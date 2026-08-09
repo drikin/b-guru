@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { deletePost, getPostThread, updatePost } from "@/lib/posts";
 import { getSessionEmail } from "@/lib/session";
+import { emitLive } from "@/lib/live";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -43,6 +44,7 @@ export async function DELETE(
     const status = result.error === "not_found" ? 404 : 403;
     return NextResponse.json({ error: result.error }, { status });
   }
+  emitLive({ type: "post", postId, action: "delete" });
   return NextResponse.json({ ok: true });
 }
 
@@ -76,5 +78,6 @@ export async function PATCH(
     const status = result.error === "not_found" ? 404 : 403;
     return NextResponse.json({ error: result.error }, { status });
   }
+  emitLive({ type: "post", postId, action: "update" });
   return NextResponse.json({ ok: true });
 }

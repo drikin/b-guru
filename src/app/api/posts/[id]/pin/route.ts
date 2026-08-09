@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { togglePin } from "@/lib/posts";
 import { getSessionEmail } from "@/lib/session";
+import { emitLive } from "@/lib/live";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -27,6 +28,7 @@ export async function POST(
       const status = result.error === "not_found" ? 404 : 403;
       return NextResponse.json({ error: result.error }, { status });
     }
+    emitLive({ type: "pin", postId, action: "toggle" });
     return NextResponse.json({ ok: true, pinned: result.pinned });
   } catch (e: any) {
     console.error("pin error:", e.message);

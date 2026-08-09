@@ -27,3 +27,24 @@ body {
     font-size: 16px !important;
   }
 }
+
+/* Brief highlight when a pinned-post summary card in the right sidebar is
+ * clicked: the corresponding timeline card flashes a green ring + tint so the
+ * user can spot it in context. The crude `*.05s` rule smooths the CSS add/remove
+ * of the class (the class is added then removed 2.6s later via JS). */
+@keyframes pin-target-flash {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  20%,
+  80% {
+    box-shadow:
+      0 0 0 3px #40c057,
+      0 0 0 7px rgba(64, 192, 87, 0.28);
+  }
+}
+.pin-target-flash {
+  animation: pin-target-flash 2.2s ease;
+  background: #f0fdf4 !important;
+}

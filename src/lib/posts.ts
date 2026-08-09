@@ -19,6 +19,8 @@ export interface FeedPost {
   lastActivityAt?: string;
   /** If this post is currently pinned by its author (within the 24h window). */
   pinnedAt?: string | null;
+  /** Hot-topic only: number of comments (incl. whispers) in the last 7 days. */
+  recentComments?: number;
   text: string;
   images: string[]; // relative or absolute URLs
   urlPreview: UrlPreview | null;
@@ -33,6 +35,9 @@ export interface NewPostInput {
   text: string;
   images?: string[];
   parentId?: number | null;
+  /** Whisper reply: appended to the group but does NOT bump last_activity,
+   *  so the timeline position stays unchanged. */
+  isWhisper?: boolean;
 }
 
 function firstUrl(text: string): string | null {
@@ -53,9 +58,9 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
   try {
     await client.query("BEGIN");
     const ins = await client.query(
-      `INSERT INTO posts (author_email, author_name, text, url_preview, parent_id)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at`,
-      [input.authorEmail, input.authorName, input.text, JSON.stringify(urlPreview), input.parentId ?? null]
+      `INSERT INTO posts (author_email, author_name, text, url_preview, parent_id, is_whisper)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
+      [input.authorEmail, input.authorName, input.text, JSON.stringify(urlPreview), input.parentId ?? null, !!input.isWhisper]
     );
     const postId = ins.rows[0].id;
     const createdAt = ins.rows[0].created_at;
@@ -92,7 +97,7 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
 const POST_SELECT = `
   SELECT p.id, p.author_email, p.author_name, p.parent_id, p.text, p.url_preview, p.created_at,
     GREATEST(p.created_at,
-      COALESCE((SELECT MAX(r.created_at) FROM posts r WHERE r.parent_id = p.id), p.created_at)
+      COALESCE((SELECT MAX(r.created_at) FROM posts r WHERE r.parent_id = p.id AND r.is_whisper IS NOT TRUE), p.created_at)
     ) AS last_activity,
     CASE WHEN p.pinned_at IS NOT NULL AND p.pinned_at > now() - interval '24 hours'
          THEN p.pinned_at ELSE NULL END AS pinned_at,
@@ -131,6 +136,9 @@ function mapRow(r: any): FeedPost {
  *  "inserted between the author's cards". */
 export async function listPosts(options?: {
   filter?: "images" | "links" | "episodes";
+  /** pinnedOnly: return ONLY currently active pins (within 24h), FIFO order
+   *  (oldest-pinned first). Used by the right-sidebar pin summary panel. */
+  pinnedOnly?: boolean;
   limit?: number;
   viewerEmail?: string;
   /** Cursor: return only posts whose latest activity is OLDER than this ISO
@@ -142,7 +150,10 @@ export async function listPosts(options?: {
   const before = options?.before;
 
   let where = "p.parent_id IS NULL";
-  if (options?.filter === "images") {
+  if (options?.pinnedOnly) {
+    // Active pins only (FIFO). No filter/date overrides apply.
+    where += ` AND p.pinned_at IS NOT NULL AND p.pinned_at > now() - interval '24 hours'`;
+  } else if (options?.filter === "images") {
     where += " AND EXISTS (SELECT 1 FROM post_images pi WHERE pi.post_id = p.id)";
   } else if (options?.filter === "links") {
     // "ニュース" = user/shared posts containing a URL, EXCLUDING auto-posted episodes
@@ -152,25 +163,27 @@ export async function listPosts(options?: {
   }
 
   // last_activity = max(post.created_at, newest reply.created_at). Repeated from
-  // POST_SELECT so we can filter (cursor) and sort by it. Pinned posts sort first
-  // (top), so a pinned post is always on the first page; older pages carry on.
-  const lastActExpr = `GREATEST(p.created_at, COALESCE((SELECT MAX(r.created_at) FROM posts r WHERE r.parent_id = p.id), p.created_at))`;
+  // POST_SELECT so we can filter (cursor) and sort by it.
+  const lastActExpr = `GREATEST(p.created_at, COALESCE((SELECT MAX(r.created_at) FROM posts r WHERE r.parent_id = p.id AND r.is_whisper IS NOT TRUE), p.created_at))`;
 
   const params: unknown[] = [viewerEmail, limit];
   let cursorSql = "";
-  if (before && before.length > 0) {
+  if (before && before.length > 0 && !options?.pinnedOnly) {
     params.push(before);
     cursorSql = ` AND ${lastActExpr} < $${params.length}`;
   }
+
+  // Timeline (non-pinnedOnly): pure latest-activity order — NO pin special-casing
+  // (pins moved to the right sidebar). pinnedOnly: FIFO (oldest pin first).
+  const orderBy = options?.pinnedOnly
+    ? "p.pinned_at ASC NULLS LAST"
+    : "last_activity DESC";
 
   const res = await pool.query(
     `${POST_SELECT}
      WHERE ${where}${cursorSql}
      GROUP BY p.id
-     ORDER BY
-       CASE WHEN p.pinned_at IS NOT NULL AND p.pinned_at > now() - interval '24 hours' THEN 0 ELSE 1 END,
-       p.pinned_at ASC NULLS LAST,
-       last_activity DESC
+     ORDER BY ${orderBy}
      LIMIT $2`,
     params
   );
@@ -224,6 +237,45 @@ export async function getPostThread(
     post: postRes.rows.length ? mapRow(postRes.rows[0]) : null,
     replies: replyRes.rows.map(mapRow),
   };
+}
+
+/** ホットトピック: 直近7日間で最もコメント（ささやき含む）が付いたルート投稿の上位 limit 件。
+ *  盛り上がり度 = 7日間のコメント数（いいねは集計対象外 — 無効のため）。スコア降順 → 最終アクティビティ順。 */
+export async function listHotTopics(
+  viewerEmail: string,
+  limit = 5
+): Promise<FeedPost[]> {
+  const res = await pool.query(
+    `${POST_SELECT}
+     WHERE p.parent_id IS NULL
+       AND EXISTS (
+         SELECT 1 FROM posts r
+         WHERE r.parent_id = p.id AND r.created_at > now() - interval '7 days'
+       )
+     GROUP BY p.id
+     ORDER BY
+       (SELECT COUNT(*) FROM posts r
+        WHERE r.parent_id = p.id AND r.created_at > now() - interval '7 days') DESC,
+       last_activity DESC
+     LIMIT $2`,
+    [viewerEmail, limit]
+  );
+  const posts = res.rows.map(mapRow);
+  if (posts.length === 0) return posts;
+
+  // Attach the 7-day comment count (incl. whispers) for each hot topic.
+  const ids = posts.map((p) => p.id);
+  const cntRes = await pool.query(
+    `SELECT r.parent_id AS pid, COUNT(*)::int AS n
+     FROM posts r
+     WHERE r.parent_id = ANY($1::int[]) AND r.created_at > now() - interval '7 days'
+     GROUP BY r.parent_id`,
+    [ids]
+  );
+  const cnt = new Map<number, number>(cntRes.rows.map((r) => [r.pid, r.n]));
+  for (const p of posts) p.recentComments = cnt.get(p.id) ?? 0;
+
+  return posts;
 }
 
 /** Resolve a Gravatar URL from an email (matches Ghost's avatar_image).

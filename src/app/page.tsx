@@ -31,18 +31,6 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 
-interface Episode {
-  id: string;
-  title: string;
-  slug: string;
-  publishedAt: string;
-  visibility: string;
-  tags: string[];
-  canonicalUrl?: string;
-  pageUrl?: string;
-  excerpt?: string;
-}
-
 type View = "login" | "otp";
 
 interface UrlPreview {
@@ -64,6 +52,7 @@ interface FeedPost {
   replies?: FeedPost[];
   lastActivityAt?: string;
   pinnedAt?: string | null;
+  recentComments?: number;
   text: string;
   images: string[];
   urlPreview: UrlPreview | null;
@@ -142,19 +131,8 @@ function groupFeed(posts: FeedPost[]): FeedGroup[] {
     })
     .filter((g): g is FeedGroup => g !== null)
     .sort((a, b) => {
-      // Pinned posts float to the very top (expired pins arrive as pinnedAt=null
-      // so they fall into the normal order). Among pinned, the oldest-pinned
-      // comes first; the rest follow by latest activity.
-      const ap = a.posts[0].pinnedAt ? 1 : 0;
-      const bp = b.posts[0].pinnedAt ? 1 : 0;
-      if (ap !== bp) return bp - ap;
-      if (a.posts[0].pinnedAt && b.posts[0].pinnedAt) {
-        return a.posts[0].pinnedAt < b.posts[0].pinnedAt
-          ? -1
-          : a.posts[0].pinnedAt > b.posts[0].pinnedAt
-          ? 1
-          : 0;
-      }
+      // Pure latest-activity order. (Pins were moved to the right sidebar and
+      // no longer affect timeline position.)
       return a.lastActivity < b.lastActivity
         ? 1
         : a.lastActivity > b.lastActivity
@@ -186,21 +164,28 @@ interface DrinewsComment {
   createdAt: string;
 }
 
-const NAV_ITEMS: {
-  key: string;
-  label: string;
-  icon: string;
-  href?: string;
-  external?: boolean;
-}[] = [
+const NAV_ITEMS: { key: string; label: string; icon: string }[] = [
   { key: "feed", label: "ホーム", icon: "🏠" },
   { key: "episodes", label: "エピソード", icon: "🎧" },
   { key: "gallery", label: "ギャラリー", icon: "🖼️" },
   { key: "news", label: "記事", icon: "📰" },
   { key: "drinews", label: "ドリニュース", icon: "📮" },
-  { key: "dvlog", label: "デスブロ", icon: "📺", href: "https://dvlog.jp/", external: true },
-  { key: "neta", label: "ネタ帳", icon: "🗒️", href: "https://neta.backspace.fm/", external: true },
 ];
+
+// External-link menu bookmarks are DB-backed (admins manage them from the UI).
+// Admin email allowlist — these members get the edit/delete/add UI.
+const ADMIN_EMAILS: ReadonlySet<string> = new Set([
+  "drikin@gmail.com",
+  "matsuo@gmail.com",
+  "zenjinishikawa@gmail.com",
+]);
+
+interface MenuLinkItem {
+  id: number;
+  label: string;
+  icon: string;
+  href: string;
+}
 
 /** Avatar that falls back to the initial-letter placeholder when the image
  * fails to load (e.g. user has no Gravatar → 404). */
@@ -255,15 +240,9 @@ function PinCountdown({ pinnedAt }: { pinnedAt: string }) {
   const pad = (n: number) => String(n).padStart(2, "0");
 
   return (
-    <Badge
-      size="sm"
-      variant="light"
-      color="green"
-      radius="xl"
-      style={{ fontWeight: 600, textTransform: "none" }}
-    >
-      ピン 残り {pad(h)}:{pad(m)}:{pad(s)}
-    </Badge>
+    <Text size="xs" c="green.7" fw={600} style={{ fontVariantNumeric: "tabular-nums" }}>
+      残り {pad(h)}:{pad(m)}:{pad(s)}
+    </Text>
   );
 }
 
@@ -280,6 +259,7 @@ function PostCard({
   onOpenThreadReply,
   onLike,
   onReply,
+  onWhisper,
   onEdit,
   onDelete,
   onPin,
@@ -294,6 +274,7 @@ function PostCard({
   onOpenThreadReply: (id: number) => void;
   onLike: (id: number) => void;
   onReply: (id: number, name: string) => void;
+  onWhisper?: (id: number, name: string) => void;
   onPin: (id: number) => void;
   onEdit: (post: FeedPost) => void;
   onDelete: (post: FeedPost) => void;
@@ -316,32 +297,6 @@ function PostCard({
     >
       {/* Own post only: small monochrome edit/delete icons floating in the
        * top-right corner of the card (absolutely positioned, no layout shift). */}
-      {/* Pinned banner — only on pinned ROOT posts */}
-      {!!post.pinnedAt && !post.parentId && (
-        <Box
-          mb="xs"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            background: "#eaf7ec",
-            border: "1px solid #cde6cd",
-            borderRadius: 8,
-            padding: "4px 10px",
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-            <path d="M12 17v5" />
-            <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" />
-          </svg>
-          <Text size="xs" fw={600} c="green.8">
-            タイムライン最上部にピン中
-            <span style={{ fontVariantNumeric: "tabular-nums", marginLeft: 6 }}>
-              <PinCountdown pinnedAt={post.pinnedAt} />
-            </span>
-          </Text>
-        </Box>
-      )}
 
       {auth.email === post.authorEmail && (
         <Group
@@ -512,10 +467,11 @@ function PostCard({
         </Paper>
       )}
 
-      {/* Only reply remains as a bottom action (like removed). Edit/delete are
-       *  now the small icons in the card's top-right corner. */}
-      {showReplyButton && (
-        <Group mt="sm">
+      {/* Bottom action: 返信 only. (Whisper is available via the "+" insert
+       * control between cards / inside the thread reply box — no separate
+       * button on the card itself.) */}
+      {showReplyButton && onReply && (
+        <Group mt="sm" gap="xs">
           <Button
             size="xs"
             variant="subtle"
@@ -531,6 +487,241 @@ function PostCard({
   );
 }
 
+/** Shared tappable summary card for a post in the right-sidebar panels (pins &
+ *  hot topics). Renders the common chrome — avatar + name header, 2-line text
+ *  clamp — and a feature-specific bottom row passed as `children`. Clicking the
+ *  card scrolls the timeline to that post (via `onOpen`). Keeps the pins & hot
+ *  lists visually identical without duplicating the card markup. */
+function SidebarPostCard({
+  post,
+  onOpen,
+  loading,
+  children,
+}: {
+  post: FeedPost;
+  onOpen: (id: number) => void;
+  loading?: boolean;
+  children?: React.ReactNode;
+}) {
+  const previewImg = post.images?.[0];
+  return (
+    <Box
+      onClick={() => onOpen(post.id)}
+      role="button"
+      tabIndex={0}
+      aria-label="タイムラインでこの投稿を表示"
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen(post.id);
+        }
+      }}
+      style={{
+        cursor: "pointer",
+        border: "1px solid #e5e7eb",
+        borderRadius: 8,
+        padding: "8px 8px 8px 10px",
+        background: "#fff",
+        position: "relative",
+        transition: "border-color .15s, box-shadow .15s, background .15s",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = "#bfd8bf";
+        e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.1)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = "#e5e7eb";
+        e.currentTarget.style.boxShadow = "none";
+      }}
+    >
+      <Group gap="xs" align="center" wrap="nowrap" mb={4}>
+        <SafeAvatar src={post.authorAvatar} initial={post.authorName || post.authorEmail} size="xs" />
+        <Text size="xs" fw={600} c="dark" truncate style={{ flex: 1 }}>
+          {post.authorName || post.authorEmail.split("@")[0]}
+        </Text>
+      </Group>
+
+      {post.text ? (
+        <Text size="xs" c="dimmed" lineClamp={2} mb={previewImg ? 6 : 2}>
+          {post.text}
+        </Text>
+      ) : null}
+
+      {children}
+
+      {loading && (
+        <Box
+          aria-hidden
+          data-loading-overlay="true"
+          style={{
+            position: "absolute",
+            inset: 0,
+            borderRadius: 8,
+            background: "rgba(233,245,234,0.92)",
+            border: "1px solid #bfd8bf",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            zIndex: 5,
+            cursor: "progress",
+          }}
+        >
+          <Loader size="md" color="green" />
+          <Text size="xs" c="green.8" fw={700}>
+            読み込み中…
+          </Text>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+/** Compact summary of a pinned post, shown in the right-sidebar panel. Clicking
+ *  the card scrolls the timeline to that post (in context); the ✕ button unpins
+ *  it. No link preview (user: link previews unnecessary in the sidebar). */
+function PinnedCard({
+  post,
+  onOpen,
+  onUnpin,
+  loading,
+}: {
+  post: FeedPost;
+  onOpen: (id: number) => void;
+  onUnpin: (id: number) => void;
+  loading?: boolean;
+}) {
+  const replyCount = post.replyCount ?? post.replies?.length ?? 0;
+  const previewImg = post.images?.[0];
+  return (
+    <SidebarPostCard post={post} onOpen={onOpen} loading={loading}>
+      {previewImg && (
+        <Image
+          src={previewImg}
+          alt=""
+          radius={6}
+          style={{
+            width: "100%",
+            height: 140,
+            objectFit: "cover",
+            display: "block",
+            marginBottom: 6,
+          }}
+        />
+      )}
+      <Group
+        align="center"
+        justify="space-between"
+        gap="xs"
+        wrap="nowrap"
+        style={{ minHeight: 20 }}
+      >
+        {/* Comment count — its own line, bottom-left */}
+        <Group gap={4} align="center" wrap="nowrap" style={{ flexShrink: 0 }}>
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+          </svg>
+          <Text size="xs" c="dimmed" style={{ fontVariantNumeric: "tabular-nums" }}>
+            {replyCount}
+          </Text>
+        </Group>
+
+        <Group gap="xs" align="center" wrap="nowrap" style={{ flexShrink: 0 }}>
+          {post.pinnedAt && <PinCountdown pinnedAt={post.pinnedAt} />}
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            size="sm"
+            aria-label="ピン解除"
+            onClick={(e) => {
+              e.stopPropagation();
+              onUnpin(post.id);
+            }}
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
+          </ActionIcon>
+        </Group>
+      </Group>
+    </SidebarPostCard>
+  );
+}
+
+/** Compact summary of a hot topic (most-commented root post in the last 7 days),
+ *  shown in the right-sidebar "ホットトピック" panel. Clicking scrolls the timeline
+ *  to it. Displays the 7-day comment count (whispers included). */
+function HotTopicCard({
+  post,
+  onOpen,
+  loading,
+}: {
+  post: FeedPost;
+  onOpen: (id: number) => void;
+  loading?: boolean;
+}) {
+  const previewImg = post.images?.[0];
+  const recent = post.recentComments ?? post.replyCount ?? 0;
+  return (
+    <SidebarPostCard post={post} onOpen={onOpen} loading={loading}>
+      {previewImg && (
+        <Image
+          src={previewImg}
+          alt=""
+          radius={6}
+          style={{
+            width: "100%",
+            height: 140,
+            objectFit: "cover",
+            display: "block",
+            marginBottom: 6,
+          }}
+        />
+      )}
+      {/* Comment count — its own line, bottom-left (never overlaps the image) */}
+      <Group gap={4} align="center" wrap="nowrap" style={{ flexShrink: 0 }}>
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+        </svg>
+        <Text size="xs" c="dimmed" style={{ fontVariantNumeric: "tabular-nums" }}>
+          {recent}
+        </Text>
+      </Group>
+    </SidebarPostCard>
+  );
+}
+
 /** Grouped timeline: day separators + per-author groups. Posts are shown fully
  *  expanded (no collapse/stack) inside a group framed by a slim author header. */
 function TimelineFeed({
@@ -539,13 +730,19 @@ function TimelineFeed({
   avatarSrc,
   inlineReplyFor,
   inlineReplyText,
+  inlineWhisper,
+  inlineReplyImages,
+  inlineUploading,
   onInlineReplyChange,
   onToggleInlineReply,
   onInlineReplySubmit,
+  onInlineReplyPick,
+  onRemoveInlineReplyImage,
   onOpenThread,
   onOpenThreadReply,
   onLike,
   onReply,
+  onWhisper,
   onEdit,
   onDelete,
   onPin,
@@ -556,13 +753,19 @@ function TimelineFeed({
   avatarSrc?: string | null;
   inlineReplyFor: number | null;
   inlineReplyText: string;
+  inlineWhisper?: boolean;
+  inlineReplyImages: string[];
+  inlineUploading: boolean;
   onInlineReplyChange: (t: string) => void;
   onToggleInlineReply: (id: number) => void;
-  onInlineReplySubmit: (id: number) => void;
+  onInlineReplySubmit: (id: number, whisper?: boolean) => void;
+  onInlineReplyPick: (files: FileList | null) => void;
+  onRemoveInlineReplyImage: (i: number) => void;
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
   onLike: (id: number) => void;
   onReply: (id: number) => void;
+  onWhisper?: (id: number, name: string) => void;
   onEdit: (p: FeedPost) => void;
   onDelete: (p: FeedPost) => void;
   onPin: (id: number) => void;
@@ -604,6 +807,7 @@ function TimelineFeed({
     rendered.push(
       <Box
         key={gkey}
+        data-post-id={g.posts[0].id}
         style={{
           borderLeft: "3px solid #cde6cd",
           borderTopLeftRadius: 8,
@@ -617,7 +821,8 @@ function TimelineFeed({
       >
         {g.posts.map((post, i) => (
           <Fragment key={post.id}>
-            {/* The author's own card (no reply button here; "+" below adds feedback) */}
+            {/* The author's own card (no reply button here; "ささやく" offers a
+             * quiet, in-place reply that does NOT bump the group to the top) */}
             <PostCard
               post={post}
               auth={auth}
@@ -628,6 +833,7 @@ function TimelineFeed({
               onOpenThreadReply={onOpenThreadReply}
               onLike={onLike}
               onReply={onReply}
+              onWhisper={onWhisper}
               onEdit={onEdit}
               onDelete={onDelete}
               onPin={onPin}
@@ -672,11 +878,14 @@ function TimelineFeed({
                 p="xs"
                 style={{ background: "#f6f9f4", borderRadius: 8, border: "1px solid #e0ecd0" }}
               >
+                <Text size="xs" c="dimmed">
+                  この位置にコメントします
+                </Text>
                 <Textarea
                   value={inlineReplyText}
                   autoFocus
                   onChange={(e) => onInlineReplyChange(e.currentTarget.value)}
-                  placeholder={`${g.authorName || g.authorEmail.split("@")[0]} の投稿にコメント…`}
+                  placeholder={`${g.authorName || g.authorEmail.split("@")[0]} の投稿にコメント…（ささやくはボタンで投稿）`}
                   minRows={2}
                   autosize
                   maxRows={5}
@@ -684,11 +893,63 @@ function TimelineFeed({
                     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                       if ((e.nativeEvent as any).isComposing) return;
                       e.preventDefault();
-                      onInlineReplySubmit(post.id);
+                      onInlineReplySubmit(post.id, false);
                     }
                   }}
                 />
-                <Group justify="flex-end" gap="xs">
+                {/* Comment image attachments (same as main post) */}
+                {inlineReplyImages.length > 0 && (
+                  <Group gap="xs" mb={4}>
+                    {inlineReplyImages.map((src, i) => (
+                      <Box key={i} style={{ position: "relative" }}>
+                        <Image
+                          src={src}
+                          width={56}
+                          height={56}
+                          fit="contain"
+                          radius="md"
+                          style={{ cursor: "pointer" }}
+                          onClick={() => onPreview(src)}
+                        />
+                        <ActionIcon
+                          size="sm"
+                          variant="filled"
+                          color="red"
+                          radius="xl"
+                          style={{ position: "absolute", top: -6, right: -6 }}
+                          onClick={() => onRemoveInlineReplyImage(i)}
+                        >
+                          ×
+                        </ActionIcon>
+                      </Box>
+                    ))}
+                  </Group>
+                )}
+                <Group gap="xs" mb={4}>
+                  <label style={{ cursor: "pointer", display: "inline-block" }}>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      hidden
+                      onChange={(e) => {
+                        onInlineReplyPick(e.target.files);
+                        e.target.value = "";
+                      }}
+                    />
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="gray"
+                      component="span"
+                      loading={inlineUploading}
+                      disabled={inlineReplyImages.length >= 5}
+                    >
+                      📷 {inlineReplyImages.length}/5
+                    </Button>
+                  </label>
+                </Group>
+                <Group justify="space-between" align="center" gap="xs">
                   <Button
                     size="xs"
                     variant="subtle"
@@ -697,9 +958,24 @@ function TimelineFeed({
                   >
                     キャンセル
                   </Button>
-                  <Button size="xs" onClick={() => onInlineReplySubmit(post.id)}>
-                    コメント
-                  </Button>
+                  <Group gap="xs">
+                    <Button
+                      size="xs"
+                      color="blue"
+                      variant="light"
+                      disabled={!inlineReplyText.trim() && inlineReplyImages.length === 0}
+                      onClick={() => onInlineReplySubmit(post.id, true)}
+                    >
+                      ささやく
+                    </Button>
+                    <Button
+                      size="xs"
+                      disabled={!inlineReplyText.trim() && inlineReplyImages.length === 0}
+                      onClick={() => onInlineReplySubmit(post.id, false)}
+                    >
+                      コメント
+                    </Button>
+                  </Group>
                 </Group>
               </Stack>
             ) : (
@@ -747,6 +1023,82 @@ function TimelineFeed({
   return <>{rendered}</>;
 }
 
+/**
+ * Optimistically insert a newly created reply (or whisper) under its parent
+ * WITHOUT refetching the whole feed — so the card's scroll position, the
+ * loaded "older" pages, and the group layout are all preserved.
+ *
+ * - whisper: the group stays put; only the new reply is appended inside it.
+ * - comment: the group is bumped to the top of the timeline (existing behavior)
+ *   and stays there, keeping its loaded content.
+ */
+function appendReplyLocal(
+  feed: FeedPost[],
+  parentId: number,
+  created: FeedPost,
+  whisper: boolean
+): FeedPost[] {
+  const now = created.createdAt || new Date().toISOString();
+  const reply: FeedPost = {
+    id: created.id,
+    authorEmail: created.authorEmail,
+    authorName: created.authorName ?? null,
+    authorAvatar: created.authorAvatar ?? null,
+    parentId,
+    text: created.text ?? "",
+    images: created.images ?? [],
+    urlPreview: created.urlPreview ?? null,
+    likeCount: created.likeCount ?? 0,
+    likedByMe: created.likedByMe ?? false,
+    createdAt: now,
+    lastActivityAt: now,
+    replies: [],
+    replyCount: 0,
+  };
+
+  const appendTo = (root: FeedPost): FeedPost => {
+    const list = [...(root.replies ?? [])];
+    if (!list.some((rp) => rp.id === reply.id)) {
+      list.push(reply);
+      list.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+    }
+    const bumped = {
+      ...root,
+      replies: list,
+      replyCount: (root.replyCount ?? 0) + 1,
+      // Normal comments move the group up (its lastActivity follows the new
+      // reply); whispers deliberately leave lastActivity unchanged.
+      lastActivityAt: whisper ? root.lastActivityAt : now,
+    };
+    return bumped;
+  };
+
+  let changed = false;
+  const next = feed.map((root) => {
+    if (root.id === parentId) {
+      changed = true;
+      return appendTo(root);
+    }
+    if ((root.replies ?? []).some((rp) => rp.id === parentId)) {
+      changed = true;
+      return appendTo(root);
+    }
+    return root;
+  });
+
+  if (!changed) return feed;
+
+  if (whisper) return next;
+
+  // For a normal comment, bring the bumped group to the top.
+  const bumped = next.find((r) => r.id === parentId || (r.replies ?? []).some((rp) => rp.id === parentId));
+  if (!bumped) return next;
+  return [
+    bumped,
+    ...next.filter((r) => r !== bumped),
+  ];
+}
+
 export default function Home() {
   const [auth, setAuth] = useState<null | {
     email: string;
@@ -754,8 +1106,6 @@ export default function Home() {
     avatar?: string | null;
   }>(null);
   const [checking, setChecking] = useState(true);
-  const [episodes, setEpisodes] = useState<Episode[]>([]);
-  const [epLoading, setEpLoading] = useState(true);
 
   const [view, setView] = useState<View>("login");
   const [email, setEmail] = useState("");
@@ -767,11 +1117,94 @@ export default function Home() {
   const [activeNav, setActiveNav] = useState("feed");
   const [navOpened, setNavOpened] = useState(false);
 
+  // ---- Admin-managed external-link menu (sidebar bookmarks) ----
+  const [menuLinks, setMenuLinks] = useState<MenuLinkItem[]>([]);
+  const [linkModal, setLinkModal] = useState<{
+    open: boolean;
+    editingId: number | null;
+    label: string;
+    icon: string;
+    href: string;
+  }>({ open: false, editingId: null, label: "", icon: "🔗", href: "" });
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [linkSaving, setLinkSaving] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
+  const isAdminAuth = !!auth && ADMIN_EMAILS.has(auth.email);
+  const loadMenuLinks = useCallback(() => {
+    fetch("/api/menu-links")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && Array.isArray(d.links)) setMenuLinks(d.links);
+      })
+      .catch(() => {});
+  }, []);
+  const openAddLink = () =>
+    setLinkModal({ open: true, editingId: null, label: "", icon: "🔗", href: "" });
+  const openEditLink = (lk: MenuLinkItem) =>
+    setLinkModal({
+      open: true,
+      editingId: lk.id,
+      label: lk.label,
+      icon: lk.icon,
+      href: lk.href,
+    });
+  const saveLink = async () => {
+    setLinkSaving(true);
+    setLinkError(null);
+    try {
+      if (!linkModal.label.trim() || !linkModal.href.trim()) {
+        setLinkError("ラベルとURLは必須です");
+        return;
+      }
+      const path = linkModal.editingId
+        ? `/api/menu-links/${linkModal.editingId}`
+        : "/api/menu-links";
+      const method = linkModal.editingId ? "PATCH" : "POST";
+      const res = await fetch(path, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: linkModal.label,
+          icon: linkModal.icon,
+          href: linkModal.href,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "保存に失敗しました");
+      await loadMenuLinks();
+      setLinkModal((m) => ({ ...m, open: false }));
+    } catch (e: any) {
+      setLinkError(e.message || "保存に失敗しました");
+    } finally {
+      setLinkSaving(false);
+    }
+  };
+  const removeLink = async (id: number) => {
+    const res = await fetch(`/api/menu-links/${id}`, { method: "DELETE" });
+    const d = await res.json();
+    if (!res.ok) {
+      setLinkError(d.error || "削除に失敗しました");
+      return;
+    }
+    setConfirmDeleteId(null);
+    await loadMenuLinks();
+  };
+
   // ---- Feed state ----
   const [feedPosts, setFeedPosts] = useState<FeedPost[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
   const [feedLoadingMore, setFeedLoadingMore] = useState(false);
   const [feedHasMore, setFeedHasMore] = useState(true);
+  // Active pins, shown in the right sidebar summary panel (FIFO order).
+  const [pinnedPosts, setPinnedPosts] = useState<FeedPost[]>([]);
+  const [pinnedLoading, setPinnedLoading] = useState(false);
+  // Hot topics: top active root posts in the last 7 days (right sidebar).
+  const [hotPosts, setHotPosts] = useState<FeedPost[]>([]);
+  const [hotLoading, setHotLoading] = useState(false);
+  // Post currently being jumped-to from a right-sidebar card (feeds the card's
+  // loading indicator while it pages back to fetch the post).
+  const [scrollingPostId, setScrollingPostId] = useState<number | null>(null);
   const feedCursorRef = useRef<string | null>(null);
   const feedSentinelRef = useRef<HTMLDivElement | null>(null);
   const [postText, setPostText] = useState("");
@@ -812,10 +1245,22 @@ export default function Home() {
   const [threadReplies, setThreadReplies] = useState<FeedPost[]>([]);
   const [threadLoading, setThreadLoading] = useState(false);
   const [threadReplyBoxOpen, setThreadReplyBoxOpen] = useState(false);
+  // Whisper mode for the thread reply box (is_whisper => no timeline bump).
+  const [threadWhisper, setThreadWhisper] = useState(false);
   // Inline "insert between cards" reply state (timeline group comments).
   const [inlineReplyFor, setInlineReplyFor] = useState<number | null>(null);
   const [inlineReplyText, setInlineReplyText] = useState("");
   const [inlineReplying, setInlineReplying] = useState(false);
+  // Whisper mode for the inline box: posts the reply as a whisper (is_whisper),
+  // which does NOT bump the group to the top of the timeline.
+  const [inlineWhisper, setInlineWhisper] = useState(false);
+
+  // Image attachments for replies (thread + inline), kept separate from the
+  // main-post images so each box manages its own uploads.
+  const [threadReplyImages, setThreadReplyImages] = useState<string[]>([]);
+  const [threadUploading, setThreadUploading] = useState(false);
+  const [inlineReplyImages, setInlineReplyImages] = useState<string[]>([]);
+  const [inlineUploading, setInlineUploading] = useState(false);
 
   // ---- Mobile keyboard detection ----
   // When the virtual keyboard opens on mobile, visualViewport shrinks.
@@ -877,23 +1322,48 @@ export default function Home() {
 
   useEffect(() => {
     if (!auth) {
-      setEpLoading(false);
       setFeedLoading(false);
       return;
     }
-    loadEpisodes();
     loadFeed();
+    loadPinned();
+    loadHot();
     loadNotifications();
+    loadMenuLinks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth]);
 
-  const loadEpisodes = () => {
-    fetch("/api/episodes")
+  // Fetch the currently active pins (within 24h, oldest-pinned first) for the
+  // right-sidebar summary panel. Refreshed on login, on SSE "pin" events and
+  // after a pin toggle.
+  const loadPinned = useCallback(() => {
+    if (!auth) {
+      setPinnedPosts([]);
+      return;
+    }
+    setPinnedLoading(true);
+    fetch("/api/posts?pinned=1")
       .then((r) => r.json())
-      .then((d) => setEpisodes(d.episodes ?? []))
-      .catch(() => setEpisodes([]))
-      .finally(() => setEpLoading(false));
-  };
+      .then((d) => setPinnedPosts(d.posts ?? []))
+      .catch(() => setPinnedPosts([]))
+      .finally(() => setPinnedLoading(false));
+  }, [auth]);
+
+  // Fetch the top hot topics (most-commented root posts in the last 7 days) for
+  // the right-sidebar panel. Refreshed on login, on SSE "post" events (a new
+  // comment bumps the ranking), after a pin toggle does nothing here).
+  const loadHot = useCallback(() => {
+    if (!auth) {
+      setHotPosts([]);
+      return;
+    }
+    setHotLoading(true);
+    fetch("/api/posts?hot=1&limit=5")
+      .then((r) => r.json())
+      .then((d) => setHotPosts(d.posts ?? []))
+      .catch(() => setHotPosts([]))
+      .finally(() => setHotLoading(false));
+  }, [auth]);
 
   const FEED_PAGE = 50;
 
@@ -948,6 +1418,82 @@ export default function Home() {
       .catch(() => setFeedHasMore(false))
       .finally(() => setFeedLoadingMore(false));
   };
+
+  // ---- Push (SSE) live refresh ----
+  // The EventSource stays open for as long as the page lives; we read the
+  // *current* view/filter state through refs so an incoming event never causes
+  // a tear-down / reconnect. (Teardown/reconnect was dropping events.)
+  const activeNavRef = useRef(activeNav);
+  activeNavRef.current = activeNav;
+  const threadPostRef = useRef(threadPost);
+  threadPostRef.current = threadPost;
+  const feedLoadingRef = useRef(feedLoading);
+  feedLoadingRef.current = feedLoading;
+
+  // ---- SSE debug indicator (temporary, for diagnosing live updates) ----
+  const [sseState, setSseState] = useState<"idle" | "open" | "error">("idle");
+  const [sseCount, setSseCount] = useState(0);
+
+  const silentRefreshFeed = useCallback(() => {
+    const nav = activeNavRef.current;
+    if (feedLoadingRef.current) return;
+    const filter = nav === "gallery" ? "images" : nav === "news" ? "links" : nav === "episodes" ? "episodes" : undefined;
+    const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}`;
+    fetch(`/api/posts${q}`)
+      .then((r) => r.json())
+      .then((d) => {
+        const fresh = d.posts ?? [];
+        setFeedPosts((prev) => {
+          if (fresh.length === 0 && prev.length === 0) return prev;
+          const freshIds = new Set(fresh.map((p: FeedPost) => p.id));
+          const older = prev.filter((p) => !freshIds.has(p.id));
+          return [...fresh, ...older];
+        });
+        if (fresh.length > 0) {
+          feedCursorRef.current =
+            fresh[fresh.length - 1].lastActivityAt ?? fresh[fresh.length - 1].createdAt;
+        }
+        setFeedHasMore(fresh.length >= FEED_PAGE);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Open exactly ONE stream for the lifetime of the page (while logged in). The
+  // handler ignores events while a thread is open or during an initial load;
+  // the client filter is read from refs so an incoming event never tears us down.
+  useEffect(() => {
+    if (!auth) return;
+    const es = new EventSource("/api/posts/stream");
+    let current = 0;
+    const onChange = () => {
+      current += 1;
+      setSseCount(current);
+      loadHot(); // new post/comment may change the hot-topics ranking
+      if (threadPostRef.current) return;
+      silentRefreshFeed();
+    };
+    const onPinChange = () => {
+      current += 1;
+      setSseCount(current);
+      loadPinned(); // refresh the right-sidebar pin summary panel
+      if (!threadPostRef.current) silentRefreshFeed();
+    };
+    es.addEventListener("post", onChange);
+    es.addEventListener("pin", onPinChange);
+    es.onopen = () => {
+      setSseState("open");
+      loadPinned();
+      loadHot();
+      if (!threadPostRef.current) silentRefreshFeed();
+    };
+    es.onerror = () => {
+      setSseState("error");
+    };
+    return () => {
+      setSseState("idle");
+      es.close();
+    };
+  }, [auth, silentRefreshFeed, loadPinned, loadHot]);
 
   const loadNotifications = useCallback(() => {
     if (!auth) return;
@@ -1068,7 +1614,6 @@ export default function Home() {
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     setAuth(null);
-    setEpisodes([]);
     setFeedPosts([]);
   };
 
@@ -1117,12 +1662,21 @@ export default function Home() {
       img.src = url;
     });
 
-  const onPickImages = async (files: FileList | null) => {
+  // Generic image upload shared by the main composer, thread reply box and
+  // inline reply box. Resizes/compresses client-side, posts to /api/upload,
+  // then appends the returned URLs to the given state setter.
+  const uploadImages = async (
+    files: FileList | null,
+    current: string[],
+    setter: (fn: (prev: string[]) => string[]) => void,
+    setUp: (v: boolean) => void,
+    setErr: (v: string) => void
+  ) => {
     if (!files || files.length === 0) return;
-    const usable = Array.from(files).slice(0, Math.max(0, 5 - pendingImages.length));
+    const usable = Array.from(files).slice(0, Math.max(0, 5 - current.length));
     if (usable.length === 0) return;
-    setUploading(true);
-    setPostError(null);
+    setUp(true);
+    setErr("");
     try {
       const fd = new FormData();
       for (const f of usable) {
@@ -1138,13 +1692,35 @@ export default function Home() {
       const r = await fetch("/api/upload", { method: "POST", body: fd });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "アップロード失敗");
-      setPendingImages((prev) => [...prev, ...d.urls]);
+      setter((prev) => [...prev, ...d.urls]);
     } catch (err: any) {
-      setPostError(err.message);
+      setErr(err.message);
     } finally {
-      setUploading(false);
+      setUp(false);
     }
   };
+
+  const onPickImages = (files: FileList | null) =>
+    uploadImages(files, pendingImages, setPendingImages, setUploading, (s) => setPostError(s));
+
+  const onThreadReplyPick = (files: FileList | null) =>
+    uploadImages(files, threadReplyImages, setThreadReplyImages, setThreadUploading, (s) =>
+      setReplyError(s)
+    );
+
+  const onInlineReplyPick = (files: FileList | null) =>
+    uploadImages(files, inlineReplyImages, setInlineReplyImages, setInlineUploading, (s) => {
+      // Only append a real error to the box text. The helper calls setErr("")
+      // to CLEAR the error at the start of an upload, so ignore empty strings
+      // (otherwise a stray "(エラー: )" would be typed into the input).
+      if (s) setInlineReplyText((prev) => prev + (prev ? "\n\n" : "") + "(エラー: " + s + ")");
+    });
+
+  const removeThreadReplyImage = (i: number) =>
+    setThreadReplyImages((prev) => prev.filter((_, idx) => idx !== i));
+
+  const removeInlineReplyImage = (i: number) =>
+    setInlineReplyImages((prev) => prev.filter((_, idx) => idx !== i));
 
   const removeImage = (i: number) => {
     setPendingImages((prev) => prev.filter((_, idx) => idx !== i));
@@ -1181,28 +1757,41 @@ export default function Home() {
   // Single path — no separate reply popup anymore.
   const openThreadReply = (postId: number) => {
     setReplyText("");
+    setThreadReplyImages([]);
     setReplyError(null);
+    setThreadWhisper(false);
     openThread(postId);
     setThreadReplyBoxOpen(true);
+  };
+
+  // Whisper to the currently open thread post: posts a whisper reply
+  // (is_whisper=true) that does NOT bump the group in the timeline.
+  const submitWhisperThread = (parentId: number) => {
+    setThreadReplyBoxOpen(true);
+    setThreadWhisper(true);
+    setReplyText("");
+    setReplyError(null);
   };
 
   // Submit a reply from within the thread view
   const submitThreadReply = async () => {
     if (!threadPost || replying) return;
     const text = replyText.trim();
-    if (!text) return;
+    if (!text && threadReplyImages.length === 0) return;
     setReplying(true);
     setReplyError(null);
     try {
       const r = await fetch("/api/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, images: [], parentId: threadPost.id }),
+        body: JSON.stringify({ text, images: threadReplyImages, parentId: threadPost.id, whisper: threadWhisper }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "返信失敗");
       setReplyText("");
+      setThreadReplyImages([]);
       setReplyError(null);
+      setThreadWhisper(false);
       openThread(threadPost.id); // reload
       loadFeed(); // refresh reply counters on timeline
     } catch (err: any) {
@@ -1216,22 +1805,37 @@ export default function Home() {
   const toggleInlineReply = (postId: number) => {
     setInlineReplyFor((prev) => (prev === postId ? null : postId));
     setInlineReplyText("");
+    setInlineReplyImages([]);
+    setInlineWhisper(false);
   };
-  const submitInlineReply = async (postId: number) => {
+  // Whisper: open the same inline box in whisper mode (reply stays in place).
+  const toggleWhisper = (postId: number) => {
+    setInlineWhisper(true);
+    // If already open for this post, keep it; otherwise open it.
+    setInlineReplyFor((prev) => (prev === postId ? prev : postId));
+    setInlineReplyText("");
+    setInlineReplyImages([]);
+  };
+  const submitInlineReply = async (postId: number, whisper?: boolean) => {
+    const isWhisper = whisper ?? inlineWhisper;
     const text = inlineReplyText.trim();
-    if (!text || inlineReplying) return;
+    if ((!text && inlineReplyImages.length === 0) || inlineReplying) return;
     setInlineReplying(true);
     try {
       const r = await fetch("/api/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, images: [], parentId: postId }),
+        body: JSON.stringify({ text, images: inlineReplyImages, parentId: postId, whisper: isWhisper }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "コメント失敗");
       setInlineReplyFor(null);
       setInlineReplyText("");
-      loadFeed(); // re-render so the comment appears inline in the group
+      setInlineReplyImages([]);
+      // Optimistically insert the new reply under its parent WITHOUT a full
+      // loadFeed (which resets pagination and loses the card's scroll position).
+      const created = d.post;
+      setFeedPosts((prev) => appendReplyLocal(prev, postId, created, !!isWhisper));
     } catch (err: any) {
       setInlineReplyText(text + "\n\n(エラー: " + err.message + ")");
     } finally {
@@ -1245,7 +1849,9 @@ export default function Home() {
     setThreadPost(null);
     setThreadReplies([]);
     setReplyText("");
+    setThreadReplyImages([]);
     setThreadReplyBoxOpen(false);
+    setThreadWhisper(false);
     setReplyError(null);
     // Allow the browser back button to close the thread view.
     window.history.pushState({ thread: postId }, "", `#/post/${postId}`);
@@ -1332,16 +1938,105 @@ export default function Home() {
     toggleLikeRequest(postId);
   };
 
-  // Pin / unpin own post (24h top placement). Reload the feed so the new pin
-  // order (and any same-author pin swap) is reflected.
+  // Pin / unpin own post. The right-sidebar panel is the canonical home for
+  // pins now, so refresh it (and the feed) when a pin changes.
   const handlePin = (postId: number) => {
     fetch(`/api/posts/${postId}/pin`, { method: "POST" })
       .then(async (r) => {
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || "ピン更新失敗");
         loadFeed();
+        loadPinned();
       })
       .catch((err) => setActionError(err.message));
+  };
+
+  // Scroll the timeline to a pinned post's card, briefly highlighting it, so the
+  // user sees it in context with the surrounding posts. If the post isn't in the
+  // already-loaded feed, wait for a fresh load (pinned posts are recent, so they
+  // usually appear on the first page after switching back to ホーム), then page
+  // back in time (bounded); as a last resort open the thread view.
+  const scrollToPinnedPost = async (postId: number) => {
+    // Flag this card as "loading" so the sidebar shows a spinner on it while we
+    // page back to fetch the (possibly not-yet-loaded) post.
+    setScrollingPostId(postId);
+    const nav = activeNavRef.current;
+    if (nav !== "feed") setActiveNav("feed");
+
+    const findEl = () =>
+      document.querySelector(
+        `[data-post-id="${postId}"]`
+      ) as HTMLElement | null;
+
+    const revealAndScroll = (el: HTMLElement) => {
+      setScrollingPostId(null);
+      el.classList.add("pin-target-flash");
+      window.setTimeout(() => el.classList.remove("pin-target-flash"), 2400);
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    };
+
+    // 1) Fast path — the post is already rendered in the loaded feed.
+    let el = findEl();
+    if (el) {
+      revealAndScroll(el);
+      return;
+    }
+
+    // 2) Brief wait for a feed reload right after switching nav.
+    const reloadDeadline = Date.now() + 800;
+    while (Date.now() < reloadDeadline) {
+      await new Promise((r) => window.setTimeout(r, 90));
+      el = findEl();
+      if (el) {
+        revealAndScroll(el);
+        return;
+      }
+    }
+
+    // 3) Not rendered — page back in time from the current cursor, appending
+    //    each page until the post is fetched, then wait for React to actually
+    //    commit the newly appended groups (double rAF = next paint) before we
+    //    attempt the scroll. This is the reliable "jump" that works on the
+    //    first click even when the post is buried in older history.
+    let guard = 0;
+    let cursor = feedCursorRef.current;
+    while (guard < 80 && cursor) {
+      const q = `?limit=${FEED_PAGE}&before=${encodeURIComponent(cursor)}`;
+      let d: any = null;
+      try {
+        d = await fetch(`/api/posts${q}`).then((r) => r.json());
+      } catch {
+        break;
+      }
+      const posts: FeedPost[] = d?.posts ?? [];
+      if (posts.length === 0) break;
+      const hit = posts.some((p) => p.id === postId);
+      setFeedPosts((prev) => {
+        const seen = new Set(prev.map((p) => p.id));
+        const merged = [...prev];
+        for (const np of posts) if (!seen.has(np.id)) merged.push(np);
+        return merged;
+      });
+      cursor = posts[posts.length - 1].lastActivityAt ?? posts[posts.length - 1].createdAt;
+      guard += 1;
+      if (hit) {
+        // Let React render the appended cards, then scroll to them.
+        await new Promise((r) =>
+          window.requestAnimationFrame(() => window.requestAnimationFrame(() => r(null)))
+        );
+        await new Promise((r) => window.setTimeout(r, 80));
+        el = findEl();
+        if (el) {
+          revealAndScroll(el);
+          return;
+        }
+        break;
+      }
+    }
+
+    // 4) Last resort — open the thread view so the post is always reachable.
+    setScrollingPostId(null);
+    openThread(postId);
   };
 
   // Edit post
@@ -1675,6 +2370,20 @@ export default function Home() {
             <Button variant="default" size="xs" onClick={logout} visibleFrom="sm">
               ログアウト
             </Button>
+            {/* TEMP debug: SSE live-update status */}
+            <Tooltip
+              label={sseState === "idle" ? "SSE未接続(再読込で接続)" : sseState === "error" ? "SSEエラー(自動再試行中)" : `SSE接続中・受信${sseCount}回`}
+              withArrow
+            >
+              <Badge
+                size="sm"
+                variant="light"
+                color={sseState === "open" ? "green" : sseState === "idle" ? "gray" : "red"}
+                style={{ cursor: "default" }}
+              >
+                {sseState === "open" ? `SSE●${sseCount}` : sseState === "idle" ? "SSE-未接続" : "SSE-再試行"}
+              </Badge>
+            </Tooltip>
           </Group>
         </div>
       </AppShell.Header>
@@ -1686,73 +2395,256 @@ export default function Home() {
             <Text size="xs" fw={700} c="dimmed" p="xs">
               メニュー
             </Text>
-            {NAV_ITEMS.map((item) =>
-              item.href ? (
+            {NAV_ITEMS.map((item) => (
+              <NavLink
+                key={item.key}
+                active={activeNav === item.key}
+                label={item.label}
+                leftSection={<span>{item.icon}</span>}
+                onClick={() => {
+                  setActiveNav(item.key);
+                  setNavOpened(false);
+                }}
+                style={{
+                  borderRadius: 8,
+                  marginBottom: 2,
+                  ...(activeNav === item.key
+                    ? { background: "#dcfce7", color: "#15803d", fontWeight: 600 }
+                    : {}),
+                }}
+              />
+            ))}
+
+            {/* Admin-managed external-link bookmarks */}
+            {menuLinks.map((lk) => (
+              <div
+                key={lk.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  borderRadius: 8,
+                  marginBottom: 2,
+                }}
+              >
                 <a
-                  key={item.key}
-                  href={item.href}
+                  href={lk.href}
                   target="_blank"
                   rel="noopener noreferrer"
                   style={{
+                    flex: 1,
                     display: "flex",
                     alignItems: "center",
                     gap: 12,
                     padding: "10px 12px",
                     borderRadius: 8,
-                    marginBottom: 2,
                     color: "#343a40",
                     textDecoration: "none",
                     fontSize: 14,
+                    minWidth: 0,
                   }}
                 >
-                  <span style={{ fontSize: 16 }}>{item.icon}</span>
-                  <span style={{ flex: 1 }}>{item.label}</span>
+                  <span style={{ fontSize: 16 }}>{lk.icon || "🔗"}</span>
+                  <span
+                    style={{
+                      flex: 1,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {lk.label}
+                  </span>
                   <span style={{ fontSize: 11, color: "#adb5bd" }}>↗</span>
                 </a>
-              ) : (
-                <NavLink
-                  key={item.key}
-                  active={activeNav === item.key}
-                  label={item.label}
-                  leftSection={<span>{item.icon}</span>}
-                  onClick={() => {
-                    setActiveNav(item.key);
-                    setNavOpened(false);
-                  }}
-                  style={{
-                    borderRadius: 8,
-                    marginBottom: 2,
-                    ...(activeNav === item.key
-                      ? { background: "#dcfce7", color: "#15803d", fontWeight: 600 }
-                      : {}),
-                  }}
-                />
-              )
+                {isAdminAuth && (
+                  <Group gap={2} wrap="nowrap" style={{ flexShrink: 0 }}>
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      size="sm"
+                      aria-label="リンクを編集"
+                      onClick={() => openEditLink(lk)}
+                    >
+                      <svg
+                        width="15"
+                        height="15"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                      </svg>
+                    </ActionIcon>
+                    {confirmDeleteId === lk.id ? (
+                      <Group gap={2} wrap="nowrap">
+                        <ActionIcon
+                          variant="subtle"
+                          color="green"
+                          size="sm"
+                          aria-label="削除を確定"
+                          onClick={() => removeLink(lk.id)}
+                        >
+                          <svg
+                            width="15"
+                            height="15"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M20 6 9 17l-5-5" />
+                          </svg>
+                        </ActionIcon>
+                        <ActionIcon
+                          variant="subtle"
+                          color="gray"
+                          size="sm"
+                          aria-label="削除をキャンセル"
+                          onClick={() => setConfirmDeleteId(null)}
+                        >
+                          <svg
+                            width="15"
+                            height="15"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M18 6 6 18M6 6l12 12" />
+                          </svg>
+                        </ActionIcon>
+                      </Group>
+                    ) : (
+                      <ActionIcon
+                        variant="subtle"
+                        color="red"
+                        size="sm"
+                        aria-label="リンクを削除"
+                        onClick={() => setConfirmDeleteId(lk.id)}
+                      >
+                        <svg
+                          width="15"
+                          height="15"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <path d="M3 6h18" />
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                          <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        </svg>
+                      </ActionIcon>
+                    )}
+                  </Group>
+                )}
+              </div>
+            ))}
+            {isAdminAuth && (
+              <Button
+                variant="subtle"
+                size="xs"
+                color="green"
+                leftSection={<span style={{ fontSize: 16, lineHeight: 1 }}>+</span>}
+                onClick={openAddLink}
+                style={{ justifyContent: "flex-start", marginTop: 4, fontWeight: 500 }}
+              >
+                外部リンクを追加
+              </Button>
             )}
           </Stack>
         </ScrollArea>
       </AppShell.Navbar>
 
-      {/* Right sidebar: visible only on very wide screens */}
+      {/* Right sidebar: visible only on very wide screens. Hosts the pinned-post
+       *  summary cards (pins were moved here from the timeline). */}
       <AppShell.Aside p="md" style={{ background: "#f8fafc", borderLeft: "1px solid #e5e7eb" }}>
         <Stack gap="sm">
           <Paper p="sm" radius="md" withBorder shadow="xs">
-            <Text fw={700} size="sm" mb={4}>
-              お知らせ 📢
-            </Text>
-            <Text size="xs" c="dimmed">
-              B-guru（backspace.fm 有料会員サービス）のフィードで、テキスト・画像の投稿とエピソードの自動配信ができます。
-            </Text>
-          </Paper>
-          <Paper p="sm" radius="md" withBorder shadow="xs">
-            <Text fw={700} size="sm" mb={4}>
-              直近のエピソード
-            </Text>
-            {episodes.slice(0, 5).map((ep) => (
-              <Text key={ep.id} size="xs" c="dimmed" truncate mb={2}>
-                {ep.title}
+            <Group justify="space-between" align="center" mb={4} wrap="nowrap">
+              <Group gap={6} align="center" wrap="nowrap">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  stroke="none"
+                  color="#40c057"
+                  aria-hidden="true"
+                >
+                  <path d="M12 17v5" />
+                  <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" />
+                </svg>
+                <Text fw={700} size="sm">
+                  ピン留め
+                </Text>
+              </Group>
+              {pinnedLoading && <Loader size="xs" color="green" />}
+            </Group>
+            {!pinnedLoading && pinnedPosts.length === 0 ? (
+              <Text size="xs" c="dimmed">
+                ピンはありません。自分の投稿の右上にあるピンアイコンから、その投稿を24時間ピン留めできます。
               </Text>
-            ))}
+            ) : (
+              <Stack gap={6}>
+                {pinnedPosts.map((p) => (
+                  <PinnedCard
+                    key={p.id}
+                    post={p}
+                    onOpen={scrollToPinnedPost}
+                    onUnpin={handlePin}
+                    loading={scrollingPostId === p.id}
+                  />
+                ))}
+              </Stack>
+            )}
+          </Paper>
+
+          <Paper p="sm" radius="md" withBorder shadow="xs">
+            <Group justify="space-between" align="center" mb={4} wrap="nowrap">
+              <Group gap={6} align="center" wrap="nowrap">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  stroke="none"
+                  color="#40c057"
+                  aria-hidden="true"
+                >
+                  <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
+                </svg>
+                <Text fw={700} size="sm">
+                  ホットトピック
+                </Text>
+              </Group>
+              {hotLoading && <Loader size="xs" color="green" />}
+            </Group>
+            {!hotLoading && hotPosts.length === 0 ? (
+              <Text size="xs" c="dimmed">
+                直近1週間で盛り上がっている投稿はまだありません。
+              </Text>
+            ) : (
+              <Stack gap={6}>
+                {hotPosts.map((p) => (
+                  <HotTopicCard
+                    key={p.id}
+                    post={p}
+                    onOpen={scrollToPinnedPost}
+                    loading={scrollingPostId === p.id}
+                  />
+                ))}
+              </Stack>
+            )}
           </Paper>
         </Stack>
       </AppShell.Aside>
@@ -1921,6 +2813,7 @@ export default function Home() {
                           onOpenThreadReply={openThreadReply}
                           onLike={handleLike}
                           onReply={openThreadReply}
+                          onWhisper={submitWhisperThread}
                           onEdit={openEdit}
                           onDelete={setDeleteTarget}
                           onPin={handlePin}
@@ -1977,14 +2870,70 @@ export default function Home() {
                               }
                             }}
                           />
+                          {threadReplyImages.length > 0 && (
+                            <Group gap="xs" mb="xs">
+                              {threadReplyImages.map((src, i) => (
+                                <Box key={i} style={{ position: "relative" }}>
+                                  <Image
+                                    src={src}
+                                    width={56}
+                                    height={56}
+                                    fit="contain"
+                                    radius="md"
+                                    style={{ cursor: "pointer" }}
+                                    onClick={() => setPreviewImage(src)}
+                                  />
+                                  <ActionIcon
+                                    size="sm"
+                                    variant="filled"
+                                    color="red"
+                                    radius="xl"
+                                    style={{ position: "absolute", top: -6, right: -6 }}
+                                    onClick={() => removeThreadReplyImage(i)}
+                                  >
+                                    ×
+                                  </ActionIcon>
+                                </Box>
+                              ))}
+                            </Group>
+                          )}
+                          <Group gap="xs" mb="xs">
+                            <label style={{ cursor: "pointer", display: "inline-block" }}>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                multiple
+                                hidden
+                                onChange={(e) => {
+                                  onThreadReplyPick(e.target.files);
+                                  e.target.value = "";
+                                }}
+                              />
+                              <Button
+                                size="xs"
+                                variant="light"
+                                color="gray"
+                                component="span"
+                                loading={threadUploading}
+                                disabled={threadReplyImages.length >= 5}
+                              >
+                                📷 {threadReplyImages.length}/5
+                              </Button>
+                            </label>
+                          </Group>
                             {replyError && (
                               <Text size="sm" c="red" mb="xs">
                                 {replyError}
                               </Text>
                             )}
                             <Group justify="flex-end">
-                              <Button size="xs" color="green" loading={replying} disabled={!replyText.trim()} type="submit">
-                                返信する
+                              {threadWhisper && (
+                                <Text size="xs" c="dimmed" mr="auto">
+                                  ささやきとして返信（タイムラインの位置は変わりません）
+                                </Text>
+                              )}
+                              <Button size="xs" color="green" loading={replying} disabled={!replyText.trim() && threadReplyImages.length === 0} type="submit">
+                                {threadWhisper ? "ささやく" : "返信する"}
                               </Button>
                             </Group>
                           </form>
@@ -2000,13 +2949,19 @@ export default function Home() {
                   avatarSrc={avatarSrc}
                   inlineReplyFor={inlineReplyFor}
                   inlineReplyText={inlineReplyText}
+                  inlineWhisper={inlineWhisper}
+                  inlineReplyImages={inlineReplyImages}
+                  inlineUploading={inlineUploading}
                   onInlineReplyChange={setInlineReplyText}
                   onToggleInlineReply={toggleInlineReply}
                   onInlineReplySubmit={submitInlineReply}
+                  onInlineReplyPick={onInlineReplyPick}
+                  onRemoveInlineReplyImage={removeInlineReplyImage}
                   onOpenThread={openThread}
                   onOpenThreadReply={openThreadReply}
                   onLike={handleLike}
                   onReply={openThreadReply}
+                  onWhisper={toggleWhisper}
                   onEdit={openEdit}
                   onDelete={setDeleteTarget}
                   onPin={handlePin}
@@ -2221,6 +3176,59 @@ export default function Home() {
             削除する
           </Button>
         </Group>
+      </Modal>
+
+      {/* External-link menu add/edit modal (admin only) */}
+      <Modal
+        opened={linkModal.open}
+        onClose={() => setLinkModal((m) => ({ ...m, open: false }))}
+        centered
+        withCloseButton
+        title={linkModal.editingId ? "外部リンクを編集" : "外部リンクを追加"}
+      >
+        <Stack>
+          <TextInput
+            label="ラベル"
+            value={linkModal.label}
+            onChange={(e) =>
+              setLinkModal((m) => ({ ...m, label: e.currentTarget.value }))
+            }
+            placeholder="例: ネタ帳"
+          />
+          <TextInput
+            label="URL"
+            value={linkModal.href}
+            onChange={(e) =>
+              setLinkModal((m) => ({ ...m, href: e.currentTarget.value }))
+            }
+            placeholder="https://..."
+          />
+          <TextInput
+            label="アイコン（絵文字）"
+            value={linkModal.icon}
+            onChange={(e) =>
+              setLinkModal((m) => ({ ...m, icon: e.currentTarget.value }))
+            }
+            placeholder="例: 🔖"
+          />
+          {linkError && (
+            <Text size="sm" c="red">
+              {linkError}
+            </Text>
+          )}
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              size="xs"
+              onClick={() => setLinkModal((m) => ({ ...m, open: false }))}
+            >
+              キャンセル
+            </Button>
+            <Button size="xs" color="green" loading={linkSaving} onClick={saveLink}>
+              保存
+            </Button>
+          </Group>
+        </Stack>
       </Modal>
     </AppShell>
   );

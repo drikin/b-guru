@@ -56,6 +56,13 @@ export async function initSchema() {
         ALTER TABLE posts ADD COLUMN parent_id INTEGER REFERENCES posts(id) ON DELETE CASCADE;
       END IF;
     END $$;
+    -- Whisper reply flag: whisper replies do NOT bump the root post's
+    -- last_activity, so the group stays put in the timeline.
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='is_whisper') THEN
+        ALTER TABLE posts ADD COLUMN is_whisper BOOLEAN NOT NULL DEFAULT FALSE;
+      END IF;
+    END $$;
     CREATE INDEX IF NOT EXISTS idx_posts_created ON posts(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_posts_parent ON posts(parent_id, created_at ASC) WHERE parent_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_ghost ON posts(source_ghost_id) WHERE source_ghost_id IS NOT NULL;
@@ -116,5 +123,25 @@ export async function initSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_email, read_at NULLS FIRST, id DESC);
+
+    -- Admin-managed external-link menu bookmarks (sidebar "メニュー")
+    CREATE TABLE IF NOT EXISTS menu_links (
+      id SERIAL PRIMARY KEY,
+      label TEXT NOT NULL,
+      icon TEXT NOT NULL DEFAULT '🔗',
+      href TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_menu_links_order ON menu_links(sort_order);
+    -- Seed default external links (idempotent: only when table is empty)
+    INSERT INTO menu_links (label, icon, href, sort_order)
+    SELECT v.label, v.icon, v.href, v.sort_order
+    FROM (VALUES
+      ('デスブロ', '📺', 'https://dvlog.jp/', 1),
+      ('ネタ帳', '🗒️', 'https://neta.backspace.fm/', 2)
+    ) AS v(label, icon, href, sort_order)
+    WHERE NOT EXISTS (SELECT 1 FROM menu_links);
   `);
 }

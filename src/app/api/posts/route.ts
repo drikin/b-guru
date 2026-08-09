@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listPosts } from "@/lib/posts";
+import { listPosts, listHotTopics } from "@/lib/posts";
 import { findMemberByEmail } from "@/lib/ghost";
 import { getSessionEmail } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/posts?filter=images|links
+// GET /api/posts?filter=images|links  /  GET /api/posts?pinned=1
 export async function GET(req: NextRequest) {
   const email = await getSessionEmail();
   if (!email) {
     return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
   }
 
+  const pinned = req.nextUrl.searchParams.get("pinned") === "1";
+  const hot = req.nextUrl.searchParams.get("hot") === "1";
   const filter = req.nextUrl.searchParams.get("filter") as
     | "images"
     | "links"
@@ -21,7 +23,13 @@ export async function GET(req: NextRequest) {
   const limit = Number(req.nextUrl.searchParams.get("limit")) || 100;
 
   try {
+    if (hot) {
+      // Hot topics: top N most-commented root posts in the last 7 days.
+      const posts = await listHotTopics(email, Math.min(limit, 5));
+      return NextResponse.json({ posts });
+    }
     const posts = await listPosts({
+      pinnedOnly: pinned || undefined,
       filter: filter ?? undefined,
       viewerEmail: email,
       before,

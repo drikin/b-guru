@@ -4,6 +4,7 @@ import { createNotification } from "@/lib/notifications";
 import { findMemberByEmail } from "@/lib/ghost";
 import { getSessionEmail } from "@/lib/session";
 import { pool } from "@/lib/db";
+import { emitLive } from "@/lib/live";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,7 +16,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
   }
 
-  let body: { text?: string; images?: unknown; parentId?: unknown };
+  let body: { text?: string; images?: unknown; parentId?: unknown; whisper?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -26,6 +27,7 @@ export async function POST(req: NextRequest) {
   const rawImages = Array.isArray(body.images) ? body.images : [];
   const parentId =
     typeof body.parentId === "number" && body.parentId > 0 ? body.parentId : null;
+  const isWhisper = body.whisper === true;
 
   if (!text && rawImages.length === 0) {
     return NextResponse.json({ error: "テキストまたは画像が必要です" }, { status: 400 });
@@ -53,6 +55,7 @@ export async function POST(req: NextRequest) {
       text,
       images,
       parentId,
+      isWhisper,
     });
 
     // If this is a reply, notify the parent post's author
@@ -82,6 +85,9 @@ export async function POST(req: NextRequest) {
         console.error("notify reply error:", (ne as any).message);
       }
     }
+
+    // Push a live "timeline changed" signal to connected clients.
+    emitLive({ type: "post", postId: post.id, action: "create" });
 
     return NextResponse.json({ post }, { status: 201 });
   } catch (e: any) {
