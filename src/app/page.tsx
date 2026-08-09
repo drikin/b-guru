@@ -585,11 +585,13 @@ function PinnedCard({
   post,
   onOpen,
   onUnpin,
+  canUnpin = false,
   loading,
 }: {
   post: FeedPost;
   onOpen: (id: number) => void;
   onUnpin: (id: number) => void;
+  canUnpin?: boolean;
   loading?: boolean;
 }) {
   const replyCount = post.replyCount ?? post.replies?.length ?? 0;
@@ -639,30 +641,32 @@ function PinnedCard({
 
         <Group gap="xs" align="center" wrap="nowrap" style={{ flexShrink: 0 }}>
           {post.pinnedAt && <PinCountdown pinnedAt={post.pinnedAt} />}
-          <ActionIcon
-            variant="subtle"
-            color="gray"
-            size="sm"
-            aria-label="ピン解除"
-            onClick={(e) => {
-              e.stopPropagation();
-              onUnpin(post.id);
-            }}
-          >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
+          {canUnpin && (
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              aria-label="ピン解除"
+              onClick={(e) => {
+                e.stopPropagation();
+                onUnpin(post.id);
+              }}
             >
-              <path d="M18 6 6 18" />
-              <path d="m6 6 12 12" />
-            </svg>
-          </ActionIcon>
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
+            </ActionIcon>
+          )}
         </Group>
       </Group>
     </SidebarPostCard>
@@ -2568,7 +2572,8 @@ export default function Home() {
       {/* Right sidebar: visible only on very wide screens. Hosts the pinned-post
        *  summary cards (pins were moved here from the timeline). */}
       <AppShell.Aside p="md" style={{ background: "#f8fafc", borderLeft: "1px solid #e5e7eb" }}>
-        <Stack gap="sm">
+        <ScrollArea>
+          <Stack gap="sm">
           <Paper p="sm" radius="md" withBorder shadow="xs">
             <Group justify="space-between" align="center" mb={4} wrap="nowrap">
               <Group gap={6} align="center" wrap="nowrap">
@@ -2602,6 +2607,7 @@ export default function Home() {
                     post={p}
                     onOpen={scrollToPinnedPost}
                     onUnpin={handlePin}
+                    canUnpin={!!auth && auth.email === p.authorEmail}
                     loading={scrollingPostId === p.id}
                   />
                 ))}
@@ -2646,7 +2652,8 @@ export default function Home() {
               </Stack>
             )}
           </Paper>
-        </Stack>
+          </Stack>
+        </ScrollArea>
       </AppShell.Aside>
 
       {/* Main: feed or episodes */}
