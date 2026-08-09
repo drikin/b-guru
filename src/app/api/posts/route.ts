@@ -1,0 +1,46 @@
+import { NextRequest, NextResponse } from "next/server";
+import { listPosts } from "@/lib/posts";
+import { findMemberByEmail } from "@/lib/ghost";
+import { getSessionEmail } from "@/lib/session";
+
+export const dynamic = "force-dynamic";
+
+// GET /api/posts?filter=images|links
+export async function GET(req: NextRequest) {
+  const email = await getSessionEmail();
+  if (!email) {
+    return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
+  }
+
+  const filter = req.nextUrl.searchParams.get("filter") as
+    | "images"
+    | "links"
+    | "episodes"
+    | null;
+  const before = req.nextUrl.searchParams.get("before") ?? undefined;
+  const limit = Number(req.nextUrl.searchParams.get("limit")) || 100;
+
+  try {
+    const posts = await listPosts({
+      filter: filter ?? undefined,
+      viewerEmail: email,
+      before,
+      limit,
+    });
+    return NextResponse.json({ posts });
+  } catch (e: any) {
+    console.error("posts GET error:", e.message);
+    return NextResponse.json(
+      { error: "投稿の取得に失敗しました" },
+      { status: 500 }
+    );
+  }
+}
+
+// (POST is delegated to the client via the publish endpoint; kept for completeness)
+export async function POST(req: NextRequest) {
+  return NextResponse.json(
+    { error: "POST は非対応です" },
+    { status: 405 }
+  );
+}

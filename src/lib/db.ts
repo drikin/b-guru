@@ -1,0 +1,120 @@
+/* DB connection pool (PostgreSQL) */
+import { Pool } from "pg";
+
+const connectionString =
+  process.env.DATABASE_URL || "postgres://postgres:@127.0.0.1:5432/bsm";
+
+// Single shared pool
+const globalForPool = globalThis as unknown as { __pgPool?: Pool };
+
+export const pool =
+  globalForPool.__pgPool ??
+  new Pool({
+    connectionString,
+    max: 10,
+    idleTimeoutMillis: 30000,
+  });
+
+if (process.env.NODE_ENV !== "production") {
+  globalForPool.__pgPool = pool;
+}
+
+/** Init schema (idempotent). Call once at startup. */
+export async function initSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS otp_codes (
+      id SERIAL PRIMARY KEY,
+      email TEXT NOT NULL,
+      code TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      used BOOLEAN NOT NULL DEFAULT FALSE
+    );
+    CREATE INDEX IF NOT EXISTS idx_otp_email ON otp_codes(email);
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_sessions_email ON sessions(email);
+
+    CREATE TABLE IF NOT EXISTS posts (
+      id SERIAL PRIMARY KEY,
+      author_email TEXT NOT NULL,
+      author_name TEXT,
+      text TEXT NOT NULL DEFAULT '',
+      url_preview JSONB,
+      source_ghost_id TEXT,
+      parent_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    -- Add parent_id if missing (for pre-existing databases)
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='parent_id') THEN
+        ALTER TABLE posts ADD COLUMN parent_id INTEGER REFERENCES posts(id) ON DELETE CASCADE;
+      END IF;
+    END $$;
+    CREATE INDEX IF NOT EXISTS idx_posts_created ON posts(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_posts_parent ON posts(parent_id, created_at ASC) WHERE parent_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_ghost ON posts(source_ghost_id) WHERE source_ghost_id IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS post_images (
+      id SERIAL PRIMARY KEY,
+      post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_post_images_post ON post_images(post_id);
+
+    CREATE TABLE IF NOT EXISTS post_likes (
+      post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      user_email TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (post_id, user_email)
+    );
+    CREATE INDEX IF NOT EXISTS idx_post_likes_post ON post_likes(post_id);
+
+    -- Dori News (drinews) — drikin's daily newsletter
+    CREATE TABLE IF NOT EXISTS drinews_articles (
+      id SERIAL PRIMARY KEY,
+      author_email TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      body_md TEXT NOT NULL DEFAULT '',
+      body_html TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'draft',       -- draft | published
+      scheduled_at TIMESTAMPTZ,                  -- scheduled publish time (JST 18:00)
+      published_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_drinews_status_at ON drinews_articles(status, published_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_drinews_sched ON drinews_articles(status, scheduled_at) WHERE status = 'draft';
+
+    CREATE TABLE IF NOT EXISTS drinews_comments (
+      id SERIAL PRIMARY KEY,
+      article_id INTEGER NOT NULL REFERENCES drinews_articles(id) ON DELETE CASCADE,
+      author_email TEXT NOT NULL,
+      author_name TEXT,
+      comment TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_drinews_comments_article ON drinews_comments(article_id, created_at ASC);
+
+    -- Notifications: e.g. "your post got a reply"
+    CREATE TABLE IF NOT EXISTS notifications (
+      id SERIAL PRIMARY KEY,
+      user_email TEXT NOT NULL,          -- recipient
+      type TEXT NOT NULL,                -- 'reply' | 'like'
+      actor_email TEXT NOT NULL,         -- who triggered it
+      actor_name TEXT,
+      post_id INTEGER,                   -- the relevant post (parent / source)
+      reply_id INTEGER,                  -- the reply post (for type='reply')
+      text TEXT NOT NULL,
+      read_at TIMESTAMPTZ,               -- NULL = unread
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_email, read_at NULLS FIRST, id DESC);
+  `);
+}

@@ -1,0 +1,29 @@
+@import "tailwindcss";
+@import "@mantine/core/styles.css";
+
+:root {
+  --background: #f8fafc;
+  --foreground: #0f172a;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+/*
+ * Prevent iOS Safari from auto-zooming when an input/textarea is focused.
+ * iOS zooms any field with font-size < 16px. Force 16px on mobile devices.
+ * Mantine sets font-size via .mantine-Input-input (higher specificity than a
+ * bare tag selector), so target that class too — same specificity + later
+ * order wins even with !important.
+ * Reference: https://qiita.com/skwbr/items/b285cc312587c73a4812
+ */
+@media (max-width: 1024px) {
+  .mantine-Input-input,
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
