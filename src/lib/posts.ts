@@ -278,10 +278,17 @@ export async function listHotTopics(
   return posts;
 }
 
+/** System-poster email for auto-posted episodes (BSM podcast). */
+export const SYSTEM_EMAIL = "system@backspace.fm";
+
 /** Resolve a Gravatar URL from an email (matches Ghost's avatar_image).
  * d=404 → returns HTTP 404 if the user has no Gravatar, so the UI can
- * fall back to its initial-letter avatar instead of a blank image. */
+ * fall back to its initial-letter avatar instead of a blank image.
+ * System posts (auto-posted episodes) use the B-guru icon instead. */
 export function gravatarUrl(email: string): string {
+  if ((email || "").trim().toLowerCase() === SYSTEM_EMAIL) {
+    return "/icon-192.png";
+  }
   const md5 = crypto
     .createHash("md5")
     .update((email || "").trim().toLowerCase())

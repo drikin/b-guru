@@ -30,6 +30,7 @@ import {
   Menu,
   UnstyledButton,
 } from "@mantine/core";
+import { mdToHtml } from "@/lib/md";
 
 type View = "login" | "otp";
 
@@ -61,29 +62,52 @@ interface FeedPost {
   createdAt: string;
 }
 
-/** Format a timestamp in JST (primary) + PDT (secondary). e.g.
- *  "2026/8/7 20:30 JST / 04:30 PDT" */
+/** Format a timestamp: JST (primary, with year) + PDT (secondary, no year).
+ *  e.g. "2026/8/10 06:05 JST | 8/9 14:05 PDT" */
 function formatJSTPDT(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const jst = d.toLocaleString("ja-JP", {
+  const fmt = (tz: string, withYear: boolean) =>
+    d.toLocaleString("ja-JP", {
+      timeZone: tz,
+      year: withYear ? "numeric" : undefined,
+      month: "numeric",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  return `${fmt("Asia/Tokyo", true)} JST | ${fmt("America/Los_Angeles", false)} PDT`;
+}
+
+/** Return the date parts (JST) of the NEXT 18:00 JST. If it's already past
+ *  18:00 JST today, returns tomorrow's date. 18:00 JST = 09:00 UTC. */
+function nextJst18Date(): { y: number; mo: number; d: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Tokyo",
     year: "numeric",
-    month: "numeric",
-    day: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  });
-  const pdt = d.toLocaleString("en-US", {
-    timeZone: "America/Los_Angeles",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  return `${jst} JST / ${pdt} PDT`;
+  }).formatToParts(new Date());
+  const p = Object.fromEntries(parts.map((x) => [x.type, x.value]));
+  const h = +p.hour;
+  // If it's already >= 18:00 JST, bump to the following day's 18:00.
+  const today18 = Date.UTC(+p.year, +p.month - 1, +p.day, 9);
+  const target = new Date(h >= 18 ? today18 + 86400000 : today18);
+  return {
+    y: target.getUTCFullYear(),
+    mo: target.getUTCMonth() + 1,
+    d: target.getUTCDate(),
+  };
+}
+
+/** Auto title for the next episode: "2026年8月10日号". */
+function drinewsNextTitle(): string {
+  const { y, mo, d } = nextJst18Date();
+  return `${y}年${mo}月${d}日号`;
 }
 
 /** JST date string "2026-8-8" (or 2-digit padding) for grouping. */
@@ -160,6 +184,7 @@ interface DrinewsComment {
   articleId: number;
   authorEmail: string;
   authorName: string | null;
+  authorAvatar?: string | null;
   comment: string;
   createdAt: string;
 }
@@ -1120,6 +1145,7 @@ export default function Home() {
 
   const [activeNav, setActiveNav] = useState("feed");
   const [navOpened, setNavOpened] = useState(false);
+  const [asideOpened, setAsideOpened] = useState(false);
 
   // ---- Admin-managed external-link menu (sidebar bookmarks) ----
   const [menuLinks, setMenuLinks] = useState<MenuLinkItem[]>([]);
@@ -1334,6 +1360,16 @@ export default function Home() {
     loadHot();
     loadNotifications();
     loadMenuLinks();
+    // Deep-link from the drinews email CTA: /?drinews=<id>
+    const params = new URLSearchParams(window.location.search);
+    const deepId = Number(params.get("drinews"));
+    if (deepId && deepId > 0) {
+      const t = window.setTimeout(() => {
+        setActiveNav("drinews");
+        openDrinews(deepId);
+      }, 300);
+      return () => window.clearTimeout(t);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth]);
 
@@ -1434,9 +1470,11 @@ export default function Home() {
   const feedLoadingRef = useRef(feedLoading);
   feedLoadingRef.current = feedLoading;
 
-  // ---- SSE debug indicator (temporary, for diagnosing live updates) ----
-  const [sseState, setSseState] = useState<"idle" | "open" | "error">("idle");
-  const [sseCount, setSseCount] = useState(0);
+  // Defer Push (SSE) refresh while a text input is focused, so an incoming
+  // update never resets/re-mounts the input the user is typing in. While any
+  // text input/textarea is focused we set a pending flag instead of refreshing;
+  // the pending refresh is flushed when focus leaves the input.
+  const pendingPushRefreshRef = useRef(false);
 
   const silentRefreshFeed = useCallback(() => {
     const nav = activeNavRef.current;
@@ -1465,37 +1503,60 @@ export default function Home() {
   // Open exactly ONE stream for the lifetime of the page (while logged in). The
   // handler ignores events while a thread is open or during an initial load;
   // the client filter is read from refs so an incoming event never tears us down.
+  // While any text input is focused the feed refresh is deferred (pending) and
+  // flushed on focus-out so typing is never disrupted by an incoming update.
   useEffect(() => {
     if (!auth) return;
+
+    const activeInput = () => {
+      const el = document.activeElement as HTMLElement | null;
+      return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+    };
+
+    const flush = () => {
+      pendingPushRefreshRef.current = false;
+      if (!threadPostRef.current) silentRefreshFeed();
+    };
+
+    const requestFeedRefresh = () => {
+      if (activeInput()) {
+        // User is typing — defer the refresh, not lose their input.
+        pendingPushRefreshRef.current = true;
+      } else {
+        silentRefreshFeed();
+      }
+    };
+
+    const onFocusOut = () => {
+      // Focus has left the input; flush any deferred refresh now that the user
+      // has finished interacting with a text field.
+      if (pendingPushRefreshRef.current) {
+        window.setTimeout(flush, 50);
+      }
+    };
+    document.addEventListener("focusout", onFocusOut);
+
     const es = new EventSource("/api/posts/stream");
-    let current = 0;
     const onChange = () => {
-      current += 1;
-      setSseCount(current);
       loadHot(); // new post/comment may change the hot-topics ranking
       if (threadPostRef.current) return;
-      silentRefreshFeed();
+      requestFeedRefresh();
     };
     const onPinChange = () => {
-      current += 1;
-      setSseCount(current);
       loadPinned(); // refresh the right-sidebar pin summary panel
-      if (!threadPostRef.current) silentRefreshFeed();
+      if (!threadPostRef.current) requestFeedRefresh();
     };
     es.addEventListener("post", onChange);
     es.addEventListener("pin", onPinChange);
     es.onopen = () => {
-      setSseState("open");
       loadPinned();
       loadHot();
-      if (!threadPostRef.current) silentRefreshFeed();
+      if (!threadPostRef.current) requestFeedRefresh();
     };
-    es.onerror = () => {
-      setSseState("error");
-    };
+    es.onerror = () => {};
     return () => {
-      setSseState("idle");
       es.close();
+      document.removeEventListener("focusout", onFocusOut);
     };
   }, [auth, silentRefreshFeed, loadPinned, loadHot]);
 
@@ -1542,12 +1603,255 @@ export default function Home() {
     }).then(() => loadNotifications());
   };
 
+  // ---- Dori News handlers ----
+  const loadDrinews = useCallback(() => {
+    if (!auth) return;
+    setDnLoading(true);
+    fetch("/api/drinews?all=1")
+      .then((r) => r.json())
+      .then((d) => {
+        setDnArticles(d.articles ?? []);
+        setDnIsDrikin(!!d.isDrikin);
+      })
+      .catch(() => setDnArticles([]))
+      .finally(() => setDnLoading(false));
+  }, [auth]);
+
+  const openDrinews = useCallback((id: number) => {
+    setDnSelected(null);
+    setDnComments([]);
+    fetch(`/api/drinews/${id}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.article) setDnSelected(d.article);
+        setDnComments(d.comments ?? []);
+      })
+      .catch(() => setDnSelected(null));
+  }, []);
+
+  const dnCloseView = useCallback(() => {
+    setDnSelected(null);
+    setDnEditing(null);
+  }, []);
+
+  const dnStartNew = useCallback(() => {
+    setDnError(null);
+    setDnEditing(null);
+    setDnEditorTitle(drinewsNextTitle());
+    setDnEditorMd("");
+    setDnSelected(null);
+    // Enter authoring mode: a pseudo-article with no id marks "new draft".
+    setDnEditing({ id: 0 } as DrinewsArticle);
+  }, []);
+
+  const dnStartEdit = useCallback((a: DrinewsArticle) => {
+    setDnError(null);
+    setDnSelected(null);
+    setDnEditorTitle(a.title);
+    setDnEditorMd(a.bodyMd);
+    setDnEditing(a);
+  }, []);
+
+  const dnCloseEditor = useCallback(() => {
+    setDnEditing(null);
+    setDnEditorTitle("");
+    setDnEditorMd("");
+    setDnError(null);
+    loadDrinews();
+  }, [loadDrinews]);
+
+  // Save draft: POST for new, PATCH for existing. bodyHtml regenerated server-side.
+  const dnSaveDraft = useCallback(async () => {
+    if (!dnEditorTitle.trim() && !dnEditorMd.trim()) {
+      setDnError("タイトルまたは本文を入力してください");
+      return;
+    }
+    setDnSaving(true);
+    setDnError(null);
+    const isNew = !dnEditing?.id;
+    const url = isNew ? "/api/drinews" : `/api/drinews/${dnEditing!.id}`;
+    try {
+      const r = await fetch(url, {
+        method: isNew ? "POST" : "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: dnEditorTitle, bodyMd: dnEditorMd, bodyHtml: dnEditorMd }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setDnError(d.error || "保存に失敗しました");
+        return;
+      }
+      setDnEditing(d.article);
+      loadDrinews();
+    } catch {
+      setDnError("保存に失敗しました");
+    } finally {
+      setDnSaving(false);
+    }
+  }, [dnEditing, dnEditorTitle, dnEditorMd, loadDrinews]);
+
+  const dnPublish = useCallback(
+    async (id: number) => {
+      if (!window.confirm("この記事を公開しますか？")) return;
+      setDnError(null);
+      try {
+        const r = await fetch(`/api/drinews/${id}/publish`, { method: "POST" });
+        const d = await r.json();
+        if (!r.ok) {
+          setDnError(d.error || "公開に失敗しました");
+          return;
+        }
+        setDnEditing(null);
+        loadDrinews();
+        openDrinews(id);
+      } catch {
+        setDnError("公開に失敗しました");
+      }
+    },
+    [loadDrinews, openDrinews]
+  );
+
+  // Schedule publish for the next JST 18:00.
+  const dnSchedule18 = useCallback(
+    async (id: number) => {
+      setDnError(null);
+      const { y, mo, d } = nextJst18Date();
+      const scheduledAt = new Date(Date.UTC(y, mo - 1, d, 9)).toISOString(); // 18:00 JST = 09:00 UTC
+      try {
+        const r = await fetch(`/api/drinews/${id}/schedule`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scheduledAt }),
+        });
+        const dJson = await r.json();
+        if (!r.ok) {
+          setDnError(dJson.error || "予約設定に失敗しました");
+          return;
+        }
+        setDnEditing(dJson.article);
+        setDnError("18:00 JST に公開予約しました");
+      } catch {
+        setDnError("予約設定に失敗しました");
+      }
+    },
+    []
+  );
+
+  const dnSendEmail = useCallback(
+    async (id: number) => {
+      if (!window.confirm("会員全員にメール配信しますか？")) return;
+      setDnError(null);
+      try {
+        const r = await fetch(`/api/drinews/${id}/send`, { method: "POST" });
+        const d = await r.json();
+        if (!r.ok) {
+          setDnError(d.error || "配信に失敗しました");
+        } else {
+          setDnError(`${d.sent ?? 0} 名に配信しました${d.skipped ? `（失敗 ${d.skipped}）` : ""}`);
+        }
+      } catch {
+        setDnError("配信に失敗しました");
+      }
+    },
+    []
+  );
+
+  // Revert a published article back to draft (drikin only).
+  const dnUnpublish = useCallback(
+    async (id: number) => {
+      if (!window.confirm("この記事を下書きに戻しますか？（公開取り消し）")) return;
+      setDnError(null);
+      try {
+        const r = await fetch(`/api/drinews/${id}/unpublish`, { method: "POST" });
+        const d = await r.json();
+        if (!r.ok) {
+          setDnError(d.error || "下書きへの変更に失敗しました");
+          return;
+        }
+        setDnSelected(d.article);
+        loadDrinews();
+      } catch {
+        setDnError("下書きへの変更に失敗しました");
+      }
+    },
+    [loadDrinews]
+  );
+
+  // Delete an article (drikin only). Comments cascade-delete.
+  const dnDeleteArticle = useCallback(
+    async (id: number) => {
+      if (!window.confirm("この記事を完全に削除しますか？コメントも削除されます。")) return;
+      setDnError(null);
+      try {
+        const r = await fetch(`/api/drinews/${id}`, { method: "DELETE" });
+        const d = await r.json();
+        if (!r.ok) {
+          setDnError(d.error || "削除に失敗しました");
+          return;
+        }
+        setDnSelected(null);
+        loadDrinews();
+      } catch {
+        setDnError("削除に失敗しました");
+      }
+    },
+    [loadDrinews]
+  );
+
+  const dnSubmitComment = useCallback(async () => {
+    if (!dnSelected || !dnCommentText.trim()) return;
+    setDnPostingComment(true);
+    try {
+      const r = await fetch(`/api/drinews/${dnSelected.id}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comment: dnCommentText, name: auth?.name ?? null }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setDnError(d.error || "コメント投稿に失敗しました");
+        return;
+      }
+      setDnComments((prev) => [...prev, d.comment]);
+      setDnCommentText("");
+      setDnSelected((prev) =>
+        prev ? { ...prev, commentCount: prev.commentCount + 1 } : prev
+      );
+    } catch {
+      setDnError("コメント投稿に失敗しました");
+    } finally {
+      setDnPostingComment(false);
+    }
+  }, [dnSelected, dnCommentText, auth]);
+
+  const dnDeleteComment = useCallback(
+    async (commentId: number) => {
+      if (!window.confirm("このコメントを削除しますか？")) return;
+      try {
+        const r = await fetch(`/api/drinews/comments/${commentId}`, { method: "DELETE" });
+        const d = await r.json();
+        if (!r.ok) {
+          setDnError(d.error || "削除に失敗しました");
+          return;
+        }
+        setDnComments((prev) => prev.filter((c) => c.id !== commentId));
+        setDnSelected((prev) =>
+          prev ? { ...prev, commentCount: Math.max(0, prev.commentCount - 1) } : prev
+        );
+      } catch {
+        setDnError("削除に失敗しました");
+      }
+    },
+    []
+  );
+
   // Load filtered feed when switching views
   useEffect(() => {
     if (!auth) return;
     if (activeNav === "gallery") loadFeed("images");
     else if (activeNav === "news") loadFeed("links");
     else if (activeNav === "episodes") loadFeed("episodes");
+    else if (activeNav === "drinews") loadDrinews();
     else if (activeNav === "feed") loadFeed();
   }, [activeNav, auth]);
 
@@ -1777,8 +2081,9 @@ export default function Home() {
     setReplyError(null);
   };
 
-  // Submit a reply from within the thread view
-  const submitThreadReply = async () => {
+  // Submit a reply from within the thread view. whisper=true posts it as a
+  // whisper (is_whisper) so the group does NOT bump to the top of the timeline.
+  const submitThreadReply = async (whisper = false) => {
     if (!threadPost || replying) return;
     const text = replyText.trim();
     if (!text && threadReplyImages.length === 0) return;
@@ -1788,7 +2093,7 @@ export default function Home() {
       const r = await fetch("/api/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, images: threadReplyImages, parentId: threadPost.id, whisper: threadWhisper }),
+        body: JSON.stringify({ text, images: threadReplyImages, parentId: threadPost.id, whisper }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "返信失敗");
@@ -1898,7 +2203,10 @@ export default function Home() {
         // ignore
       }
     }
-    loadFeed();
+    // Smoothly scroll the timeline back to the top instead of forcing a full
+    // feed reload (the feed is already held client-side and kept live by SSE),
+    // so tapping the logo feels fluid like the sidebar jump-to-post motion.
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   // Toggle like optimistically on the feed list AND the current thread view
@@ -2212,7 +2520,7 @@ export default function Home() {
     <AppShell
       header={{ height: 56 }}
       navbar={{ width: 220, breakpoint: "sm", collapsed: { mobile: !navOpened } }}
-      aside={{ width: 280, breakpoint: "lg", collapsed: { mobile: true } }}
+      aside={{ width: 280, breakpoint: "lg", collapsed: { mobile: !asideOpened } }}
       padding={0}
     >
       {/* Header */}
@@ -2356,7 +2664,7 @@ export default function Home() {
                                   </Text>
                                 ) : null}
                                 <Text size="xs" c="gray">
-                                  {new Date(n.createdAt).toLocaleString("ja-JP")}
+                                  {formatJSTPDT(n.createdAt)}
                                 </Text>
                               </div>
                             </Group>
@@ -2368,26 +2676,17 @@ export default function Home() {
                 </Popover.Dropdown>
               </Popover>
             </Tooltip>
-            <Badge color="green" variant="light" hiddenFrom="sm">
-              会員
-            </Badge>
+            <Burger
+              opened={asideOpened}
+              onClick={() => setAsideOpened((o) => !o)}
+              size="sm"
+              hiddenFrom="lg"
+              color="dark"
+              aria-label="右パネルを開く"
+            />
             <Button variant="default" size="xs" onClick={logout} visibleFrom="sm">
               ログアウト
             </Button>
-            {/* TEMP debug: SSE live-update status */}
-            <Tooltip
-              label={sseState === "idle" ? "SSE未接続(再読込で接続)" : sseState === "error" ? "SSEエラー(自動再試行中)" : `SSE接続中・受信${sseCount}回`}
-              withArrow
-            >
-              <Badge
-                size="sm"
-                variant="light"
-                color={sseState === "open" ? "green" : sseState === "idle" ? "gray" : "red"}
-                style={{ cursor: "default" }}
-              >
-                {sseState === "open" ? `SSE●${sseCount}` : sseState === "idle" ? "SSE-未接続" : "SSE-再試行"}
-              </Badge>
-            </Tooltip>
           </Group>
         </div>
       </AppShell.Header>
@@ -2933,15 +3232,44 @@ export default function Home() {
                                 {replyError}
                               </Text>
                             )}
-                            <Group justify="flex-end">
-                              {threadWhisper && (
-                                <Text size="xs" c="dimmed" mr="auto">
-                                  ささやきとして返信（タイムラインの位置は変わりません）
-                                </Text>
-                              )}
-                              <Button size="xs" color="green" loading={replying} disabled={!replyText.trim() && threadReplyImages.length === 0} type="submit">
-                                {threadWhisper ? "ささやく" : "返信する"}
+                            <Group justify="space-between" align="center" gap="xs">
+                              <Button
+                                size="xs"
+                                variant="subtle"
+                                color="gray"
+                                type="button"
+                                onClick={() => {
+                                  setThreadReplyBoxOpen(false);
+                                  setReplyText("");
+                                  setThreadReplyImages([]);
+                                  setReplyError(null);
+                                  setThreadWhisper(false);
+                                }}
+                              >
+                                キャンセル
                               </Button>
+                              <Group gap="xs">
+                                <Button
+                                  size="xs"
+                                  color="blue"
+                                  variant="light"
+                                  type="button"
+                                  loading={replying}
+                                  disabled={(replyText.trim() === "" && threadReplyImages.length === 0)}
+                                  onClick={() => submitThreadReply(true)}
+                                >
+                                  ささやく
+                                </Button>
+                                <Button
+                                  size="xs"
+                                  color="green"
+                                  loading={replying}
+                                  disabled={!replyText.trim() && threadReplyImages.length === 0}
+                                  type="submit"
+                                >
+                                  返信する
+                                </Button>
+                              </Group>
                             </Group>
                           </form>
                         </Paper>
@@ -2999,6 +3327,261 @@ export default function Home() {
                     これより古い投稿はありません
                   </Text>
                 ) : null}
+                </>
+              )}
+            </Stack>
+          )}
+
+          {activeNav === "drinews" && (
+            <Stack gap="md">
+              {/* ---- Dori News: list | editor | detail ---- */}
+              {dnEditing ? (
+                /* ---------- Editor (drikin only) ---------- */
+                <Paper p="md" radius="md" withBorder shadow="sm">
+                  <Group justify="space-between" align="center" mb="sm">
+                    <Text fw={700} size="lg" c="dark">
+                      {dnEditing.id ? "ドリニュース編集" : "新規ドリニュース"}
+                    </Text>
+                    <Button variant="subtle" size="xs" color="gray" onClick={dnCloseEditor}>
+                      ← 一覧へ戻る
+                    </Button>
+                  </Group>
+                  <TextInput
+                    label="タイトル"
+                    placeholder="ドリニュースのタイトル"
+                    value={dnEditorTitle}
+                    onChange={(e) => setDnEditorTitle(e.currentTarget.value)}
+                    mb="sm"
+                  />
+                  <Textarea
+                    label="本文（マークダウン）"
+                    placeholder="今日のドリニュース…"
+                    autosize
+                    minRows={6}
+                    value={dnEditorMd}
+                    onChange={(e) => setDnEditorMd(e.currentTarget.value)}
+                    mb="xs"
+                  />
+                  <Text size="xs" c="dimmed" mb="sm">
+                    #見出し / **太字** / - リスト / &gt;引用 / [リンク](URL) が使えます
+                  </Text>
+                  <Divider label="プレビュー" labelPosition="left" mb="sm" />
+                  <div
+                    className="drinews-body"
+                    style={{ lineHeight: 1.8, wordBreak: "break-word" }}
+                    dangerouslySetInnerHTML={{ __html: mdToHtml(dnEditorMd) }}
+                  />
+                  {dnError && (
+                    <Text size="sm" mt="sm" c="green">
+                      {dnError}
+                    </Text>
+                  )}
+                  <Group mt="md">
+                    <Button size="sm" color="green" onClick={dnSaveDraft} loading={dnSaving} disabled={dnSaving}>
+                      下書き保存
+                    </Button>
+                    {dnEditing.id ? (
+                      <>
+                        <Button size="sm" color="teal" variant="light" onClick={() => dnSchedule18(dnEditing!.id)}>
+                          🕒 18:00に公開予約
+                        </Button>
+                        <Button size="sm" color="dark" variant="filled" onClick={() => dnPublish(dnEditing!.id)}>
+                          今すぐ公開
+                        </Button>
+                      </>
+                    ) : (
+                      <Text size="xs" c="dimmed">
+                        下書きを保存してから予約・公開できます
+                      </Text>
+                    )}
+                  </Group>
+                </Paper>
+              ) : dnSelected ? (
+                /* ---------- Article detail + comments ---------- */
+                <Paper p="md" radius="md" withBorder shadow="sm">
+                  <Button variant="subtle" size="xs" color="gray" onClick={dnCloseView} mb="xs">
+                    ← 一覧へ戻る
+                  </Button>
+                  <Title order={2} c="dark" mb={4}>
+                    {dnSelected.title || "（無題）"}
+                  </Title>
+                  <Text size="xs" c="dimmed" mb="sm">
+                    {dnSelected.status === "published"
+                      ? `公開: ${formatJSTPDT(dnSelected.publishedAt || dnSelected.createdAt)}`
+                      : dnSelected.scheduledAt
+                      ? `公開予約: ${formatJSTPDT(dnSelected.scheduledAt)}`
+                      : "下書き"}
+                  </Text>
+                  <div
+                    className="drinews-body"
+                    style={{ lineHeight: 1.8, wordBreak: "break-word" }}
+                    dangerouslySetInnerHTML={{ __html: dnSelected.bodyHtml }}
+                  />
+                  {/* drikin extra actions */}
+                  {dnIsDrikin && (
+                    <Group mt="md" gap="xs">
+                      {dnSelected.status === "published" ? (
+                        <>
+                          <Button size="xs" variant="light" color="teal" onClick={() => dnSendEmail(dnSelected!.id)}>
+                            📧 メール配信
+                          </Button>
+                          <Button size="xs" variant="light" color="orange" onClick={() => dnUnpublish(dnSelected!.id)}>
+                            ↓ 下書きに戻す
+                          </Button>
+                          <Button size="xs" variant="light" color="red" onClick={() => dnDeleteArticle(dnSelected!.id)}>
+                            🗑 削除
+                          </Button>
+                        </>
+                      ) : (
+                        <Button size="xs" variant="light" color="gray" onClick={() => dnStartEdit(dnSelected!)}>
+                          ✏️ 編集
+                        </Button>
+                      )}
+                    </Group>
+                  )}
+                  <Divider label={`コメント（${dnComments.length}）`} labelPosition="left" my="md" />
+                  {dnComments.length === 0 && (
+                    <Text size="sm" c="dimmed" mb="sm">
+                      まだコメントがありません。
+                    </Text>
+                  )}
+                  {dnComments.map((c) => (
+                    <Box key={c.id} mb="sm">
+                      <Group align="center" gap="xs" mb={2}>
+                        <SafeAvatar
+                          src={c.authorAvatar}
+                          initial={c.authorName || c.authorEmail}
+                          size="sm"
+                        />
+                        <Text size="xs" fw={600} c="dark">
+                          {c.authorName || c.authorEmail}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          {formatJSTPDT(c.createdAt)}
+                        </Text>
+                        {(auth.email === c.authorEmail || dnIsDrikin) && (
+                          <ActionIcon
+                            size="xs"
+                            variant="subtle"
+                            color="red"
+                            ml="auto"
+                            aria-label="コメントを削除"
+                            onClick={() => dnDeleteComment(c.id)}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                            </svg>
+                          </ActionIcon>
+                        )}
+                      </Group>
+                      <Text size="sm" c="dark" style={{ wordBreak: "break-word" }}>
+                        {c.comment}
+                      </Text>
+                    </Box>
+                  ))}
+                  <Paper p="sm" radius="md" withBorder mt="sm">
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        dnSubmitComment();
+                      }}
+                    >
+                      <Textarea
+                        placeholder="コメントを書く…"
+                        autosize
+                        minRows={2}
+                        value={dnCommentText}
+                        onChange={(e) => setDnCommentText(e.currentTarget.value)}
+                        mb="sm"
+                      />
+                      <Group justify="flex-end">
+                        <Button
+                          type="submit"
+                          size="sm"
+                          color="green"
+                          loading={dnPostingComment}
+                          disabled={!dnCommentText.trim()}
+                        >
+                          コメントする
+                        </Button>
+                      </Group>
+                    </form>
+                  </Paper>
+                </Paper>
+              ) : (
+                /* ---------- Article list ---------- */
+                <>
+                  <Group justify="space-between" align="center">
+                    <Title order={3} c="dark">
+                      📮 ドリニュース
+                    </Title>
+                    {dnIsDrikin && (
+                      <Button size="sm" color="green" onClick={dnStartNew} leftSection={<span style={{ fontSize: 16 }}>＋</span>}>
+                        新規作成
+                      </Button>
+                    )}
+                  </Group>
+                  {dnError && (
+                    <Text size="sm" c="red">
+                      {dnError}
+                    </Text>
+                  )}
+                  {dnLoading ? (
+                    <Text c="dimmed">読み込み中…</Text>
+                  ) : dnArticles.length === 0 ? (
+                    <Text c="dimmed">まだドリニュースがありません。</Text>
+                  ) : (
+                    dnArticles.map((a) => (
+                      <Paper
+                        key={a.id}
+                        p="md"
+                        radius="md"
+                        withBorder
+                        shadow="sm"
+                        style={{ cursor: "pointer" }}
+                        onClick={() => openDrinews(a.id)}
+                      >
+                        <Group justify="space-between" align="flex-start">
+                          <Box style={{ flex: 1, minWidth: 0 }}>
+                            <Text fw={600} size="md" c="dark">
+                              {a.title || "（無題）"}
+                            </Text>
+                            <Text size="xs" c="dimmed" mt={2}>
+                              {a.status === "published"
+                                ? `公開: ${formatJSTPDT(a.publishedAt || a.createdAt)}`
+                                : a.scheduledAt
+                                ? `公開予約: ${formatJSTPDT(a.scheduledAt)}`
+                                : "下書き"}
+                            </Text>
+                            <Text size="xs" c="dimmed" mt={2} lineClamp={2}>
+                              {a.bodyMd.replace(/[#>*`[\]]/g, "").slice(0, 120)}
+                            </Text>
+                          </Box>
+                          <Stack gap={6} align="flex-end" style={{ flexShrink: 0 }}>
+                            <Badge size="sm" color={a.status === "published" ? "green" : "gray"}>
+                              {a.status === "published" ? "公開中" : "下書き"}
+                            </Badge>
+                            <Text size="xs" c="dimmed">
+                              💬 {a.commentCount}
+                            </Text>
+                            {dnIsDrikin && a.status === "draft" && (
+                              <Button
+                                size="xs"
+                                variant="light"
+                                color="gray"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  dnStartEdit(a);
+                                }}
+                              >
+                                編集
+                              </Button>
+                            )}
+                          </Stack>
+                        </Group>
+                      </Paper>
+                    ))
+                  )}
                 </>
               )}
             </Stack>

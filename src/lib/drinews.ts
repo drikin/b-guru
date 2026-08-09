@@ -4,6 +4,7 @@
  */
 import { pool } from "./db";
 import { mdToHtml } from "./md";
+import { gravatarUrl } from "./posts";
 
 export const DRINEWS_AUTHOR_EMAIL = "drikin@gmail.com";
 
@@ -28,6 +29,7 @@ export interface DrinewsComment {
   articleId: number;
   authorEmail: string;
   authorName: string | null;
+  authorAvatar: string | null;
   comment: string;
   createdAt: string;
 }
@@ -101,6 +103,24 @@ export async function publishDrinews(id: number): Promise<DrinewsArticle> {
   return rowToArticle(res.rows[0]);
 }
 
+/** Revert a published article back to draft (drikin only). Clears published_at. */
+export async function unpublishDrinews(id: number): Promise<DrinewsArticle> {
+  const res = await pool.query(
+    `UPDATE drinews_articles SET status = 'draft', published_at = NULL, updated_at = now()
+     WHERE id = $1 AND status = 'published'
+     RETURNING *`,
+    [id]
+  );
+  if (res.rows.length === 0) throw new Error("not_found_or_not_published");
+  return rowToArticle(res.rows[0]);
+}
+
+/** Delete an article (drikin only). Comments on it are removed via ON DELETE CASCADE. */
+export async function deleteDrinews(id: number): Promise<void> {
+  const res = await pool.query(`DELETE FROM drinews_articles WHERE id = $1`, [id]);
+  if (res.rowCount === 0) throw new Error("not_found");
+}
+
 /** List published articles, newest first (for members). */
 export async function listPublishedDrinews(): Promise<DrinewsArticle[]> {
   const res = await pool.query(
@@ -143,6 +163,7 @@ export async function listComments(articleId: number): Promise<DrinewsComment[]>
     articleId: r.article_id,
     authorEmail: r.author_email,
     authorName: r.author_name,
+    authorAvatar: gravatarUrl(r.author_email),
     comment: r.comment,
     createdAt: new Date(r.created_at).toISOString(),
   }));
@@ -169,6 +190,7 @@ export async function addComment(
     articleId: r.article_id,
     authorEmail: r.author_email,
     authorName: r.author_name,
+    authorAvatar: gravatarUrl(r.author_email),
     comment: r.comment,
     createdAt: new Date(r.created_at).toISOString(),
   };

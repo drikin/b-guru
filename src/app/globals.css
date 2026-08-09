@@ -48,3 +48,99 @@ body {
   animation: pin-target-flash 2.2s ease;
   background: #f0fdf4 !important;
 }
+
+/* ---- Dori News rendered markdown body ---- */
+.drinews-body h1 {
+  font-size: 1.6em;
+  font-weight: 800;
+  color: #111827;
+  margin: 1em 0 0.5em;
+  line-height: 1.3;
+}
+.drinews-body h2 {
+  font-size: 1.35em;
+  font-weight: 700;
+  color: #111827;
+  margin: 1em 0 0.5em;
+  line-height: 1.3;
+}
+.drinews-body h3 {
+  font-size: 1.15em;
+  font-weight: 700;
+  color: #111827;
+  margin: 1em 0 0.5em;
+}
+.drinews-body h4 {
+  font-size: 1em;
+  font-weight: 700;
+  color: #111827;
+  margin: 1em 0 0.4em;
+}
+.drinews-body p {
+  margin: 0.6em 0;
+  color: #1f2937;
+}
+.drinews-body ul,
+.drinews-body ol {
+  margin: 0.6em 0;
+  padding-left: 1.6em;
+}
+.drinews-body ul {
+  list-style: disc;
+}
+.drinews-body ol {
+  list-style: decimal;
+}
+.drinews-body li {
+  margin: 0.25em 0;
+}
+.drinews-body blockquote {
+  border-left: 3px solid #86efac;
+  background: #f0fdf4;
+  padding: 0.5em 0.9em;
+  margin: 0.7em 0;
+  color: #374151;
+  border-radius: 0 6px 6px 0;
+}
+.drinews-body a {
+  color: #15803d;
+  text-decoration: underline;
+}
+.drinews-body code {
+  background: #f1f5f9;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.drinews-body pre {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 0.9em 1.1em;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0.7em 0;
+}
+.drinews-body pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+.drinews-body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 0.5em 0;
+}
+.drinews-body hr {
+  border: none;
+  border-top: 1px solid #e5e7eb;
+  margin: 1.2em 0;
+}
+.drinews-body strong {
+  font-weight: 700;
+  color: #111827;
+}
+.drinews-body em {
+  font-style: italic;
+}

@@ -4,7 +4,7 @@ import { fetchBsmEpisodes, BsmEpisode } from "./bsm";
 import { pool } from "./db";
 
 const SYSTEM_EMAIL = "system@backspace.fm";
-const SYSTEM_NAME = "system";
+const SYSTEM_NAME = "ビーグル";
 
 /**
  * Check Ghost for new episodes and insert them into the feed.

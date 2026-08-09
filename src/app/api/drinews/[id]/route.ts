@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionEmail } from "@/lib/session";
 import {
+  deleteDrinews,
   getDrinews,
   isDrikin,
   listComments,
@@ -73,4 +74,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 // (Separate route file handles this; see [id]/publish/route.ts)
 export async function POST() {
   return NextResponse.json({ error: "Not found" }, { status: 404 });
+}
+
+// DELETE /api/drinews/[id] — delete an article (drikin only). Comments cascade.
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const email = await getSessionEmail();
+  if (!email) return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
+  if (!isDrikin(email)) return NextResponse.json({ error: "削除はドリキンのみ可能です" }, { status: 403 });
+
+  const id = await parseId(params);
+  if (id === null) return NextResponse.json({ error: "不正なID" }, { status: 400 });
+
+  try {
+    await deleteDrinews(id);
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    const status = e.message === "not_found" ? 404 : 500;
+    return NextResponse.json(
+      { error: e.message === "not_found" ? "記事が見つかりません" : "削除に失敗しました" },
+      { status }
+    );
+  }
 }
