@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "ドリニュースの投稿はドリキンのみ可能です" }, { status: 403 });
   }
 
-  let body: { title?: string; bodyMd?: string; bodyHtml?: string };
+  let body: { title?: string; bodyMd?: string; bodyHtml?: string; headerImage?: string | null };
   try {
     body = await req.json();
   } catch {
@@ -47,6 +47,7 @@ export async function POST(req: NextRequest) {
       title: body.title ?? "",
       bodyMd: body.bodyMd ?? "",
       bodyHtml: body.bodyHtml ?? "",
+      headerImage: body.headerImage ?? null,
     });
     return NextResponse.json({ article }, { status: 201 });
   } catch (e: any) {

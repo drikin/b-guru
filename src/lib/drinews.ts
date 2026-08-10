@@ -16,6 +16,7 @@ export interface DrinewsArticle {
   title: string;
   bodyMd: string;
   bodyHtml: string;
+  headerImage: string | null;  // path like /api/drinews/image/<filename>
   status: DrinewsStatus;
   scheduledAt: string | null;
   publishedAt: string | null;
@@ -44,6 +45,7 @@ const rowToArticle = (r: any): DrinewsArticle => ({
   title: r.title,
   bodyMd: r.body_md,
   bodyHtml: r.body_html,
+  headerImage: r.header_image ?? null,
   status: r.status,
   scheduledAt: r.scheduled_at ? new Date(r.scheduled_at).toISOString() : null,
   publishedAt: r.published_at ? new Date(r.published_at).toISOString() : null,
@@ -58,12 +60,13 @@ export async function createDrinews(input: {
   title: string;
   bodyMd: string;
   bodyHtml: string;
+  headerImage?: string | null;
 }): Promise<DrinewsArticle> {
   const res = await pool.query(
-    `INSERT INTO drinews_articles (author_email, title, body_md, body_html, status)
-     VALUES ($1, $2, $3, $4, 'draft')
+    `INSERT INTO drinews_articles (author_email, title, body_md, body_html, header_image, status)
+     VALUES ($1, $2, $3, $4, $5, 'draft')
      RETURNING *`,
-    [input.authorEmail, input.title, input.bodyMd, mdToHtml(input.bodyMd)]
+    [input.authorEmail, input.title, input.bodyMd, mdToHtml(input.bodyMd), input.headerImage ?? null]
   );
   return rowToArticle(res.rows[0]);
 }
@@ -75,17 +78,27 @@ export async function updateDrinews(
     title: string;
     bodyMd: string;
     bodyHtml: string;
+    headerImage?: string | null;
     scheduledAt?: string | null;
   }
 ): Promise<DrinewsArticle> {
+  // headerImage: undefined = keep existing (don't touch), null = clear, string = set
+  const headerClause =
+    input.headerImage === undefined ? "header_image" : "$5";
+  const params: any[] = [id, input.title, input.bodyMd, mdToHtml(input.bodyMd)];
+  if (input.headerImage !== undefined) params.push(input.headerImage);
+  const scIdx = params.length + 1; // next $N for scheduled_at
+  params.push(input.scheduledAt ?? null);
+
   const res = await pool.query(
     `UPDATE drinews_articles
      SET title = $2, body_md = $3, body_html = $4,
-         scheduled_at = COALESCE($5, scheduled_at),
+         header_image = ${headerClause},
+         scheduled_at = COALESCE($${scIdx}, scheduled_at),
          updated_at = now()
      WHERE id = $1 AND status = 'draft'
      RETURNING *`,
-    [id, input.title, input.bodyMd, mdToHtml(input.bodyMd), input.scheduledAt ?? null]
+    params
   );
   if (res.rows.length === 0) throw new Error("not_found_or_published");
   return rowToArticle(res.rows[0]);
@@ -303,13 +316,14 @@ export async function sendDrinewsEmail(article: DrinewsArticle): Promise<{
       await sendEmail({
         to,
         subject: `📮 ドリニュース: ${article.title}`,
-        text: `${article.title}\n\n${stripHtml(article.bodyHtml)}\n\n━━━━━━━━━━━━━━━━━━━━━━\n💬 この記事にコメントする／サイトで読む:\n${portalUrl}/?drinews=${article.id}\n━━━━━━━━━━━━━━━━━━━━━━`,
+        text: `${article.title}\n\n${article.headerImage ? `${portalUrl}${article.headerImage}\n\n` : ""}${stripHtml(article.bodyHtml)}\n\n━━━━━━━━━━━━━━━━━━━━━━\n💬 この記事にコメントする／サイトで読む:\n${portalUrl}/?drinews=${article.id}\n━━━━━━━━━━━━━━━━━━━━━━`,
         html: `
           <div style="font-family: 'Hiragino Sans','Meiryo',sans-serif; max-width: 620px; margin: 0 auto; color:#111827;">
             <div style="background:#15803d; color:#fff; padding:18px 24px; border-radius:10px 10px 0 0;">
               <div style="font-size:13px; opacity:0.8;">📮 ドリニュース</div>
               <h1 style="margin:4px 0 0; font-size:22px; line-height:1.4;">${escapeHtml(article.title)}</h1>
             </div>
+            ${article.headerImage ? `<img src="${portalUrl}${article.headerImage}" alt="" style="width:100%; display:block; border:0; border-bottom:1px solid #e5e7eb;" />` : ""}
             <div style="border:1px solid #e5e7eb; border-top:none; border-radius:0 0 10px 10px; padding:24px; line-height:1.8;">
               ${article.bodyHtml}
             </div>

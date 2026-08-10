@@ -179,6 +179,7 @@ interface DrinewsArticle {
   title: string;
   bodyMd: string;
   bodyHtml: string;
+  headerImage: string | null;
   status: string;
   scheduledAt: string | null;
   publishedAt: string | null;
@@ -1457,6 +1458,8 @@ export default function Home() {
   const [dnPostingComment, setDnPostingComment] = useState(false);
   const [dnError, setDnError] = useState<string | null>(null);
   const [dnProofreading, setDnProofreading] = useState(false);
+  const [dnEditorHeaderImage, setDnEditorHeaderImage] = useState<string | null>(null);
+  const [dnUploadingHeader, setDnUploadingHeader] = useState(false);
 
   // ---- Feed edit/delete state ----
   const [postError, setPostError] = useState<string | null>(null);
@@ -1886,6 +1889,7 @@ export default function Home() {
     setDnEditing(null);
     setDnEditorTitle(drinewsNextTitle());
     setDnEditorMd("");
+    setDnEditorHeaderImage(null);
     setDnSelected(null);
     // Enter authoring mode: a pseudo-article with no id marks "new draft".
     setDnEditing({ id: 0 } as DrinewsArticle);
@@ -1896,6 +1900,7 @@ export default function Home() {
     setDnSelected(null);
     setDnEditorTitle(a.title);
     setDnEditorMd(a.bodyMd);
+    setDnEditorHeaderImage(a.headerImage ?? null);
     setDnEditing(a);
   }, []);
 
@@ -1903,6 +1908,7 @@ export default function Home() {
     setDnEditing(null);
     setDnEditorTitle("");
     setDnEditorMd("");
+    setDnEditorHeaderImage(null);
     setDnError(null);
     loadDrinews();
   }, [loadDrinews]);
@@ -1921,7 +1927,7 @@ export default function Home() {
       const r = await fetch(url, {
         method: isNew ? "POST" : "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: dnEditorTitle, bodyMd: dnEditorMd, bodyHtml: dnEditorMd }),
+        body: JSON.stringify({ title: dnEditorTitle, bodyMd: dnEditorMd, bodyHtml: dnEditorMd, headerImage: dnEditorHeaderImage }),
       });
       const d = await r.json();
       if (!r.ok) {
@@ -1935,7 +1941,30 @@ export default function Home() {
     } finally {
       setDnSaving(false);
     }
-  }, [dnEditing, dnEditorTitle, dnEditorMd, loadDrinews]);
+  }, [dnEditing, dnEditorTitle, dnEditorMd, dnEditorHeaderImage, loadDrinews]);
+
+  // Upload header image: resize client-side (max 2048px) then POST to /api/drinews/upload
+  const dnUploadHeaderImage = useCallback(async (file: File) => {
+    setDnUploadingHeader(true);
+    setDnError(null);
+    try {
+      // Resize via Canvas (reuse resizeImage with maxW=2048)
+      const resized = await resizeImage(file, 2048, 0.85);
+      const fd = new FormData();
+      fd.append("image", resized, file.name);
+      const r = await fetch("/api/drinews/upload", { method: "POST", body: fd });
+      const d = await r.json();
+      if (!r.ok) {
+        setDnError(d.error || "画像のアップロードに失敗しました");
+        return;
+      }
+      setDnEditorHeaderImage(d.url);
+    } catch {
+      setDnError("画像のアップロードに失敗しました");
+    } finally {
+      setDnUploadingHeader(false);
+    }
+  }, []);
 
   // AI proofread / restructure the draft via OpenRouter (drikin only).
   const dnProofread = useCallback(async () => {
@@ -3717,6 +3746,65 @@ export default function Home() {
                     onChange={(e) => setDnEditorTitle(e.currentTarget.value)}
                     mb="sm"
                   />
+                  {/* Header image attachment */}
+                  <Box mb="sm">
+                    <Text size="sm" fw={500} mb={4}>ヘッダー画像</Text>
+                    {dnEditorHeaderImage ? (
+                      <Group align="flex-start" gap="sm">
+                        <Box
+                          style={{
+                            position: "relative",
+                            borderRadius: 8,
+                            overflow: "hidden",
+                            border: "1px solid #e5e7eb",
+                            maxWidth: 320,
+                          }}
+                        >
+                          <img
+                            src={dnEditorHeaderImage}
+                            alt="ヘッダー画像"
+                            style={{ display: "block", width: "100%", height: "auto" }}
+                          />
+                        </Box>
+                        <Button
+                          size="xs"
+                          variant="light"
+                          color="red"
+                          onClick={() => setDnEditorHeaderImage(null)}
+                        >
+                          画像を削除
+                        </Button>
+                      </Group>
+                    ) : (
+                      <Group gap="sm">
+                        <label>
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,image/gif"
+                            style={{ display: "none" }}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) dnUploadHeaderImage(f);
+                              e.target.value = "";
+                            }}
+                          />
+                          <Button
+                            component="span"
+                            size="xs"
+                            variant="light"
+                            color="gray"
+                            loading={dnUploadingHeader}
+                            disabled={dnUploadingHeader}
+                          >
+                            🖼 画像を添付
+                          </Button>
+                        </label>
+                        <Text size="xs" c="dimmed">
+                          記事の先頭に表示されます（長辺2,048pxにリサイズ）
+                        </Text>
+                      </Group>
+                    )}
+                  </Box>
                   <Textarea
                     label="本文（マークダウン）"
                     placeholder="今日のドリニュース…（通勤電車でサクッと読める 2,000字 前後が目安 / 上限 5,000字）"
@@ -3797,6 +3885,19 @@ export default function Home() {
                       ? `公開予約: ${formatJSTPDT(dnSelected.scheduledAt)}`
                       : "下書き"}
                   </Text>
+                  {dnSelected.headerImage && (
+                    <img
+                      src={dnSelected.headerImage}
+                      alt=""
+                      style={{
+                        width: "100%",
+                        height: "auto",
+                        borderRadius: 8,
+                        marginBottom: 16,
+                        display: "block",
+                      }}
+                    />
+                  )}
                   <div
                     className="drinews-body"
                     style={{ lineHeight: 1.8, wordBreak: "break-word" }}

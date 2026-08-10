@@ -46,7 +46,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const id = await parseId(params);
   if (id === null) return NextResponse.json({ error: "不正なID" }, { status: 400 });
 
-  let body: { title?: string; bodyMd?: string; bodyHtml?: string; scheduledAt?: string | null };
+  let body: { title?: string; bodyMd?: string; bodyHtml?: string; headerImage?: string | null; scheduledAt?: string | null };
   try {
     body = await req.json();
   } catch {
@@ -58,6 +58,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       title: body.title ?? "",
       bodyMd: body.bodyMd ?? "",
       bodyHtml: body.bodyHtml ?? "",
+      headerImage: body.headerImage !== undefined ? body.headerImage : null,
       scheduledAt: typeof body.scheduledAt === "string" ? body.scheduledAt : null,
     });
     return NextResponse.json({ article });

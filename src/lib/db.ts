@@ -115,6 +115,12 @@ export async function initSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_drinews_status_at ON drinews_articles(status, published_at DESC);
     CREATE INDEX IF NOT EXISTS idx_drinews_sched ON drinews_articles(status, scheduled_at) WHERE status = 'draft';
+    -- Header image for drinews articles (public URL, viewable in email without auth)
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='drinews_articles' AND column_name='header_image') THEN
+        ALTER TABLE drinews_articles ADD COLUMN header_image TEXT;
+      END IF;
+    END $$;
 
     CREATE TABLE IF NOT EXISTS drinews_comments (
       id SERIAL PRIMARY KEY,
