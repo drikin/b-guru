@@ -439,11 +439,19 @@ export async function updatePost(
     return { ok: false, error: "自分の投稿のみ編集できます" };
   }
 
+  // Fetch URL preview for the updated text (same as createPost)
+  let urlPreview: UrlPreview | null = null;
+  const rawUrl = firstUrl(input.text ?? "");
+  if (rawUrl) {
+    urlPreview = await fetchUrlPreview(rawUrl);
+  }
+
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await client.query(`UPDATE posts SET text = $1, url_preview = NULL WHERE id = $2`, [
+    await client.query(`UPDATE posts SET text = $1, url_preview = $2 WHERE id = $3`, [
       input.text ?? "",
+      JSON.stringify(urlPreview),
       postId,
     ]);
     // Replace images if provided

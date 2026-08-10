@@ -29,6 +29,7 @@ import {
   Tooltip,
   Menu,
   UnstyledButton,
+  Collapse,
 } from "@mantine/core";
 import { mdToHtml } from "@/lib/md";
 
@@ -397,9 +398,10 @@ function PostCard({
       </Group>
 
       {post.text && (
-        <Text size="sm" c="dark" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-          {post.text}
-        </Text>
+        <div
+          className="post-body"
+          dangerouslySetInnerHTML={{ __html: mdToHtml(post.text) }}
+        />
       )}
 
       {/* Images */}
@@ -758,6 +760,207 @@ function HotTopicCard({
   );
 }
 
+/** Collapsible replies: when a post has 5+ comments, show the parent + latest 3
+ *  comments with the middle ones collapsed behind a "show N hidden" toggle.
+ *  Comments are in chronological ascending order (oldest first, newest at bottom).
+ *  So we collapse the OLDER middle section (after parent, before the latest 3).
+ *  Smooth expand/collapse animation using Mantine's Collapse + CSS transitions. */
+const COLLAPSE_THRESHOLD = 5;
+const VISIBLE_TAIL = 3; // latest 3 comments always visible
+
+function CollapsibleReplies({
+  replies,
+  auth,
+  avatarSrc,
+  onOpenThread,
+  onOpenThreadReply,
+  onLike,
+  onReply,
+  onWhisper,
+  onEdit,
+  onDelete,
+  onPin,
+  onPreview,
+}: {
+  replies: FeedPost[];
+  auth: { email: string };
+  avatarSrc?: string | null;
+  onOpenThread: (id: number) => void;
+  onOpenThreadReply: (id: number) => void;
+  onLike: (id: number) => void;
+  onReply: (id: number, name: string) => void;
+  onWhisper?: (id: number, name: string) => void;
+  onEdit: (post: FeedPost) => void;
+  onDelete: (post: FeedPost) => void;
+  onPin: (id: number) => void;
+  onPreview: (src: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (replies.length <= COLLAPSE_THRESHOLD) {
+    // No collapsing needed — render all replies directly
+    return (
+      <>
+        {replies.map((rep) => (
+          <ReplyBubble
+            key={`rep-${rep.id}`}
+            rep={rep}
+            auth={auth}
+            avatarSrc={avatarSrc}
+            onOpenThread={onOpenThread}
+            onOpenThreadReply={onOpenThreadReply}
+            onLike={onLike}
+            onEdit={onEdit}
+            onDelete={onDelete}
+            onPreview={onPreview}
+          />
+        ))}
+      </>
+    );
+  }
+
+  const hiddenCount = replies.length - VISIBLE_TAIL;
+  const hiddenReplies = replies.slice(0, hiddenCount); // older middle section
+  const visibleReplies = replies.slice(hiddenCount);   // latest 4
+
+  return (
+    <>
+      {/* Toggle button — sits right after parent, before collapsed section */}
+      <UnstyledButton
+        onClick={() => setExpanded((v) => !v)}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 6,
+          padding: "6px 12px",
+          borderRadius: 8,
+          background: expanded ? "#f0f6ec" : "#f6f9f4",
+          border: "1px solid #e0ecd0",
+          transition: "background 0.2s ease, border-color 0.2s ease",
+          cursor: "pointer",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "#e8f3e0";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = expanded ? "#f0f6ec" : "#f6f9f4";
+        }}
+      >
+        {expanded ? (
+          <>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+              stroke="#5c8a3e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+              style={{ transition: "transform 0.3s ease" }}>
+              <path d="M18 15l-6-6-6 6" />
+            </svg>
+            <Text size="xs" c="green.7" style={{ fontWeight: 500 }}>
+              閉じる
+            </Text>
+          </>
+        ) : (
+          <>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+              stroke="#5c8a3e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+              style={{ transition: "transform 0.3s ease" }}>
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+            <Text size="xs" c="green.7" style={{ fontWeight: 500 }}>
+              {hiddenCount}件のコメントを表示
+            </Text>
+          </>
+        )}
+      </UnstyledButton>
+      {/* Collapsed older replies — expands between toggle and latest 4 */}
+      <Collapse expanded={expanded} transitionDuration={400} animateOpacity>
+        <Stack gap={6}>
+          {hiddenReplies.map((rep) => (
+            <ReplyBubble
+              key={`rep-${rep.id}`}
+              rep={rep}
+              auth={auth}
+              avatarSrc={avatarSrc}
+              onOpenThread={onOpenThread}
+              onOpenThreadReply={onOpenThreadReply}
+              onLike={onLike}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onPreview={onPreview}
+            />
+          ))}
+        </Stack>
+      </Collapse>
+      {/* Latest 3 replies always visible at bottom (newest at very bottom) */}
+      {visibleReplies.map((rep) => (
+        <ReplyBubble
+          key={`rep-${rep.id}`}
+          rep={rep}
+          auth={auth}
+          avatarSrc={avatarSrc}
+          onOpenThread={onOpenThread}
+          onOpenThreadReply={onOpenThreadReply}
+          onLike={onLike}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onPreview={onPreview}
+        />
+      ))}
+    </>
+  );
+}
+
+/** A single reply bubble with the shared green-tinted left border style. */
+function ReplyBubble({
+  rep,
+  auth,
+  avatarSrc,
+  onOpenThread,
+  onOpenThreadReply,
+  onLike,
+  onEdit,
+  onDelete,
+  onPreview,
+}: {
+  rep: FeedPost;
+  auth: { email: string };
+  avatarSrc?: string | null;
+  onOpenThread: (id: number) => void;
+  onOpenThreadReply: (id: number) => void;
+  onLike: (id: number) => void;
+  onEdit: (post: FeedPost) => void;
+  onDelete: (post: FeedPost) => void;
+  onPreview: (src: string) => void;
+}) {
+  return (
+    <Box
+      ml={6}
+      style={{
+        borderLeft: "2px solid #e0ecd0",
+        paddingLeft: 8,
+        background: "#fbfcf8",
+        borderRadius: 8,
+      }}
+    >
+      <PostCard
+        post={rep}
+        auth={auth}
+        avatarSrc={avatarSrc}
+        isThreadRoot={false}
+        showReplyButton={false}
+        onOpenThread={onOpenThread}
+        onOpenThreadReply={() => {}}
+        onLike={onLike}
+        onReply={() => {}}
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onPin={() => {}}
+        onPreview={onPreview}
+      />
+    </Box>
+  );
+}
+
 /** Grouped timeline: day separators + per-author groups. Posts are shown fully
  *  expanded (no collapse/stack) inside a group framed by a slim author header. */
 function TimelineFeed({
@@ -876,35 +1079,23 @@ function TimelineFeed({
               onPreview={onPreview}
             />
             {/* Interleaved comments = replies to this card, rendered right after
-             * it so the position (between which cards) is preserved. */}
-            {(post.replies ?? []).map((rep) => (
-              <Box
-                key={`rep-${rep.id}`}
-                ml={6}
-                style={{
-                  borderLeft: "2px solid #e0ecd0",
-                  paddingLeft: 8,
-                  background: "#fbfcf8",
-                  borderRadius: 8,
-                }}
-              >
-                <PostCard
-                  post={rep}
-                  auth={auth}
-                  avatarSrc={avatarSrc}
-                  isThreadRoot={false}
-                  showReplyButton={false}
-                  onOpenThread={onOpenThread}
-                  onOpenThreadReply={() => {}}
-                  onLike={onLike}
-                  onReply={onReply}
-                  onEdit={onEdit}
-                  onDelete={onDelete}
-                  onPin={onPin}
-                  onPreview={onPreview}
-                />
-              </Box>
-            ))}
+             * it so the position (between which cards) is preserved.
+             * When 5+ replies, older middle ones are collapsed with a smooth
+             * expand/collapse animation; the latest 3 stay visible at bottom. */}
+            <CollapsibleReplies
+              replies={post.replies ?? []}
+              auth={auth}
+              avatarSrc={avatarSrc}
+              onOpenThread={onOpenThread}
+              onOpenThreadReply={onOpenThreadReply}
+              onLike={onLike}
+              onReply={onReply}
+              onWhisper={onWhisper}
+              onEdit={onEdit}
+              onDelete={onDelete}
+              onPin={onPin}
+              onPreview={onPreview}
+            />
             {/* "+" insert control: a small circular button centered in a slim row
              * between cards. Center placement is intuitive ("insert here"),
              * while the single narrow row keeps vertical space tight. */}
@@ -1380,6 +1571,17 @@ export default function Home() {
         openDrinews(deepId);
       }, 300);
       return () => window.clearTimeout(t);
+    }
+    // Deep-link from a post permalink: #/post/<id>
+    // openThread pushes #/post/<id> so the URL can be shared/bookmarked,
+    // but on a fresh page load nothing restores the thread view. Re-open it.
+    const postHash = window.location.hash || "";
+    if (postHash.startsWith("#/post/")) {
+      const pid = Number(postHash.slice("#/post/".length));
+      if (pid && pid > 0) {
+        const t = window.setTimeout(() => openThread(pid), 300);
+        return () => window.clearTimeout(t);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth]);
@@ -3122,7 +3324,7 @@ export default function Home() {
           // outside the post cards/controls) returns to the timeline.
           if (!threadPost) return;
           const t = e.target as HTMLElement;
-          if (t.closest(".mantine-Card-root, button, a, input, textarea, img")) return;
+          if (t.closest(".mantine-Card-root, button, a, input, textarea, img, label")) return;
           closeThread();
         }}
       >
