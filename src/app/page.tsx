@@ -921,15 +921,18 @@ function TimelineFeed({
                   value={inlineReplyText}
                   autoFocus
                   onChange={(e) => onInlineReplyChange(e.currentTarget.value)}
-                  placeholder={`${g.authorName || g.authorEmail.split("@")[0]} の投稿にコメント…（ささやくはボタンで投稿）`}
+                  placeholder={`${g.authorName || g.authorEmail.split("@")[0]} の投稿にコメント…（Shift+Enter でささやく）`}
                   minRows={2}
                   autosize
                   maxRows={5}
                   onKeyDown={(e) => {
+                    if ((e.nativeEvent as any).isComposing) return;
                     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                      if ((e.nativeEvent as any).isComposing) return;
                       e.preventDefault();
                       onInlineReplySubmit(post.id, false);
+                    } else if (e.shiftKey && e.key === "Enter") {
+                      e.preventDefault();
+                      onInlineReplySubmit(post.id, true);
                     }
                   }}
                 />
@@ -1427,6 +1430,35 @@ export default function Home() {
       .catch(() => setOnlineMembers([]));
   }, [auth]);
 
+  // Real-time "wave" (👋 flying up from bottom-right, Insta-live style).
+  // waves: { id, fromName, kind } — kind "received" = someone waved at me
+  // (show their name), "sent" = I waved at someone (just a hand, feedback).
+  const [waves, setWaves] = useState<
+    { id: number; fromName: string; kind: "sent" | "received" }[]
+  >([]);
+  const waveIdRef = useRef(0);
+  // Stable callbacks: showWave/sendWave only touch functional setState + a ref,
+  // so they can be safely listed in the SSE effect deps without recreating the
+  // EventSource on every render (see the SSE "Effect dependency" pitfall).
+  const showWave = useCallback((fromName: string, kind: "sent" | "received") => {
+    const id = ++waveIdRef.current;
+    setWaves((w) => [...w, { id, fromName, kind }]);
+    window.setTimeout(() => setWaves((w) => w.filter((x) => x.id !== id)), 3000);
+  }, []);
+  const sendWave = useCallback((toEmail: string, toName: string) => {
+    if (!auth || toEmail === auth.email) return;
+    fetch("/api/wave", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: toEmail }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok) showWave(toName, "sent"); // instant sender feedback
+      })
+      .catch(() => {});
+  }, [auth, showWave]);
+
   const FEED_PAGE = 50;
 
   const loadFeed = (filter?: string) => {
@@ -1534,9 +1566,24 @@ export default function Home() {
     const onPresenceChange = () => {
       loadOnline(); // refresh the right-sidebar online panel
     };
+    const onWave = (e: MessageEvent) => {
+      let d: any;
+      try {
+        d = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      if (!d || d.type !== "wave" || !auth) return;
+      if (d.to === auth.email) {
+        showWave(d.from?.name || d.from?.email || "", "received");
+      } else if (d.from?.email === auth.email) {
+        showWave(d.from?.name || "", "sent");
+      }
+    };
     es.addEventListener("post", onChange);
     es.addEventListener("pin", onPinChange);
     es.addEventListener("presence", onPresenceChange);
+    es.addEventListener("wave", onWave);
     es.onopen = () => {
       loadPinned();
       loadHot();
@@ -1547,7 +1594,7 @@ export default function Home() {
     return () => {
       es.close();
     };
-  }, [auth, silentRefreshFeed, loadPinned, loadHot, loadOnline]);
+  }, [auth, silentRefreshFeed, loadPinned, loadHot, loadOnline, showWave]);
 
   // Periodic self-heal for the online panel: refresh even if a presence SSE
   // event or onopen callback was missed (e.g. iOS Safari dropping the stream).
@@ -2932,26 +2979,55 @@ export default function Home() {
                 現在オンラインのメンバーはいません。
               </Text>
             ) : (
-              <Stack gap={6}>
-                {onlineMembers.map((m) => (
-                  <Group
-                    key={m.email}
-                    gap={8}
-                    align="center"
-                    wrap="nowrap"
-                    style={{ minWidth: 0 }}
-                  >
-                    <SafeAvatar src={m.avatar} initial={m.name || m.email} size="sm" />
-                    <Text size="sm" truncate style={{ minWidth: 0 }}>
-                      {m.name || m.email}
-                      {auth && m.email === auth.email && (
-                        <Text span c="green" fw={600}>
-                          （あなた）
+              <Stack gap={4}>
+                {onlineMembers.map((m) => {
+                  const isSelf = !!auth && m.email === auth.email;
+                  return (
+                    <UnstyledButton
+                      key={m.email}
+                      title={
+                        isSelf
+                          ? "自分に手を振る（動作確認）"
+                          : `${m.name || m.email} に手を振る`
+                      }
+                      onClick={() =>
+                        isSelf
+                          ? showWave("自分", "received")
+                          : sendWave(m.email, m.name || m.email)
+                      }
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        borderRadius: 8,
+                        padding: "3px 4px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <Group
+                        gap={8}
+                        align="center"
+                        wrap="nowrap"
+                        style={{ minWidth: 0 }}
+                      >
+                        <SafeAvatar src={m.avatar} initial={m.name || m.email} size="sm" />
+                        <Text size="sm" truncate style={{ minWidth: 0 }}>
+                          {m.name || m.email}
+                          {isSelf && (
+                            <Text span c="green" fw={600}>
+                              （あなた）
+                            </Text>
+                          )}
                         </Text>
-                      )}
-                    </Text>
-                  </Group>
-                ))}
+                        {!isSelf && (
+                          <Text span c="dimmed" size="sm" ml="auto">
+                            👋
+                          </Text>
+                        )}
+                      </Group>
+                    </UnstyledButton>
+                  );
+                })}
               </Stack>
             )}
           </Paper>
@@ -3247,15 +3323,18 @@ export default function Home() {
                           <Textarea
                             autosize
                             minRows={2}
-                            placeholder={`${threadPost.authorName || "この投稿"} に返信…`}
+                            placeholder={`${threadPost.authorName || "この投稿"} に返信…（Shift+Enter でささやく）`}
                             value={replyText}
                             onChange={(e) => setReplyText(e.currentTarget.value)}
                             mb="xs"
                             onKeyDown={(e) => {
+                              if ((e.nativeEvent as any).isComposing) return;
                               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                                if ((e.nativeEvent as any).isComposing) return;
                                 e.preventDefault();
                                 submitThreadReply();
+                              } else if (e.shiftKey && e.key === "Enter") {
+                                e.preventDefault();
+                                submitThreadReply(true);
                               }
                             }}
                           />
@@ -3924,6 +4003,62 @@ export default function Home() {
           </Group>
         </Stack>
       </Modal>
+
+      {/* Wave animation overlay — 👋 floats up from bottom-right (Insta-live style) */}
+      <style>{`
+        @keyframes bguruWaveFly {
+          0%   { transform: translate(0, 0) scale(0.5) rotate(-8deg); opacity: 0; }
+          12%  { opacity: 1; }
+          100% { transform: translate(-90px, -360px) scale(1.15) rotate(8deg); opacity: 0; }
+        }
+        .bguru-wave {
+          position: absolute;
+          bottom: 0;
+          animation: bguruWaveFly 2.6s ease-out forwards;
+          will-change: transform, opacity;
+          user-select: none;
+          white-space: nowrap;
+          pointer-events: none;
+        }
+      `}</style>
+      {waves.length > 0 && (
+        <div
+          style={{
+            position: "fixed",
+            right: 24,
+            bottom: 20,
+            zIndex: 3000,
+            pointerEvents: "none",
+          }}
+        >
+          {waves.map((w, i) => (
+            <div
+              key={w.id}
+              className="bguru-wave"
+              style={{ right: (i % 5) * 16, transformOrigin: "bottom center" }}
+            >
+              <div style={{ fontSize: 44, lineHeight: 1, textAlign: "center" }}>👋</div>
+              {w.kind === "received" && w.fromName && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: "#333",
+                    background: "rgba(255,255,255,0.85)",
+                    borderRadius: 8,
+                    padding: "2px 6px",
+                    textAlign: "center",
+                    marginTop: 2,
+                    display: "inline-block",
+                  }}
+                >
+                  {w.fromName}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </AppShell>
   );
 }
