@@ -303,15 +303,23 @@ export async function sendDrinewsEmail(article: DrinewsArticle): Promise<{
       await sendEmail({
         to,
         subject: `📮 ドリニュース: ${article.title}`,
-        text: `${article.title}\n\n${stripHtml(article.bodyHtml)}\n\nコメントする: ${portalUrl}/?drinews=${article.id}`,
+        text: `${article.title}\n\n${stripHtml(article.bodyHtml)}\n\n━━━━━━━━━━━━━━━━━━━━━━\n💬 この記事にコメントする／サイトで読む:\n${portalUrl}/?drinews=${article.id}\n━━━━━━━━━━━━━━━━━━━━━━`,
         html: `
-          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color:#15803d;">${escapeHtml(article.title)}</h2>
-            <div style="line-height:1.7;">${article.bodyHtml}</div>
-            <p style="margin-top:24px;border-top:1px solid #e5e7eb;padding-top:12px;">
-              <a href="${portalUrl}/?drinews=${article.id}" style="background:#15803d;color:#fff;padding:10px 18px;border-radius:999px;text-decoration:none;">
-                サイトで読む・コメントする
+          <div style="font-family: 'Hiragino Sans','Meiryo',sans-serif; max-width: 620px; margin: 0 auto; color:#111827;">
+            <div style="background:#15803d; color:#fff; padding:18px 24px; border-radius:10px 10px 0 0;">
+              <div style="font-size:13px; opacity:0.8;">📮 ドリニュース</div>
+              <h1 style="margin:4px 0 0; font-size:22px; line-height:1.4;">${escapeHtml(article.title)}</h1>
+            </div>
+            <div style="border:1px solid #e5e7eb; border-top:none; border-radius:0 0 10px 10px; padding:24px; line-height:1.8;">
+              ${article.bodyHtml}
+            </div>
+            <div style="text-align:center; margin:24px 0 8px;">
+              <a href="${portalUrl}/?drinews=${article.id}" style="display:inline-block; background:#15803d; color:#fff; padding:14px 28px; border-radius:999px; text-decoration:none; font-size:16px; font-weight:bold;">
+                💬 サイトで読む・コメントする
               </a>
+            </div>
+            <p style="text-align:center; font-size:12px; color:#6b7280; margin:4px 0 24px;">
+              <a href="${portalUrl}/?drinews=${article.id}" style="color:#6b7280;">${portalUrl}/?drinews=${article.id}</a>
             </p>
           </div>
         `,
@@ -325,12 +333,13 @@ export async function sendDrinewsEmail(article: DrinewsArticle): Promise<{
 }
 
 function stripHtml(html: string): string {
+  // Full plain-text version (no truncation — include the entire article body).
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, "")
     .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 500);
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n\s*\n+/g, "\n")
+    .trim();
 }
 
 function escapeHtml(s: string): string {
