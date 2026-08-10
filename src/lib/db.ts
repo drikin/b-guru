@@ -66,6 +66,14 @@ export async function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_posts_created ON posts(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_posts_parent ON posts(parent_id, created_at ASC) WHERE parent_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_ghost ON posts(source_ghost_id) WHERE source_ghost_id IS NOT NULL;
+    -- Dori News auto-post: which drinews article spawned this feed post
+    -- (Beagle posts one entry to the timeline when an article is published).
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='drinews_article_id') THEN
+        ALTER TABLE posts ADD COLUMN drinews_article_id INTEGER REFERENCES drinews_articles(id) ON DELETE CASCADE;
+      END IF;
+    END $$;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_drinews ON posts(drinews_article_id) WHERE drinews_article_id IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS post_images (
       id SERIAL PRIMARY KEY,

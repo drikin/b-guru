@@ -100,7 +100,39 @@ export async function publishDrinews(id: number): Promise<DrinewsArticle> {
     [id]
   );
   if (res.rows.length === 0) throw new Error("not_found");
-  return rowToArticle(res.rows[0]);
+  const article = rowToArticle(res.rows[0]);
+  await postDrinewsToFeed(article);
+  return article;
+}
+
+/** Poster identity for the timeline feed entry (matches episode auto-posts). */
+export const FEED_SYSTEM_EMAIL = "system@backspace.fm";
+export const FEED_SYSTEM_NAME = "ビーグル";
+
+/**
+ * Post a single "new drinews" entry to the timeline feed, as Beagle.
+ * Idempotent via the unique index on posts.drinews_article_id — calling this
+ * again for the same article is a no-op.
+ */
+export async function postDrinewsToFeed(article: DrinewsArticle): Promise<void> {
+  const portalUrl = process.env.DRINEWS_PORTAL_URL || "https://bsm.backspace.fm";
+  const link = `${portalUrl}/?drinews=${article.id}`;
+  const text = `📮 ドリニュース更新: ${article.title}\n${link}`;
+  const urlPreview = JSON.stringify({ url: link, title: article.title, siteName: "ドリニュース" });
+  await pool.query(
+    `INSERT INTO posts (author_email, author_name, text, url_preview, source_ghost_id, drinews_article_id, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, now()))
+     ON CONFLICT (drinews_article_id) WHERE drinews_article_id IS NOT NULL DO NOTHING`,
+    [
+      FEED_SYSTEM_EMAIL,
+      FEED_SYSTEM_NAME,
+      text,
+      urlPreview,
+      null,
+      article.id,
+      article.publishedAt ? new Date(article.publishedAt) : null,
+    ]
+  );
 }
 
 /** Revert a published article back to draft (drikin only). Clears published_at. */
@@ -328,6 +360,12 @@ export async function processScheduledDrinews(): Promise<{
 
     const article = rowToArticle(claimed.rows[0]);
     published.push(article.id);
+
+    try {
+      await postDrinewsToFeed(article);
+    } catch (e: any) {
+      console.error(`drinews feed post failed for #${article.id}:`, e.message);
+    }
 
     try {
       const result = await sendDrinewsEmail(article);

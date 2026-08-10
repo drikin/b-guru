@@ -157,7 +157,7 @@ export async function listPosts(options?: {
     where += " AND EXISTS (SELECT 1 FROM post_images pi WHERE pi.post_id = p.id)";
   } else if (options?.filter === "links") {
     // "ニュース" = user/shared posts containing a URL, EXCLUDING auto-posted episodes
-    where += ` AND p.text ~* 'https?://[^\\s]+' AND p.source_ghost_id IS NULL`;
+    where += ` AND p.text ~* 'https?://[^\\s]+' AND p.source_ghost_id IS NULL AND p.drinews_article_id IS NULL`;
   } else if (options?.filter === "episodes") {
     where += " AND p.source_ghost_id IS NOT NULL";
   }
