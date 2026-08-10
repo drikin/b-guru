@@ -38,6 +38,10 @@ export interface NewPostInput {
   /** Whisper reply: appended to the group but does NOT bump last_activity,
    *  so the timeline position stays unchanged. */
   isWhisper?: boolean;
+  /** When non-null, this post is a mirror of an existing drinews comment
+   *  (i.e. came FROM the drinews article side). It must NOT be re-mirrored
+   *  back into drinews_comments (breaks the loop). */
+  sourceDrinewsCommentId?: number | null;
 }
 
 function firstUrl(text: string): string | null {
@@ -58,12 +62,31 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
   try {
     await client.query("BEGIN");
     const ins = await client.query(
-      `INSERT INTO posts (author_email, author_name, text, url_preview, parent_id, is_whisper)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
-      [input.authorEmail, input.authorName, input.text, JSON.stringify(urlPreview), input.parentId ?? null, !!input.isWhisper]
+      `INSERT INTO posts (author_email, author_name, text, url_preview, parent_id, is_whisper, source_drinews_comment_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
+      [input.authorEmail, input.authorName, input.text, JSON.stringify(urlPreview), input.parentId ?? null, !!input.isWhisper, input.sourceDrinewsCommentId ?? null]
     );
     const postId = ins.rows[0].id;
     const createdAt = ins.rows[0].created_at;
+
+    // Mirror: a REAL timeline reply to the Beagle feed post (drinews_article_id
+    // set) that did NOT come from a drinews comment → add an equivalent comment
+    // to the drinews article so both sides stay in sync. source_* is set on the
+    // resulting drinews comment so it is never mirrored back (no loop).
+    if (!input.sourceDrinewsCommentId && input.parentId != null) {
+      const parent = await client.query(
+        `SELECT drinews_article_id FROM posts WHERE id = $1`,
+        [input.parentId]
+      );
+      if (parent.rows.length > 0 && parent.rows[0].drinews_article_id != null) {
+        const artId = parent.rows[0].drinews_article_id;
+        await client.query(
+          `INSERT INTO drinews_comments (article_id, author_email, author_name, comment, source_post_id)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [artId, input.authorEmail, input.authorName, input.text, postId]
+        );
+      }
+    }
 
     const images = input.images ?? [];
     for (let i = 0; i < images.length; i++) {

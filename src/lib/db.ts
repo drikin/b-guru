@@ -74,6 +74,15 @@ export async function initSchema() {
       END IF;
     END $$;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_drinews ON posts(drinews_article_id) WHERE drinews_article_id IS NOT NULL;
+    -- Mirror-link: when a drinews comment is mirrored into the Beagle feed
+    -- post's replies, record the originating drinews_comments.id here so we
+    -- never re-mirror it back (source_* NULL = the "real" post from this side).
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='source_drinews_comment_id') THEN
+        ALTER TABLE posts ADD COLUMN source_drinews_comment_id INTEGER REFERENCES drinews_comments(id) ON DELETE CASCADE;
+      END IF;
+    END $$;
+    CREATE INDEX IF NOT EXISTS idx_posts_source_drinews ON posts(source_drinews_comment_id) WHERE source_drinews_comment_id IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS post_images (
       id SERIAL PRIMARY KEY,
@@ -116,6 +125,15 @@ export async function initSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_drinews_comments_article ON drinews_comments(article_id, created_at ASC);
+    -- Mirror-link: when a timeline reply to the Beagle feed post is mirrored
+    -- into a drinews comment, record the originating posts.id here so we never
+    -- re-mirror it back (source_* NULL = the "real" comment from this side).
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='drinews_comments' AND column_name='source_post_id') THEN
+        ALTER TABLE drinews_comments ADD COLUMN source_post_id INTEGER REFERENCES posts(id) ON DELETE CASCADE;
+      END IF;
+    END $$;
+    CREATE INDEX IF NOT EXISTS idx_drinews_comments_source ON drinews_comments(source_post_id) WHERE source_post_id IS NOT NULL;
 
     -- Notifications: e.g. "your post got a reply"
     CREATE TABLE IF NOT EXISTS notifications (

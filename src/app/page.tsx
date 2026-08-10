@@ -62,22 +62,29 @@ interface FeedPost {
   createdAt: string;
 }
 
-/** Format a timestamp: JST (primary, with year) + PDT (secondary, no year).
- *  e.g. "2026/8/10 06:05 JST | 8/9 14:05 PDT" */
+/** Format a timestamp in JST (primary) + PDT (secondary). e.g.
+ *  "2026/8/7 20:30 JST / 04:30 PDT" */
 function formatJSTPDT(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const fmt = (tz: string, withYear: boolean) =>
-    d.toLocaleString("ja-JP", {
-      timeZone: tz,
-      year: withYear ? "numeric" : undefined,
-      month: "numeric",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-  return `${fmt("Asia/Tokyo", true)} JST | ${fmt("America/Los_Angeles", false)} PDT`;
+  const jst = d.toLocaleString("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const pdt = d.toLocaleString("en-US", {
+    timeZone: "America/Los_Angeles",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return `${jst} JST / ${pdt} PDT`;
 }
 
 /** Return the date parts (JST) of the NEXT 18:00 JST. If it's already past
@@ -1255,6 +1262,7 @@ export default function Home() {
   const [dnCommentText, setDnCommentText] = useState("");
   const [dnPostingComment, setDnPostingComment] = useState(false);
   const [dnError, setDnError] = useState<string | null>(null);
+  const [dnProofreading, setDnProofreading] = useState(false);
 
   // ---- Feed edit/delete state ----
   const [postError, setPostError] = useState<string | null>(null);
@@ -1470,12 +1478,6 @@ export default function Home() {
   const feedLoadingRef = useRef(feedLoading);
   feedLoadingRef.current = feedLoading;
 
-  // Defer Push (SSE) refresh while a text input is focused, so an incoming
-  // update never resets/re-mounts the input the user is typing in. While any
-  // text input/textarea is focused we set a pending flag instead of refreshing;
-  // the pending refresh is flushed when focus leaves the input.
-  const pendingPushRefreshRef = useRef(false);
-
   const silentRefreshFeed = useCallback(() => {
     const nav = activeNavRef.current;
     if (feedLoadingRef.current) return;
@@ -1503,60 +1505,28 @@ export default function Home() {
   // Open exactly ONE stream for the lifetime of the page (while logged in). The
   // handler ignores events while a thread is open or during an initial load;
   // the client filter is read from refs so an incoming event never tears us down.
-  // While any text input is focused the feed refresh is deferred (pending) and
-  // flushed on focus-out so typing is never disrupted by an incoming update.
   useEffect(() => {
     if (!auth) return;
-
-    const activeInput = () => {
-      const el = document.activeElement as HTMLElement | null;
-      return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
-    };
-
-    const flush = () => {
-      pendingPushRefreshRef.current = false;
-      if (!threadPostRef.current) silentRefreshFeed();
-    };
-
-    const requestFeedRefresh = () => {
-      if (activeInput()) {
-        // User is typing — defer the refresh, not lose their input.
-        pendingPushRefreshRef.current = true;
-      } else {
-        silentRefreshFeed();
-      }
-    };
-
-    const onFocusOut = () => {
-      // Focus has left the input; flush any deferred refresh now that the user
-      // has finished interacting with a text field.
-      if (pendingPushRefreshRef.current) {
-        window.setTimeout(flush, 50);
-      }
-    };
-    document.addEventListener("focusout", onFocusOut);
-
     const es = new EventSource("/api/posts/stream");
     const onChange = () => {
       loadHot(); // new post/comment may change the hot-topics ranking
       if (threadPostRef.current) return;
-      requestFeedRefresh();
+      silentRefreshFeed();
     };
     const onPinChange = () => {
       loadPinned(); // refresh the right-sidebar pin summary panel
-      if (!threadPostRef.current) requestFeedRefresh();
+      if (!threadPostRef.current) silentRefreshFeed();
     };
     es.addEventListener("post", onChange);
     es.addEventListener("pin", onPinChange);
     es.onopen = () => {
       loadPinned();
       loadHot();
-      if (!threadPostRef.current) requestFeedRefresh();
+      if (!threadPostRef.current) silentRefreshFeed();
     };
     es.onerror = () => {};
     return () => {
       es.close();
-      document.removeEventListener("focusout", onFocusOut);
     };
   }, [auth, silentRefreshFeed, loadPinned, loadHot]);
 
@@ -1689,6 +1659,38 @@ export default function Home() {
       setDnSaving(false);
     }
   }, [dnEditing, dnEditorTitle, dnEditorMd, loadDrinews]);
+
+  // AI proofread / restructure the draft via OpenRouter (drikin only).
+  const dnProofread = useCallback(async () => {
+    if (dnProofreading) return;
+    if (!dnEditorMd.trim()) {
+      setDnError("本文を入力してからAI校正を実行してください");
+      return;
+    }
+    setDnProofreading(true);
+    setDnError(null);
+    try {
+      const r = await fetch("/api/drinews/proofread", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: dnEditorTitle, bodyMd: dnEditorMd }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        setDnError(d.error || "AI校正に失敗しました");
+        return;
+      }
+      if (d.title && dnEditorTitle === drinewsNextTitle()) {
+        // Only adopt AI title when the current one is still the auto date title.
+        setDnEditorTitle(d.title);
+      }
+      setDnEditorMd(d.markdown ?? d.raw ?? "");
+    } catch {
+      setDnError("AI校正に失敗しました");
+    } finally {
+      setDnProofreading(false);
+    }
+  }, [dnProofreading, dnEditorMd, dnEditorTitle]);
 
   const dnPublish = useCallback(
     async (id: number) => {
@@ -2664,7 +2666,7 @@ export default function Home() {
                                   </Text>
                                 ) : null}
                                 <Text size="xs" c="gray">
-                                  {formatJSTPDT(n.createdAt)}
+                                  {new Date(n.createdAt).toLocaleString("ja-JP")}
                                 </Text>
                               </div>
                             </Group>
@@ -3355,12 +3357,23 @@ export default function Home() {
                   />
                   <Textarea
                     label="本文（マークダウン）"
-                    placeholder="今日のドリニュース…"
+                    placeholder="今日のドリニュース…（通勤電車でサクッと読める 2,000字 前後が目安 / 上限 5,000字）"
                     autosize
-                    minRows={6}
+                    minRows={14}
+                    maxRows={28}
+                    maxLength={5000}
                     value={dnEditorMd}
                     onChange={(e) => setDnEditorMd(e.currentTarget.value)}
-                    mb="xs"
+                    mb={4}
+                    description={
+                      <Text
+                        component="span"
+                        size="xs"
+                        c={dnEditorMd.length > 2000 ? "orange" : "dimmed"}
+                      >
+                        {dnEditorMd.length} 字 / 目安 2,000字{dnEditorMd.length > 2000 ? "（やや長め）" : ""}
+                      </Text>
+                    }
                   />
                   <Text size="xs" c="dimmed" mb="sm">
                     #見出し / **太字** / - リスト / &gt;引用 / [リンク](URL) が使えます
@@ -3377,6 +3390,16 @@ export default function Home() {
                     </Text>
                   )}
                   <Group mt="md">
+                    <Button
+                      size="sm"
+                      color="violet"
+                      variant="light"
+                      onClick={dnProofread}
+                      loading={dnProofreading}
+                      disabled={dnProofreading || !dnEditorMd.trim()}
+                    >
+                      ✨ AI校正
+                    </Button>
                     <Button size="sm" color="green" onClick={dnSaveDraft} loading={dnSaving} disabled={dnSaving}>
                       下書き保存
                     </Button>

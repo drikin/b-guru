@@ -201,31 +201,63 @@ export async function listComments(articleId: number): Promise<DrinewsComment[]>
   }));
 }
 
-/** Add a comment to a published article (member). */
+/** Add a comment to a published article (member).
+ *  If it did NOT come from a timeline reply (sourcePostId null), mirror it into
+ *  the Beagle feed post's replies so both sides stay in sync. */
 export async function addComment(
   articleId: number,
-  input: { authorEmail: string; authorName: string | null; comment: string }
+  input: { authorEmail: string; authorName: string | null; comment: string },
+  opts?: { sourcePostId?: number | null }
 ): Promise<DrinewsComment> {
   // Only allow commenting on published articles
   const art = await pool.query(`SELECT status FROM drinews_articles WHERE id = $1`, [articleId]);
   if (art.rows.length === 0) throw new Error("not_found");
   if (art.rows[0].status !== "published") throw new Error("not_published");
 
-  const res = await pool.query(
-    `INSERT INTO drinews_comments (article_id, author_email, author_name, comment)
-     VALUES ($1, $2, $3, $4) RETURNING *`,
-    [articleId, input.authorEmail, input.authorName, input.comment]
-  );
-  const r = res.rows[0];
-  return {
-    id: r.id,
-    articleId: r.article_id,
-    authorEmail: r.author_email,
-    authorName: r.author_name,
-    authorAvatar: gravatarUrl(r.author_email),
-    comment: r.comment,
-    createdAt: new Date(r.created_at).toISOString(),
-  };
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const res = await client.query(
+      `INSERT INTO drinews_comments (article_id, author_email, author_name, comment, source_post_id)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [articleId, input.authorEmail, input.authorName, input.comment, opts?.sourcePostId ?? null]
+    );
+    const r = res.rows[0];
+
+    // Mirror: a REAL drinews comment (not from a timeline reply) → add an
+    // equivalent reply to the Beagle feed post for this article. The resulting
+    // reply carries source_drinews_comment_id so it is never mirrored back.
+    if (!opts?.sourcePostId) {
+      const feed = await client.query(
+        `SELECT id FROM posts WHERE drinews_article_id = $1 AND parent_id IS NULL LIMIT 1`,
+        [articleId]
+      );
+      if (feed.rows.length > 0) {
+        await client.query(
+          `INSERT INTO posts (author_email, author_name, text, parent_id, source_drinews_comment_id)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [input.authorEmail, input.authorName, input.comment, feed.rows[0].id, r.id]
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+    return {
+      id: r.id,
+      articleId: r.article_id,
+      authorEmail: r.author_email,
+      authorName: r.author_name,
+      authorAvatar: gravatarUrl(r.author_email),
+      comment: r.comment,
+      createdAt: new Date(r.created_at).toISOString(),
+    };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 /** Delete a comment. Allowed for the comment author or drikin (admin). */
