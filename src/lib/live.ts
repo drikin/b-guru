@@ -25,7 +25,8 @@ liveBus.setMaxListeners(0);
 
 export type LiveEvent =
   | { type: "post"; postId: number; action: "create" | "update" | "delete" }
-  | { type: "pin"; postId: number; action: "toggle" };
+  | { type: "pin"; postId: number; action: "toggle" }
+  | { type: "presence"; emails: string[] };
 
 export function emitLive(event: LiveEvent): void {
   // fire-and-forget; guard against listener errors crashing the API route

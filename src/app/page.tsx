@@ -1413,6 +1413,20 @@ export default function Home() {
       .finally(() => setHotLoading(false));
   }, [auth]);
 
+  const [onlineMembers, setOnlineMembers] = useState<
+    { email: string; name: string | null; avatar?: string | null }[]
+  >([]);
+  const loadOnline = useCallback(() => {
+    if (!auth) {
+      setOnlineMembers([]);
+      return;
+    }
+    fetch("/api/presence")
+      .then((r) => r.json())
+      .then((d) => setOnlineMembers(d.members ?? []))
+      .catch(() => setOnlineMembers([]));
+  }, [auth]);
+
   const FEED_PAGE = 50;
 
   const loadFeed = (filter?: string) => {
@@ -1517,18 +1531,32 @@ export default function Home() {
       loadPinned(); // refresh the right-sidebar pin summary panel
       if (!threadPostRef.current) silentRefreshFeed();
     };
+    const onPresenceChange = () => {
+      loadOnline(); // refresh the right-sidebar online panel
+    };
     es.addEventListener("post", onChange);
     es.addEventListener("pin", onPinChange);
+    es.addEventListener("presence", onPresenceChange);
     es.onopen = () => {
       loadPinned();
       loadHot();
+      loadOnline();
       if (!threadPostRef.current) silentRefreshFeed();
     };
     es.onerror = () => {};
     return () => {
       es.close();
     };
-  }, [auth, silentRefreshFeed, loadPinned, loadHot]);
+  }, [auth, silentRefreshFeed, loadPinned, loadHot, loadOnline]);
+
+  // Periodic self-heal for the online panel: refresh even if a presence SSE
+  // event or onopen callback was missed (e.g. iOS Safari dropping the stream).
+  useEffect(() => {
+    if (!auth) return;
+    loadOnline();
+    const t = window.setInterval(loadOnline, 60000);
+    return () => window.clearInterval(t);
+  }, [auth, loadOnline]);
 
   const loadNotifications = useCallback(() => {
     if (!auth) return;
@@ -2875,6 +2903,59 @@ export default function Home() {
       <AppShell.Aside p="md" style={{ background: "#f8fafc", borderLeft: "1px solid #e5e7eb" }}>
         <ScrollArea>
           <Stack gap="sm">
+          <Paper p="sm" radius="md" withBorder shadow="xs">
+            <Group justify="space-between" align="center" mb={4} wrap="nowrap">
+              <Group gap={6} align="center" wrap="nowrap">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  stroke="none"
+                  color="#40c057"
+                  aria-hidden="true"
+                >
+                  <circle cx="12" cy="12" r="5" />
+                </svg>
+                <Text fw={700} size="sm">
+                  オンライン
+                </Text>
+              </Group>
+              {onlineMembers.length > 0 && (
+                <Text size="xs" c="dimmed">
+                  {onlineMembers.length}人
+                </Text>
+              )}
+            </Group>
+            {onlineMembers.length === 0 ? (
+              <Text size="xs" c="dimmed">
+                現在オンラインのメンバーはいません。
+              </Text>
+            ) : (
+              <Stack gap={6}>
+                {onlineMembers.map((m) => (
+                  <Group
+                    key={m.email}
+                    gap={8}
+                    align="center"
+                    wrap="nowrap"
+                    style={{ minWidth: 0 }}
+                  >
+                    <SafeAvatar src={m.avatar} initial={m.name || m.email} size="sm" />
+                    <Text size="sm" truncate style={{ minWidth: 0 }}>
+                      {m.name || m.email}
+                      {auth && m.email === auth.email && (
+                        <Text span c="green" fw={600}>
+                          （あなた）
+                        </Text>
+                      )}
+                    </Text>
+                  </Group>
+                ))}
+              </Stack>
+            )}
+          </Paper>
+
           <Paper p="sm" radius="md" withBorder shadow="xs">
             <Group justify="space-between" align="center" mb={4} wrap="nowrap">
               <Group gap={6} align="center" wrap="nowrap">
