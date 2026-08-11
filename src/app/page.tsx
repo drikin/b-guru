@@ -987,7 +987,7 @@ function HotTopicCard({
  *  Comments are in chronological ascending order (oldest first, newest at bottom).
  *  So we collapse the OLDER middle section (after parent, before the latest 3).
  *  Smooth expand/collapse animation using Mantine's Collapse + CSS transitions. */
-const COLLAPSE_THRESHOLD = 5;
+const COLLAPSE_THRESHOLD = 4;
 const VISIBLE_TAIL = 3; // latest 3 comments always visible
 
 function CollapsibleReplies({
@@ -1021,7 +1021,7 @@ function CollapsibleReplies({
 }) {
   const [expanded, setExpanded] = useState(false);
 
-  if (replies.length <= COLLAPSE_THRESHOLD) {
+  if (replies.length < COLLAPSE_THRESHOLD) {
     // No collapsing needed — render all replies directly
     return (
       <>
