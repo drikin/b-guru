@@ -247,3 +247,14 @@ body {
 .drinews-body em {
   font-style: italic;
 }
+
+/* @mention highlight in post bodies */
+.post-body a[href^="#mention-"] {
+  color: #15803d;
+  background: #f0fdf4;
+  padding: 1px 5px;
+  border-radius: 4px;
+  text-decoration: none;
+  font-weight: 600;
+  cursor: default;
+}

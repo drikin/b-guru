@@ -253,6 +253,183 @@ function SafeAvatar({
   );
 }
 
+
+// ---- @mention support ----
+interface MentionMember { email: string; name: string; avatar: string | null }
+
+/** Highlight @mentions in post text by wrapping them in a markdown link
+ *  that mdToHtml turns into <a href="#mention-name">@name</a>, styled via CSS. */
+function highlightMentions(text: string, members: MentionMember[]): string {
+  if (!members.length) return text;
+  const nameSet = new Set(members.map(m => m.name.toLowerCase()));
+  // Match @[Full Name] (bracket syntax for names with spaces) or @name (single word)
+  return text
+    .replace(/@\[([^\]]+)\]/g, (match, name) => {
+      if (nameSet.has(name.toLowerCase())) {
+        return `[@${name}](#mention-${name.toLowerCase().replace(/\s+/g, "-")})`;
+      }
+      return match;
+    })
+    .replace(/@([^\s@<>\[]+)/g, (match, name) => {
+      if (nameSet.has(name.toLowerCase())) {
+        return `[@${name}](#mention-${name.toLowerCase()})`;
+      }
+      return match;
+    });
+}
+
+/** Textarea with @mention autocomplete. Shows a suggestion popover when the
+ *  user types @ followed by characters. Selecting a member inserts @name. */
+function MentionTextarea({
+  value, onChange, onKeyDown, placeholder, autosize, minRows, maxRows, mb,
+  maxLength, label, description, autoFocus,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  placeholder?: string;
+  autosize?: boolean;
+  minRows?: number;
+  maxRows?: number;
+  mb?: string | number;
+  maxLength?: number;
+  label?: string;
+  description?: React.ReactNode;
+  autoFocus?: boolean;
+}) {
+  const [members, setMembers] = useState<MentionMember[]>([]);
+  const [query, setQuery] = useState<string | null>(null);
+  const [suggestIndex, setSuggestIndex] = useState(0);
+  const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const membersLoaded = useRef(false);
+
+  useEffect(() => {
+    if (membersLoaded.current) return;
+    membersLoaded.current = true;
+    fetch("/api/members")
+      .then(r => r.json())
+      .then(d => { if (d.members) setMembers(d.members); })
+      .catch(() => {});
+  }, []);
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const v = e.currentTarget.value;
+    onChange(v);
+    const pos = e.currentTarget.selectionStart;
+    const before = v.slice(0, pos);
+    const m = before.match(/@(\[?[^\s@\[\]]*)$/);
+    if (m) {
+      setQuery(m[1]);
+      setSuggestIndex(0);
+    } else {
+      setQuery(null);
+    }
+  };
+
+  const filtered = query !== null
+    ? members.filter(m => m.name.toLowerCase().includes(query.replace(/^\[/, "").toLowerCase())).slice(0, 6)
+    : [];
+
+  const insertMention = (member: MentionMember) => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const v = ta.value;
+    const pos = ta.selectionStart;
+    const before = v.slice(0, pos);
+    const after = v.slice(pos);
+    const mentionText = member.name.includes(" ") ? `@[${member.name}] ` : `@${member.name} `;
+    const replaced = before.replace(/@([^\s@\[\]]*)$/, mentionText);
+    const newVal = replaced + after;
+    onChange(newVal);
+    setQuery(null);
+    requestAnimationFrame(() => {
+      ta.focus();
+      const cursorPos = replaced.length;
+      ta.setSelectionRange(cursorPos, cursorPos);
+    });
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (query !== null && filtered.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSuggestIndex(i => (i + 1) % filtered.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSuggestIndex(i => (i - 1 + filtered.length) % filtered.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        insertMention(filtered[suggestIndex]);
+        return;
+      }
+      if (e.key === "Escape") {
+        setQuery(null);
+        return;
+      }
+    }
+    onKeyDown?.(e);
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <Textarea
+        ref={taRef}
+        value={value}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
+        placeholder={placeholder}
+        autosize={autosize}
+        minRows={minRows}
+        maxRows={maxRows}
+        mb={mb}
+        maxLength={maxLength}
+        label={label}
+        description={description}
+        autoFocus={autoFocus}
+      />
+      {query !== null && filtered.length > 0 && (
+        <div
+          style={{
+            position: "absolute",
+            zIndex: 1000,
+            left: 0,
+            right: 0,
+            background: "white",
+            border: "1px solid #d1d5db",
+            borderRadius: 8,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+            maxHeight: 220,
+            overflowY: "auto",
+          }}
+        >
+          {filtered.map((m, i) => (
+            <div
+              key={m.email}
+              onClick={() => insertMention(m)}
+              style={{
+                padding: "6px 10px",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: i === suggestIndex ? "#f0fdf4" : "white",
+              }}
+              onMouseEnter={() => setSuggestIndex(i)}
+            >
+              <SafeAvatar src={m.avatar} initial={m.name} size="xs" />
+              <Text size="sm" c="dark">{m.name}</Text>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Live countdown of a pinned post's remaining 24h window. Ticks every second.
  *  Shows "あと 23:59:59" style until expiry, then renders nothing (the post
  *  will drop out of the pinned section on the next feed reload). */
@@ -289,6 +466,7 @@ function PostCard({
   avatarSrc,
   isThreadRoot = false,
   showReplyButton = true,
+  mentionMembers,
   onOpenThread,
   onOpenThreadReply,
   onLike,
@@ -304,6 +482,7 @@ function PostCard({
   avatarSrc?: string | null;
   isThreadRoot?: boolean;
   showReplyButton?: boolean;
+  mentionMembers?: MentionMember[];
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
   onLike: (id: number) => void;
@@ -314,6 +493,10 @@ function PostCard({
   onDelete: (post: FeedPost) => void;
   onPreview: (src: string) => void;
 }) {
+  const CLAMP_THRESHOLD = 500;
+  const [expanded, setExpanded] = useState(false);
+  const needsClamp = post.text && post.text.length > CLAMP_THRESHOLD;
+
   return (
     <Card
       radius="md"
@@ -399,10 +582,48 @@ function PostCard({
       </Group>
 
       {post.text && (
-        <div
-          className="post-body"
-          dangerouslySetInnerHTML={{ __html: mdToHtml(post.text) }}
-        />
+        <div style={{ position: "relative" }}>
+          <div
+            className="post-body"
+            dangerouslySetInnerHTML={{
+              __html: mdToHtml(
+                highlightMentions(
+                  needsClamp && !expanded
+                    ? post.text.slice(0, CLAMP_THRESHOLD)
+                    : post.text,
+                  mentionMembers ?? []
+                )
+              ),
+            }}
+          />
+          {needsClamp && !expanded && (
+            <div
+              style={{
+                position: "absolute",
+                bottom: 0,
+                left: 0,
+                right: 0,
+                height: "4em",
+                background: "linear-gradient(transparent, white)",
+                display: "flex",
+                alignItems: "flex-end",
+                justifyContent: "center",
+                paddingBottom: 4,
+              }}
+            >
+              <Button
+                variant="subtle"
+                size="xs"
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  setExpanded(true);
+                }}
+              >
+                続きを読む
+              </Button>
+            </div>
+          )}
+        </div>
       )}
 
       {/* Images */}
@@ -773,6 +994,7 @@ function CollapsibleReplies({
   replies,
   auth,
   avatarSrc,
+  mentionMembers,
   onOpenThread,
   onOpenThreadReply,
   onLike,
@@ -786,6 +1008,7 @@ function CollapsibleReplies({
   replies: FeedPost[];
   auth: { email: string };
   avatarSrc?: string | null;
+  mentionMembers?: MentionMember[];
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
   onLike: (id: number) => void;
@@ -807,6 +1030,7 @@ function CollapsibleReplies({
             key={`rep-${rep.id}`}
             rep={rep}
             auth={auth}
+            mentionMembers={mentionMembers}
             avatarSrc={avatarSrc}
             onOpenThread={onOpenThread}
             onOpenThreadReply={onOpenThreadReply}
@@ -881,6 +1105,7 @@ function CollapsibleReplies({
               key={`rep-${rep.id}`}
               rep={rep}
               auth={auth}
+              mentionMembers={mentionMembers}
               avatarSrc={avatarSrc}
               onOpenThread={onOpenThread}
               onOpenThreadReply={onOpenThreadReply}
@@ -898,6 +1123,7 @@ function CollapsibleReplies({
           key={`rep-${rep.id}`}
           rep={rep}
           auth={auth}
+          mentionMembers={mentionMembers}
           avatarSrc={avatarSrc}
           onOpenThread={onOpenThread}
           onOpenThreadReply={onOpenThreadReply}
@@ -916,6 +1142,7 @@ function ReplyBubble({
   rep,
   auth,
   avatarSrc,
+  mentionMembers,
   onOpenThread,
   onOpenThreadReply,
   onLike,
@@ -926,6 +1153,7 @@ function ReplyBubble({
   rep: FeedPost;
   auth: { email: string };
   avatarSrc?: string | null;
+  mentionMembers?: MentionMember[];
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
   onLike: (id: number) => void;
@@ -946,6 +1174,7 @@ function ReplyBubble({
       <PostCard
         post={rep}
         auth={auth}
+        mentionMembers={mentionMembers}
         avatarSrc={avatarSrc}
         isThreadRoot={false}
         showReplyButton={false}
@@ -968,6 +1197,7 @@ function TimelineFeed({
   groups,
   auth,
   avatarSrc,
+  mentionMembers,
   inlineReplyFor,
   inlineReplyText,
   inlineWhisper,
@@ -991,6 +1221,7 @@ function TimelineFeed({
   groups: FeedGroup[];
   auth: { email: string };
   avatarSrc?: string | null;
+  mentionMembers?: MentionMember[];
   inlineReplyFor: number | null;
   inlineReplyText: string;
   inlineWhisper?: boolean;
@@ -1066,6 +1297,7 @@ function TimelineFeed({
             <PostCard
               post={post}
               auth={auth}
+              mentionMembers={mentionMembers}
               avatarSrc={avatarSrc}
               isThreadRoot={false}
               showReplyButton={false}
@@ -1087,6 +1319,7 @@ function TimelineFeed({
               replies={post.replies ?? []}
               auth={auth}
               avatarSrc={avatarSrc}
+              mentionMembers={mentionMembers}
               onOpenThread={onOpenThread}
               onOpenThreadReply={onOpenThreadReply}
               onLike={onLike}
@@ -1109,10 +1342,10 @@ function TimelineFeed({
                 <Text size="xs" c="dimmed">
                   この位置にコメントします
                 </Text>
-                <Textarea
+                <MentionTextarea
                   value={inlineReplyText}
                   autoFocus
-                  onChange={(e) => onInlineReplyChange(e.currentTarget.value)}
+                  onChange={onInlineReplyChange}
                   placeholder={`${g.authorName || g.authorEmail.split("@")[0]} の投稿にコメント…（Shift+Enter でささやく）`}
                   minRows={2}
                   autosize
@@ -1528,6 +1761,15 @@ export default function Home() {
   const [notifOpen, setNotifOpen] = useState(false);
 
   const displayName = auth?.name || auth?.email?.split("@")[0] || "";
+  // @mention members list (for highlight in post display)
+  const [mentionMembers, setMentionMembers] = useState<MentionMember[]>([]);
+  useEffect(() => {
+    if (!auth) return;
+    fetch("/api/members")
+      .then(r => r.json())
+      .then(d => { if (d.members) setMentionMembers(d.members); })
+      .catch(() => {});
+  }, [auth]);
   const avatarSrc = auth?.avatar || undefined;
 
   const checkAuth = useCallback(() => {
@@ -2359,7 +2601,11 @@ export default function Home() {
         if (!r.ok) throw new Error(d.error || "投稿失敗");
         setPostText("");
         setPendingImages([]);
-        loadFeed();
+        // Optimistic: insert the returned post at the top instead of a full
+        // loadFeed() which can fail and leave the UI frozen.
+        if (d.post) {
+          setFeedPosts((prev) => [d.post, ...prev]);
+        }
       } catch (err: any) {
         setPostError(err.message);
       } finally {
@@ -2409,8 +2655,7 @@ export default function Home() {
       setThreadReplyImages([]);
       setReplyError(null);
       setThreadWhisper(false);
-      openThread(threadPost.id); // reload
-      loadFeed(); // refresh reply counters on timeline
+      openThread(threadPost.id); // reload thread
     } catch (err: any) {
       setReplyError(err.message);
     } finally {
@@ -2959,12 +3204,12 @@ export default function Home() {
                           >
                             <Group gap="xs" align="flex-start" wrap="nowrap">
                               <Text size="lg" style={{ lineHeight: 1 }}>
-                                {n.type === "reply" ? "💬" : "❤️"}
+                                {n.type === "reply" ? "💬" : n.type === "mention" ? "📢" : "❤️"}
                               </Text>
                               <div style={{ minWidth: 0 }}>
                                 <Text size="sm" c="dark" style={{ wordBreak: "break-word" }}>
                                   <b>{n.actorName || n.actorEmail.split("@")[0]}</b>
-                                  {n.type === "reply" ? " があなたの投稿に返信しました" : " があなたの投稿にいいねしました"}
+                                  {n.type === "reply" ? " があなたの投稿に返信しました" : n.type === "mention" ? " があなたをメンションしました" : " があなたの投稿にいいねしました"}
                                 </Text>
                                 {n.text ? (
                                   <Text size="xs" c="dimmed" lineClamp={2}>
@@ -3375,12 +3620,12 @@ export default function Home() {
                     </Text>
                   </Group>
                   <form onSubmit={submitPost}>
-                    <Textarea
+                    <MentionTextarea
                       placeholder="今なにしてる？ (画像投稿もできます)"
                       autosize
                       minRows={2}
                       value={postText}
-                      onChange={(e) => setPostText(e.currentTarget.value)}
+                      onChange={setPostText}
                       onKeyDown={onComposerKeyDown}
                       mb="sm"
                     />
@@ -3503,8 +3748,10 @@ export default function Home() {
                         <PostCard
                           post={threadPost}
                           auth={auth}
+                          mentionMembers={mentionMembers}
                           avatarSrc={avatarSrc}
                           isThreadRoot
+                          showReplyButton={false}
                           onOpenThread={openThread}
                           onOpenThreadReply={openThreadReply}
                           onLike={handleLike}
@@ -3524,6 +3771,7 @@ export default function Home() {
                           key={rep.id}
                           post={rep}
                           auth={auth}
+                          mentionMembers={mentionMembers}
                           avatarSrc={avatarSrc}
                           showReplyButton={false}
                           onOpenThread={openThread}
@@ -3551,12 +3799,12 @@ export default function Home() {
                             submitThreadReply();
                           }}
                         >
-                          <Textarea
+                          <MentionTextarea
                             autosize
                             minRows={2}
                             placeholder={`${threadPost.authorName || "この投稿"} に返信…（Shift+Enter でささやく）`}
                             value={replyText}
-                            onChange={(e) => setReplyText(e.currentTarget.value)}
+                            onChange={setReplyText}
                             mb="xs"
                             onKeyDown={(e) => {
                               if ((e.nativeEvent as any).isComposing) return;
@@ -3675,6 +3923,7 @@ export default function Home() {
                   groups={groupFeed(feedPosts)}
                   auth={auth}
                   avatarSrc={avatarSrc}
+                  mentionMembers={mentionMembers}
                   inlineReplyFor={inlineReplyFor}
                   inlineReplyText={inlineReplyText}
                   inlineWhisper={inlineWhisper}
@@ -4155,12 +4404,12 @@ export default function Home() {
       >
         {editingPost && (
           <Stack gap="sm">
-            <Textarea
+            <MentionTextarea
               autosize
               minRows={3}
               placeholder="本文"
               value={editText}
-              onChange={(e) => setEditText(e.currentTarget.value)}
+              onChange={setEditText}
             />
             {editImages.length > 0 && (
               <Group gap="xs">

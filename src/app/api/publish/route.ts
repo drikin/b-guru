@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPost } from "@/lib/posts";
 import { createNotification } from "@/lib/notifications";
-import { findMemberByEmail } from "@/lib/ghost";
+import { findMemberByEmail, listMembers } from "@/lib/ghost";
 import { getSessionEmail } from "@/lib/session";
 import { pool } from "@/lib/db";
 import { emitLive } from "@/lib/live";
@@ -67,7 +67,6 @@ export async function POST(req: NextRequest) {
         );
         if (parent.rows.length > 0) {
           const parentAuthor = parent.rows[0].author_email;
-          const parentName = parent.rows[0].author_name;
           // Don't notify if replying to your own post
           if (parentAuthor !== email) {
             await createNotification({
@@ -84,6 +83,45 @@ export async function POST(req: NextRequest) {
       } catch (ne) {
         console.error("notify reply error:", (ne as any).message);
       }
+    }
+
+    // ---- @mention notifications ----
+    // Parse @name tokens from text, match against paid members, notify each.
+    try {
+      const members = await listMembers();
+      // Build a lookup: name (lowercase) → email
+      const nameMap = new Map<string, string>();
+      for (const m of members) {
+        const name = (m.name || m.email.split("@")[0] || "").trim();
+        if (name) nameMap.set(name.toLowerCase(), m.email);
+      }
+      // Extract @mentions: @[Full Name] (bracket syntax for spaces) or @name
+      const bracketMentions = text.match(/@\[([^\]]+)\]/g) || [];
+      const plainMentions = text.match(/@([^\s@\[]+)/g) || [];
+      const notifiedEmails = new Set<string>();
+      const tryNotify = async (name: string) => {
+        const targetEmail = nameMap.get(name.toLowerCase());
+        if (targetEmail && targetEmail !== email && !notifiedEmails.has(targetEmail)) {
+          notifiedEmails.add(targetEmail);
+          await createNotification({
+            userEmail: targetEmail,
+            type: "mention",
+            actorEmail: email,
+            actorName: authorName,
+            postId: post.id,
+            replyId: null,
+            text: text.length > 60 ? text.slice(0, 57) + "…" : text,
+          });
+        }
+      };
+      for (const token of bracketMentions) {
+        await tryNotify(token.slice(2, -1)); // remove @[ and ]
+      }
+      for (const token of plainMentions) {
+        await tryNotify(token.slice(1)); // remove @
+      }
+    } catch (me) {
+      console.error("mention notify error:", (me as any).message);
     }
 
     // Push a live "timeline changed" signal to connected clients.
