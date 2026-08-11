@@ -270,12 +270,26 @@ function highlightMentions(text: string, members: MentionMember[]): string {
       }
       return match;
     })
-    .replace(/@([^\s@<>\[]+)/g, (match, name) => {
+    .replace(/@([^\s@<\[]+)/g, (match, name) => {
       if (nameSet.has(name.toLowerCase())) {
         return `[@${name}](#mention-${name.toLowerCase()})`;
       }
       return match;
     });
+}
+
+/** Highlight search keyword in rendered HTML by wrapping matches in <mark>.
+ *  Escapes regex special chars in the keyword. Only operates outside HTML tags
+ *  (between > and <) to avoid corrupting attributes. */
+function highlightSearchTerm(html: string, keyword: string): string {
+  const kw = keyword.trim();
+  if (!kw) return html;
+  const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(${escaped})`, "gi");
+  // Split by HTML tags so we only highlight text content, not attributes.
+  return html.replace(/(>)([^<]+)(<)/g, (_match, openTag, text, closeTag) => {
+    return openTag + text.replace(re, '<mark style="background:#fff3a0;padding:0 2px;border-radius:2px">$1</mark>') + closeTag;
+  });
 }
 
 /** Textarea with @mention autocomplete. Shows a suggestion popover when the
@@ -467,6 +481,7 @@ function PostCard({
   isThreadRoot = false,
   showReplyButton = true,
   mentionMembers,
+  searchQuery,
   onOpenThread,
   onOpenThreadReply,
   onLike,
@@ -483,6 +498,7 @@ function PostCard({
   isThreadRoot?: boolean;
   showReplyButton?: boolean;
   mentionMembers?: MentionMember[];
+  searchQuery?: string;
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
   onLike: (id: number) => void;
@@ -586,13 +602,16 @@ function PostCard({
           <div
             className="post-body"
             dangerouslySetInnerHTML={{
-              __html: mdToHtml(
-                highlightMentions(
-                  needsClamp && !expanded
-                    ? post.text.slice(0, CLAMP_THRESHOLD)
-                    : post.text,
-                  mentionMembers ?? []
-                )
+              __html: highlightSearchTerm(
+                mdToHtml(
+                  highlightMentions(
+                    needsClamp && !expanded
+                      ? post.text.slice(0, CLAMP_THRESHOLD)
+                      : post.text,
+                    mentionMembers ?? []
+                  )
+                ),
+                searchQuery ?? ""
               ),
             }}
           />
@@ -995,6 +1014,7 @@ function CollapsibleReplies({
   auth,
   avatarSrc,
   mentionMembers,
+  searchQuery,
   onOpenThread,
   onOpenThreadReply,
   onLike,
@@ -1009,6 +1029,7 @@ function CollapsibleReplies({
   auth: { email: string };
   avatarSrc?: string | null;
   mentionMembers?: MentionMember[];
+  searchQuery?: string;
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
   onLike: (id: number) => void;
@@ -1031,6 +1052,7 @@ function CollapsibleReplies({
             rep={rep}
             auth={auth}
             mentionMembers={mentionMembers}
+            searchQuery={searchQuery}
             avatarSrc={avatarSrc}
             onOpenThread={onOpenThread}
             onOpenThreadReply={onOpenThreadReply}
@@ -1106,6 +1128,7 @@ function CollapsibleReplies({
               rep={rep}
               auth={auth}
               mentionMembers={mentionMembers}
+              searchQuery={searchQuery}
               avatarSrc={avatarSrc}
               onOpenThread={onOpenThread}
               onOpenThreadReply={onOpenThreadReply}
@@ -1124,6 +1147,7 @@ function CollapsibleReplies({
           rep={rep}
           auth={auth}
           mentionMembers={mentionMembers}
+          searchQuery={searchQuery}
           avatarSrc={avatarSrc}
           onOpenThread={onOpenThread}
           onOpenThreadReply={onOpenThreadReply}
@@ -1143,6 +1167,7 @@ function ReplyBubble({
   auth,
   avatarSrc,
   mentionMembers,
+  searchQuery,
   onOpenThread,
   onOpenThreadReply,
   onLike,
@@ -1154,6 +1179,7 @@ function ReplyBubble({
   auth: { email: string };
   avatarSrc?: string | null;
   mentionMembers?: MentionMember[];
+  searchQuery?: string;
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
   onLike: (id: number) => void;
@@ -1175,6 +1201,7 @@ function ReplyBubble({
         post={rep}
         auth={auth}
         mentionMembers={mentionMembers}
+        searchQuery={searchQuery}
         avatarSrc={avatarSrc}
         isThreadRoot={false}
         showReplyButton={false}
@@ -1198,11 +1225,13 @@ function TimelineFeed({
   auth,
   avatarSrc,
   mentionMembers,
+  searchQuery,
   inlineReplyFor,
   inlineReplyText,
   inlineWhisper,
   inlineReplyImages,
   inlineUploading,
+  inlineReplying,
   onInlineReplyChange,
   onToggleInlineReply,
   onInlineReplySubmit,
@@ -1222,11 +1251,13 @@ function TimelineFeed({
   auth: { email: string };
   avatarSrc?: string | null;
   mentionMembers?: MentionMember[];
+  searchQuery?: string;
   inlineReplyFor: number | null;
   inlineReplyText: string;
   inlineWhisper?: boolean;
   inlineReplyImages: string[];
   inlineUploading: boolean;
+  inlineReplying: 'comment' | 'whisper' | false;
   onInlineReplyChange: (t: string) => void;
   onToggleInlineReply: (id: number) => void;
   onInlineReplySubmit: (id: number, whisper?: boolean) => void;
@@ -1298,6 +1329,7 @@ function TimelineFeed({
               post={post}
               auth={auth}
               mentionMembers={mentionMembers}
+              searchQuery={searchQuery}
               avatarSrc={avatarSrc}
               isThreadRoot={false}
               showReplyButton={false}
@@ -1320,6 +1352,7 @@ function TimelineFeed({
               auth={auth}
               avatarSrc={avatarSrc}
               mentionMembers={mentionMembers}
+              searchQuery={searchQuery}
               onOpenThread={onOpenThread}
               onOpenThreadReply={onOpenThreadReply}
               onLike={onLike}
@@ -1427,14 +1460,16 @@ function TimelineFeed({
                       size="xs"
                       color="blue"
                       variant="light"
-                      disabled={!inlineReplyText.trim() && inlineReplyImages.length === 0}
+                      loading={inlineReplying === 'whisper'}
+                      disabled={(!inlineReplyText.trim() && inlineReplyImages.length === 0) || inlineReplying !== false}
                       onClick={() => onInlineReplySubmit(post.id, true)}
                     >
                       ささやく
                     </Button>
                     <Button
                       size="xs"
-                      disabled={!inlineReplyText.trim() && inlineReplyImages.length === 0}
+                      loading={inlineReplying === 'comment'}
+                      disabled={(!inlineReplyText.trim() && inlineReplyImages.length === 0) || inlineReplying !== false}
                       onClick={() => onInlineReplySubmit(post.id, false)}
                     >
                       コメント
@@ -1582,6 +1617,12 @@ export default function Home() {
   const [navOpened, setNavOpened] = useState(false);
   const [asideOpened, setAsideOpened] = useState(false);
 
+  // ---- Timeline search ----
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchActive, setSearchActive] = useState(false);
+  const searchQueryRef = useRef("");
+  searchQueryRef.current = searchQuery;
+
   // ---- Admin-managed external-link menu (sidebar bookmarks) ----
   const [menuLinks, setMenuLinks] = useState<MenuLinkItem[]>([]);
   const [linkModal, setLinkModal] = useState<{
@@ -1707,7 +1748,7 @@ export default function Home() {
 
   // ---- Reply / thread state ----
   const [replyText, setReplyText] = useState("");
-  const [replying, setReplying] = useState(false);
+  const [replying, setReplying] = useState<'comment' | 'whisper' | false>(false);
   const [replyError, setReplyError] = useState<string | null>(null);
   const [threadPost, setThreadPost] = useState<FeedPost | null>(null);
   const [threadReplies, setThreadReplies] = useState<FeedPost[]>([]);
@@ -1718,7 +1759,7 @@ export default function Home() {
   // Inline "insert between cards" reply state (timeline group comments).
   const [inlineReplyFor, setInlineReplyFor] = useState<number | null>(null);
   const [inlineReplyText, setInlineReplyText] = useState("");
-  const [inlineReplying, setInlineReplying] = useState(false);
+  const [inlineReplying, setInlineReplying] = useState<'comment' | 'whisper' | false>(false);
   // Whisper mode for the inline box: posts the reply as a whisper (is_whisper),
   // which does NOT bump the group to the top of the timeline.
   const [inlineWhisper, setInlineWhisper] = useState(false);
@@ -1908,11 +1949,12 @@ export default function Home() {
 
   const FEED_PAGE = 50;
 
-  const loadFeed = (filter?: string) => {
+  const loadFeed = (filter?: string, search?: string) => {
     setFeedLoading(true);
     setFeedHasMore(true);
     feedCursorRef.current = null;
-    const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}`;
+    const s = search?.trim();
+    const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
     fetch(`/api/posts${q}`)
       .then((r) => r.json())
       .then((d) => {
@@ -1938,9 +1980,10 @@ export default function Home() {
       return;
     setFeedLoadingMore(true);
     const filter = activeNav === "gallery" ? "images" : activeNav === "news" ? "links" : activeNav === "episodes" ? "episodes" : undefined;
+    const s = searchQueryRef.current.trim();
     const q = `?limit=${FEED_PAGE}&before=${encodeURIComponent(feedCursorRef.current)}${
       filter ? `&filter=${filter}` : ""
-    }`;
+    }${s ? `&search=${encodeURIComponent(s)}` : ""}`;
     fetch(`/api/posts${q}`)
       .then((r) => r.json())
       .then((d) => {
@@ -1972,6 +2015,8 @@ export default function Home() {
   feedLoadingRef.current = feedLoading;
 
   const silentRefreshFeed = useCallback(() => {
+    // Don't refresh during search — SSE events would wipe the search results.
+    if (searchQueryRef.current.trim()) return;
     const nav = activeNavRef.current;
     if (feedLoadingRef.current) return;
     const filter = nav === "gallery" ? "images" : nav === "news" ? "links" : nav === "episodes" ? "episodes" : undefined;
@@ -2405,6 +2450,31 @@ export default function Home() {
     else if (activeNav === "feed") loadFeed();
   }, [activeNav, auth]);
 
+  // Debounced search: when searchQuery changes, wait 300ms then reload feed
+  // with the search parameter. Switching to feed view if needed.
+  useEffect(() => {
+    if (!auth) return;
+    const trimmed = searchQuery.trim();
+    if (trimmed) {
+      setSearchActive(true);
+      if (activeNav !== "feed") setActiveNav("feed");
+    } else {
+      setSearchActive(false);
+    }
+    const t = setTimeout(() => {
+      if (!auth) return;
+      const q = searchQueryRef.current.trim();
+      if (q) {
+        loadFeed(undefined, q);
+      } else if (searchActive) {
+        // Search was cleared — reload normal feed
+        loadFeed();
+      }
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, auth]);
+
   // Infinite scroll: load the next older page when the sentinel enters view.
   useEffect(() => {
     if (!feedSentinelRef.current) return;
@@ -2641,7 +2711,7 @@ export default function Home() {
     if (!threadPost || replying) return;
     const text = replyText.trim();
     if (!text && threadReplyImages.length === 0) return;
-    setReplying(true);
+    setReplying(whisper ? 'whisper' : 'comment');
     setReplyError(null);
     try {
       const r = await fetch("/api/publish", {
@@ -2682,7 +2752,7 @@ export default function Home() {
     const isWhisper = whisper ?? inlineWhisper;
     const text = inlineReplyText.trim();
     if ((!text && inlineReplyImages.length === 0) || inlineReplying) return;
-    setInlineReplying(true);
+    setInlineReplying(whisper ? 'whisper' : 'comment');
     try {
       const r = await fetch("/api/publish", {
         method: "POST",
@@ -2748,6 +2818,8 @@ export default function Home() {
     setInlineReplyFor(null);
     setNotifOpen(false);
     setNavOpened(false);
+    // Clear search when going home
+    if (searchQuery) setSearchQuery("");
     if (window.location.hash.startsWith("#/post/")) {
       // Replace the hash so we don't leave the thread in history.
       try {
@@ -3426,6 +3498,41 @@ export default function Home() {
       <AppShell.Aside p="md" style={{ background: "#f8fafc", borderLeft: "1px solid #e5e7eb" }}>
         <ScrollArea>
           <Stack gap="sm">
+          {/* Search box */}
+          <Paper p="sm" radius="md" withBorder shadow="xs">
+            <TextInput
+              placeholder="タイムラインを検索"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.currentTarget.value)}
+              size="sm"
+              leftSection={
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+              }
+              rightSection={
+                searchQuery ? (
+                  <ActionIcon
+                    size="sm"
+                    variant="subtle"
+                    color="gray"
+                    onClick={() => setSearchQuery("")}
+                    aria-label="検索をクリア"
+                  >
+                    ×
+                  </ActionIcon>
+                ) : null
+              }
+              aria-label="タイムラインを検索"
+            />
+            {searchActive && (
+              <Text size="xs" c="green" mt={6}>
+                「{searchQuery}」で検索中
+              </Text>
+            )}
+          </Paper>
+
           <Paper p="sm" radius="md" withBorder shadow="xs">
             <Group justify="space-between" align="center" mb={4} wrap="nowrap">
               <Group gap={6} align="center" wrap="nowrap">
@@ -3608,8 +3715,8 @@ export default function Home() {
         >
           {isCenterView && (
             <Stack gap="md">
-              {/* Composer (hidden on gallery/news? show only on home feed) */}
-              {activeNav === "feed" && !threadPost && (
+              {/* Composer (hidden on gallery/news? show only on home feed, and not during search) */}
+              {activeNav === "feed" && !threadPost && !searchActive && (
                 <Paper p="md" radius="md" withBorder shadow="sm">
                   <Group align="flex-start" gap="sm" mb="xs">
                     <Avatar src={avatarSrc} alt={displayName} radius="xl" size="md" color="green">
@@ -3702,8 +3809,23 @@ export default function Home() {
                 </Paper>
               )}
 
-              {/* Section title */}
-              {activeNav !== "feed" && (
+              {/* Section title (hidden during search — search has its own header) */}
+              {searchActive && !threadPost && (
+                <Group justify="space-between" align="center">
+                  <Text fw={700} size="sm" c="dark">
+                    検索結果: {feedPosts.length}件
+                  </Text>
+                  <Button
+                    variant="subtle"
+                    size="xs"
+                    color="gray"
+                    onClick={() => setSearchQuery("")}
+                  >
+                    検索をクリア
+                  </Button>
+                </Group>
+              )}
+              {activeNav !== "feed" && !searchActive && (
                 <Title order={3} c="dark">
                   {activeNav === "gallery"
                     ? "🖼️ ギャラリー"
@@ -3718,7 +3840,9 @@ export default function Home() {
                 <Text c="dimmed">読み込み中…</Text>
               ) : feedPosts.length === 0 ? (
                 <Text c="dimmed">
-                  {activeNav === "gallery"
+                  {searchActive
+                    ? `「${searchQuery}」に一致する投稿は見つかりませんでした`
+                    : activeNav === "gallery"
                     ? "画像付きの投稿がまだありません"
                     : activeNav === "news"
                     ? "リンク付きの記事がまだありません"
@@ -3895,8 +4019,8 @@ export default function Home() {
                                   color="blue"
                                   variant="light"
                                   type="button"
-                                  loading={replying}
-                                  disabled={(replyText.trim() === "" && threadReplyImages.length === 0)}
+                                  loading={replying === 'whisper'}
+                                  disabled={(replyText.trim() === "" && threadReplyImages.length === 0) || replying !== false}
                                   onClick={() => submitThreadReply(true)}
                                 >
                                   ささやく
@@ -3904,8 +4028,8 @@ export default function Home() {
                                 <Button
                                   size="xs"
                                   color="green"
-                                  loading={replying}
-                                  disabled={!replyText.trim() && threadReplyImages.length === 0}
+                                  loading={replying === 'comment'}
+                                  disabled={(!replyText.trim() && threadReplyImages.length === 0) || replying !== false}
                                   type="submit"
                                 >
                                   返信する
@@ -3924,11 +4048,13 @@ export default function Home() {
                   auth={auth}
                   avatarSrc={avatarSrc}
                   mentionMembers={mentionMembers}
+                  searchQuery={searchActive ? searchQuery : undefined}
                   inlineReplyFor={inlineReplyFor}
                   inlineReplyText={inlineReplyText}
                   inlineWhisper={inlineWhisper}
                   inlineReplyImages={inlineReplyImages}
                   inlineUploading={inlineUploading}
+                  inlineReplying={inlineReplying}
                   onInlineReplyChange={setInlineReplyText}
                   onToggleInlineReply={toggleInlineReply}
                   onInlineReplySubmit={submitInlineReply}

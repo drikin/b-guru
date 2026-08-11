@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
 
   const pinned = req.nextUrl.searchParams.get("pinned") === "1";
   const hot = req.nextUrl.searchParams.get("hot") === "1";
+  const search = req.nextUrl.searchParams.get("search") ?? undefined;
   const filter = req.nextUrl.searchParams.get("filter") as
     | "images"
     | "links"
@@ -31,6 +32,7 @@ export async function GET(req: NextRequest) {
     const posts = await listPosts({
       pinnedOnly: pinned || undefined,
       filter: filter ?? undefined,
+      search: search ?? undefined,
       viewerEmail: email,
       before,
       limit,

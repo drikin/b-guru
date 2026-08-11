@@ -167,10 +167,14 @@ export async function listPosts(options?: {
   /** Cursor: return only posts whose latest activity is OLDER than this ISO
    *  timestamp (for infinite-scroll pagination back in time). */
   before?: string;
+  /** Search keyword: ILIKE partial match on root post text, author name, or
+   *  any reply text (matching replies pull in their parent root post). */
+  search?: string;
 }): Promise<FeedPost[]> {
   const limit = options?.limit ?? 100;
   const viewerEmail = options?.viewerEmail ?? "";
   const before = options?.before;
+  const search = options?.search?.trim();
 
   let where = "p.parent_id IS NULL";
   if (options?.pinnedOnly) {
@@ -185,6 +189,17 @@ export async function listPosts(options?: {
     where += " AND p.source_ghost_id IS NOT NULL";
   }
 
+  // Search: ILIKE partial match on root post text, author name, or any reply
+  // text. Matching replies pull in their parent root post so the whole thread
+  // is visible in results.
+  const searchParams: unknown[] = [viewerEmail, limit];
+  let searchSql = "";
+  if (search && search.length > 0) {
+    searchParams.push(`%${search}%`);
+    const pat = `$${searchParams.length}`;
+    searchSql = ` AND (p.text ILIKE ${pat} OR p.author_name ILIKE ${pat} OR EXISTS (SELECT 1 FROM posts r WHERE r.parent_id = p.id AND r.text ILIKE ${pat}))`;
+  }
+
   // last_activity = max(post.created_at, newest reply.created_at). Repeated from
   // POST_SELECT so we can filter (cursor) and sort by it.
   const lastActExpr = `GREATEST(p.created_at, COALESCE((SELECT MAX(r.created_at) FROM posts r WHERE r.parent_id = p.id AND r.is_whisper IS NOT TRUE), p.created_at))`;
@@ -196,6 +211,15 @@ export async function listPosts(options?: {
     cursorSql = ` AND ${lastActExpr} < $${params.length}`;
   }
 
+  // Merge search params (already has viewerEmail + limit at positions 1,2).
+  // Rebuild param list: search params are [viewerEmail, limit, searchPattern]
+  // and cursor param needs to be appended after.
+  const finalParams = [...searchParams];
+  if (before && before.length > 0 && !options?.pinnedOnly) {
+    finalParams.push(before);
+    cursorSql = ` AND ${lastActExpr} < $${finalParams.length}`;
+  }
+
   // Timeline (non-pinnedOnly): pure latest-activity order — NO pin special-casing
   // (pins moved to the right sidebar). pinnedOnly: FIFO (oldest pin first).
   const orderBy = options?.pinnedOnly
@@ -204,11 +228,11 @@ export async function listPosts(options?: {
 
   const res = await pool.query(
     `${POST_SELECT}
-     WHERE ${where}${cursorSql}
+     WHERE ${where}${searchSql}${cursorSql}
      GROUP BY p.id
      ORDER BY ${orderBy}
      LIMIT $2`,
-    params
+    finalParams
   );
 
   const posts = res.rows.map(mapRow);
