@@ -2894,6 +2894,10 @@ export default function Home() {
   // usually appear on the first page after switching back to ホーム), then page
   // back in time (bounded); as a last resort open the thread view.
   const scrollToPinnedPost = async (postId: number) => {
+    // Close the mobile right sidebar (aside overlay) so the user sees the
+    // timeline scroll happen. On desktop the aside is always visible and this
+    // is a no-op.
+    setAsideOpened(false);
     // Flag this card as "loading" so the sidebar shows a spinner on it while we
     // page back to fetch the (possibly not-yet-loaded) post.
     setScrollingPostId(postId);
