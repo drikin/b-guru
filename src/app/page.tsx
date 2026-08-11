@@ -1799,7 +1799,6 @@ export default function Home() {
   // ---- Notifications state ----
   const [notifications, setNotifications] = useState<any[]>([]);
   const [notifUnread, setNotifUnread] = useState(0);
-  const [notifOpen, setNotifOpen] = useState(false);
 
   const displayName = auth?.name || auth?.email?.split("@")[0] || "";
   // @mention members list (for highlight in post display)
@@ -2108,14 +2107,7 @@ export default function Home() {
       .catch(() => {});
   }, [auth]);
 
-  const toggleNotifOpen = (open: boolean) => {
-    setNotifOpen(open);
-    if (open) loadNotifications();
-  };
-
-  // Mark a single notification read (clicking a reply)
   const handleNotifClick = (n: any) => {
-    setNotifOpen(false); // close the popover first
     setActiveNav("feed"); // make sure the thread view can render
     if (!n.readAt) {
       fetch("/api/notifications", {
@@ -2816,7 +2808,6 @@ export default function Home() {
     setThreadPost(null);
     setThreadReplies([]);
     setInlineReplyFor(null);
-    setNotifOpen(false);
     setNavOpened(false);
     // Clear search when going home
     if (searchQuery) setSearchQuery("");
@@ -3213,106 +3204,25 @@ export default function Home() {
                 </Text>
               </div>
             </Group>
-            <Tooltip label="通知" withArrow>
-              <Popover
-                opened={notifOpen}
-                onClose={() => setNotifOpen(false)}
-                position="bottom-end"
-                width={340}
-                withArrow
-                withinPortal
-                styles={{ dropdown: { width: "min(340px, 92vw)" } }}
-              >
-                <Popover.Target>
-                  <Indicator
-                    inline
-                    size={16}
-                    offset={4}
-                    color="red"
-                    label={notifUnread > 9 ? "9+" : notifUnread}
-                    disabled={notifUnread === 0}
-                  >
-                    <ActionIcon
-                      variant="subtle"
-                      color="dark"
-                      radius="xl"
-                      size="lg"
-                      onClick={() => toggleNotifOpen(!notifOpen)}
-                    >
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
-                        <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
-                      </svg>
-                    </ActionIcon>
-                  </Indicator>
-                </Popover.Target>
-                <Popover.Dropdown p={0} style={{ border: "1px solid #e5e7eb", borderRadius: 12 }}>
-                  <Box>
-                    <Group justify="space-between" p="sm" style={{ borderBottom: "1px solid #e5e7eb" }}>
-                      <Text fw={700} size="sm" c="dark">
-                        通知
-                      </Text>
-                      {notifUnread > 0 && (
-                        <Button size="xs" variant="subtle" color="gray" onClick={markAllNotifRead}>
-                          すべて既読
-                        </Button>
-                      )}
-                    </Group>
-                    <ScrollArea.Autosize mah={360} type="auto">
-                      {notifications.length === 0 ? (
-                        <Text c="dimmed" size="sm" p="md">
-                          通知はありません
-                        </Text>
-                      ) : (
-                        notifications.map((n) => (
-                          <Box
-                            key={n.id}
-                            p="sm"
-                            style={{
-                              cursor: "pointer",
-                              borderBottom: "1px solid #f1f5f9",
-                              background: n.readAt ? "#ffffff" : "#f0fdf4",
-                            }}
-                            onClick={() => {
-                              setNotifOpen(false);
-                              handleNotifClick(n);
-                            }}
-                          >
-                            <Group gap="xs" align="flex-start" wrap="nowrap">
-                              <Text size="lg" style={{ lineHeight: 1 }}>
-                                {n.type === "reply" ? "💬" : n.type === "mention" ? "📢" : "❤️"}
-                              </Text>
-                              <div style={{ minWidth: 0 }}>
-                                <Text size="sm" c="dark" style={{ wordBreak: "break-word" }}>
-                                  <b>{n.actorName || n.actorEmail.split("@")[0]}</b>
-                                  {n.type === "reply" ? " があなたの投稿に返信しました" : n.type === "mention" ? " があなたをメンションしました" : " があなたの投稿にいいねしました"}
-                                </Text>
-                                {n.text ? (
-                                  <Text size="xs" c="dimmed" lineClamp={2}>
-                                    「{n.text}」
-                                  </Text>
-                                ) : null}
-                                <Text size="xs" c="gray">
-                                  {new Date(n.createdAt).toLocaleString("ja-JP")}
-                                </Text>
-                              </div>
-                            </Group>
-                          </Box>
-                        ))
-                      )}
-                    </ScrollArea.Autosize>
-                  </Box>
-                </Popover.Dropdown>
-              </Popover>
-            </Tooltip>
-            <Burger
-              opened={asideOpened}
-              onClick={() => setAsideOpened((o) => !o)}
-              size="sm"
-              hiddenFrom="lg"
-              color="dark"
-              aria-label="右パネルを開く"
-            />
+            {/* Bell icon removed — notifications moved to the right sidebar (below search).
+                Unread badge is now on the right Burger for symmetry. */}
+            <Indicator
+              inline
+              size={16}
+              offset={4}
+              color="red"
+              label={notifUnread > 9 ? "9+" : notifUnread}
+              disabled={notifUnread === 0}
+            >
+              <Burger
+                opened={asideOpened}
+                onClick={() => setAsideOpened((o) => !o)}
+                size="sm"
+                hiddenFrom="lg"
+                color="dark"
+                aria-label="右パネルを開く"
+              />
+            </Indicator>
             <Button variant="default" size="xs" onClick={logout} visibleFrom="sm">
               ログアウト
             </Button>
@@ -3535,6 +3445,74 @@ export default function Home() {
                 「{searchQuery}」で検索中
               </Text>
             )}
+          </Paper>
+
+          {/* Notifications panel (moved here from header popover) */}
+          <Paper p={0} radius="md" withBorder shadow="xs">
+            <Group justify="space-between" p="sm" style={{ borderBottom: "1px solid #e5e7eb" }}>
+              <Group gap={6} align="center" wrap="nowrap">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+                  <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+                </svg>
+                <Text fw={700} size="sm" c="dark">
+                  通知
+                </Text>
+                {notifUnread > 0 && (
+                  <Badge size="sm" color="red" variant="filled">
+                    {notifUnread > 9 ? "9+" : notifUnread}
+                  </Badge>
+                )}
+              </Group>
+              {notifUnread > 0 && (
+                <Button size="xs" variant="subtle" color="gray" onClick={markAllNotifRead}>
+                  すべて既読
+                </Button>
+              )}
+            </Group>
+            <ScrollArea.Autosize mah={360} type="auto">
+              {notifications.length === 0 ? (
+                <Text c="dimmed" size="sm" p="md">
+                  通知はありません
+                </Text>
+              ) : (
+                notifications.map((n) => (
+                  <Box
+                    key={n.id}
+                    p="sm"
+                    style={{
+                      cursor: "pointer",
+                      borderBottom: "1px solid #f1f5f9",
+                      background: n.readAt ? "#ffffff" : "#f0fdf4",
+                    }}
+                    onClick={() => {
+                      setAsideOpened(false);
+                      handleNotifClick(n);
+                    }}
+                  >
+                    <Group gap="xs" align="flex-start" wrap="nowrap">
+                      <Text size="lg" style={{ lineHeight: 1 }}>
+                        {n.type === "reply" ? "💬" : n.type === "mention" ? "📢" : "❤️"}
+                      </Text>
+                      <div style={{ minWidth: 0 }}>
+                        <Text size="sm" c="dark" style={{ wordBreak: "break-word" }}>
+                          <b>{n.actorName || n.actorEmail.split("@")[0]}</b>
+                          {n.type === "reply" ? " があなたの投稿に返信しました" : n.type === "mention" ? " があなたをメンションしました" : " があなたの投稿にいいねしました"}
+                        </Text>
+                        {n.text ? (
+                          <Text size="xs" c="dimmed" lineClamp={2}>
+                            「{n.text}」
+                          </Text>
+                        ) : null}
+                        <Text size="xs" c="gray">
+                          {new Date(n.createdAt).toLocaleString("ja-JP")}
+                        </Text>
+                      </div>
+                    </Group>
+                  </Box>
+                ))
+              )}
+            </ScrollArea.Autosize>
           </Paper>
 
           <Paper p="sm" radius="md" withBorder shadow="xs">
