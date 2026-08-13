@@ -327,18 +327,30 @@ function MentionTextarea({
       .catch(() => {});
   }, []);
 
+  // Detect the active @mention token. `before` is the text up to the caret;
+  // `detect` extracts the last `@...` token that reaches the end of the text.
+  const detect = (text: string): string | null => {
+    const m = text.match(/@(\[?[^\s@\[\]]*)$/);
+    return m ? m[1] : null;
+  };
+
+  // Update the mention query from the current textarea content. Prefer the
+  // caret-based trigger (lets suggestions open while editing mid-text), but
+  // fall back to the whole value's last @token — IME composition (Japanese
+  // etc.) makes the caret position unreliable, so `@柳家` filters correctly
+  // even right after the user commits 2-byte text.
+  const updateQuery = (v: string) => {
+    const ta = taRef.current;
+    const pos = ta?.selectionStart ?? v.length;
+    const before = v.slice(0, pos);
+    setQuery(detect(before) ?? detect(v));
+    setSuggestIndex(0);
+  };
+
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const v = e.currentTarget.value;
     onChange(v);
-    const pos = e.currentTarget.selectionStart;
-    const before = v.slice(0, pos);
-    const m = before.match(/@(\[?[^\s@\[\]]*)$/);
-    if (m) {
-      setQuery(m[1]);
-      setSuggestIndex(0);
-    } else {
-      setQuery(null);
-    }
+    updateQuery(v);
   };
 
   // Name matching is normalized so white-space never blocks an @-candidate:
@@ -418,6 +430,13 @@ function MentionTextarea({
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
+        onCompositionEnd={() => {
+          // After IME commits 2-byte text (Japanese etc.), re-detect the
+          // mention query from the real value — onChange may not have delivered
+          // the composing text, which left the suggestion list unfiltered.
+          const ta = taRef.current;
+          if (ta) updateQuery(ta.value);
+        }}
         placeholder={placeholder}
         autosize={autosize}
         minRows={minRows}
