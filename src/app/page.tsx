@@ -341,9 +341,18 @@ function MentionTextarea({
     }
   };
 
-  const filtered = query !== null
-    ? members.filter(m => m.name.toLowerCase().includes(query.replace(/^\[/, "").toLowerCase())).slice(0, 6)
-    : [];
+  // Name matching is normalized so white-space never blocks an @-candidate:
+  // spaces and full-width spaces are stripped from both the query and each
+  // member name before comparing. A Japanese/2-byte name registered with a
+  // space (e.g. 「柳家 三之助」) therefore matches whether the user types
+  // `@柳家`, `@柳家三之助`, or `@柳家三`.
+  const norm = (s: string) => s.toLowerCase().replace(/[\s\u3000]/g, "");
+  const filtered =
+    query !== null
+      ? members
+          .filter((m) => norm(m.name).includes(norm(query.replace(/^\[/, ""))))
+          .slice(0, 6)
+      : [];
 
   const insertMention = (member: MentionMember) => {
     const ta = taRef.current;
