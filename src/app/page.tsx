@@ -2244,19 +2244,46 @@ export default function Home() {
       .catch(() => {});
   }, [auth]);
 
-  const handleNotifClick = (n: any) => {
-    setActiveNav("feed"); // make sure the thread view can render
+  // Resolve the topmost (root) post id of a given post, so a notification
+  // (which may point at a reply) jumps to the group that is actually rendered
+  // on the main timeline. The timeline only shows root groups; commenting
+  // there is a normal top-level reply everyone can see, instead of the hidden
+  // "grandchild" that opening the reply's thread view used to create.
+  const resolveRootId = async (id: number): Promise<number> => {
+    let cur = id;
+    const seen = new Set<number>();
+    while (!seen.has(cur)) {
+      seen.add(cur);
+      try {
+        const d = await fetch(`/api/posts/${cur}`, { cache: "no-store" }).then(
+          (r) => r.json()
+        );
+        const p = d?.post;
+        if (!p || p.parentId == null) break; // not found, or this is the root
+        cur = p.parentId;
+      } catch {
+        break;
+      }
+    }
+    return cur;
+  };
+
+  const handleNotifClick = async (n: any) => {
+    setActiveNav("feed"); // ensure the feed view can render & scroll
     if (!n.readAt) {
-      fetch("/api/notifications", {
+      await fetch("/api/notifications", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: n.id }),
-      }).then(() => {
-        loadNotifications();
-        if (n.postId) openThread(n.postId);
       });
-    } else if (n.postId) {
-      openThread(n.postId);
+      loadNotifications();
+    }
+    const targetId = n.replyId ?? n.postId;
+    if (targetId) {
+      // Link to the card on the MAIN timeline (not the reply's thread view),
+      // so a follow-up comment is a normal top-level reply that stays visible.
+      const rootId = await resolveRootId(targetId);
+      scrollToPinnedPost(rootId);
     }
   };
 
