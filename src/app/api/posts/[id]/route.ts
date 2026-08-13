@@ -6,6 +6,11 @@ import { emitLive } from "@/lib/live";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/** No-store headers — prevents the browser from caching this API's responses,
+ *  so an edited/deleted post reflects immediately (and on a re-opened thread)
+ *  instead of only after a hard reload. */
+const NO_CACHE = { "Cache-Control": "no-store, no-cache, must-revalidate" };
+
 async function getPostId(params: Promise<{ id: string }>): Promise<number | null> {
   const { id } = await params;
   const postId = Number(id);
@@ -18,14 +23,14 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const email = await getSessionEmail();
-  if (!email) return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
+  if (!email) return NextResponse.json({ error: "ログインが必要です" }, { status: 401, headers: NO_CACHE });
 
   const postId = await getPostId(params);
-  if (postId === null) return NextResponse.json({ error: "不正な投稿ID" }, { status: 400 });
+  if (postId === null) return NextResponse.json({ error: "不正な投稿ID" }, { status: 400, headers: NO_CACHE });
 
   const { post, replies } = await getPostThread(postId, email);
-  if (!post) return NextResponse.json({ error: "投稿が見つかりません" }, { status: 404 });
-  return NextResponse.json({ post, replies });
+  if (!post) return NextResponse.json({ error: "投稿が見つかりません" }, { status: 404, headers: NO_CACHE });
+  return NextResponse.json({ post, replies }, { headers: NO_CACHE });
 }
 
 // DELETE /api/posts/[id] — delete own post
@@ -34,18 +39,18 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const email = await getSessionEmail();
-  if (!email) return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
+  if (!email) return NextResponse.json({ error: "ログインが必要です" }, { status: 401, headers: NO_CACHE });
 
   const postId = await getPostId(params);
-  if (postId === null) return NextResponse.json({ error: "不正な投稿ID" }, { status: 400 });
+  if (postId === null) return NextResponse.json({ error: "不正な投稿ID" }, { status: 400, headers: NO_CACHE });
 
   const result = await deletePost(postId, email);
   if (!result.ok) {
     const status = result.error === "not_found" ? 404 : 403;
-    return NextResponse.json({ error: result.error }, { status });
+    return NextResponse.json({ error: result.error }, { status, headers: NO_CACHE });
   }
   emitLive({ type: "post", postId, action: "delete", authorEmail: email });
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true }, { headers: NO_CACHE });
 }
 
 // PATCH /api/posts/[id] — edit own post (text + images)
@@ -54,30 +59,30 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const email = await getSessionEmail();
-  if (!email) return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
+  if (!email) return NextResponse.json({ error: "ログインが必要です" }, { status: 401, headers: NO_CACHE });
 
   const postId = await getPostId(params);
-  if (postId === null) return NextResponse.json({ error: "不正な投稿ID" }, { status: 400 });
+  if (postId === null) return NextResponse.json({ error: "不正な投稿ID" }, { status: 400, headers: NO_CACHE });
 
   let body: { text?: string; images?: string[] };
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "リクエストが不正です" }, { status: 400 });
+    return NextResponse.json({ error: "リクエストが不正です" }, { status: 400, headers: NO_CACHE });
   }
 
   const text = typeof body.text === "string" ? body.text.trim() : "";
   const images = Array.isArray(body.images) ? body.images.slice(0, 5) : undefined;
 
   if (!text && (!images || images.length === 0)) {
-    return NextResponse.json({ error: "テキストまたは画像が必要です" }, { status: 400 });
+    return NextResponse.json({ error: "テキストまたは画像が必要です" }, { status: 400, headers: NO_CACHE });
   }
 
   const result = await updatePost(postId, email, { text, images });
   if (!result.ok) {
     const status = result.error === "not_found" ? 404 : 403;
-    return NextResponse.json({ error: result.error }, { status });
+    return NextResponse.json({ error: result.error }, { status, headers: NO_CACHE });
   }
   emitLive({ type: "post", postId, action: "update", authorEmail: email });
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true }, { headers: NO_CACHE });
 }

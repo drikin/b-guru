@@ -3022,7 +3022,7 @@ export default function Home() {
     setReplyError(null);
     // Allow the browser back button to close the thread view.
     window.history.pushState({ thread: postId }, "", `#/post/${postId}`);
-    fetch(`/api/posts/${postId}`)
+    fetch(`/api/posts/${postId}`, { cache: "no-store" })
       .then(async (r) => {
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || "取得失敗");
@@ -3242,6 +3242,28 @@ export default function Home() {
       .catch(() => setActionError("アップロードに失敗しました"));
   };
 
+  // Apply a mutation to a post wherever it currently appears — the feed
+  // (root cards + their nested inline replies) AND the open thread view
+  // (threadPost + threadReplies). Editing/deleting must update every state
+  // slice that renders the same post; otherwise a change looks like it "did
+  // not apply" until a full page reload (e.g. editing a post from inside a
+  // thread view, or editing an inline reply which lives nested in the feed).
+  const applyPostChange = (
+    postId: number,
+    mutate: (p: FeedPost) => FeedPost
+  ) => {
+    const apply = (p: FeedPost): FeedPost => {
+      let next = p.id === postId ? mutate(p) : { ...p };
+      if (next.replies?.length) {
+        next = { ...next, replies: next.replies.map(apply) };
+      }
+      return next;
+    };
+    setFeedPosts((prev) => prev.map(apply));
+    setThreadPost((prev) => (prev ? apply(prev) : prev));
+    setThreadReplies((prev) => prev.map(apply));
+  };
+
   const saveEdit = () => {
     if (!editingPost || savingEdit) return;
     setSavingEdit(true);
@@ -3258,14 +3280,9 @@ export default function Home() {
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || "更新失敗");
         setEditingPost(null);
-        // Update the post in-place without a full reload.
-        setFeedPosts((prev) =>
-          prev.map((p) =>
-            p.id === editId
-              ? { ...p, text: newText, images: newImages }
-              : p
-          )
-        );
+        // Update the post in-place everywhere it's rendered (feed + thread)
+        // without a full reload.
+        applyPostChange(editId, (p) => ({ ...p, text: newText, images: newImages }));
       })
       .catch((err) => setActionError(err.message))
       .finally(() => setSavingEdit(false));
@@ -3282,7 +3299,8 @@ export default function Home() {
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || "削除失敗");
         setDeleteTarget(null);
-        // Remove the post from feed state without a full reload.
+        // Remove the post from every state slice (feed root + nested replies,
+        // and the open thread view) without a full reload.
         setFeedPosts((prev) =>
           prev
             .filter((p) => p.id !== deletedId)
@@ -3291,6 +3309,15 @@ export default function Home() {
               replies: (p.replies ?? []).filter((rp) => rp.id !== deletedId),
             }))
         );
+        setThreadReplies((prev) => prev.filter((rp) => rp.id !== deletedId));
+        setThreadPost((prev) => {
+          if (!prev) return prev;
+          if (prev.id === deletedId) return null;
+          return {
+            ...prev,
+            replies: (prev.replies ?? []).filter((rp) => rp.id !== deletedId),
+          };
+        });
       })
       .catch((err) => setActionError(err.message))
       .finally(() => setDeleting(false));
