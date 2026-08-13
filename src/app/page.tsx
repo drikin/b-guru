@@ -30,6 +30,7 @@ import {
   Menu,
   UnstyledButton,
   Collapse,
+  useMantineColorScheme,
 } from "@mantine/core";
 import { mdToHtml } from "@/lib/md";
 
@@ -199,7 +200,7 @@ interface DrinewsComment {
 }
 
 const NAV_ITEMS: { key: string; label: string; icon: string }[] = [
-  { key: "feed", label: "ホーム", icon: "🏠" },
+  { key: "feed", label: "タイムライン", icon: "🏠" },
   { key: "episodes", label: "エピソード", icon: "🎧" },
   { key: "gallery", label: "ギャラリー", icon: "🖼️" },
   { key: "news", label: "記事", icon: "📰" },
@@ -288,7 +289,7 @@ function highlightSearchTerm(html: string, keyword: string): string {
   const re = new RegExp(`(${escaped})`, "gi");
   // Split by HTML tags so we only highlight text content, not attributes.
   return html.replace(/(>)([^<]+)(<)/g, (_match, openTag, text, closeTag) => {
-    return openTag + text.replace(re, '<mark style="background:#fff3a0;padding:0 2px;border-radius:2px">$1</mark>') + closeTag;
+    return openTag + text.replace(re, '<mark style="background:var(--mark-bg);color:inherit;padding:0 2px;border-radius:2px">$1</mark>') + closeTag;
   });
 }
 
@@ -364,6 +365,10 @@ function MentionTextarea({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Mention suggestions are open — handle navigation/selection.
+    // But always let modifier-key combos (Cmd/Ctrl+Enter, Shift+Enter) pass
+    // through to the parent's onKeyDown so reply/whisper shortcuts work even
+    // while a suggestion popup is visible.
     if (query !== null && filtered.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -375,7 +380,8 @@ function MentionTextarea({
         setSuggestIndex(i => (i - 1 + filtered.length) % filtered.length);
         return;
       }
-      if (e.key === "Enter" || e.key === "Tab") {
+      // Plain Enter or Tab selects a mention — but only without modifiers.
+      if ((e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.shiftKey) || e.key === "Tab") {
         e.preventDefault();
         insertMention(filtered[suggestIndex]);
         return;
@@ -413,7 +419,7 @@ function MentionTextarea({
             left: 0,
             right: 0,
             background: "white",
-            border: "1px solid #d1d5db",
+            border: "1px solid var(--border-default)",
             borderRadius: 8,
             boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
             maxHeight: 220,
@@ -430,12 +436,12 @@ function MentionTextarea({
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
-                background: i === suggestIndex ? "#f0fdf4" : "white",
+                background: i === suggestIndex ? "var(--bg-tinted)" : "white",
               }}
               onMouseEnter={() => setSuggestIndex(i)}
             >
               <SafeAvatar src={m.avatar} initial={m.name} size="xs" />
-              <Text size="sm" c="dark">{m.name}</Text>
+              <Text size="sm" c="inherit">{m.name}</Text>
             </div>
           ))}
         </div>
@@ -588,7 +594,7 @@ function PostCard({
           initial={(post.authorName || post.authorEmail.split("@")[0] || "?")}
         />
         <div style={{ minWidth: 0 }}>
-          <Text size="sm" fw={600} c="dark">
+          <Text size="sm" fw={600} c="inherit">
             {post.authorName || post.authorEmail.split("@")[0]}
           </Text>
           <Text size="xs" c="dimmed">
@@ -719,7 +725,7 @@ function PostCard({
                       alignItems: "center",
                       justifyContent: "center",
                       fontSize: 22,
-                      color: "#fff",
+                      color: "var(--bg-surface)",
                     }}
                   >
                     ▶
@@ -728,7 +734,7 @@ function PostCard({
               )}
             </Box>
           )}
-          <Text size="sm" fw={600} c="dark">
+          <Text size="sm" fw={600} c="inherit">
             {post.urlPreview.title || post.urlPreview.url}
           </Text>
           {post.urlPreview.description && (
@@ -793,25 +799,25 @@ function SidebarPostCard({
       }}
       style={{
         cursor: "pointer",
-        border: "1px solid #e5e7eb",
+        border: "1px solid var(--border-default)",
         borderRadius: 8,
         padding: "8px 8px 8px 10px",
-        background: "#fff",
+        background: "var(--bg-surface)",
         position: "relative",
         transition: "border-color .15s, box-shadow .15s, background .15s",
       }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "#bfd8bf";
+        e.currentTarget.style.borderColor = "var(--border-green)";
         e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.1)";
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = "#e5e7eb";
+        e.currentTarget.style.borderColor = "var(--border-default)";
         e.currentTarget.style.boxShadow = "none";
       }}
     >
       <Group gap="xs" align="center" wrap="nowrap" mb={4}>
         <SafeAvatar src={post.authorAvatar} initial={post.authorName || post.authorEmail} size="xs" />
-        <Text size="xs" fw={600} c="dark" truncate style={{ flex: 1 }}>
+        <Text size="xs" fw={600} c="inherit" truncate style={{ flex: 1 }}>
           {post.authorName || post.authorEmail.split("@")[0]}
         </Text>
       </Group>
@@ -833,7 +839,7 @@ function SidebarPostCard({
             inset: 0,
             borderRadius: 8,
             background: "rgba(233,245,234,0.92)",
-            border: "1px solid #bfd8bf",
+            border: "1px solid var(--border-green)",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
@@ -1083,22 +1089,22 @@ function CollapsibleReplies({
           gap: 6,
           padding: "6px 12px",
           borderRadius: 8,
-          background: expanded ? "#f0f6ec" : "#f6f9f4",
-          border: "1px solid #e0ecd0",
+          background: expanded ? "var(--bg-expanded)" : "var(--bg-subtle)",
+          border: "1px solid var(--border-green-soft)",
           transition: "background 0.2s ease, border-color 0.2s ease",
           cursor: "pointer",
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = "#e8f3e0";
+          e.currentTarget.style.background = "var(--bg-hover)";
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.background = expanded ? "#f0f6ec" : "#f6f9f4";
+          e.currentTarget.style.background = expanded ? "var(--bg-expanded)" : "var(--bg-subtle)";
         }}
       >
         {expanded ? (
           <>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-              stroke="#5c8a3e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+              stroke="var(--text-green-soft)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
               style={{ transition: "transform 0.3s ease" }}>
               <path d="M18 15l-6-6-6 6" />
             </svg>
@@ -1109,7 +1115,7 @@ function CollapsibleReplies({
         ) : (
           <>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-              stroke="#5c8a3e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+              stroke="var(--text-green-soft)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
               style={{ transition: "transform 0.3s ease" }}>
               <path d="M6 9l6 6 6-6" />
             </svg>
@@ -1191,9 +1197,9 @@ function ReplyBubble({
     <Box
       ml={6}
       style={{
-        borderLeft: "2px solid #e0ecd0",
+        borderLeft: "2px solid var(--border-green-soft)",
         paddingLeft: 8,
-        background: "#fbfcf8",
+        background: "var(--bg-reply)",
         borderRadius: 8,
       }}
     >
@@ -1311,7 +1317,7 @@ function TimelineFeed({
         key={gkey}
         data-post-id={g.posts[0].id}
         style={{
-          borderLeft: "3px solid #cde6cd",
+          borderLeft: "3px solid var(--border-green-soft)",
           borderTopLeftRadius: 8,
           borderBottomLeftRadius: 8,
           paddingLeft: 12,
@@ -1370,7 +1376,7 @@ function TimelineFeed({
               <Stack
                 gap={6}
                 p="xs"
-                style={{ background: "#f6f9f4", borderRadius: 8, border: "1px solid #e0ecd0" }}
+                style={{ background: "var(--bg-subtle)", borderRadius: 8, border: "1px solid var(--border-green-soft)" }}
               >
                 <Text size="xs" c="dimmed">
                   この位置にコメントします
@@ -1489,9 +1495,9 @@ function TimelineFeed({
                       width: 22,
                       height: 22,
                       borderRadius: "50%",
-                      border: "1px solid #bfd8bf",
-                      color: "#4a9d4a",
-                      background: "#ffffff",
+                      border: "1px solid var(--border-green)",
+                      color: "var(--text-green-soft)",
+                      background: "var(--bg-surface)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
@@ -1612,6 +1618,10 @@ export default function Home() {
   const [sentTo, setSentTo] = useState("");
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // ---- Dark mode toggle ----
+  const { colorScheme, toggleColorScheme } = useMantineColorScheme();
+  const isDark = colorScheme === "dark";
 
   const [activeNav, setActiveNav] = useState("feed");
   const [navOpened, setNavOpened] = useState(false);
@@ -1954,7 +1964,7 @@ export default function Home() {
     feedCursorRef.current = null;
     const s = search?.trim();
     const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
-    fetch(`/api/posts${q}`)
+    fetch(`/api/posts${q}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
         const posts = d.posts ?? [];
@@ -1983,7 +1993,7 @@ export default function Home() {
     const q = `?limit=${FEED_PAGE}&before=${encodeURIComponent(feedCursorRef.current)}${
       filter ? `&filter=${filter}` : ""
     }${s ? `&search=${encodeURIComponent(s)}` : ""}`;
-    fetch(`/api/posts${q}`)
+    fetch(`/api/posts${q}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
         const posts = d.posts ?? [];
@@ -2013,30 +2023,72 @@ export default function Home() {
   const feedLoadingRef = useRef(feedLoading);
   feedLoadingRef.current = feedLoading;
 
+  // Debounce + abort controller for silentRefreshFeed: multiple SSE events
+  // arriving in quick succession (e.g. rapid comments) used to fire several
+  // concurrent fetches whose setState callbacks raced and caused duplicates
+  // or stale overwrites. We keep only the latest request and discard earlier
+  // in-flight ones.
+  const silentRefreshAbortRef = useRef<AbortController | null>(null);
+  const silentRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const silentRefreshFeed = useCallback(() => {
     // Don't refresh during search — SSE events would wipe the search results.
     if (searchQueryRef.current.trim()) return;
     const nav = activeNavRef.current;
     if (feedLoadingRef.current) return;
-    const filter = nav === "gallery" ? "images" : nav === "news" ? "links" : nav === "episodes" ? "episodes" : undefined;
-    const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}`;
-    fetch(`/api/posts${q}`)
-      .then((r) => r.json())
-      .then((d) => {
-        const fresh = d.posts ?? [];
-        setFeedPosts((prev) => {
-          if (fresh.length === 0 && prev.length === 0) return prev;
-          const freshIds = new Set(fresh.map((p: FeedPost) => p.id));
-          const older = prev.filter((p) => !freshIds.has(p.id));
-          return [...fresh, ...older];
-        });
-        if (fresh.length > 0) {
-          feedCursorRef.current =
-            fresh[fresh.length - 1].lastActivityAt ?? fresh[fresh.length - 1].createdAt;
-        }
-        setFeedHasMore(fresh.length >= FEED_PAGE);
-      })
-      .catch(() => {});
+
+    // Debounce: collapse rapid successive events into a single fetch (150ms).
+    if (silentRefreshTimerRef.current) clearTimeout(silentRefreshTimerRef.current);
+    silentRefreshTimerRef.current = setTimeout(() => {
+      // Abort any previous in-flight refresh to avoid a stale response
+      // overwriting a newer one.
+      if (silentRefreshAbortRef.current) silentRefreshAbortRef.current.abort();
+      const ac = new AbortController();
+      silentRefreshAbortRef.current = ac;
+
+      const filter = nav === "gallery" ? "images" : nav === "news" ? "links" : nav === "episodes" ? "episodes" : undefined;
+      const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}`;
+      fetch(`/api/posts${q}`, { signal: ac.signal, cache: "no-store" })
+        .then((r) => r.json())
+        .then((d) => {
+          const fresh = d.posts ?? [];
+          setFeedPosts((prev) => {
+            if (fresh.length === 0 && prev.length === 0) return prev;
+            const freshIds = new Set(fresh.map((p: FeedPost) => p.id));
+            // Build the merged result:
+            // - For posts in `fresh`: use the server version (authoritative for
+            //   sort order, reply count, likes, URL previews) BUT preserve any
+            //   optimistic replies (tempId or just-created real replies) that
+            //   the server hasn't seen yet.
+            // - For posts NOT in fresh: keep them as-is (older pages / temp posts).
+            const prevMap = new Map(prev.map((p) => [p.id, p]));
+            const merged = fresh.map((fp: FeedPost) => {
+              const oldP = prevMap.get(fp.id);
+              if (!oldP) return fp;
+              // Preserve optimistic replies that the server doesn't have yet.
+              const serverReplyIds = new Set((fp.replies ?? []).map((r) => r.id));
+              const oldReplies = oldP.replies ?? [];
+              const preservedReplies = oldReplies.filter(
+                (rp) => !serverReplyIds.has(rp.id) && rp.id > 0
+              );
+              if (preservedReplies.length > 0) {
+                return { ...fp, replies: [...(fp.replies ?? []), ...preservedReplies] };
+              }
+              return fp;
+            });
+            const older = prev.filter(
+              (p) => !freshIds.has(p.id) && p.id > 0
+            );
+            return [...merged, ...older];
+          });
+          if (fresh.length > 0) {
+            feedCursorRef.current =
+              fresh[fresh.length - 1].lastActivityAt ?? fresh[fresh.length - 1].createdAt;
+          }
+          setFeedHasMore(fresh.length >= FEED_PAGE);
+        })
+        .catch(() => {});
+    }, 150);
   }, []);
 
   // Open exactly ONE stream for the lifetime of the page (while logged in). The
@@ -2045,7 +2097,20 @@ export default function Home() {
   useEffect(() => {
     if (!auth) return;
     const es = new EventSource("/api/posts/stream");
-    const onChange = () => {
+    const onChange = (e: MessageEvent) => {
+      // Skip events triggered by our own posts — we already did an optimistic
+      // update, and a silentRefreshFeed here would race with the POST response
+      // handler, causing duplicates / missing replies.
+      let authorEmail: string | undefined;
+      try {
+        const d = JSON.parse(e.data);
+        authorEmail = d?.authorEmail;
+      } catch {}
+      if (auth && authorEmail && authorEmail === auth.email) {
+        // Still refresh hot topics (other people's view of activity changed)
+        loadHot();
+        return;
+      }
       loadHot(); // new post/comment may change the hot-topics ranking
       if (threadPostRef.current) return;
       silentRefreshFeed();
@@ -2129,6 +2194,15 @@ export default function Home() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ all: true }),
+    }).then(() => loadNotifications());
+  };
+
+  // Clear all notifications (delete)
+  const clearAllNotif = () => {
+    fetch("/api/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clear: true }),
     }).then(() => loadNotifications());
   };
 
@@ -2663,10 +2737,15 @@ export default function Home() {
         if (!r.ok) throw new Error(d.error || "投稿失敗");
         setPostText("");
         setPendingImages([]);
-        // Optimistic: insert the returned post at the top instead of a full
-        // loadFeed() which can fail and leave the UI frozen.
+        // Insert the returned post at the top of the feed (no full reload).
+        // This works now that createPost returns a complete FeedPost object
+        // (with lastActivityAt, parentId, authorAvatar, etc.) and the SSE
+        // self-event skip prevents a redundant silentRefreshFeed from racing.
         if (d.post) {
-          setFeedPosts((prev) => [d.post, ...prev]);
+          setFeedPosts((prev) => {
+            if (prev.some((p) => p.id === d.post.id)) return prev;
+            return [d.post, ...prev];
+          });
         }
       } catch (err: any) {
         setPostError(err.message);
@@ -2705,21 +2784,69 @@ export default function Home() {
     if (!text && threadReplyImages.length === 0) return;
     setReplying(whisper ? 'whisper' : 'comment');
     setReplyError(null);
+    // Optimistically add the reply to the thread view immediately.
+    const tempId = Date.now();
+    const tempReply: FeedPost = {
+      id: tempId,
+      authorEmail: auth?.email ?? "",
+      authorName: auth?.name ?? null,
+      authorAvatar: avatarSrc ?? null,
+      parentId: threadPost.id,
+      text,
+      images: threadReplyImages,
+      urlPreview: null,
+      likeCount: 0,
+      likedByMe: false,
+      createdAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString(),
+      replies: [],
+      replyCount: 0,
+    };
+    setThreadReplies((prev) => [...prev, tempReply]);
+    setReplyText("");
+    setThreadReplyImages([]);
+    setThreadWhisper(false);
     try {
       const r = await fetch("/api/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, images: threadReplyImages, parentId: threadPost.id, whisper }),
+        body: JSON.stringify({ text, images: tempReply.images, parentId: threadPost.id, whisper }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "返信失敗");
-      setReplyText("");
-      setThreadReplyImages([]);
-      setReplyError(null);
-      setThreadWhisper(false);
-      openThread(threadPost.id); // reload thread
+      // Replace the temp reply with the real one.
+      const created = d.post;
+      setThreadReplies((prev) =>
+        prev.map((rp) =>
+          rp.id === tempId
+            ? {
+                ...created,
+                id: created.id,
+                authorEmail: created.authorEmail,
+                authorName: created.authorName ?? null,
+                authorAvatar: created.authorAvatar ?? null,
+                parentId: threadPost.id,
+                text: created.text ?? "",
+                images: created.images ?? [],
+                urlPreview: created.urlPreview ?? null,
+                likeCount: 0,
+                likedByMe: false,
+                createdAt: new Date(created.createdAt).toISOString(),
+                lastActivityAt: new Date(created.createdAt).toISOString(),
+                replies: [],
+                replyCount: 0,
+              }
+            : rp
+        )
+      );
+      // Also update the feed's inline replies for this post.
+      setFeedPosts((prev) => appendReplyLocal(prev, threadPost.id, created, !!whisper));
     } catch (err: any) {
+      // Rollback: remove the optimistic reply.
+      setThreadReplies((prev) => prev.filter((rp) => rp.id !== tempId));
       setReplyError(err.message);
+      // Restore the text so the user can retry.
+      setReplyText(text);
     } finally {
       setReplying(false);
     }
@@ -2745,22 +2872,87 @@ export default function Home() {
     const text = inlineReplyText.trim();
     if ((!text && inlineReplyImages.length === 0) || inlineReplying) return;
     setInlineReplying(whisper ? 'whisper' : 'comment');
+    // Optimistically insert the reply into the feed IMMEDIATELY (before the
+    // network round-trip) so the user sees instant feedback.  Clear the
+    // input box right away — this also prevents double-submits because the
+    // text is gone and inlineReplying is non-false while the request is
+    // in-flight.
+    const tempId = Date.now(); // temporary ID until the server responds
+    const tempReply: FeedPost = {
+      id: tempId,
+      authorEmail: auth?.email ?? "",
+      authorName: auth?.name ?? null,
+      authorAvatar: avatarSrc ?? null,
+      parentId: postId,
+      text,
+      images: inlineReplyImages,
+      urlPreview: null,
+      likeCount: 0,
+      likedByMe: false,
+      createdAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString(),
+      replies: [],
+      replyCount: 0,
+    };
+    setInlineReplyFor(null);
+    setInlineReplyText("");
+    setInlineReplyImages([]);
+    setFeedPosts((prev) => appendReplyLocal(prev, postId, tempReply, !!isWhisper));
     try {
       const r = await fetch("/api/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, images: inlineReplyImages, parentId: postId, whisper: isWhisper }),
+        body: JSON.stringify({ text, images: tempReply.images, parentId: postId, whisper: isWhisper }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "コメント失敗");
-      setInlineReplyFor(null);
-      setInlineReplyText("");
-      setInlineReplyImages([]);
-      // Optimistically insert the new reply under its parent WITHOUT a full
-      // loadFeed (which resets pagination and loses the card's scroll position).
+      // Replace the temporary reply with the real one from the server.
       const created = d.post;
-      setFeedPosts((prev) => appendReplyLocal(prev, postId, created, !!isWhisper));
+      setFeedPosts((prev) => {
+        const replaceTemp = (root: FeedPost): FeedPost => {
+          if (root.id !== postId && !(root.replies ?? []).some((rp) => rp.id === postId)) return root;
+          // Remove BOTH the temp reply (tempId) AND any stale server reply
+          // with the same real ID (could've been brought in by a silentRefreshFeed
+          // that raced between our optimistic insert and this replacement).
+          const filtered = (root.replies ?? []).filter(
+            (rp) => rp.id !== tempId && rp.id !== created.id
+          );
+          const realReply: FeedPost = {
+            id: created.id,
+            authorEmail: created.authorEmail,
+            authorName: created.authorName ?? null,
+            authorAvatar: created.authorAvatar ?? null,
+            parentId: postId,
+            text: created.text ?? "",
+            images: created.images ?? [],
+            urlPreview: created.urlPreview ?? null,
+            likeCount: 0,
+            likedByMe: false,
+            createdAt: new Date(created.createdAt).toISOString(),
+            lastActivityAt: new Date(created.createdAt).toISOString(),
+            replies: [],
+            replyCount: 0,
+          };
+          const replies = [...filtered, realReply];
+          replies.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+          return { ...root, replies };
+        };
+        return prev.map(replaceTemp);
+      });
     } catch (err: any) {
+      // Rollback: remove the optimistic reply and restore the text.
+      setFeedPosts((prev) => {
+        const removeTemp = (root: FeedPost): FeedPost => {
+          if (root.id !== postId && !(root.replies ?? []).some((rp) => rp.id === postId)) return root;
+          const replies = (root.replies ?? []).filter((rp) => rp.id !== tempId);
+          return {
+            ...root,
+            replies,
+            replyCount: Math.max(0, (root.replyCount ?? 0) - 1),
+          };
+        };
+        return prev.map(removeTemp);
+      });
       setInlineReplyText(text + "\n\n(エラー: " + err.message + ")");
     } finally {
       setInlineReplying(false);
@@ -2998,16 +3190,26 @@ export default function Home() {
     if (!editingPost || savingEdit) return;
     setSavingEdit(true);
     setActionError(null);
-    fetch(`/api/posts/${editingPost.id}`, {
+    const editId = editingPost.id;
+    const newText = editText.trim();
+    const newImages = editImages;
+    fetch(`/api/posts/${editId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: editText.trim(), images: editImages }),
+      body: JSON.stringify({ text: newText, images: newImages }),
     })
       .then(async (r) => {
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || "更新失敗");
         setEditingPost(null);
-        loadFeed();
+        // Update the post in-place without a full reload.
+        setFeedPosts((prev) =>
+          prev.map((p) =>
+            p.id === editId
+              ? { ...p, text: newText, images: newImages }
+              : p
+          )
+        );
       })
       .catch((err) => setActionError(err.message))
       .finally(() => setSavingEdit(false));
@@ -3018,12 +3220,21 @@ export default function Home() {
     if (!deleteTarget || deleting) return;
     setDeleting(true);
     setActionError(null);
-    fetch(`/api/posts/${deleteTarget.id}`, { method: "DELETE" })
+    const deletedId = deleteTarget.id;
+    fetch(`/api/posts/${deletedId}`, { method: "DELETE" })
       .then(async (r) => {
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || "削除失敗");
         setDeleteTarget(null);
-        loadFeed();
+        // Remove the post from feed state without a full reload.
+        setFeedPosts((prev) =>
+          prev
+            .filter((p) => p.id !== deletedId)
+            .map((p) => ({
+              ...p,
+              replies: (p.replies ?? []).filter((rp) => rp.id !== deletedId),
+            }))
+        );
       })
       .catch((err) => setActionError(err.message))
       .finally(() => setDeleting(false));
@@ -3052,7 +3263,7 @@ export default function Home() {
   // ---------- Auth gates ----------
   if (checking) {
     return (
-      <main className="flex-1 w-full min-h-screen flex items-center justify-center bg-gray-50">
+      <main className="flex-1 w-full min-h-screen flex items-center justify-center ">
         <Text c="dimmed">読み込み中…</Text>
       </main>
     );
@@ -3060,12 +3271,12 @@ export default function Home() {
 
   if (!auth) {
     return (
-      <main className="flex-1 w-full max-w-md mx-auto px-6 py-16 bg-gray-50">
+      <main className="flex-1 w-full max-w-md mx-auto px-6 py-16 ">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-400 font-black text-2xl text-white shadow-lg mb-5">
             B
           </div>
-          <Title order={1} fw={900} c="dark">
+          <Title order={1} fw={900} c="inherit">
             B-guru
           </Title>
           <Text size="sm" c="dimmed" mt={8}>
@@ -3144,7 +3355,7 @@ export default function Home() {
       padding={0}
     >
       {/* Header */}
-      <AppShell.Header style={{ background: "#ffffff", borderBottom: "1px solid #e5e7eb" }}>
+      <AppShell.Header style={{ background: "var(--bg-surface)", borderBottom: "1px solid var(--border-default)" }}>
         <div
           style={{
             height: "100%",
@@ -3162,13 +3373,12 @@ export default function Home() {
               onClick={() => setNavOpened((o) => !o)}
               size="sm"
               hiddenFrom="sm"
-              color="dark"
             />
           </Group>
           {/* Center: site logo (blue leaping dog) */}
           <UnstyledButton
             onClick={goHome}
-            aria-label="ホームへ戻る"
+            aria-label="タイムラインへ戻る"
             style={{
               cursor: "pointer",
               background: "transparent",
@@ -3196,7 +3406,7 @@ export default function Home() {
                 {displayName.charAt(0).toUpperCase()}
               </Avatar>
               <div style={{ lineHeight: 1.2 }}>
-                <Text size="sm" fw={600} c="dark">
+                <Text size="sm" fw={600} c="inherit">
                   {auth.name || auth.email}
                 </Text>
                 <Text size="xs" c="dimmed">
@@ -3219,7 +3429,6 @@ export default function Home() {
                 onClick={() => setAsideOpened((o) => !o)}
                 size="sm"
                 hiddenFrom="lg"
-                color="dark"
                 aria-label="右パネルを開く"
               />
             </Indicator>
@@ -3231,7 +3440,7 @@ export default function Home() {
       </AppShell.Header>
 
       {/* Left sidebar */}
-      <AppShell.Navbar p="xs" style={{ background: "#ffffff", borderRight: "1px solid #e5e7eb" }}>
+      <AppShell.Navbar p="xs" style={{ background: "var(--bg-surface)", borderRight: "1px solid var(--border-default)" }}>
         <ScrollArea>
           <Stack gap={2}>
             <Text size="xs" fw={700} c="dimmed" p="xs">
@@ -3244,14 +3453,21 @@ export default function Home() {
                 label={item.label}
                 leftSection={<span>{item.icon}</span>}
                 onClick={() => {
-                  setActiveNav(item.key);
+                  if (item.key === "feed") {
+                    // "タイムライン" should always return to the full timeline
+                    // (closing any open thread) and scroll to top — matching the
+                    // in-feed "タイムラインに戻る" button so the two feel consistent.
+                    goHome();
+                  } else {
+                    setActiveNav(item.key);
+                  }
                   setNavOpened(false);
                 }}
                 style={{
                   borderRadius: 8,
                   marginBottom: 2,
                   ...(activeNav === item.key
-                    ? { background: "#dcfce7", color: "#15803d", fontWeight: 600 }
+                    ? { background: "var(--bg-tinted)", color: "var(--text-green)", fontWeight: 600 }
                     : {}),
                 }}
               />
@@ -3279,7 +3495,7 @@ export default function Home() {
                     gap: 12,
                     padding: "10px 12px",
                     borderRadius: 8,
-                    color: "#343a40",
+                    color: "var(--text-primary)",
                     textDecoration: "none",
                     fontSize: 14,
                     minWidth: 0,
@@ -3296,7 +3512,7 @@ export default function Home() {
                   >
                     {lk.label}
                   </span>
-                  <span style={{ fontSize: 11, color: "#adb5bd" }}>↗</span>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>↗</span>
                 </a>
                 {isAdminAuth && (
                   <Group gap={2} wrap="nowrap" style={{ flexShrink: 0 }}>
@@ -3405,11 +3621,46 @@ export default function Home() {
             )}
           </Stack>
         </ScrollArea>
+        {/* Dark mode toggle — bottom of left sidebar to preserve header symmetry */}
+        <Divider my="xs" />
+        <UnstyledButton
+          onClick={() => toggleColorScheme()}
+          aria-label={isDark ? "ライトモードに切替" : "ダークモードに切替"}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            padding: "10px 12px",
+            borderRadius: 8,
+            color: "var(--text-primary)",
+            fontSize: 14,
+            width: "100%",
+          }}
+        >
+          {isDark ? (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <circle cx="12" cy="12" r="5" />
+              <line x1="12" y1="1" x2="12" y2="3" />
+              <line x1="12" y1="21" x2="12" y2="23" />
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+              <line x1="1" y1="12" x2="3" y2="12" />
+              <line x1="21" y1="12" x2="23" y2="12" />
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+            </svg>
+          ) : (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          )}
+          <span>{isDark ? "ライトモード" : "ダークモード"}</span>
+        </UnstyledButton>
       </AppShell.Navbar>
 
       {/* Right sidebar: visible only on very wide screens. Hosts the pinned-post
        *  summary cards (pins were moved here from the timeline). */}
-      <AppShell.Aside p="md" style={{ background: "#f8fafc", borderLeft: "1px solid #e5e7eb" }}>
+      <AppShell.Aside p="md" style={{ background: "var(--bg-primary)", borderLeft: "1px solid var(--border-default)" }}>
         <ScrollArea>
           <Stack gap="sm">
           {/* Search box */}
@@ -3449,13 +3700,13 @@ export default function Home() {
 
           {/* Notifications panel (moved here from header popover) */}
           <Paper p={0} radius="md" withBorder shadow="xs">
-            <Group justify="space-between" p="sm" style={{ borderBottom: "1px solid #e5e7eb" }}>
+            <Group justify="space-between" p="sm" style={{ borderBottom: "1px solid var(--border-default)" }}>
               <Group gap={6} align="center" wrap="nowrap">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
                   <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
                 </svg>
-                <Text fw={700} size="sm" c="dark">
+                <Text fw={700} size="sm" c="inherit">
                   通知
                 </Text>
                 {notifUnread > 0 && (
@@ -3467,6 +3718,11 @@ export default function Home() {
               {notifUnread > 0 && (
                 <Button size="xs" variant="subtle" color="gray" onClick={markAllNotifRead}>
                   すべて既読
+                </Button>
+              )}
+              {notifications.length > 0 && (
+                <Button size="xs" variant="subtle" color="red" onClick={clearAllNotif}>
+                  クリア
                 </Button>
               )}
             </Group>
@@ -3482,8 +3738,8 @@ export default function Home() {
                     p="sm"
                     style={{
                       cursor: "pointer",
-                      borderBottom: "1px solid #f1f5f9",
-                      background: n.readAt ? "#ffffff" : "#f0fdf4",
+                      borderBottom: "1px solid var(--border-light)",
+                      background: n.readAt ? "var(--bg-surface)" : "var(--bg-tinted)",
                     }}
                     onClick={() => {
                       setAsideOpened(false);
@@ -3495,7 +3751,7 @@ export default function Home() {
                         {n.type === "reply" ? "💬" : n.type === "mention" ? "📢" : "❤️"}
                       </Text>
                       <div style={{ minWidth: 0 }}>
-                        <Text size="sm" c="dark" style={{ wordBreak: "break-word" }}>
+                        <Text size="sm" c="inherit" style={{ wordBreak: "break-word" }}>
                           <b>{n.actorName || n.actorEmail.split("@")[0]}</b>
                           {n.type === "reply" ? " があなたの投稿に返信しました" : n.type === "mention" ? " があなたをメンションしました" : " があなたの投稿にいいねしました"}
                         </Text>
@@ -3524,7 +3780,7 @@ export default function Home() {
                   viewBox="0 0 24 24"
                   fill="currentColor"
                   stroke="none"
-                  color="#40c057"
+                  color="var(--text-green)"
                   aria-hidden="true"
                 >
                   <circle cx="12" cy="12" r="5" />
@@ -3606,7 +3862,7 @@ export default function Home() {
                   viewBox="0 0 24 24"
                   fill="currentColor"
                   stroke="none"
-                  color="#40c057"
+                  color="var(--text-green)"
                   aria-hidden="true"
                 >
                   <path d="M12 17v5" />
@@ -3647,7 +3903,7 @@ export default function Home() {
                   viewBox="0 0 24 24"
                   fill="currentColor"
                   stroke="none"
-                  color="#40c057"
+                  color="var(--text-green)"
                   aria-hidden="true"
                 >
                   <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
@@ -3681,7 +3937,7 @@ export default function Home() {
 
       {/* Main: feed or episodes */}
       <AppShell.Main
-        style={{ background: "#f8fafc", minHeight: "100vh" }}
+        style={{ background: "var(--bg-primary)", minHeight: "100vh" }}
         onClick={(e) => {
           // In thread view, tapping the wide left/right margin (or any area
           // outside the post cards/controls) returns to the timeline.
@@ -3704,7 +3960,7 @@ export default function Home() {
                     <Avatar src={avatarSrc} alt={displayName} radius="xl" size="md" color="green">
                       {displayName.charAt(0).toUpperCase()}
                     </Avatar>
-                    <Text fw={600} size="sm" c="dark">
+                    <Text fw={600} size="sm" c="inherit">
                       {auth.name || auth.email}
                     </Text>
                   </Group>
@@ -3794,7 +4050,7 @@ export default function Home() {
               {/* Section title (hidden during search — search has its own header) */}
               {searchActive && !threadPost && (
                 <Group justify="space-between" align="center">
-                  <Text fw={700} size="sm" c="dark">
+                  <Text fw={700} size="sm" c="inherit">
                     検索結果: {feedPosts.length}件
                   </Text>
                   <Button
@@ -3808,7 +4064,7 @@ export default function Home() {
                 </Group>
               )}
               {activeNav !== "feed" && !searchActive && (
-                <Title order={3} c="dark">
+                <Title order={3} c="inherit">
                   {activeNav === "gallery"
                     ? "🖼️ ギャラリー"
                     : activeNav === "news"
@@ -4089,7 +4345,7 @@ export default function Home() {
                 /* ---------- Editor (drikin only) ---------- */
                 <Paper p="md" radius="md" withBorder shadow="sm">
                   <Group justify="space-between" align="center" mb="sm">
-                    <Text fw={700} size="lg" c="dark">
+                    <Text fw={700} size="lg" c="inherit">
                       {dnEditing.id ? "ドリニュース編集" : "新規ドリニュース"}
                     </Text>
                     <Button variant="subtle" size="xs" color="gray" onClick={dnCloseEditor}>
@@ -4113,7 +4369,7 @@ export default function Home() {
                             position: "relative",
                             borderRadius: 8,
                             overflow: "hidden",
-                            border: "1px solid #e5e7eb",
+                            border: "1px solid var(--border-default)",
                             maxWidth: 320,
                           }}
                         >
@@ -4215,7 +4471,7 @@ export default function Home() {
                         <Button size="sm" color="teal" variant="light" onClick={() => dnSchedule18(dnEditing!.id)}>
                           🕒 18:00に公開予約
                         </Button>
-                        <Button size="sm" color="dark" variant="filled" onClick={() => dnPublish(dnEditing!.id)}>
+                        <Button size="sm" color="green" variant="filled" onClick={() => dnPublish(dnEditing!.id)}>
                           今すぐ公開
                         </Button>
                       </>
@@ -4232,7 +4488,7 @@ export default function Home() {
                   <Button variant="subtle" size="xs" color="gray" onClick={dnCloseView} mb="xs">
                     ← 一覧へ戻る
                   </Button>
-                  <Title order={2} c="dark" mb={4}>
+                  <Title order={2} c="inherit" mb={4}>
                     {dnSelected.title || "（無題）"}
                   </Title>
                   <Text size="xs" c="dimmed" mb="sm">
@@ -4296,7 +4552,7 @@ export default function Home() {
                           initial={c.authorName || c.authorEmail}
                           size="sm"
                         />
-                        <Text size="xs" fw={600} c="dark">
+                        <Text size="xs" fw={600} c="inherit">
                           {c.authorName || c.authorEmail}
                         </Text>
                         <Text size="xs" c="dimmed">
@@ -4317,7 +4573,7 @@ export default function Home() {
                           </ActionIcon>
                         )}
                       </Group>
-                      <Text size="sm" c="dark" style={{ wordBreak: "break-word" }}>
+                      <Text size="sm" c="inherit" style={{ wordBreak: "break-word" }}>
                         {c.comment}
                       </Text>
                     </Box>
@@ -4355,7 +4611,7 @@ export default function Home() {
                 /* ---------- Article list ---------- */
                 <>
                   <Group justify="space-between" align="center">
-                    <Title order={3} c="dark">
+                    <Title order={3} c="inherit">
                       📮 ドリニュース
                     </Title>
                     {dnIsDrikin && (
@@ -4386,7 +4642,7 @@ export default function Home() {
                       >
                         <Group justify="space-between" align="flex-start">
                           <Box style={{ flex: 1, minWidth: 0 }}>
-                            <Text fw={600} size="md" c="dark">
+                            <Text fw={600} size="md" c="inherit">
                               {a.title || "（無題）"}
                             </Text>
                             <Text size="xs" c="dimmed" mt={2}>
@@ -4464,7 +4720,7 @@ export default function Home() {
               height: 44,
               borderRadius: "50%",
               background: "rgba(255,255,255,0.15)",
-              color: "#fff",
+              color: "var(--bg-surface)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -4593,7 +4849,7 @@ export default function Home() {
         withCloseButton
         title="投稿を削除"
       >
-        <Text size="sm" c="dark" mb="md">
+        <Text size="sm" c="inherit" mb="md">
           この投稿を削除しますか？この操作は取り消せません。
         </Text>
         {actionError && (
@@ -4703,7 +4959,7 @@ export default function Home() {
                   style={{
                     fontSize: 12,
                     fontWeight: 600,
-                    color: "#333",
+                    color: "var(--text-primary)",
                     background: "rgba(255,255,255,0.85)",
                     borderRadius: 8,
                     padding: "2px 6px",

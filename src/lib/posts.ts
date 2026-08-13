@@ -97,16 +97,23 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
     }
     await client.query("COMMIT");
 
+    const isoCreated = new Date(createdAt).toISOString();
     return {
       id: postId,
       authorEmail: input.authorEmail,
       authorName: input.authorName,
+      authorAvatar: gravatarUrl(input.authorEmail),
+      parentId: input.parentId ?? null,
+      replyCount: 0,
       text: input.text,
       images,
       urlPreview,
       likeCount: 0,
       likedByMe: false,
-      createdAt: new Date(createdAt).toISOString(),
+      createdAt: isoCreated,
+      lastActivityAt: isoCreated, // New post has no replies yet → activity = creation time
+      pinnedAt: null,
+      replies: [],
     };
   } catch (e) {
     await client.query("ROLLBACK");

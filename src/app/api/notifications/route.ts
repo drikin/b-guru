@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionEmail } from "@/lib/session";
 import {
+  clearAllNotifications,
   countUnreadNotifications,
   listNotifications,
   markAllNotificationsRead,
@@ -27,13 +28,14 @@ export async function GET() {
   }
 }
 
-// POST /api/notifications — body: { id?: number, all?: true }
+// POST /api/notifications — body: { id?: number, all?: true, clear?: true }
 // Marks one notification (id) or all (all:true) as read.
+// Clears (deletes) all notifications when clear:true.
 export async function POST(req: NextRequest) {
   const email = await getSessionEmail();
   if (!email) return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
 
-  let body: { id?: unknown; all?: unknown };
+  let body: { id?: unknown; all?: unknown; clear?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -41,6 +43,10 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    if (body.clear === true) {
+      const deleted = await clearAllNotifications(email);
+      return NextResponse.json({ ok: true, deleted });
+    }
     if (body.all === true) {
       const updated = await markAllNotificationsRead(email);
       return NextResponse.json({ ok: true, updated });
@@ -49,7 +55,7 @@ export async function POST(req: NextRequest) {
       const marked = await markNotificationRead(body.id, email);
       return NextResponse.json({ ok: true, marked });
     }
-    return NextResponse.json({ error: "id または all が必要です" }, { status: 400 });
+    return NextResponse.json({ error: "id または all または clear が必要です" }, { status: 400 });
   } catch (e: any) {
     console.error("notifications POST:", e.message);
     return NextResponse.json({ error: "更新失敗" }, { status: 500 });

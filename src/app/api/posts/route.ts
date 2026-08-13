@@ -5,11 +5,17 @@ import { getSessionEmail } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
+/** No-store headers to prevent the browser from caching API responses.
+ *  Without this, `fetch("/api/posts")` returns a stale cached response
+ *  after posting/editing/deleting, so the timeline doesn't update until
+ *  a full page reload bypasses the cache. */
+const NO_CACHE = { "Cache-Control": "no-store, no-cache, must-revalidate" };
+
 // GET /api/posts?filter=images|links  /  GET /api/posts?pinned=1
 export async function GET(req: NextRequest) {
   const email = await getSessionEmail();
   if (!email) {
-    return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
+    return NextResponse.json({ error: "ログインが必要です" }, { status: 401, headers: NO_CACHE });
   }
 
   const pinned = req.nextUrl.searchParams.get("pinned") === "1";
@@ -27,7 +33,7 @@ export async function GET(req: NextRequest) {
     if (hot) {
       // Hot topics: top N most-commented root posts in the last 7 days.
       const posts = await listHotTopics(email, Math.min(limit, 5));
-      return NextResponse.json({ posts });
+      return NextResponse.json({ posts }, { headers: NO_CACHE });
     }
     const posts = await listPosts({
       pinnedOnly: pinned || undefined,
@@ -37,12 +43,12 @@ export async function GET(req: NextRequest) {
       before,
       limit,
     });
-    return NextResponse.json({ posts });
+    return NextResponse.json({ posts }, { headers: NO_CACHE });
   } catch (e: any) {
     console.error("posts GET error:", e.message);
     return NextResponse.json(
       { error: "投稿の取得に失敗しました" },
-      { status: 500 }
+      { status: 500, headers: NO_CACHE }
     );
   }
 }

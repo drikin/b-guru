@@ -24,7 +24,7 @@ export const liveBus = new EventEmitter();
 liveBus.setMaxListeners(0);
 
 export type LiveEvent =
-  | { type: "post"; postId: number; action: "create" | "update" | "delete" }
+  | { type: "post"; postId: number; action: "create" | "update" | "delete"; authorEmail?: string }
   | { type: "pin"; postId: number; action: "toggle" }
   | { type: "presence"; emails: string[] }
   | { type: "wave"; from: { email: string; name: string }; to: string };

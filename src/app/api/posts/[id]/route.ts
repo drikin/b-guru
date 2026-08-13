@@ -44,7 +44,7 @@ export async function DELETE(
     const status = result.error === "not_found" ? 404 : 403;
     return NextResponse.json({ error: result.error }, { status });
   }
-  emitLive({ type: "post", postId, action: "delete" });
+  emitLive({ type: "post", postId, action: "delete", authorEmail: email });
   return NextResponse.json({ ok: true });
 }
 
@@ -78,6 +78,6 @@ export async function PATCH(
     const status = result.error === "not_found" ? 404 : 403;
     return NextResponse.json({ error: result.error }, { status });
   }
-  emitLive({ type: "post", postId, action: "update" });
+  emitLive({ type: "post", postId, action: "update", authorEmail: email });
   return NextResponse.json({ ok: true });
 }

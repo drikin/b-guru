@@ -9,6 +9,12 @@ import { emitLive } from "@/lib/live";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+// ---- Server-side duplicate prevention (30s window) ----
+// If the same author posts the exact same text + parentId within 30 seconds,
+// return the previously created post instead of creating a duplicate.
+const DEDUP_WINDOW = 30_000;
+const recentPosts = new Map<string, { at: number; post: any }>();
+
 // POST /api/publish  — body: { text: string, images?: string[] }
 export async function POST(req: NextRequest) {
   const email = await getSessionEmail();
@@ -47,6 +53,14 @@ export async function POST(req: NextRequest) {
     const member = await findMemberByEmail(email);
     authorName = member?.name || null;
   } catch {}
+
+  // ---- Duplicate prevention: same author + text + parentId within 30s ----
+  const dedupKey = `${email}:${parentId ?? "root"}:${text}`;
+  const prev = recentPosts.get(dedupKey);
+  if (prev && Date.now() - prev.at < DEDUP_WINDOW) {
+    // Return the existing post — don't create a duplicate.
+    return NextResponse.json({ post: prev.post }, { status: 201 });
+  }
 
   try {
     const post = await createPost({
@@ -125,7 +139,19 @@ export async function POST(req: NextRequest) {
     }
 
     // Push a live "timeline changed" signal to connected clients.
-    emitLive({ type: "post", postId: post.id, action: "create" });
+    // Include the author's email so the author's own client can skip
+    // a redundant silentRefreshFeed (it already did an optimistic update).
+    emitLive({ type: "post", postId: post.id, action: "create", authorEmail: email });
+
+    // Record in dedup map so a double-submit within 30s returns this post.
+    recentPosts.set(dedupKey, { at: Date.now(), post });
+    // Clean old entries periodically.
+    if (recentPosts.size > 200) {
+      const now = Date.now();
+      for (const [k, v] of recentPosts) {
+        if (now - v.at > DEDUP_WINDOW) recentPosts.delete(k);
+      }
+    }
 
     return NextResponse.json({ post }, { status: 201 });
   } catch (e: any) {

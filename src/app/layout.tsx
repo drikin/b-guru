@@ -35,10 +35,10 @@ export const viewport: Viewport = {
   userScalable: false,
 };
 
-// Light theme, green key color — inspired by backspace.fm's bright/modern look
+// Green key color — works in both light and dark via Mantine's primaryShade.
 const theme = createTheme({
   primaryColor: "green",
-  primaryShade: { light: 6, dark: 7 },
+  primaryShade: { light: 6, dark: 4 },
   fontFamily:
     "var(--font-noto-sans-jp), -apple-system, BlinkMacSystemFont, 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif",
   headings: {
@@ -68,9 +68,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="ja" className={`${notoSansJp.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col bg-gray-50">
-        <MantineProvider theme={theme} defaultColorScheme="light">
+    <html lang="ja" className={`${notoSansJp.variable} h-full antialiased`} suppressHydrationWarning>
+      <body className="min-h-full flex flex-col">
+        <MantineProvider theme={theme} defaultColorScheme="auto">
           {children}
         </MantineProvider>
       </body>

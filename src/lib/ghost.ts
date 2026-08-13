@@ -1,8 +1,29 @@
 /* Ghost Admin API client:
  * - JWT auth (Admin API key)
  * - members lookup to verify paid membership
+ * - In-process cache (60s TTL) to avoid hammering Ghost on every publish
  */
 import crypto from "crypto";
+
+// ---- In-process member cache (TTL 60s) ----
+const MEMBER_CACHE_TTL = 60_000; // 60 seconds
+let memberCache: { at: number; members: GhostMember[] } | null = null;
+const memberByEmail = new Map<string, GhostMember>();
+
+function getCachedMembers(): GhostMember[] | null {
+  if (memberCache && Date.now() - memberCache.at < MEMBER_CACHE_TTL) {
+    return memberCache.members;
+  }
+  return null;
+}
+
+function setCachedMembers(members: GhostMember[]): void {
+  memberCache = { at: Date.now(), members };
+  memberByEmail.clear();
+  for (const m of members) {
+    memberByEmail.set(m.email.toLowerCase(), m);
+  }
+}
 
 function makeToken(key: string): string {
   const parts = key.split(":", 1);
@@ -36,12 +57,19 @@ export interface GhostMember {
 }
 
 /**
- * Look up a member by email via Ghost Admin API.
- * Returns the member or null if not found.
+ * Look up a member by email.
+ * Uses the in-process member cache (60s TTL) — falls back to a direct
+ * Ghost API search on cache miss.
  */
 export async function findMemberByEmail(
   email: string
 ): Promise<GhostMember | null> {
+  // Try cache first (populated by listMembers or a prior findMemberByEmail)
+  const cached = getCachedMembers();
+  if (cached) {
+    return memberByEmail.get(email.toLowerCase()) ?? null;
+  }
+
   const base = process.env.GHOST_ADMIN_API_URL!;
   const key = process.env.GHOST_ADMIN_API_KEY!;
   const token = makeToken(key);
@@ -61,6 +89,8 @@ export async function findMemberByEmail(
   }
   const data = await res.json();
   const members: GhostMember[] = data.members ?? [];
+  // Cache the results so subsequent lookups (including listMembers) are fast.
+  if (members.length > 0) setCachedMembers(members);
   // exact email match
   const found = members.find(
     (m) => m.email.toLowerCase() === email.toLowerCase()
@@ -80,10 +110,13 @@ export function isPaidMember(m: GhostMember): boolean {
 }
 
 /**
- * Fetch all members (paginated) from Ghost. Returns active paid members
- * (used for newsletter emailing).
+ * Fetch all members (paginated) from Ghost. Uses in-process cache (60s TTL).
+ * Returns active paid members (used for newsletter emailing).
  */
 export async function listMembers(): Promise<GhostMember[]> {
+  const cached = getCachedMembers();
+  if (cached) return cached;
+
   const base = process.env.GHOST_ADMIN_API_URL!;
   const key = process.env.GHOST_ADMIN_API_KEY!;
   const token = makeToken(key);
@@ -110,5 +143,6 @@ export async function listMembers(): Promise<GhostMember[]> {
     page++;
     if (page > 20) break; // safety
   }
+  setCachedMembers(members);
   return members;
 }

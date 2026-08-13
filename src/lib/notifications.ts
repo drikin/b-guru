@@ -130,3 +130,12 @@ export async function markAllNotificationsRead(userEmail: string): Promise<numbe
   );
   return res.rowCount ?? 0;
 }
+
+/** Delete all notifications for a user. */
+export async function clearAllNotifications(userEmail: string): Promise<number> {
+  const res = await pool.query(
+    `DELETE FROM notifications WHERE user_email = $1`,
+    [userEmail]
+  );
+  return res.rowCount ?? 0;
+}
