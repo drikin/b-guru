@@ -3011,9 +3011,11 @@ export default function Home() {
         // ignore
       }
     }
-    // Smoothly scroll the timeline back to the top instead of forcing a full
-    // feed reload (the feed is already held client-side and kept live by SSE),
-    // so tapping the logo feels fluid like the sidebar jump-to-post motion.
+    // Refresh the feed with a silent diff update (debounced, abortable) so
+    // the user always sees the latest posts when tapping the logo or the
+    // "タイムライン" nav item — without a full page reload.
+    silentRefreshFeed();
+    // Smoothly scroll the timeline back to the top.
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
