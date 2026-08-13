@@ -33,36 +33,18 @@ import {
   useMantineColorScheme,
 } from "@mantine/core";
 import { mdToHtml } from "@/lib/md";
+import {
+  FeedPost,
+  FeedGroup,
+  jstDateKey,
+  groupFeed,
+  appendReplyLocal,
+  parentInFeed,
+  replaceReplyInFeed,
+  removeReplyTemp,
+} from "@/lib/feed";
 
 type View = "login" | "otp";
-
-interface UrlPreview {
-  url: string;
-  title?: string;
-  description?: string;
-  image?: string;
-  siteName?: string;
-  videoId?: string;
-}
-
-interface FeedPost {
-  id: number;
-  authorEmail: string;
-  authorName: string | null;
-  authorAvatar?: string | null;
-  parentId?: number | null;
-  replyCount?: number;
-  replies?: FeedPost[];
-  lastActivityAt?: string;
-  pinnedAt?: string | null;
-  recentComments?: number;
-  text: string;
-  images: string[];
-  urlPreview: UrlPreview | null;
-  likeCount: number;
-  likedByMe: boolean;
-  createdAt: string;
-}
 
 /** Format a timestamp in JST (primary) + PDT (secondary). e.g.
  *  "2026/8/7 20:30 JST / 04:30 PDT" */
@@ -119,13 +101,6 @@ function drinewsNextTitle(): string {
   return `${y}年${mo}月${d}日号`;
 }
 
-/** JST date string "2026-8-8" (or 2-digit padding) for grouping. */
-function jstDateKey(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-CA", { timeZone: "Asia/Tokyo" }); // YYYY-MM-DD
-}
-
 /** Human label for a JST date key, e.g. "2026年8月8日 (土)". */
 function jstDateLabel(dateKey: string): string {
   const [y, m, dd] = dateKey.split("-").map(Number);
@@ -135,44 +110,8 @@ function jstDateLabel(dateKey: string): string {
   return `${y}年${m}月${dd}日 (${wd})`;
 }
 
-interface FeedGroup {
-  dateKey: string;
-  authorEmail: string;
-  authorName: string;
-  authorAvatar?: string | null;
-  lastActivity: string;
-  posts: FeedPost[]; // exactly ONE root post per group (its replies live in posts[0].replies)
-}
-
-/** Each ROOT post is its own group (main card + its replying comments). Date key
- *  comes from the post's LATEST activity (own or newest reply), so inserting a
- *  comment keeps it on the right day and bumps it to the top of the timeline. */
-function groupFeed(posts: FeedPost[]): FeedGroup[] {
-  return posts
-    .map((p): FeedGroup | null => {
-      const act = p.lastActivityAt || p.createdAt;
-      const dateKey = jstDateKey(act);
-      if (!dateKey) return null;
-      return {
-        dateKey,
-        authorEmail: p.authorEmail,
-        authorName: p.authorName || p.authorEmail.split("@")[0],
-        authorAvatar: p.authorAvatar || null,
-        lastActivity: act,
-        posts: [p],
-      };
-    })
-    .filter((g): g is FeedGroup => g !== null)
-    .sort((a, b) => {
-      // Pure latest-activity order. (Pins were moved to the right sidebar and
-      // no longer affect timeline position.)
-      return a.lastActivity < b.lastActivity
-        ? 1
-        : a.lastActivity > b.lastActivity
-        ? -1
-        : 0;
-    });
-}
+/** Format a human label for a JST date key (rendered between date groups).
+ *  (jstDateKey / groupFeed / FeedGroup moved to @/lib/feed) */
 
 interface DrinewsArticle {
   id: number;
@@ -1564,81 +1503,9 @@ function TimelineFeed({
   return <>{rendered}</>;
 }
 
-/**
- * Optimistically insert a newly created reply (or whisper) under its parent
- * WITHOUT refetching the whole feed — so the card's scroll position, the
- * loaded "older" pages, and the group layout are all preserved.
- *
- * - whisper: the group stays put; only the new reply is appended inside it.
- * - comment: the group is bumped to the top of the timeline (existing behavior)
- *   and stays there, keeping its loaded content.
- */
-function appendReplyLocal(
-  feed: FeedPost[],
-  parentId: number,
-  created: FeedPost,
-  whisper: boolean
-): FeedPost[] {
-  const now = created.createdAt || new Date().toISOString();
-  const reply: FeedPost = {
-    id: created.id,
-    authorEmail: created.authorEmail,
-    authorName: created.authorName ?? null,
-    authorAvatar: created.authorAvatar ?? null,
-    parentId,
-    text: created.text ?? "",
-    images: created.images ?? [],
-    urlPreview: created.urlPreview ?? null,
-    likeCount: created.likeCount ?? 0,
-    likedByMe: created.likedByMe ?? false,
-    createdAt: now,
-    lastActivityAt: now,
-    replies: [],
-    replyCount: 0,
-  };
+// Optimistic feed mutation helpers (appendReplyLocal / parentInFeed /
+// replaceReplyInFeed / removeReplyTemp) now live in @/lib/feed (pure + tested).
 
-  const appendTo = (root: FeedPost): FeedPost => {
-    const list = [...(root.replies ?? [])];
-    if (!list.some((rp) => rp.id === reply.id)) {
-      list.push(reply);
-      list.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
-    }
-    const bumped = {
-      ...root,
-      replies: list,
-      replyCount: (root.replyCount ?? 0) + 1,
-      // Normal comments move the group up (its lastActivity follows the new
-      // reply); whispers deliberately leave lastActivity unchanged.
-      lastActivityAt: whisper ? root.lastActivityAt : now,
-    };
-    return bumped;
-  };
-
-  let changed = false;
-  const next = feed.map((root) => {
-    if (root.id === parentId) {
-      changed = true;
-      return appendTo(root);
-    }
-    if ((root.replies ?? []).some((rp) => rp.id === parentId)) {
-      changed = true;
-      return appendTo(root);
-    }
-    return root;
-  });
-
-  if (!changed) return feed;
-
-  if (whisper) return next;
-
-  // For a normal comment, bring the bumped group to the top.
-  const bumped = next.find((r) => r.id === parentId || (r.replies ?? []).some((rp) => rp.id === parentId));
-  if (!bumped) return next;
-  return [
-    bumped,
-    ...next.filter((r) => r !== bumped),
-  ];
-}
 
 export default function Home() {
   const [auth, setAuth] = useState<null | {
@@ -2062,6 +1929,8 @@ export default function Home() {
   threadPostRef.current = threadPost;
   const feedLoadingRef = useRef(feedLoading);
   feedLoadingRef.current = feedLoading;
+  const feedPostsRef = useRef(feedPosts);
+  feedPostsRef.current = feedPosts;
 
   // Debounce + abort controller for silentRefreshFeed: multiple SSE events
   // arriving in quick succession (e.g. rapid comments) used to fire several
@@ -2823,36 +2692,63 @@ export default function Home() {
     async (e?: React.FormEvent) => {
       e?.preventDefault();
       const text = postText.trim();
-      if ((!text && pendingImages.length === 0) || posting) return;
+      const images = pendingImages;
+      if ((!text && images.length === 0) || posting) return;
       setPosting(true);
       setPostError(null);
+      // Optimistic insert: show the post at the top of the timeline IMMEDIATELY
+      // (before the network round-trip) instead of waiting for /api/publish —
+      // which used to make URL posts appear only after a multi-second OG fetch.
+      // `groupFeed` re-sorts by lastActivityAt every render, so the temp post
+      // (created now) always renders at the top even if a concurrent
+      // silentRefreshFeed momentarily changes the array order.
+      setPostText("");
+      setPendingImages([]);
+      const tempId = Date.now();
+      const tempPost: FeedPost = {
+        id: tempId,
+        authorEmail: auth?.email ?? "",
+        authorName: auth?.name ?? null,
+        authorAvatar: avatarSrc ?? null,
+        parentId: null,
+        replyCount: 0,
+        text,
+        images,
+        urlPreview: null,
+        likeCount: 0,
+        likedByMe: false,
+        createdAt: new Date().toISOString(),
+        lastActivityAt: new Date().toISOString(),
+        pinnedAt: null,
+        replies: [],
+      };
+      setFeedPosts((prev) =>
+        prev.some((p) => p.id === tempId) ? prev : [tempPost, ...prev]
+      );
       try {
         const r = await fetch("/api/publish", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, images: pendingImages }),
+          body: JSON.stringify({ text, images }),
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || "投稿失敗");
-        setPostText("");
-        setPendingImages([]);
-        // Insert the returned post at the top of the feed (no full reload).
-        // This works now that createPost returns a complete FeedPost object
-        // (with lastActivityAt, parentId, authorAvatar, etc.) and the SSE
-        // self-event skip prevents a redundant silentRefreshFeed from racing.
+        // Swap the temp post for the authoritative server post.
         if (d.post) {
-          setFeedPosts((prev) => {
-            if (prev.some((p) => p.id === d.post.id)) return prev;
-            return [d.post, ...prev];
-          });
+          setFeedPosts((prev) =>
+            prev.some((p) => p.id === d.post.id)
+              ? prev.filter((p) => p.id !== tempId) // server post already present (via refresh)
+              : prev.map((p) => (p.id === tempId ? d.post : p))
+          );
         }
       } catch (err: any) {
         setPostError(err.message);
+        setFeedPosts((prev) => prev.filter((p) => p.id !== tempId));
       } finally {
         setPosting(false);
       }
     },
-    [postText, pendingImages, posting]
+    [postText, pendingImages, posting, auth, avatarSrc]
   );
 
   // Reply button: open that post's thread view and show the reply box.
@@ -2878,88 +2774,16 @@ export default function Home() {
   // Submit a reply from within the thread view. whisper=true posts it as a
   // whisper (is_whisper) so the group does NOT bump to the top of the timeline.
   const submitThreadReply = async (whisper = false) => {
-    if (!threadPost || replying) return;
+    if (!threadPost) return;
     const text = replyText.trim();
     if (!text && threadReplyImages.length === 0) return;
-    setReplying(whisper ? 'whisper' : 'comment');
-    setReplyError(null);
-    // Optimistically add the reply to the thread view immediately.
-    const tempId = Date.now();
-    const tempReply: FeedPost = {
-      id: tempId,
-      authorEmail: auth?.email ?? "",
-      authorName: auth?.name ?? null,
-      authorAvatar: avatarSrc ?? null,
+    await createReply({
       parentId: threadPost.id,
       text,
       images: threadReplyImages,
-      urlPreview: null,
-      likeCount: 0,
-      likedByMe: false,
-      createdAt: new Date().toISOString(),
-      lastActivityAt: new Date().toISOString(),
-      replies: [],
-      replyCount: 0,
-    };
-    setThreadReplies((prev) => [...prev, tempReply]);
-    setReplyText("");
-    setThreadReplyImages([]);
-    setThreadWhisper(false);
-    try {
-      const r = await fetch("/api/publish", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, images: tempReply.images, parentId: threadPost.id, whisper }),
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error || "返信失敗");
-      // Replace the temp reply with the real one.
-      const created = d.post;
-      setThreadReplies((prev) =>
-        prev.map((rp) =>
-          rp.id === tempId
-            ? {
-                ...created,
-                id: created.id,
-                authorEmail: created.authorEmail,
-                authorName: created.authorName ?? null,
-                authorAvatar: created.authorAvatar ?? null,
-                parentId: threadPost.id,
-                text: created.text ?? "",
-                images: created.images ?? [],
-                urlPreview: created.urlPreview ?? null,
-                likeCount: 0,
-                likedByMe: false,
-                createdAt: new Date(created.createdAt).toISOString(),
-                lastActivityAt: new Date(created.createdAt).toISOString(),
-                replies: [],
-                replyCount: 0,
-              }
-            : rp
-        )
-      );
-      // Also update the feed's inline replies for this post.
-      setFeedPosts((prev) => appendReplyLocal(prev, threadPost.id, created, !!whisper));
-      // Scroll to the newly posted reply inside the thread view.
-      requestAnimationFrame(() => {
-        const el = document.querySelector(
-          `[data-reply-id="${created.id}"]`
-        ) as HTMLElement | null;
-        if (el) {
-          el.scrollIntoView({ behavior: "smooth", block: "center" });
-          el.classList.add("pin-target-flash");
-          window.setTimeout(() => el.classList.remove("pin-target-flash"), 2400);
-        }
-      });
-    } catch (err: any) {
-      // Rollback: remove the optimistic reply.
-      setThreadReplies((prev) => prev.filter((rp) => rp.id !== tempId));
-      setReplyError(err.message);
-      // Restore the text so the user can retry.
-      setReplyText(text);
-    } finally {
-      setReplying(false);
-    }
+      whisper,
+      mode: "thread",
+    });
   };
 
   // ---- Inline "insert between cards" comment (timeline group) ----
@@ -2980,22 +2804,60 @@ export default function Home() {
   const submitInlineReply = async (postId: number, whisper?: boolean) => {
     const isWhisper = whisper ?? inlineWhisper;
     const text = inlineReplyText.trim();
-    if ((!text && inlineReplyImages.length === 0) || inlineReplying) return;
-    setInlineReplying(isWhisper ? 'whisper' : 'comment');
-    // Optimistically insert the reply into the feed IMMEDIATELY (before the
-    // network round-trip) so the user sees instant feedback.  Clear the
-    // input box right away — this also prevents double-submits because the
-    // text is gone and inlineReplying is non-false while the request is
-    // in-flight.
-    const tempId = Date.now(); // temporary ID until the server responds
+    if (!text && inlineReplyImages.length === 0) return;
+    await createReply({
+      parentId: postId,
+      text,
+      images: inlineReplyImages,
+      whisper: isWhisper,
+      mode: "inline",
+    });
+  };
+
+  // ---- Shared reply/whisper creator (used by both the thread and the inline
+  // "insert between cards" UIs) ----
+  // Unifies two previously near-identical optimistic-insert paths so comments
+  // and whispers reflect instantly and CONSISTENTLY in both the thread view and
+  // the timeline group. Handles: optimistic temp insert → swap for the server's
+  // real reply on success → rollback on failure. If the parent group isn't part
+  // of the currently loaded feed, it falls back to a reliable server refresh
+  // instead of silently dropping the comment (the "didn't reflect" bug).
+  const createReply = async (opts: {
+    parentId: number;
+    text: string;
+    images: string[];
+    whisper: boolean;
+    mode: "inline" | "thread";
+  }): Promise<void> => {
+    const { parentId, text, images, whisper, mode } = opts;
+    if (!text && images.length === 0) return;
+    if (mode === "thread") {
+      if (replying) return;
+      setReplying(whisper ? "whisper" : "comment");
+      setReplyError(null);
+      setReplyText("");
+      setThreadReplyImages([]);
+      setThreadWhisper(false);
+    } else {
+      if (inlineReplying) return;
+      setInlineReplying(whisper ? "whisper" : "comment");
+      setInlineReplyFor(null);
+      setInlineReplyText("");
+      setInlineReplyImages([]);
+    }
+
+    // Optimistic reply — appears instantly in the open thread and (when the
+    // parent group is loaded) in the timeline.
+    const parentWasInFeed = parentInFeed(feedPostsRef.current, parentId);
+    const tempId = Date.now();
     const tempReply: FeedPost = {
       id: tempId,
       authorEmail: auth?.email ?? "",
       authorName: auth?.name ?? null,
       authorAvatar: avatarSrc ?? null,
-      parentId: postId,
+      parentId,
       text,
-      images: inlineReplyImages,
+      images,
       urlPreview: null,
       likeCount: 0,
       likedByMe: false,
@@ -3004,72 +2866,82 @@ export default function Home() {
       replies: [],
       replyCount: 0,
     };
-    setInlineReplyFor(null);
-    setInlineReplyText("");
-    setInlineReplyImages([]);
-    setFeedPosts((prev) => appendReplyLocal(prev, postId, tempReply, !!isWhisper));
+    if (mode === "thread") {
+      setThreadReplies((prev) => [...prev, tempReply]);
+    }
+    setFeedPosts((prev) =>
+      parentInFeed(prev, parentId)
+        ? appendReplyLocal(prev, parentId, tempReply, whisper)
+        : prev
+    );
+
     try {
       const r = await fetch("/api/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, images: tempReply.images, parentId: postId, whisper: isWhisper }),
+        body: JSON.stringify({ text, images, parentId, whisper }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "コメント失敗");
-      // Replace the temporary reply with the real one from the server.
       const created = d.post;
+      const realReply: FeedPost = {
+        ...created,
+        id: created.id,
+        parentId,
+        replies: [],
+        replyCount: 0,
+      };
+      if (mode === "thread") {
+        setThreadReplies((prev) =>
+          prev.map((rp) => (rp.id === tempId ? realReply : rp))
+        );
+        // Scroll to the new reply inside the thread view.
+        requestAnimationFrame(() => {
+          const el = document.querySelector(
+            `[data-reply-id="${created.id}"]`
+          ) as HTMLElement | null;
+          if (el) {
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+            el.classList.add("pin-target-flash");
+            window.setTimeout(() => el.classList.remove("pin-target-flash"), 2400);
+          }
+        });
+      } else {
+        // Scroll to the parent post so the user sees their comment in context.
+        pendingScrollRef.current = parentId;
+      }
       setFeedPosts((prev) => {
-        const replaceTemp = (root: FeedPost): FeedPost => {
-          if (root.id !== postId && !(root.replies ?? []).some((rp) => rp.id === postId)) return root;
-          // Remove BOTH the temp reply (tempId) AND any stale server reply
-          // with the same real ID (could've been brought in by a silentRefreshFeed
-          // that raced between our optimistic insert and this replacement).
-          const filtered = (root.replies ?? []).filter(
-            (rp) => rp.id !== tempId && rp.id !== created.id
-          );
-          const realReply: FeedPost = {
-            id: created.id,
-            authorEmail: created.authorEmail,
-            authorName: created.authorName ?? null,
-            authorAvatar: created.authorAvatar ?? null,
-            parentId: postId,
-            text: created.text ?? "",
-            images: created.images ?? [],
-            urlPreview: created.urlPreview ?? null,
-            likeCount: 0,
-            likedByMe: false,
-            createdAt: new Date(created.createdAt).toISOString(),
-            lastActivityAt: new Date(created.createdAt).toISOString(),
-            replies: [],
-            replyCount: 0,
-          };
-          const replies = [...filtered, realReply];
-          replies.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
-          return { ...root, replies };
-        };
-        return prev.map(replaceTemp);
+        const next = parentInFeed(prev, parentId)
+          ? replaceReplyInFeed(prev, parentId, tempId, realReply, whisper)
+          : prev;
+        if (whisper) return next;
+        // Non-whisper: bring the bumped group to the top.
+        const bumped = next.find(
+          (r) =>
+            r.id === parentId ||
+            (r.replies ?? []).some((rp) => rp.id === created.id)
+        );
+        if (!bumped) return next;
+        return [bumped, ...next.filter((r) => r !== bumped)];
       });
-      // Scroll to the parent post so the user sees their comment in context.
-      // For normal comments the group bumped to the top; for whispers it
-      // stayed in place. Either way, scroll to the parent card.
-      pendingScrollRef.current = postId;
+      // If the parent group wasn't in the loaded feed at all, pull a fresh page
+      // so the new comment (which bumps a non-whisper parent into page 1) is
+      // never silently dropped from the timeline.
+      if (!parentWasInFeed) silentRefreshFeed();
     } catch (err: any) {
-      // Rollback: remove the optimistic reply and restore the text.
-      setFeedPosts((prev) => {
-        const removeTemp = (root: FeedPost): FeedPost => {
-          if (root.id !== postId && !(root.replies ?? []).some((rp) => rp.id === postId)) return root;
-          const replies = (root.replies ?? []).filter((rp) => rp.id !== tempId);
-          return {
-            ...root,
-            replies,
-            replyCount: Math.max(0, (root.replyCount ?? 0) - 1),
-          };
-        };
-        return prev.map(removeTemp);
-      });
-      setInlineReplyText(text + "\n\n(エラー: " + err.message + ")");
+      // Rollback the optimistic reply (both the feed group and the thread) and
+      // restore the text.
+      setFeedPosts((prev) => removeReplyTemp(prev, parentId, tempId));
+      if (mode === "thread") {
+        setThreadReplies((prev) => prev.filter((rp) => rp.id !== tempId));
+        setReplyText(text);
+        setReplyError(err.message);
+      } else {
+        setInlineReplyText(text + "\n\n(エラー: " + err.message + ")");
+      }
     } finally {
-      setInlineReplying(false);
+      if (mode === "thread") setReplying(false);
+      else setInlineReplying(false);
     }
   };
 

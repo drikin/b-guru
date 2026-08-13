@@ -2,6 +2,7 @@
 import crypto from "crypto";
 import { pool } from "./db";
 import { fetchUrlPreview, UrlPreview } from "./urlpreview";
+import { emitLive } from "./live";
 
 export interface FeedPost {
   id: number;
@@ -51,23 +52,25 @@ function firstUrl(text: string): string | null {
 
 /** Create a post + its images (transaction), fetching URL preview. */
 export async function createPost(input: NewPostInput): Promise<FeedPost> {
-  // Fetch preview (best effort, don't block failure)
-  let urlPreview: UrlPreview | null = null;
-  const rawUrl = firstUrl(input.text);
-  if (rawUrl) {
-    urlPreview = await fetchUrlPreview(rawUrl);
-  }
+  // NOTE: URL preview is fetched NON-blocking after the commit (see below) so we
+  // never hold the POST handler on an external OG fetch (which could take up to
+  // ~8s). The response returns immediately; the preview card fills in via an SSE
+  // "update" event and the next feed refresh.
+  const rawUrl = firstUrl(input.text) || null;
 
   const client = await pool.connect();
+  let postId: number = 0;
+  let createdAt: string = "";
+  let images: string[] = [];
   try {
     await client.query("BEGIN");
     const ins = await client.query(
       `INSERT INTO posts (author_email, author_name, text, url_preview, parent_id, is_whisper, source_drinews_comment_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
-      [input.authorEmail, input.authorName, input.text, JSON.stringify(urlPreview), input.parentId ?? null, !!input.isWhisper, input.sourceDrinewsCommentId ?? null]
+      [input.authorEmail, input.authorName, input.text, null, input.parentId ?? null, !!input.isWhisper, input.sourceDrinewsCommentId ?? null]
     );
-    const postId = ins.rows[0].id;
-    const createdAt = ins.rows[0].created_at;
+    postId = ins.rows[0].id;
+    createdAt = ins.rows[0].created_at;
 
     // Mirror: a REAL timeline reply to the Beagle feed post (drinews_article_id
     // set) that did NOT come from a drinews comment → add an equivalent comment
@@ -88,7 +91,7 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
       }
     }
 
-    const images = input.images ?? [];
+    images = input.images ?? [];
     for (let i = 0; i < images.length; i++) {
       await client.query(
         `INSERT INTO post_images (post_id, url, sort_order) VALUES ($1, $2, $3)`,
@@ -96,31 +99,50 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
       );
     }
     await client.query("COMMIT");
-
-    const isoCreated = new Date(createdAt).toISOString();
-    return {
-      id: postId,
-      authorEmail: input.authorEmail,
-      authorName: input.authorName,
-      authorAvatar: gravatarUrl(input.authorEmail),
-      parentId: input.parentId ?? null,
-      replyCount: 0,
-      text: input.text,
-      images,
-      urlPreview,
-      likeCount: 0,
-      likedByMe: false,
-      createdAt: isoCreated,
-      lastActivityAt: isoCreated, // New post has no replies yet → activity = creation time
-      pinnedAt: null,
-      replies: [],
-    };
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
   } finally {
     client.release();
   }
+
+  // Non-blocking URL preview: fill in the preview AFTER the commit so the POST
+  // response is never held up by an external fetch. When it resolves we persist
+  // it and broadcast an SSE "update" so every connected client (including the
+  // author, on their next refresh) picks up the link card.
+  if (rawUrl) {
+    const pid = postId;
+    const author = input.authorEmail;
+    fetchUrlPreview(rawUrl)
+      .then((pv) => pool.query(`UPDATE posts SET url_preview = $1 WHERE id = $2`, [JSON.stringify(pv), pid]))
+      .then(() => {
+        try {
+          emitLive({ type: "post", postId: pid, action: "update", authorEmail: author });
+        } catch {
+          /* ignore */
+        }
+      })
+      .catch((e) => console.error("preview update error:", (e as any)?.message));
+  }
+
+  const isoCreated = new Date(createdAt).toISOString();
+  return {
+    id: postId,
+    authorEmail: input.authorEmail,
+    authorName: input.authorName,
+    authorAvatar: gravatarUrl(input.authorEmail),
+    parentId: input.parentId ?? null,
+    replyCount: 0,
+    text: input.text,
+    images,
+    urlPreview: null, // link preview arrives via the async update above
+    likeCount: 0,
+    likedByMe: false,
+    createdAt: isoCreated,
+    lastActivityAt: isoCreated, // New post has no replies yet → activity = creation time
+    pinnedAt: null,
+    replies: [],
+  };
 }
 
 /** Shared SELECT fragment and row→FeedPost mapper used by listPosts / getPostThread. */
