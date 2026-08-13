@@ -365,6 +365,14 @@ function MentionTextarea({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // During IME composition (Japanese, Chinese, Korean, …), let the IME own
+    // Enter/Arrow/Tab — otherwise the mention navigator hijacks them and the
+    // user can't commit or pick IME candidates. The parent's onKeyDown guards
+    // its own shortcuts against composition, so it is safe to fall through.
+    if ((e.nativeEvent as any).isComposing) {
+      onKeyDown?.(e);
+      return;
+    }
     // Mention suggestions are open — handle navigation/selection.
     // But always let modifier-key combos (Cmd/Ctrl+Enter, Shift+Enter) pass
     // through to the parent's onKeyDown so reply/whisper shortcuts work even
