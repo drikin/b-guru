@@ -418,7 +418,7 @@ function MentionTextarea({
             zIndex: 1000,
             left: 0,
             right: 0,
-            background: "white",
+            background: "var(--bg-surface)",
             border: "1px solid var(--border-default)",
             borderRadius: 8,
             boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
@@ -436,7 +436,7 @@ function MentionTextarea({
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
-                background: i === suggestIndex ? "var(--bg-tinted)" : "white",
+                background: i === suggestIndex ? "var(--bg-suggest-active)" : "var(--bg-surface)",
               }}
               onMouseEnter={() => setSuggestIndex(i)}
             >
