@@ -89,8 +89,15 @@ export async function findMemberByEmail(
   }
   const data = await res.json();
   const members: GhostMember[] = data.members ?? [];
-  // Cache the results so subsequent lookups (including listMembers) are fast.
-  if (members.length > 0) setCachedMembers(members);
+  // Index these search hits into the fast email map for repeat lookups, but do
+  // NOT overwrite the shared full-member cache (`setCachedMembers`): Ghost's
+  // `search=<email>` only matches the queried email, so replacing the whole
+  // list with it makes /api/members (the @mention suggestion source) return
+  // just that one member instead of everyone. The full list cache is only ever
+  // filled by listMembers().
+  for (const m of members) {
+    memberByEmail.set(m.email.toLowerCase(), m);
+  }
   // exact email match
   const found = members.find(
     (m) => m.email.toLowerCase() === email.toLowerCase()
