@@ -1721,6 +1721,10 @@ export default function Home() {
   // Post currently being jumped-to from a right-sidebar card (feeds the card's
   // loading indicator while it pages back to fetch the post).
   const [scrollingPostId, setScrollingPostId] = useState<number | null>(null);
+  // After posting a comment/whisper, we scroll to the (potentially bumped)
+  // parent post so the user sees their contribution in context. Set via ref,
+  // consumed by a useEffect that watches feedPosts and performs the scroll.
+  const pendingScrollRef = useRef<number | null>(null);
   const feedCursorRef = useRef<string | null>(null);
   const feedSentinelRef = useRef<HTMLDivElement | null>(null);
   const [postText, setPostText] = useState("");
@@ -2035,7 +2039,12 @@ export default function Home() {
     // Don't refresh during search — SSE events would wipe the search results.
     if (searchQueryRef.current.trim()) return;
     const nav = activeNavRef.current;
-    if (feedLoadingRef.current) return;
+    // NOTE: we intentionally do NOT skip when feedLoadingRef.current is true.
+    // The merge logic (below) safely diffs server data against local state,
+    // so even a concurrent loadFeed() won't cause stale overwrites. Skipping
+    // here was causing SSE events to be silently dropped when a loadFeed was
+    // in flight (e.g. right after goHome / nav switch), which was the root
+    // cause of "comments not reflecting until manual reload".
 
     // Debounce: collapse rapid successive events into a single fetch (150ms).
     if (silentRefreshTimerRef.current) clearTimeout(silentRefreshTimerRef.current);
@@ -2146,11 +2155,38 @@ export default function Home() {
       loadOnline();
       if (!threadPostRef.current) silentRefreshFeed();
     };
-    es.onerror = () => {};
+    es.onerror = () => {
+      // EventSource auto-reconnects. When it does, onopen fires and we
+      // silentRefreshFeed() to recover any events missed during the
+      // disconnect. Nothing to do here — the reconnect + onopen handles it.
+    };
     return () => {
       es.close();
     };
   }, [auth, silentRefreshFeed, loadPinned, loadHot, loadOnline, showWave]);
+
+  // Scroll to a post after its reply bumps it (or after inline insertion).
+  // pendingScrollRef is set by submitInlineReply / submitThreadReply on
+  // success. We wait for the next feedPosts commit (which reflects the
+  // optimistic / server update), then scrollIntoView the [data-post-id]
+  // element. A double-rAF ensures React has painted the DOM.
+  useEffect(() => {
+    const targetId = pendingScrollRef.current;
+    if (targetId == null) return;
+    const el = document.querySelector(
+      `[data-post-id="${targetId}"]`
+    ) as HTMLElement | null;
+    if (!el) return; // not rendered (e.g. filtered view) — give up silently
+    pendingScrollRef.current = null;
+    // Double rAF: wait for the browser to paint the updated layout.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        el.classList.add("pin-target-flash");
+        window.setTimeout(() => el.classList.remove("pin-target-flash"), 2400);
+      })
+    );
+  }, [feedPosts]);
 
   // Periodic self-heal for the online panel: refresh even if a presence SSE
   // event or onopen callback was missed (e.g. iOS Safari dropping the stream).
@@ -2841,6 +2877,17 @@ export default function Home() {
       );
       // Also update the feed's inline replies for this post.
       setFeedPosts((prev) => appendReplyLocal(prev, threadPost.id, created, !!whisper));
+      // Scroll to the newly posted reply inside the thread view.
+      requestAnimationFrame(() => {
+        const el = document.querySelector(
+          `[data-reply-id="${created.id}"]`
+        ) as HTMLElement | null;
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          el.classList.add("pin-target-flash");
+          window.setTimeout(() => el.classList.remove("pin-target-flash"), 2400);
+        }
+      });
     } catch (err: any) {
       // Rollback: remove the optimistic reply.
       setThreadReplies((prev) => prev.filter((rp) => rp.id !== tempId));
@@ -2871,7 +2918,7 @@ export default function Home() {
     const isWhisper = whisper ?? inlineWhisper;
     const text = inlineReplyText.trim();
     if ((!text && inlineReplyImages.length === 0) || inlineReplying) return;
-    setInlineReplying(whisper ? 'whisper' : 'comment');
+    setInlineReplying(isWhisper ? 'whisper' : 'comment');
     // Optimistically insert the reply into the feed IMMEDIATELY (before the
     // network round-trip) so the user sees instant feedback.  Clear the
     // input box right away — this also prevents double-submits because the
@@ -2939,6 +2986,10 @@ export default function Home() {
         };
         return prev.map(replaceTemp);
       });
+      // Scroll to the parent post so the user sees their comment in context.
+      // For normal comments the group bumped to the top; for whispers it
+      // stayed in place. Either way, scroll to the parent card.
+      pendingScrollRef.current = postId;
     } catch (err: any) {
       // Rollback: remove the optimistic reply and restore the text.
       setFeedPosts((prev) => {
@@ -2990,7 +3041,9 @@ export default function Home() {
     } else {
       setThreadPost(null);
       setThreadReplies([]);
-      loadFeed(); // refresh reply counts on timeline
+      // Use silent diff refresh instead of full reload — preserves scroll
+      // position and loaded older pages while syncing reply counts.
+      silentRefreshFeed();
     }
   };
 
@@ -3011,10 +3064,11 @@ export default function Home() {
         // ignore
       }
     }
-    // Refresh the feed with a silent diff update (debounced, abortable) so
-    // the user always sees the latest posts when tapping the logo or the
-    // "タイムライン" nav item — without a full page reload.
-    silentRefreshFeed();
+    // NOTE: removed silentRefreshFeed() here — when navigating back to the
+    // feed from another nav, the activeNav Effect calls loadFeed() which is
+    // the authoritative full reload. Calling silentRefreshFeed in the same
+    // tick caused a race with loadFeed's setFeedLoading(true). When already
+    // on the feed, the SSE connection keeps the timeline live anyway.
     // Smoothly scroll the timeline back to the top.
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -4131,8 +4185,8 @@ export default function Home() {
                       {/* Replies in chronological order */}
                       {threadReplies.length > 0 && <Divider label="返信" labelPosition="left" />}
                       {threadReplies.map((rep) => (
+                        <Box key={rep.id} data-reply-id={rep.id}>
                         <PostCard
-                          key={rep.id}
                           post={rep}
                           auth={auth}
                           mentionMembers={mentionMembers}
@@ -4147,6 +4201,7 @@ export default function Home() {
                           onPin={handlePin}
                           onPreview={setPreviewImage}
                         />
+                        </Box>
                       ))}
                       {threadReplies.length === 0 && (
                         <Text size="sm" c="dimmed">
