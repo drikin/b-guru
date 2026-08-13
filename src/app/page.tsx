@@ -3512,29 +3512,49 @@ export default function Home() {
             position: "relative",
           }}
         >
-          {/* Left: hamburger (wordmark removed — the centered logo is the brand) */}
+          {/* Left: beagle logo on mobile — replaces the left hamburger (drikin 2026-08).
+              The logo retains the left hamburger's role: tapping it opens the left menu.
+              The center logo (back to timeline top) is dropped on mobile. */}
           <Group gap="xs" wrap="nowrap">
-            <Burger
-              opened={navOpened}
+            <UnstyledButton
               onClick={() => setNavOpened((o) => !o)}
-              size="sm"
+              aria-label="メニューを開く"
               hiddenFrom="sm"
-            />
+              style={{
+                cursor: "pointer",
+                background: "transparent",
+                border: "none",
+                padding: 0,
+                lineHeight: 0,
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <Image
+                src="/icon-192.png"
+                alt="B-guru"
+                w={28}
+                h={28}
+                fit="contain"
+                style={{ display: "block", borderRadius: 6 }}
+              />
+            </UnstyledButton>
           </Group>
-          {/* Center: site logo (blue leaping dog) */}
+          {/* Center: beagle logo on desktop */}
           <UnstyledButton
             onClick={goHome}
             aria-label="タイムラインへ戻る"
+            visibleFrom="sm"
             style={{
               cursor: "pointer",
               background: "transparent",
               border: "none",
               padding: 0,
+              lineHeight: 0,
               position: "absolute",
               left: "50%",
               top: "50%",
               transform: "translate(-50%, -50%)",
-              lineHeight: 0,
             }}
           >
             <Image
@@ -3546,22 +3566,8 @@ export default function Home() {
               style={{ display: "block", borderRadius: 6 }}
             />
           </UnstyledButton>
+          {/* Right: hamburger (mobile/tablet) — opens the right sidebar + unread badge. Kept. */}
           <Group gap="sm" wrap="nowrap">
-            <Group gap={8} visibleFrom="sm">
-              <Avatar src={avatarSrc} alt={displayName} radius="xl" size="sm" color="green">
-                {displayName.charAt(0).toUpperCase()}
-              </Avatar>
-              <div style={{ lineHeight: 1.2 }}>
-                <Text size="sm" fw={600} c="inherit">
-                  {auth.name || auth.email}
-                </Text>
-                <Text size="xs" c="dimmed">
-                  {auth.name ? auth.email : ""}
-                </Text>
-              </div>
-            </Group>
-            {/* Bell icon removed — notifications moved to the right sidebar (below search).
-                Unread badge is now on the right Burger for symmetry. */}
             <Indicator
               inline
               size={16}
@@ -3578,9 +3584,6 @@ export default function Home() {
                 aria-label="右パネルを開く"
               />
             </Indicator>
-            <Button variant="default" size="xs" onClick={logout} visibleFrom="sm">
-              ログアウト
-            </Button>
           </Group>
         </div>
       </AppShell.Header>
@@ -3589,9 +3592,6 @@ export default function Home() {
       <AppShell.Navbar p="xs" style={{ background: "var(--bg-surface)", borderRight: "1px solid var(--border-default)" }}>
         <ScrollArea>
           <Stack gap={2}>
-            <Text size="xs" fw={700} c="dimmed" p="xs">
-              メニュー
-            </Text>
             {NAV_ITEMS.map((item) => (
               <NavLink
                 key={item.key}
@@ -3802,6 +3802,39 @@ export default function Home() {
           )}
           <span>{isDark ? "ライトモード" : "ダークモード"}</span>
         </UnstyledButton>
+        {/* Account: profile + logout — moved from header to bottom of left sidebar */}
+        <Divider my="xs" />
+        <Group wrap="nowrap" align="center" gap={10} style={{ padding: "10px 6px", borderRadius: 8 }}>
+          <Avatar src={avatarSrc} alt={displayName} radius="xl" size="md" color="green">
+            {displayName.charAt(0).toUpperCase()}
+          </Avatar>
+          <div style={{ flex: 1, minWidth: 0, lineHeight: 1.2 }}>
+            <Text size="sm" fw={600} c="inherit" truncate>
+              {auth.name || auth.email}
+            </Text>
+            <Text size="xs" c="dimmed" truncate>
+              {auth.name ? auth.email : ""}
+            </Text>
+          </div>
+          <Tooltip label="ログアウト" withArrow>
+            <ActionIcon variant="subtle" color="gray" onClick={logout} aria-label="ログアウト">
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+            </ActionIcon>
+          </Tooltip>
+        </Group>
       </AppShell.Navbar>
 
       {/* Right sidebar: visible only on very wide screens. Hosts the pinned-post
