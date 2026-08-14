@@ -13,6 +13,7 @@
   --bg-quote: #f0fdf4;
   --bg-code: #f1f5f9;
   --bg-reply: #fbfcf8;
+  --bg-unread: #eef7e4;
   --bg-suggest-active: #f0fdf4;
 
   --text-primary: #0f172a;
@@ -50,6 +51,7 @@
   --bg-quote: #13241a;
   --bg-code: #25282f;
   --bg-reply: #181b21;
+  --bg-unread: #222e20;
   --bg-suggest-active: #1e3a28;
 
   --text-primary: #e2e8f0;

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   AppShell,
   NavLink,
@@ -455,6 +455,126 @@ function PinCountdown({ pinnedAt }: { pinnedAt: string }) {
 /* Shared post card used both in the timeline feed and the thread view.
  * Holds the single implementation of like/reply/edit/delete/image/URL so we
  * never duplicate post UI between the timeline and thread views. */
+// =====================================================================
+// Auto read/unread (per-card, client-side)
+// ---------------------------------------------------------------------
+// A card is "unread" (subtly highlighted) when it is NEWER than the last
+// time this browser was viewing the feed (`lastSeenAt`) and has not yet
+// been "read". Any unread card that stays in the viewport for
+// AUTO_READ_DWELL_MS is automatically marked read. Read state is persisted
+// per browser/user in localStorage, and judged per individual card (each
+// root card AND each reply has its own id — not per group).
+//
+// Implementation is self-contained: every PostCard subscribes to the same
+// module store via useSyncExternalStore, and a single shared
+// IntersectionObserver watches every [data-unread-id] card so dwell-based
+// auto-read works everywhere the card is rendered (feed + thread view).
+// =====================================================================
+const BGURU_READ_KEY = "bguru_read_posts_v1";
+const AUTO_READ_DWELL_MS = 1800;
+
+type ReadStore = { lastSeenAt: number; read: Set<number> };
+
+function loadReadStore(): ReadStore {
+  const fallback: ReadStore = { lastSeenAt: Date.now(), read: new Set<number>() };
+  try {
+    const raw = localStorage.getItem(BGURU_READ_KEY);
+    if (!raw) return fallback;
+    const d = JSON.parse(raw);
+    const read = new Set<number>(
+      Array.isArray(d.read) ? d.read.filter((n: unknown) => typeof n === "number") : []
+    );
+    return {
+      lastSeenAt: typeof d.lastSeenAt === "number" ? d.lastSeenAt : Date.now(),
+      read,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+let readStore: ReadStore = loadReadStore();
+const readListeners = new Set<() => void>();
+function persistReadStore() {
+  try {
+    localStorage.setItem(
+      BGURU_READ_KEY,
+      JSON.stringify({ lastSeenAt: readStore.lastSeenAt, read: [...readStore.read] })
+    );
+  } catch {}
+}
+function subscribeRead(l: () => void) {
+  readListeners.add(l);
+  return () => {
+    readListeners.delete(l);
+  };
+}
+function getReadSnapshot() {
+  return readStore;
+}
+function isReadId(id: number) {
+  return readStore.read.has(id);
+}
+function markReadId(id: number) {
+  if (readStore.read.has(id)) return;
+  // Advance the "seen" boundary to this card's createdAt when it is newer, so
+  // a post is "new/unread" iff it is newer than the newest post actually read.
+  const created = readPostCreated.get(id);
+  readStore = {
+    lastSeenAt: created && created > readStore.lastSeenAt ? created : readStore.lastSeenAt,
+    read: new Set(readStore.read).add(id),
+  };
+  persistReadStore();
+  readListeners.forEach((l) => l());
+}
+
+// Shared IntersectionObserver: a single observer tracks every unread card and
+// marks it read once it stays in the viewport for AUTO_READ_DWELL_MS.
+let readObserver: IntersectionObserver | null = null;
+const readDwellTimers = new Map<number, ReturnType<typeof setTimeout>>();
+// id -> createdAt(ms), populated by PostCard while rendering, so markReadId can
+// advance the "seen" boundary to the newest post actually read.
+const readPostCreated = new Map<number, number>();
+function readIdOf(el: Element) {
+  const n = Number(el.getAttribute("data-unread-id"));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+function ensureReadObserver() {
+  if (readObserver || typeof IntersectionObserver === "undefined") return;
+  readObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        const id = readIdOf(entry.target);
+        if (id === null) continue;
+        if (entry.isIntersecting) {
+          if (isReadId(id) || readDwellTimers.has(id)) continue;
+          readDwellTimers.set(
+            id,
+            setTimeout(() => {
+              readDwellTimers.delete(id);
+              markReadId(id);
+            }, AUTO_READ_DWELL_MS)
+          );
+        } else {
+          const t = readDwellTimers.get(id);
+          if (t) {
+            clearTimeout(t);
+            readDwellTimers.delete(id);
+          }
+        }
+      }
+    },
+    { threshold: 0.25 }
+  );
+}
+function observeUnreadCard(el: HTMLElement | null) {
+  ensureReadObserver();
+  if (!el || !readObserver) return;
+  const id = readIdOf(el);
+  if (id === null || isReadId(id)) return;
+  readObserver.observe(el);
+}
+
 function PostCard({
   post,
   auth,
@@ -494,13 +614,34 @@ function PostCard({
   const [expanded, setExpanded] = useState(false);
   const needsClamp = post.text && post.text.length > CLAMP_THRESHOLD;
 
+  // ---- Auto read/unread (self-contained per card) ----
+  const readSnap = useSyncExternalStore(subscribeRead, getReadSnapshot);
+  const setUnreadRef = useCallback((el: HTMLElement | null) => {
+    observeUnreadCard(el);
+  }, []);
+  const createdMs = Date.parse(post.createdAt) || 0;
+  if (post.id > 0 && createdMs) readPostCreated.set(post.id, createdMs);
+  // Unread = newer than the newest post already read (boundary) and not yet
+  // read individually. Own posts are never highlighted (you just wrote them).
+  const isUnread =
+    post.id > 0 &&
+    auth.email !== post.authorEmail &&
+    !readSnap.read.has(post.id) &&
+    createdMs > readSnap.lastSeenAt;
+
   return (
     <Card
       radius="md"
       withBorder
       p="md"
       shadow="sm"
-      style={{ cursor: isThreadRoot ? "default" : "pointer", position: "relative" }}
+      ref={setUnreadRef as unknown as React.Ref<HTMLDivElement>}
+      data-unread-id={post.id}
+      style={{
+        cursor: isThreadRoot ? "default" : "pointer",
+        position: "relative",
+        ...(isUnread ? { background: "var(--bg-unread)" } : {}),
+      }}
       onClick={(e: React.MouseEvent) => {
         // Don't open when clicking buttons/links/images inside the card
         const t = e.target as HTMLElement;
