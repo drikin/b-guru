@@ -644,7 +644,9 @@ function PostCard({
       style={{
         cursor: isThreadRoot ? "default" : "pointer",
         position: "relative",
-        ...(isUnread ? { background: "var(--bg-unread)" } : {}),
+        // Unread highlight fades out smoothly the moment the card is marked read.
+        backgroundColor: isUnread ? "var(--bg-unread)" : "transparent",
+        transition: "background-color 0.6s ease",
       }}
       onClick={(e: React.MouseEvent) => {
         // Don't open when clicking buttons/links/images inside the card
