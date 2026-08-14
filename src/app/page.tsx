@@ -4155,25 +4155,25 @@ export default function Home() {
                   </Paper>
                 ) : (
                   <Paper p="xs" radius="md" withBorder shadow="sm">
-                    <Box style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
+                    <Box style={{ display: "flex", justifyContent: "center", lineHeight: 0 }}>
                       <UnstyledButton
                         onClick={() => setComposerOpen(true)}
                         aria-label="新しい投稿を作成"
                         title="新しい投稿を作成"
-                        style={{ cursor: "pointer", background: "transparent", border: "none", lineHeight: 1 }}
+                        style={{ cursor: "pointer", padding: 2, background: "transparent", border: "none", lineHeight: 1 }}
                       >
                         <Box
                           style={{
-                            width: 36,
-                            height: 36,
+                            width: 22,
+                            height: 22,
                             borderRadius: "50%",
-                            border: "1.5px solid var(--border-green)",
+                            border: "1px solid var(--border-green)",
                             color: "var(--text-green-soft)",
                             background: "var(--bg-surface)",
                             display: "flex",
                             alignItems: "center",
                             justifyContent: "center",
-                            fontSize: 22,
+                            fontSize: 14,
                             boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
                           }}
                         >
