@@ -17,6 +17,7 @@ import {
   Card,
   Divider,
   ScrollArea,
+  Switch,
   ThemeIcon,
   Box,
   Image,
@@ -471,30 +472,42 @@ function PinCountdown({ pinnedAt }: { pinnedAt: string }) {
 // auto-read works everywhere the card is rendered (feed + thread view).
 // =====================================================================
 const BGURU_READ_KEY = "bguru_read_posts_v2";
+const BGURU_UNREAD_ON_KEY = "bguru_auto_unread_v1";
 const AUTO_READ_DWELL_MS = 1000;
 
-type ReadStore = { read: Set<number> };
+type ReadStore = { enabled: boolean; read: Set<number> };
 
 function loadReadStore(): ReadStore {
-  const fallback: ReadStore = { read: new Set<number>() };
+  const fallback: ReadStore = { enabled: true, read: new Set<number>() };
   try {
+    // Auto-unread highlight on/off (default ON, persisted).
+    let enabled = true;
+    try {
+      const en = localStorage.getItem(BGURU_UNREAD_ON_KEY);
+      if (en !== null) enabled = en === "1";
+    } catch {}
     const raw = localStorage.getItem(BGURU_READ_KEY);
-    if (!raw) return fallback;
+    if (!raw) return { enabled, read: new Set<number>() };
     const d = JSON.parse(raw);
     const read = new Set<number>(
       Array.isArray(d.read) ? d.read.filter((n: unknown) => typeof n === "number") : []
     );
-    return { read };
+    return { enabled, read };
   } catch {
     return fallback;
   }
 }
 
 let readStore: ReadStore = loadReadStore();
+// Server-render/pre-render snapshot: useSyncExternalStore requires a stable
+// getServerSnapshot when the component is server-rendered. The client then
+// immediately hydrates with the real localStorage-backed store.
+const readServerSnapshot: ReadStore = { enabled: true, read: new Set<number>() };
 const readListeners = new Set<() => void>();
 function persistReadStore() {
   try {
     localStorage.setItem(BGURU_READ_KEY, JSON.stringify({ read: [...readStore.read] }));
+    localStorage.setItem(BGURU_UNREAD_ON_KEY, readStore.enabled ? "1" : "0");
   } catch {}
 }
 function subscribeRead(l: () => void) {
@@ -509,9 +522,15 @@ function getReadSnapshot() {
 function isReadId(id: number) {
   return readStore.read.has(id);
 }
+function setUnreadEnabled(v: boolean) {
+  if (readStore.enabled === v) return;
+  readStore = { ...readStore, enabled: v };
+  persistReadStore();
+  readListeners.forEach((l) => l());
+}
 function markReadId(id: number) {
   if (readStore.read.has(id)) return;
-  readStore = { read: new Set(readStore.read).add(id) };
+  readStore = { ...readStore, read: new Set(readStore.read).add(id) };
   persistReadStore();
   readListeners.forEach((l) => l());
 }
@@ -555,6 +574,7 @@ function ensureReadObserver() {
 function observeUnreadCard(el: HTMLElement | null) {
   ensureReadObserver();
   if (!el || !readObserver) return;
+  if (!readStore.enabled) return;
   const id = readIdOf(el);
   if (id === null || isReadId(id)) return;
   readObserver.observe(el);
@@ -600,14 +620,17 @@ function PostCard({
   const needsClamp = post.text && post.text.length > CLAMP_THRESHOLD;
 
   // ---- Auto read/unread (self-contained per card) ----
-  const readSnap = useSyncExternalStore(subscribeRead, getReadSnapshot);
+  const readSnap = useSyncExternalStore(subscribeRead, getReadSnapshot, () => readServerSnapshot);
   const setUnreadRef = useCallback((el: HTMLElement | null) => {
     observeUnreadCard(el);
   }, []);
-  // Unread = a post this browser has not yet marked read. Own posts are never
-  // highlighted (you just wrote them).
+  // Unread = the feature is ON and this browser has not yet marked the post
+  // read. Own posts are never highlighted (you just wrote them).
   const isUnread =
-    post.id > 0 && auth.email !== post.authorEmail && !readSnap.read.has(post.id);
+    readSnap.enabled &&
+    post.id > 0 &&
+    auth.email !== post.authorEmail &&
+    !readSnap.read.has(post.id);
 
   return (
     <Card
@@ -1849,6 +1872,8 @@ export default function Home() {
   // ---- Dark mode toggle ----
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const isDark = colorScheme === "dark";
+  // ---- Auto unread highlight on/off (persisted, default ON) ----
+  const autoUnreadOn = useSyncExternalStore(subscribeRead, getReadSnapshot, () => readServerSnapshot).enabled;
 
   const [activeNav, setActiveNav] = useState("feed");
   const [navOpened, setNavOpened] = useState(false);
@@ -4038,6 +4063,22 @@ export default function Home() {
           )}
           <span>{isDark ? "ライトモード" : "ダークモード"}</span>
         </UnstyledButton>
+        {/* Auto unread management on/off — below the dark mode toggle */}
+        <Divider my="xs" />
+        <Group
+          wrap="nowrap"
+          align="center"
+          justify="space-between"
+          style={{ padding: "8px 12px", borderRadius: 8 }}
+        >
+          <span style={{ color: "var(--text-primary)", fontSize: 14 }}>オート未読管理</span>
+          <Switch
+            checked={autoUnreadOn}
+            onChange={(e) => setUnreadEnabled(e.currentTarget.checked)}
+            aria-label="オート未読管理"
+            size="sm"
+          />
+        </Group>
         {/* Account: profile + logout — moved from header to bottom of left sidebar */}
         <Divider my="xs" />
         <Group wrap="nowrap" align="center" gap={10} style={{ padding: "10px 6px", borderRadius: 8 }}>
