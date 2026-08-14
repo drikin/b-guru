@@ -1305,7 +1305,13 @@ function TimelineFeed({
       );
     }
 
-    const gkey = `${g.dateKey}|${g.authorEmail}`;
+    // MUST be unique per ROOT post: two groups by the same author on the same
+    // day would otherwise collide on the React key (`dateKey|authorEmail`),
+    // which makes React mis-reconcile siblings when a comment floats a group
+    // to the top — leaving a stale copy of the ORIGINAL card group and its
+    // still-open comment box behind (the "original group + posting screen
+    // remain" bug). Appending the root post id makes every key unique.
+    const gkey = `${g.dateKey}|${g.authorEmail}|${g.posts[0].id}`;
 
     // Minimal grouping: no header/frame. A subtle green left-accent bar plus
     // tight inner spacing visually "chains" this author's consecutive posts
@@ -2286,6 +2292,15 @@ export default function Home() {
     ) as HTMLElement | null;
     if (!el) return; // not rendered (e.g. filtered view) — give up silently
     pendingScrollRef.current = null;
+    // If the target group is already inside the current viewport (e.g. the
+    // card sits at the top of the timeline), there is nothing to scroll or
+    // highlight — just reflect the comment in place. Only move the viewport
+    // when the group genuinely went out of sight (e.g. a non-whisper comment
+    // floated it to the top while the user is scrolled further down).
+    const rect = el.getBoundingClientRect();
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+    const alreadyVisible = rect.top >= 0 && rect.top <= vh * 0.9;
+    if (alreadyVisible) return;
     // Double rAF: wait for the browser to paint the updated layout.
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
@@ -3111,8 +3126,10 @@ export default function Home() {
           }
         });
       } else {
-        // Scroll to the parent post so the user sees their comment in context.
-        pendingScrollRef.current = parentId;
+        // Scroll to the parent post so the user sees their comment in context,
+        // but ONLY for normal comments. Whispers stay put (their whole point),
+        // so they must never auto-scroll or flash the timeline.
+        if (!whisper) pendingScrollRef.current = parentId;
       }
       setFeedPosts((prev) => {
         const next = parentInFeed(prev, parentId)
