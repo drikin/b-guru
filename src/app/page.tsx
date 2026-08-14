@@ -5535,9 +5535,9 @@ export default function Home() {
             scrollbarSize={8}
             offsetScrollbars
             style={{ flex: 1, minHeight: 0 }}
+            viewportRef={chatListRef}
           >
             <div
-              ref={chatListRef}
               style={{
                 padding: "8px 10px",
                 display: "flex",
