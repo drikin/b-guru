@@ -1873,6 +1873,10 @@ export default function Home() {
   useEffect(() => {
     const onErr = (e: ErrorEvent) => {
       const msg = e.message || String(e.error || "");
+      // "ResizeObserver loop completed with undelivered notifications" is a
+      // benign browser quirk, not an app error — filtering it keeps the badge
+      // focused on real failures (it otherwise fires constantly and misleads).
+      if (msg.includes("ResizeObserver")) return;
       const at = `${e.filename ? e.filename.split("/").pop() + ":" + e.lineno : "?"}`;
       setClientErr({ msg: msg.slice(0, 220), at });
       console.error("[GlobalError]", e.error || e);
@@ -2733,11 +2737,14 @@ export default function Home() {
       setFeedPosts((prev) =>
         prev.some((p) => p.id === tempId) ? prev : [tempPost, ...prev]
       );
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 20000); // guard can't hang forever
       try {
         const r = await fetch("/api/publish", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text, images }),
+          signal: ac.signal,
         });
         const d = await r.json();
         if (!r.ok) throw new Error(d.error || "投稿失敗");
@@ -2754,6 +2761,7 @@ export default function Home() {
         setPostError(err.message);
         setFeedPosts((prev) => prev.filter((p) => p.id !== tempId));
       } finally {
+        clearTimeout(timer);
         setPosting(false);
       }
     },
@@ -2841,14 +2849,20 @@ export default function Home() {
     const { parentId, text, images, whisper, mode } = opts;
     if (!text && images.length === 0) return;
     if (mode === "thread") {
-      if (replying) return;
+      if (replying) {
+        console.warn("[submitBlocked] thread", { replying, parentId });
+        return;
+      }
       setReplying(whisper ? "whisper" : "comment");
       setReplyError(null);
       setReplyText("");
       setThreadReplyImages([]);
       setThreadWhisper(false);
     } else {
-      if (inlineReplying) return;
+      if (inlineReplying) {
+        console.warn("[submitBlocked] inline", { inlineReplying, parentId });
+        return;
+      }
       setInlineReplying(whisper ? "whisper" : "comment");
       setInlineReplyFor(null);
       setInlineReplyText("");
@@ -2884,11 +2898,20 @@ export default function Home() {
         : prev
     );
 
+    // Give the publish fetch an abort timeout so the replying/inlineReplying
+    // guard can NEVER stay stuck from a response that never arrives — `finally`
+    // below always runs and resets the guard. (A lost response used to leave
+    // the guard true forever, silently blocking every later comment: the form
+    // stopped closing and nothing reflected locally, which matches the report.)
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 20000);
+
     try {
       const r = await fetch("/api/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, images, parentId, whisper }),
+        signal: ac.signal,
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "コメント失敗");
@@ -2978,6 +3001,7 @@ export default function Home() {
         setInlineReplyText(text + "\n\n(エラー: " + err.message + ")");
       }
     } finally {
+      clearTimeout(timer);
       if (mode === "thread") setReplying(false);
       else setInlineReplying(false);
     }
