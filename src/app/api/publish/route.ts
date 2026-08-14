@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
   }
 
-  let body: { text?: string; images?: unknown; parentId?: unknown; whisper?: unknown };
+  let body: { text?: string; images?: unknown; parentId?: unknown; whisper?: unknown; videoUrl?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -34,9 +34,14 @@ export async function POST(req: NextRequest) {
   const parentId =
     typeof body.parentId === "number" && body.parentId > 0 ? body.parentId : null;
   const isWhisper = body.whisper === true;
+  // At most one video: only accept a non-empty string; anything else → null.
+  const videoUrl =
+    typeof body.videoUrl === "string" && body.videoUrl.trim().length > 0
+      ? body.videoUrl.trim()
+      : null;
 
-  if (!text && rawImages.length === 0) {
-    return NextResponse.json({ error: "テキストまたは画像が必要です" }, { status: 400 });
+  if (!text && rawImages.length === 0 && !videoUrl) {
+    return NextResponse.json({ error: "テキスト・画像・動画のいずれかが必要です" }, { status: 400 });
   }
   if (rawImages.length > 5) {
     return NextResponse.json({ error: "画像は最大5枚までです" }, { status: 400 });
@@ -46,6 +51,10 @@ export async function POST(req: NextRequest) {
     .filter((u) => typeof u === "string")
     .map((u) => u as string)
     .slice(0, 5);
+  // Validate video URL shape (must be a server media path)
+  if (videoUrl && !/^\/api\/media\/[^/]+$/.test(videoUrl)) {
+    return NextResponse.json({ error: "不正な動画URLです" }, { status: 400 });
+  }
 
   // Resolve member name
   let authorName: string | null = null;
@@ -68,6 +77,7 @@ export async function POST(req: NextRequest) {
       authorName,
       text,
       images,
+      videoUrl,
       parentId,
       isWhisper,
     });

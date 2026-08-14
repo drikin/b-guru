@@ -83,6 +83,13 @@ export async function initSchema() {
       END IF;
     END $$;
     CREATE INDEX IF NOT EXISTS idx_posts_source_drinews ON posts(source_drinews_comment_id) WHERE source_drinews_comment_id IS NOT NULL;
+    -- Video attachment: a post may carry at most ONE video (stored as a single
+    -- nullable URL, unlike images which live in the post_images table).
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='video_url') THEN
+        ALTER TABLE posts ADD COLUMN video_url TEXT;
+      END IF;
+    END $$;
 
     CREATE TABLE IF NOT EXISTS post_images (
       id SERIAL PRIMARY KEY,

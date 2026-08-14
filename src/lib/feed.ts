@@ -31,6 +31,8 @@ export interface FeedPost {
   recentComments?: number;
   text: string;
   images: string[];
+  /** At most one video attachment (nullable URL), rendered as a <video> player. */
+  videoUrl?: string | null;
   urlPreview: UrlPreview | null;
   likeCount: number;
   likedByMe: boolean;

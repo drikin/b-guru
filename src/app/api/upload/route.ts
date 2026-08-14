@@ -11,7 +11,16 @@ const MAX_IMAGES = 5;
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB per image
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
-// POST /api/upload — multipart form, fields: images[] (up to 5)
+const MAX_VIDEO_BYTES = 20 * 1024 * 1024; // 20MB per video (server capacity)
+const ALLOWED_VIDEO = new Set([
+  "video/mp4",
+  "video/webm",
+  "video/quicktime", // .mov
+]);
+
+// POST /api/upload — multipart form
+//   fields: images[] (up to 5)  → returns { urls }
+//   fields: video (single)      → returns { videoUrl }
 export async function POST(req: NextRequest) {
   const email = await getSessionEmail();
   if (!email) {
@@ -23,6 +32,41 @@ export async function POST(req: NextRequest) {
     form = await req.formData();
   } catch {
     return NextResponse.json({ error: "不正なリクエストです" }, { status: 400 });
+  }
+
+  const toFile = (f: FormDataEntryValue | null): File | null =>
+    f && typeof f === "object" && "arrayBuffer" in f ? (f as File) : null;
+
+  const videoFile = toFile(form.get("video"));
+
+  // If a video field is present, treat this as a single-video upload.
+  if (videoFile) {
+    if (!ALLOWED_VIDEO.has(videoFile.type)) {
+      return NextResponse.json(
+        { error: `非対応の動画形式です: ${videoFile.type}` },
+        { status: 400 }
+      );
+    }
+    if (videoFile.size > MAX_VIDEO_BYTES) {
+      return NextResponse.json(
+        { error: "動画は20MBまでです" },
+        { status: 400 }
+      );
+    }
+
+    const uploadDir = path.join(process.cwd(), "public", "uploads");
+    await mkdir(uploadDir, { recursive: true });
+
+    const ext = path.extname(videoFile.name) || ".mp4";
+    const safeExt = [".mp4", ".webm", ".mov"].includes(ext) ? ext : ".mp4";
+    const filename = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${safeExt}`;
+    const buf = Buffer.from(await videoFile.arrayBuffer());
+    await writeFile(path.join(uploadDir, filename), buf);
+
+    return NextResponse.json(
+      { videoUrl: `/api/media/${filename}` },
+      { status: 201 }
+    );
   }
 
   const files = form.getAll("images").filter(

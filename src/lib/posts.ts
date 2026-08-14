@@ -24,6 +24,8 @@ export interface FeedPost {
   recentComments?: number;
   text: string;
   images: string[]; // relative or absolute URLs
+  /** At most one video attachment (nullable URL), rendered as a <video> player. */
+  videoUrl?: string | null;
   urlPreview: UrlPreview | null;
   likeCount: number;
   likedByMe: boolean;
@@ -35,6 +37,8 @@ export interface NewPostInput {
   authorName: string | null;
   text: string;
   images?: string[];
+  /** At most one video URL for this post (single nullable column). */
+  videoUrl?: string | null;
   parentId?: number | null;
   /** Whisper reply: appended to the group but does NOT bump last_activity,
    *  so the timeline position stays unchanged. */
@@ -65,9 +69,9 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
   try {
     await client.query("BEGIN");
     const ins = await client.query(
-      `INSERT INTO posts (author_email, author_name, text, url_preview, parent_id, is_whisper, source_drinews_comment_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
-      [input.authorEmail, input.authorName, input.text, null, input.parentId ?? null, !!input.isWhisper, input.sourceDrinewsCommentId ?? null]
+      `INSERT INTO posts (author_email, author_name, text, url_preview, parent_id, is_whisper, source_drinews_comment_id, video_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
+      [input.authorEmail, input.authorName, input.text, null, input.parentId ?? null, !!input.isWhisper, input.sourceDrinewsCommentId ?? null, input.videoUrl ?? null]
     );
     postId = ins.rows[0].id;
     createdAt = ins.rows[0].created_at;
@@ -135,6 +139,7 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
     replyCount: 0,
     text: input.text,
     images,
+    videoUrl: input.videoUrl ?? null,
     urlPreview: null, // link preview arrives via the async update above
     likeCount: 0,
     likedByMe: false,
@@ -157,6 +162,7 @@ const POST_SELECT = `
       SELECT array_agg(pi2.url ORDER BY pi2.sort_order)
       FROM post_images pi2 WHERE pi2.post_id = p.id
     ), '{}') AS images,
+    p.video_url AS video_url,
     COUNT(DISTINCT l.user_email) AS like_count,
     BOOL_OR(l.user_email = $1) AS liked_by_me,
     (SELECT COUNT(*) FROM posts c WHERE c.parent_id = p.id) AS reply_count
@@ -174,6 +180,7 @@ function mapRow(r: any): FeedPost {
     replyCount: Number(r.reply_count) || 0,
     text: r.text,
     images: r.images ?? [],
+    videoUrl: r.video_url ?? null,
     urlPreview: r.url_preview,
     likeCount: Number(r.like_count) || 0,
     likedByMe: !!r.liked_by_me,
@@ -479,7 +486,7 @@ export async function togglePin(
 export async function updatePost(
   postId: number,
   userEmail: string,
-  input: { text?: string; images?: string[] }
+  input: { text?: string; images?: string[]; videoUrl?: string | null }
 ): Promise<{ ok: boolean; error?: string }> {
   const authorEmail = await getPostAuthor(postId);
   if (authorEmail === null) return { ok: false, error: "not_found" };
@@ -514,6 +521,13 @@ export async function updatePost(
       for (let i = 0; i < input.images.length; i++) {
         await client.query(q, [postId, input.images[i], i]);
       }
+    }
+    // Update the video attachment if explicitly provided (undefined = leave as-is)
+    if (input.videoUrl !== undefined) {
+      await client.query(`UPDATE posts SET video_url = $1 WHERE id = $2`, [
+        input.videoUrl || null,
+        postId,
+      ]);
     }
     await client.query("COMMIT");
     return { ok: true };

@@ -799,6 +799,25 @@ function PostCard({
         </Group>
       )}
 
+      {/* Video attachment (at most one per post) */}
+      {post.videoUrl && (
+        <Box mt="sm" style={{ width: "100%", maxWidth: 560 }}>
+          <video
+            src={post.videoUrl}
+            controls
+            playsInline
+            preload="metadata"
+            style={{
+              width: "100%",
+              display: "block",
+              borderRadius: 12,
+              background: "#000",
+              maxHeight: 420,
+            }}
+          />
+        </Box>
+      )}
+
       {/* URL preview */}
       {post.urlPreview && (
         <Paper
@@ -1378,6 +1397,7 @@ function InlineReplyBox({
   postId,
   authorLabel,
   uploadImages,
+  uploadVideo,
   onSubmit,
   onCancel,
   onPreview,
@@ -1391,7 +1411,20 @@ function InlineReplyBox({
     setUp: (v: boolean) => void,
     setErr: (v: string) => void
   ) => Promise<void>;
-  onSubmit: (id: number, text: string, images: string[], whisper: boolean) => Promise<void>;
+  uploadVideo: (
+    files: FileList | null,
+    setUrl: (v: string) => void,
+    setUp: (v: boolean) => void,
+    setErr: (v: string) => void,
+    clearPrev?: () => void
+  ) => Promise<void>;
+  onSubmit: (
+    id: number,
+    text: string,
+    images: string[],
+    whisper: boolean,
+    videoUrl?: string | null
+  ) => Promise<void>;
   onCancel: () => void;
   onPreview: (src: string) => void;
 }) {
@@ -1400,21 +1433,28 @@ function InlineReplyBox({
   const [uploading, setUploading] = useState(false);
   const [posting, setPosting] = useState<"comment" | "whisper" | false>(false);
   const [error, setError] = useState<string | null>(null);
+  // At most one video attachment.
+  const [video, setVideo] = useState<string | null>(null);
+  const [videoUploading, setVideoUploading] = useState(false);
 
-  const canSend = (text.trim() !== "" || images.length > 0) && posting === false;
+  const canSend = (text.trim() !== "" || images.length > 0 || !!video) && posting === false;
 
   const onPick = (files: FileList | null) =>
     uploadImages(files, images, setImages, setUploading, (s) => setError(s));
   const removeImage = (i: number) => setImages((prev) => prev.filter((_, idx) => idx !== i));
+  const onPickVideo = (files: FileList | null) =>
+    uploadVideo(files, setVideo, setVideoUploading, (s) => setError(s));
+  const removeVideo = () => setVideo(null);
 
   const handleSubmit = async (whisper: boolean) => {
     if (!canSend) return;
     const t = text;
     const imgs = images;
+    const v = video;
     setPosting(whisper ? "whisper" : "comment");
     setError(null);
     try {
-      await onSubmit(postId, t, imgs, whisper);
+      await onSubmit(postId, t, imgs, whisper, v);
     } catch (err: any) {
       setError(err?.message || "コメントに失敗しました");
     } finally {
@@ -1483,6 +1523,28 @@ function InlineReplyBox({
           ))}
         </Group>
       )}
+      {/* Comment video attachment (at most one; shown inline) */}
+      {video && (
+        <Box mb={4} style={{ position: "relative", width: "100%", maxWidth: 320 }}>
+          <video
+            src={video}
+            controls
+            playsInline
+            preload="metadata"
+            style={{ width: "100%", display: "block", borderRadius: 8, background: "#000" }}
+          />
+          <ActionIcon
+            size="sm"
+            variant="filled"
+            color="red"
+            radius="xl"
+            style={{ position: "absolute", top: -6, right: -6 }}
+            onClick={removeVideo}
+          >
+            ×
+          </ActionIcon>
+        </Box>
+      )}
       <Group gap="xs" mb={4}>
         <label style={{ cursor: "pointer", display: "inline-block" }}>
           <input
@@ -1504,6 +1566,27 @@ function InlineReplyBox({
             disabled={images.length >= 5}
           >
             📷 {images.length}/5
+          </Button>
+        </label>
+        <label style={{ cursor: "pointer", display: "inline-block" }}>
+          <input
+            type="file"
+            accept="video/mp4,video/webm,video/quicktime"
+            hidden
+            onChange={(e) => {
+              onPickVideo(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <Button
+            size="xs"
+            variant="light"
+            color="gray"
+            component="span"
+            loading={videoUploading}
+            disabled={!!video}
+          >
+            🎬 動画
           </Button>
         </label>
       </Group>
@@ -1544,6 +1627,7 @@ function TimelineFeed({
   searchQuery,
   inlineReplyFor,
   uploadImages,
+  uploadVideo,
   onToggleInlineReply,
   onInlineReplySubmit,
   onOpenThread,
@@ -1570,8 +1654,21 @@ function TimelineFeed({
     setUp: (v: boolean) => void,
     setErr: (v: string) => void
   ) => Promise<void>;
+  uploadVideo: (
+    files: FileList | null,
+    setUrl: (v: string) => void,
+    setUp: (v: boolean) => void,
+    setErr: (v: string) => void,
+    clearPrev?: () => void
+  ) => Promise<void>;
   onToggleInlineReply: (id: number) => void;
-  onInlineReplySubmit: (id: number, text: string, images: string[], whisper: boolean) => Promise<void>;
+  onInlineReplySubmit: (
+    id: number,
+    text: string,
+    images: string[],
+    whisper: boolean,
+    videoUrl?: string | null
+  ) => Promise<void>;
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
   onLike: (id: number) => void;
@@ -1689,6 +1786,7 @@ function TimelineFeed({
                 postId={post.id}
                 authorLabel={g.authorName || g.authorEmail.split("@")[0]}
                 uploadImages={uploadImages}
+                uploadVideo={uploadVideo}
                 onSubmit={onInlineReplySubmit}
                 onCancel={() => onToggleInlineReply(post.id)}
                 onPreview={onPreview}
@@ -1748,6 +1846,7 @@ function ComposerPaper({
   displayName,
   mentionMembers,
   uploadImages,
+  uploadVideo,
   onPublish,
   onClose,
   onPreviewImage,
@@ -1763,7 +1862,14 @@ function ComposerPaper({
     setUp: (v: boolean) => void,
     setErr: (v: string) => void
   ) => Promise<void>;
-  onPublish: (text: string, images: string[]) => Promise<void>;
+  uploadVideo: (
+    files: FileList | null,
+    setUrl: (v: string) => void,
+    setUp: (v: boolean) => void,
+    setErr: (v: string) => void,
+    clearPrev?: () => void
+  ) => Promise<void>;
+  onPublish: (text: string, images: string[], videoUrl?: string | null) => Promise<void>;
   onClose: () => void;
   onPreviewImage: (src: string) => void;
 }) {
@@ -1772,23 +1878,31 @@ function ComposerPaper({
   const [uploading, setUploading] = useState(false);
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [video, setVideo] = useState<string | null>(null);
+  const [videoUploading, setVideoUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLInputElement>(null);
 
   const onPick = (files: FileList | null) =>
     uploadImages(files, images, setImages, setUploading, (s) => setError(s));
   const removeImage = (i: number) => setImages((prev) => prev.filter((_, idx) => idx !== i));
+  const onPickVideo = (files: FileList | null) =>
+    uploadVideo(files, setVideo, setVideoUploading, (s) => setError(s));
+  const removeVideo = () => setVideo(null);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if ((!text.trim() && images.length === 0) || posting) return;
+    if ((!text.trim() && images.length === 0 && !video) || posting) return;
     const t = text;
     const imgs = images;
+    const v = video;
     setPosting(true);
     setError(null);
     setText("");
     setImages([]);
+    setVideo(null);
     try {
-      await onPublish(t, imgs);
+      await onPublish(t, imgs, v);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -1831,7 +1945,7 @@ function ComposerPaper({
       </Group>
       <form onSubmit={handleSubmit}>
         <MentionTextarea
-          placeholder="今なにしてる？ (画像投稿もできます)"
+          placeholder="今なにしてる？ (画像・動画投稿もできます)"
           autosize
           minRows={2}
           autoFocus
@@ -1867,6 +1981,27 @@ function ComposerPaper({
             ))}
           </Group>
         )}
+        {video && (
+          <Box mb="sm" style={{ position: "relative", width: "100%", maxWidth: 360 }}>
+            <video
+              src={video}
+              controls
+              playsInline
+              preload="metadata"
+              style={{ width: "100%", display: "block", borderRadius: 8, background: "#000" }}
+            />
+            <ActionIcon
+              size="sm"
+              variant="filled"
+              color="red"
+              radius="xl"
+              style={{ position: "absolute", top: -6, right: -6 }}
+              onClick={removeVideo}
+            >
+              ×
+            </ActionIcon>
+          </Box>
+        )}
         <Group justify="space-between">
           <Group gap="xs">
             <Button
@@ -1879,6 +2014,16 @@ function ComposerPaper({
             >
               📷 {images.length}/5
             </Button>
+            <Button
+              size="xs"
+              variant="light"
+              color="gray"
+              loading={videoUploading}
+              disabled={!!video}
+              onClick={() => videoRef.current?.click()}
+            >
+              🎬 動画
+            </Button>
             <input
               ref={fileRef}
               type="file"
@@ -1887,6 +2032,16 @@ function ComposerPaper({
               hidden
               onChange={(e) => {
                 onPick(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <input
+              ref={videoRef}
+              type="file"
+              accept="video/mp4,video/webm,video/quicktime"
+              hidden
+              onChange={(e) => {
+                onPickVideo(e.target.files);
                 e.target.value = "";
               }}
             />
@@ -1899,7 +2054,7 @@ function ComposerPaper({
             size="sm"
             color="green"
             loading={posting}
-            disabled={(!text.trim() && images.length === 0) || uploading}
+            disabled={(!text.trim() && images.length === 0 && !video) || uploading || videoUploading}
           >
             投稿
           </Button>
@@ -2090,6 +2245,9 @@ export default function Home() {
   // owns its own images locally).
   const [threadReplyImages, setThreadReplyImages] = useState<string[]>([]);
   const [threadUploading, setThreadUploading] = useState(false);
+  // At most one video attachment on the thread reply box.
+  const [threadReplyVideo, setThreadReplyVideo] = useState<string | null>(null);
+  const [threadVideoUploading, setThreadVideoUploading] = useState(false);
 
   // ---- Mobile keyboard detection ----
   // When the virtual keyboard opens on mobile, visualViewport shrinks.
@@ -3153,10 +3311,52 @@ export default function Home() {
     }
   };
 
+  // Upload a single video file (at most 20MB) to /api/upload and set the
+  // attachment URL. `clearPrev` (optional) runs right before the URL is set so
+  // a replaced attachment drops its old selection.
+  const uploadVideo = async (
+    files: FileList | null,
+    setUrl: (v: string) => void,
+    setUp: (v: boolean) => void,
+    setErr: (v: string) => void,
+    clearPrev?: () => void
+  ) => {
+    if (!files || files.length === 0) return;
+    const f = files[0];
+    if (f.size > 20 * 1024 * 1024) {
+      setErr("動画は20MBまでです");
+      return;
+    }
+    if (!["video/mp4", "video/webm", "video/quicktime"].includes(f.type)) {
+      setErr("対応形式: MP4 / WebM / MOV");
+      return;
+    }
+    setUp(true);
+    setErr("");
+    try {
+      const fd = new FormData();
+      fd.append("video", f);
+      const r = await fetch("/api/upload", { method: "POST", body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "動画アップロード失敗");
+      clearPrev?.();
+      setUrl(d.videoUrl);
+    } catch (err: any) {
+      setErr(err.message);
+    } finally {
+      setUp(false);
+    }
+  };
+
   const onThreadReplyPick = (files: FileList | null) =>
     uploadImages(files, threadReplyImages, setThreadReplyImages, setThreadUploading, (s) =>
       setReplyError(s)
     );
+
+  const onThreadReplyPickVideo = (files: FileList | null) =>
+    uploadVideo(files, setThreadReplyVideo, setThreadVideoUploading, (s) => setReplyError(s));
+
+  const removeThreadReplyVideo = () => setThreadReplyVideo(null);
 
   const removeThreadReplyImage = (i: number) =>
     setThreadReplyImages((prev) => prev.filter((_, idx) => idx !== i));
@@ -3165,7 +3365,7 @@ export default function Home() {
   // own local text/image state — see ComposerPaper) so typing doesn't re-render
   // the whole page. Does the optimistic insert + API round-trip + swap.
   const publishComposer = useCallback(
-    async (text: string, images: string[]) => {
+    async (text: string, images: string[], videoUrl?: string | null) => {
       const tempId = Date.now();
       const tempPost: FeedPost = {
         id: tempId,
@@ -3176,6 +3376,7 @@ export default function Home() {
         replyCount: 0,
         text,
         images,
+        videoUrl: videoUrl ?? null,
         urlPreview: null,
         likeCount: 0,
         likedByMe: false,
@@ -3193,7 +3394,7 @@ export default function Home() {
         const r = await fetch("/api/publish", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, images }),
+          body: JSON.stringify({ text, images, videoUrl }),
           signal: ac.signal,
         });
         const d = await r.json();
@@ -3222,6 +3423,7 @@ export default function Home() {
   const openThreadReply = (postId: number) => {
     setReplyText("");
     setThreadReplyImages([]);
+    setThreadReplyVideo(null);
     setReplyError(null);
     setThreadWhisper(false);
     openThread(postId);
@@ -3242,11 +3444,12 @@ export default function Home() {
   const submitThreadReply = async (whisper = false) => {
     if (!threadPost) return;
     const text = replyText.trim();
-    if (!text && threadReplyImages.length === 0) return;
+    if (!text && threadReplyImages.length === 0 && !threadReplyVideo) return;
     await createReply({
       parentId: threadPost.id,
       text,
       images: threadReplyImages,
+      videoUrl: threadReplyVideo,
       whisper,
       mode: "thread",
     });
@@ -3267,13 +3470,15 @@ export default function Home() {
     postId: number,
     text: string,
     images: string[],
-    whisper: boolean
+    whisper: boolean,
+    videoUrl?: string | null
   ) => {
-    if (!text.trim() && images.length === 0) return;
+    if (!text.trim() && images.length === 0 && !videoUrl) return;
     await createReply({
       parentId: postId,
       text: text.trim(),
       images,
+      videoUrl: videoUrl ?? null,
       whisper,
       mode: "inline",
     });
@@ -3291,11 +3496,12 @@ export default function Home() {
     parentId: number;
     text: string;
     images: string[];
+    videoUrl?: string | null;
     whisper: boolean;
     mode: "inline" | "thread";
   }): Promise<void> => {
-    const { parentId, text, images, whisper, mode } = opts;
-    if (!text && images.length === 0) return;
+    const { parentId, text, images, videoUrl, whisper, mode } = opts;
+    if (!text && images.length === 0 && !videoUrl) return;
     if (mode === "thread") {
       if (replying) {
         console.warn("[submitBlocked] thread", { replying, parentId });
@@ -3327,6 +3533,7 @@ export default function Home() {
       parentId,
       text,
       images,
+      videoUrl: videoUrl ?? null,
       urlPreview: null,
       likeCount: 0,
       likedByMe: false,
@@ -3356,7 +3563,7 @@ export default function Home() {
       const r = await fetch("/api/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, images, parentId, whisper }),
+        body: JSON.stringify({ text, images, videoUrl, parentId, whisper }),
         signal: ac.signal,
       });
       const d = await r.json();
@@ -4549,6 +4756,7 @@ export default function Home() {
                     displayName={displayName}
                     mentionMembers={mentionMembers}
                     uploadImages={uploadImages}
+                    uploadVideo={uploadVideo}
                     onPublish={publishComposer}
                     onClose={() => setComposerOpen(false)}
                     onPreviewImage={setPreviewImage}
@@ -4741,6 +4949,27 @@ export default function Home() {
                               ))}
                             </Group>
                           )}
+                          {threadReplyVideo && (
+                            <Box mb="xs" style={{ position: "relative", width: "100%", maxWidth: 320 }}>
+                              <video
+                                src={threadReplyVideo}
+                                controls
+                                playsInline
+                                preload="metadata"
+                                style={{ width: "100%", display: "block", borderRadius: 8, background: "#000" }}
+                              />
+                              <ActionIcon
+                                size="sm"
+                                variant="filled"
+                                color="red"
+                                radius="xl"
+                                style={{ position: "absolute", top: -6, right: -6 }}
+                                onClick={removeThreadReplyVideo}
+                              >
+                                ×
+                              </ActionIcon>
+                            </Box>
+                          )}
                           <Group gap="xs" mb="xs">
                             <label style={{ cursor: "pointer", display: "inline-block" }}>
                               <input
@@ -4764,6 +4993,27 @@ export default function Home() {
                                 📷 {threadReplyImages.length}/5
                               </Button>
                             </label>
+                            <label style={{ cursor: "pointer", display: "inline-block" }}>
+                              <input
+                                type="file"
+                                accept="video/mp4,video/webm,video/quicktime"
+                                hidden
+                                onChange={(e) => {
+                                  onThreadReplyPickVideo(e.target.files);
+                                  e.target.value = "";
+                                }}
+                              />
+                              <Button
+                                size="xs"
+                                variant="light"
+                                color="gray"
+                                component="span"
+                                loading={threadVideoUploading}
+                                disabled={!!threadReplyVideo}
+                              >
+                                🎬 動画
+                              </Button>
+                            </label>
                           </Group>
                             {replyError && (
                               <Text size="sm" c="red" mb="xs">
@@ -4780,6 +5030,7 @@ export default function Home() {
                                   setThreadReplyBoxOpen(false);
                                   setReplyText("");
                                   setThreadReplyImages([]);
+                                  setThreadReplyVideo(null);
                                   setReplyError(null);
                                   setThreadWhisper(false);
                                 }}
@@ -4793,7 +5044,7 @@ export default function Home() {
                                   variant="light"
                                   type="button"
                                   loading={replying === 'whisper'}
-                                  disabled={(replyText.trim() === "" && threadReplyImages.length === 0) || replying !== false}
+                                  disabled={(replyText.trim() === "" && threadReplyImages.length === 0 && !threadReplyVideo) || replying !== false}
                                   onClick={() => submitThreadReply(true)}
                                 >
                                   ささやく
@@ -4802,7 +5053,7 @@ export default function Home() {
                                   size="xs"
                                   color="green"
                                   loading={replying === 'comment'}
-                                  disabled={(!replyText.trim() && threadReplyImages.length === 0) || replying !== false}
+                                  disabled={(!replyText.trim() && threadReplyImages.length === 0 && !threadReplyVideo) || replying !== false}
                                   type="submit"
                                 >
                                   返信する
@@ -4827,6 +5078,7 @@ export default function Home() {
                   searchQuery={searchActive ? searchQuery : undefined}
                   inlineReplyFor={inlineReplyFor}
                   uploadImages={uploadImages}
+                  uploadVideo={uploadVideo}
                   onToggleInlineReply={toggleInlineReply}
                   onInlineReplySubmit={submitInlineReply}
                   onOpenThread={openThread}
