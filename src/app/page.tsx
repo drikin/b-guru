@@ -1227,6 +1227,7 @@ function TimelineFeed({
   onDelete,
   onPin,
   onPreview,
+  skipFirstDate,
 }: {
   groups: FeedGroup[];
   auth: { email: string };
@@ -1253,8 +1254,11 @@ function TimelineFeed({
   onDelete: (p: FeedPost) => void;
   onPin: (id: number) => void;
   onPreview: (src: string) => void;
+  skipFirstDate?: boolean;
 }) {
-  let lastDate = "";
+  // When the parent renders the topmost date separator itself (above the
+  // "+" composer), skip the first in-feed separator to avoid duplication.
+  let lastDate = skipFirstDate && groups.length > 0 ? groups[0].dateKey : "";
   const rendered: React.ReactNode[] = [];
 
   for (const g of groups) {
@@ -3427,6 +3431,12 @@ export default function Home() {
   // ---------- Logged-in: 3-column shell ----------
   const isCenterView = ["feed", "gallery", "news", "episodes"].includes(activeNav);
 
+  // First group's date key on the home feed — used to render the topmost date
+  // separator ABOVE the "+" composer (order: 日付 → プラス), and to tell
+  // TimelineFeed to skip its own duplicate of that first separator.
+  const composerGroups = activeNav === "feed" ? groupFeed(feedPosts) : [];
+  const topDateKey = composerGroups.length > 0 ? composerGroups[0].dateKey : null;
+
   return (
     <AppShell
       className="appshell-center"
@@ -4068,6 +4078,25 @@ export default function Home() {
         >
           {isCenterView && (
             <Stack gap="md">
+              {/* Topmost date separator — rendered above the "+" composer so the
+                  timeline opens with 日付 → プラス (feed only). TimelineFeed skips
+                  its own duplicate via skipFirstDate. */}
+              {activeNav === "feed" && !threadPost && !searchActive && topDateKey && (
+                <Group align="center" mt="md" mb={4}>
+                  <Divider style={{ flex: 1 }} />
+                  <Badge
+                    size="lg"
+                    variant={topDateKey === jstDateKey(new Date().toISOString()) ? "filled" : "light"}
+                    color={topDateKey === jstDateKey(new Date().toISOString()) ? "green" : "gray"}
+                    radius="xl"
+                    style={{ textTransform: "none", fontWeight: 600 }}
+                  >
+                    {jstDateLabel(topDateKey)}
+                    {topDateKey === jstDateKey(new Date().toISOString()) ? "（今日）" : ""}
+                  </Badge>
+                  <Divider style={{ flex: 1 }} />
+                </Group>
+              )}
               {/* Composer (hidden on gallery/news? show only on home feed, and not during search).
                   Collapsed to a small "+" by default to keep the timeline clean; click expands into the full form. */}
               {activeNav === "feed" && !threadPost && !searchActive && (
@@ -4444,6 +4473,9 @@ export default function Home() {
                 <>
                 <TimelineFeed
                   groups={groupFeed(feedPosts)}
+                  skipFirstDate={
+                    activeNav === "feed" && !threadPost && !searchActive && !!topDateKey
+                  }
                   auth={auth}
                   avatarSrc={avatarSrc}
                   mentionMembers={mentionMembers}
