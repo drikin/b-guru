@@ -3376,6 +3376,12 @@ export default function Home() {
 
   // Return to the top/home (feed) view from anywhere — including from a thread.
   const goHome = () => {
+    // Explicitly refresh the timeline: the user asked that the header logo and
+    // the sidebar タイムライン link always reload the feed. If we're already
+    // viewing the feed the activeNav effect won't re-run (nav unchanged), so
+    // reload here; when switching in from another tab the effect already
+    // loads it, so we skip to avoid a double fetch.
+    const wasOnFeed = activeNavRef.current === "feed";
     setActiveNav("feed");
     setThreadPost(null);
     setThreadReplies([]);
@@ -3391,11 +3397,7 @@ export default function Home() {
         // ignore
       }
     }
-    // NOTE: removed silentRefreshFeed() here — when navigating back to the
-    // feed from another nav, the activeNav Effect calls loadFeed() which is
-    // the authoritative full reload. Calling silentRefreshFeed in the same
-    // tick caused a race with loadFeed's setFeedLoading(true). When already
-    // on the feed, the SSE connection keeps the timeline live anyway.
+    if (wasOnFeed) loadFeed();
     // Smoothly scroll the timeline back to the top.
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
