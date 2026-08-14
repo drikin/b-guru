@@ -330,3 +330,22 @@ body {
   font-weight: 600;
   cursor: default;
 }
+
+
+/* ===== X-style centered shell (wide desktop) =====
+   横幅に余裕があるとき(>1240px)に左右のサイドバーをメインに寄せて外側余白を作り、
+   サムネイル風の3カラムを中央寄せにする。それ以下では余白0=従来どおり詰める。 */
+.appshell-center {
+  --shell-w: 1240px;
+  --shell-m: max(0px, calc((100vw - var(--shell-w)) / 2));
+}
+.appshell-center [data-cx="navbar"] {
+  inset-inline-start: var(--shell-m) !important;
+}
+.appshell-center [data-cx="aside"] {
+  inset-inline-end: var(--shell-m) !important;
+}
+.appshell-center [data-cx="main"] {
+  padding-inline-start: calc(var(--shell-m) + var(--app-shell-navbar-offset, 0rem)) !important;
+  padding-inline-end: calc(var(--shell-m) + var(--app-shell-aside-offset, 0rem)) !important;
+}

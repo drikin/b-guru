@@ -6,6 +6,7 @@ import {
   replaceReplyInFeed,
   removeReplyTemp,
   groupFeed,
+  mergeFreshFeed,
 } from "../feed";
 
 /** Minimal valid FeedPost factory. All fields populated so shape-parity tests
@@ -207,5 +208,66 @@ describe("full optimistic comment flow (temp → refresh race → real)", () => 
     expect(ids).toEqual([realId]);
     expect(feed[0].replyCount).toBe(1);
     expect(feed[0].lastActivityAt).toBe(after);
+  });
+});
+
+
+describe("mergeFreshFeed (silentRefresh server-page merge)", () => {
+  it("keeps older pages / temp roots that the fresh page didn't return", () => {
+    const prev = [
+      makePost(1, { lastActivityAt: "2026-08-13T10:00:00.000Z" }),
+      makePost(2, { lastActivityAt: "2026-08-13T08:00:00.000Z" }),
+    ];
+    const fresh = [makePost(1, { lastActivityAt: "2026-08-13T10:00:00.000Z" })];
+    const merged = mergeFreshFeed(prev, fresh);
+    expect(merged.map((p) => p.id).sort()).toEqual([1, 2]);
+  });
+
+  it("keeps the NEWER lastActivityAt so a stale refresh can't sink a just-commented group", () => {
+    const commentTime = "2026-08-13T11:00:00.000Z";
+    // prev: post 5 was just commented on → optimistically bumped to the top with
+    // a (temp) reply and a bumped lastActivityAt.
+    const tempId = 999888777;
+    const prev = [
+      {
+        ...makePost(5, { lastActivityAt: commentTime }),
+        replies: [makeReply(tempId, 5, { createdAt: commentTime })],
+        replyCount: 1,
+      },
+      makePost(1, { lastActivityAt: "2026-08-13T10:00:00.000Z" }),
+    ];
+    // fresh: server page-1 AS OF BEFORE the comment committed — post 5 is still
+    // present but with its OLD lastActivityAt and without the reply.
+    const fresh = [
+      makePost(1, { lastActivityAt: "2026-08-13T10:00:00.000Z" }),
+      makePost(5, { lastActivityAt: "2026-08-13T09:00:00.000Z" }),
+    ];
+    const merged = mergeFreshFeed(prev, fresh);
+    const p5 = merged.find((p) => p.id === 5)!;
+    // The race must NOT clobber the bumped lastActivityAt…
+    expect(p5.lastActivityAt).toBe(commentTime);
+    // …nor drop the optimistic reply the server hasn't seen yet.
+    expect((p5.replies ?? []).map((r) => r.id)).toEqual([tempId]);
+    // And the timeline still floats the group to the top.
+    expect(groupFeed(merged)[0].posts[0].id).toBe(5);
+  });
+
+  it("uses the server value when the server is fresher (normal refresh keeps server order)", () => {
+    const serverTime = "2026-08-13T12:00:00.000Z";
+    const prev = [
+      makePost(1, { lastActivityAt: "2026-08-13T11:00:00.000Z" }),
+      makePost(2, { lastActivityAt: "2026-08-13T10:00:00.000Z" }),
+    ];
+    const fresh = [
+      makePost(1, { lastActivityAt: serverTime }),
+      makePost(2, { lastActivityAt: "2026-08-13T10:00:00.000Z" }),
+    ];
+    const merged = mergeFreshFeed(prev, fresh);
+    expect(merged.find((p) => p.id === 1)!.lastActivityAt).toBe(serverTime);
+    expect(groupFeed(merged)[0].posts[0].id).toBe(1);
+  });
+
+  it("returns prev unchanged when both lists are empty", () => {
+    expect(mergeFreshFeed([], [])).toEqual([]);
   });
 });

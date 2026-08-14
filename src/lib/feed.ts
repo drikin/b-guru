@@ -230,3 +230,47 @@ export function removeReplyTemp(feed: FeedPost[], parentId: number, tempId: numb
     };
   });
 }
+
+
+/**
+ * Merge a freshly fetched page-1 list (`fresh`, authoritative server order)
+ * into the current local feed (`prev`).
+ *
+ * - Posts present in BOTH: the server version wins (authoritative for sort
+ *   order, reply count, likes, URL previews) but any optimistic reply the
+ *   server hasn't seen yet (tempId or just-created real replies) is preserved.
+ * - Posts NOT in `fresh` are kept as-is (older pages / optimistic temp roots).
+ * - `lastActivityAt` keeps the NEWER of local/server. A comment optimistically
+ *   bumps its group locally, and a silentRefresh that races ahead of that
+ *   comment's server commit would otherwise clobber the bump with a stale
+ *   value and sink the group back down (the "comment didn't float the group
+ *   to the top" bug). max() is safe for whispers too — they never move it.
+ */
+export function mergeFreshFeed(prev: FeedPost[], fresh: FeedPost[]): FeedPost[] {
+  if (fresh.length === 0 && prev.length === 0) return prev;
+  const freshIds = new Set(fresh.map((p) => p.id));
+  const prevMap = new Map(prev.map((p) => [p.id, p]));
+  const merged = fresh.map((fp) => {
+    const oldP = prevMap.get(fp.id);
+    if (!oldP) return fp;
+    const serverReplyIds = new Set((fp.replies ?? []).map((r) => r.id));
+    const oldReplies = oldP.replies ?? [];
+    const preservedReplies = oldReplies.filter(
+      (rp) => !serverReplyIds.has(rp.id) && rp.id > 0
+    );
+    const mergedActivity =
+      oldP.lastActivityAt && fp.lastActivityAt && oldP.lastActivityAt > fp.lastActivityAt
+        ? oldP.lastActivityAt
+        : fp.lastActivityAt;
+    if (preservedReplies.length > 0) {
+      return {
+        ...fp,
+        replies: [...(fp.replies ?? []), ...preservedReplies],
+        ...(mergedActivity !== fp.lastActivityAt ? { lastActivityAt: mergedActivity } : {}),
+      };
+    }
+    return mergedActivity !== fp.lastActivityAt ? { ...fp, lastActivityAt: mergedActivity } : fp;
+  });
+  const older = prev.filter((p) => !freshIds.has(p.id) && p.id > 0);
+  return [...merged, ...older];
+}

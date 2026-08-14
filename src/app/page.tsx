@@ -24,7 +24,6 @@ import {
   ActionIcon,
   Burger,
   Popover,
-  Indicator,
   Loader,
   Tooltip,
   Menu,
@@ -42,6 +41,7 @@ import {
   parentInFeed,
   replaceReplyInFeed,
   removeReplyTemp,
+  mergeFreshFeed,
 } from "@/lib/feed";
 
 type View = "login" | "otp";
@@ -1966,35 +1966,7 @@ export default function Home() {
         .then((r) => r.json())
         .then((d) => {
           const fresh = d.posts ?? [];
-          setFeedPosts((prev) => {
-            if (fresh.length === 0 && prev.length === 0) return prev;
-            const freshIds = new Set(fresh.map((p: FeedPost) => p.id));
-            // Build the merged result:
-            // - For posts in `fresh`: use the server version (authoritative for
-            //   sort order, reply count, likes, URL previews) BUT preserve any
-            //   optimistic replies (tempId or just-created real replies) that
-            //   the server hasn't seen yet.
-            // - For posts NOT in fresh: keep them as-is (older pages / temp posts).
-            const prevMap = new Map(prev.map((p) => [p.id, p]));
-            const merged = fresh.map((fp: FeedPost) => {
-              const oldP = prevMap.get(fp.id);
-              if (!oldP) return fp;
-              // Preserve optimistic replies that the server doesn't have yet.
-              const serverReplyIds = new Set((fp.replies ?? []).map((r) => r.id));
-              const oldReplies = oldP.replies ?? [];
-              const preservedReplies = oldReplies.filter(
-                (rp) => !serverReplyIds.has(rp.id) && rp.id > 0
-              );
-              if (preservedReplies.length > 0) {
-                return { ...fp, replies: [...(fp.replies ?? []), ...preservedReplies] };
-              }
-              return fp;
-            });
-            const older = prev.filter(
-              (p) => !freshIds.has(p.id) && p.id > 0
-            );
-            return [...merged, ...older];
-          });
+          setFeedPosts((prev) => mergeFreshFeed(prev, fresh));
           if (fresh.length > 0) {
             feedCursorRef.current =
               fresh[fresh.length - 1].lastActivityAt ?? fresh[fresh.length - 1].createdAt;
@@ -3367,13 +3339,14 @@ export default function Home() {
 
   return (
     <AppShell
+      className="appshell-center"
       header={{ height: 56 }}
-      navbar={{ width: 220, breakpoint: "sm", collapsed: { mobile: !navOpened } }}
-      aside={{ width: 280, breakpoint: "lg", collapsed: { mobile: !asideOpened } }}
+      navbar={{ width: { base: 220, lg: 250 }, breakpoint: "sm", collapsed: { mobile: !navOpened } }}
+      aside={{ width: { base: 280, lg: 300 }, breakpoint: "lg", collapsed: { mobile: !asideOpened } }}
       padding={0}
     >
       {/* Header */}
-      <AppShell.Header style={{ background: "var(--bg-surface)", borderBottom: "1px solid var(--border-default)" }}>
+      <AppShell.Header data-cx="header" style={{ background: "var(--bg-surface)", borderBottom: "1px solid var(--border-default)" }}>
         <div
           style={{
             height: "100%",
@@ -3440,28 +3413,19 @@ export default function Home() {
           </UnstyledButton>
           {/* Right: hamburger (mobile/tablet) — opens the right sidebar + unread badge. Kept. */}
           <Group gap="sm" wrap="nowrap">
-            <Indicator
-              inline
-              size={16}
-              offset={4}
-              color="red"
-              label={notifUnread > 9 ? "9+" : notifUnread}
-              disabled={notifUnread === 0}
-            >
-              <Burger
-                opened={asideOpened}
-                onClick={() => setAsideOpened((o) => !o)}
-                size="sm"
-                hiddenFrom="lg"
-                aria-label="右パネルを開く"
-              />
-            </Indicator>
+            <Burger
+              opened={asideOpened}
+              onClick={() => setAsideOpened((o) => !o)}
+              size="sm"
+              hiddenFrom="lg"
+              aria-label="右パネルを開く"
+            />
           </Group>
         </div>
       </AppShell.Header>
 
       {/* Left sidebar */}
-      <AppShell.Navbar p="xs" style={{ background: "var(--bg-surface)", borderRight: "1px solid var(--border-default)" }}>
+      <AppShell.Navbar data-cx="navbar" p="xs" style={{ background: "var(--bg-primary)", borderRight: "1px solid var(--border-default)" }}>
         <ScrollArea>
           <Stack gap={2}>
             {NAV_ITEMS.map((item) => (
@@ -3711,7 +3675,7 @@ export default function Home() {
 
       {/* Right sidebar: visible only on very wide screens. Hosts the pinned-post
        *  summary cards (pins were moved here from the timeline). */}
-      <AppShell.Aside p="md" style={{ background: "var(--bg-primary)", borderLeft: "1px solid var(--border-default)" }}>
+      <AppShell.Aside data-cx="aside" p="md" style={{ background: "var(--bg-primary)", borderLeft: "1px solid var(--border-default)" }}>
         <ScrollArea>
           <Stack gap="sm">
           {/* Search box */}
@@ -3766,16 +3730,24 @@ export default function Home() {
                   </Badge>
                 )}
               </Group>
-              {notifUnread > 0 && (
-                <Button size="xs" variant="subtle" color="gray" onClick={markAllNotifRead}>
-                  すべて既読
-                </Button>
-              )}
-              {notifications.length > 0 && (
-                <Button size="xs" variant="subtle" color="red" onClick={clearAllNotif}>
-                  クリア
-                </Button>
-              )}
+              <Group gap={4} wrap="nowrap" align="center">
+                {notifUnread > 0 && (
+                  <ActionIcon size="sm" variant="subtle" color="gray" onClick={markAllNotifRead} aria-label="すべて既読" title="すべて既読">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M20 6 9 17l-5-5" />
+                    </svg>
+                  </ActionIcon>
+                )}
+                {notifications.length > 0 && (
+                  <ActionIcon size="sm" variant="subtle" color="red" onClick={clearAllNotif} aria-label="クリア" title="クリア">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M3 6h18" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    </svg>
+                  </ActionIcon>
+                )}
+              </Group>
             </Group>
             <ScrollArea.Autosize mah={360} type="auto">
               {notifications.length === 0 ? (
@@ -3988,6 +3960,7 @@ export default function Home() {
 
       {/* Main: feed or episodes */}
       <AppShell.Main
+        data-cx="main"
         style={{ background: "var(--bg-primary)", minHeight: "100vh" }}
         onClick={(e) => {
           // In thread view, tapping the wide left/right margin (or any area
