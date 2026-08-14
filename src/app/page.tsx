@@ -1510,6 +1510,180 @@ function TimelineFeed({
 // Optimistic feed mutation helpers (appendReplyLocal / parentInFeed /
 // replaceReplyInFeed / removeReplyTemp) now live in @/lib/feed (pure + tested).
 
+// Composer rendered when the top "+" is expanded. Owns its text/image/upload/
+// posting state locally so that typing (or attaching images) does NOT re-render
+// the entire page (which contains the full timeline feed) on every keystroke.
+function ComposerPaper({
+  auth,
+  avatarSrc,
+  displayName,
+  mentionMembers,
+  uploadImages,
+  onPublish,
+  onClose,
+  onPreviewImage,
+}: {
+  auth: { name?: string | null; email: string };
+  avatarSrc?: string | null;
+  displayName: string;
+  mentionMembers?: MentionMember[];
+  uploadImages: (
+    files: FileList | null,
+    current: string[],
+    setter: (fn: (prev: string[]) => string[]) => void,
+    setUp: (v: boolean) => void,
+    setErr: (v: string) => void
+  ) => Promise<void>;
+  onPublish: (text: string, images: string[]) => Promise<void>;
+  onClose: () => void;
+  onPreviewImage: (src: string) => void;
+}) {
+  const [text, setText] = useState("");
+  const [images, setImages] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [posting, setPosting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const onPick = (files: FileList | null) =>
+    uploadImages(files, images, setImages, setUploading, (s) => setError(s));
+  const removeImage = (i: number) => setImages((prev) => prev.filter((_, idx) => idx !== i));
+
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if ((!text.trim() && images.length === 0) || posting) return;
+    const t = text;
+    const imgs = images;
+    setPosting(true);
+    setError(null);
+    setText("");
+    setImages([]);
+    try {
+      await onPublish(t, imgs);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  // Cmd/Ctrl + Enter to submit (skip during IME composition)
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      if ((e.nativeEvent as any).isComposing) return;
+      e.preventDefault();
+      handleSubmit();
+    }
+  };
+
+  return (
+    <Paper p="md" radius="md" withBorder shadow="sm">
+      <Group align="flex-start" gap="sm" mb="xs">
+        <Avatar src={avatarSrc} alt={displayName} radius="xl" size="md" color="green">
+          {displayName.charAt(0).toUpperCase()}
+        </Avatar>
+        <Text fw={600} size="sm" c="inherit" style={{ flex: 1 }}>
+          {auth.name || auth.email}
+        </Text>
+        <ActionIcon
+          variant="subtle"
+          color="gray"
+          radius="xl"
+          size="sm"
+          aria-label="投稿フォームを閉じる"
+          title="閉じる"
+          onClick={onClose}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </ActionIcon>
+      </Group>
+      <form onSubmit={handleSubmit}>
+        <MentionTextarea
+          placeholder="今なにしてる？ (画像投稿もできます)"
+          autosize
+          minRows={2}
+          autoFocus
+          value={text}
+          onChange={setText}
+          onKeyDown={onKeyDown}
+          mb="sm"
+        />
+        {images.length > 0 && (
+          <Group gap="xs" mb="sm">
+            {images.map((src, i) => (
+              <Box key={i} style={{ position: "relative" }}>
+                <Image
+                  src={src}
+                  width={72}
+                  height={72}
+                  fit="contain"
+                  radius="md"
+                  style={{ cursor: "pointer" }}
+                  onClick={() => onPreviewImage(src)}
+                />
+                <ActionIcon
+                  size="sm"
+                  variant="filled"
+                  color="red"
+                  radius="xl"
+                  style={{ position: "absolute", top: -6, right: -6 }}
+                  onClick={() => removeImage(i)}
+                >
+                  ×
+                </ActionIcon>
+              </Box>
+            ))}
+          </Group>
+        )}
+        <Group justify="space-between">
+          <Group gap="xs">
+            <Button
+              size="xs"
+              variant="light"
+              color="gray"
+              loading={uploading}
+              disabled={images.length >= 5}
+              onClick={() => fileRef.current?.click()}
+            >
+              📷 {images.length}/5
+            </Button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={(e) => {
+                onPick(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <Text size="xs" c="dimmed">
+              Cmd/Ctrl + Enter で投稿
+            </Text>
+          </Group>
+          <Button
+            type="submit"
+            size="sm"
+            color="green"
+            loading={posting}
+            disabled={(!text.trim() && images.length === 0) || uploading}
+          >
+            投稿
+          </Button>
+        </Group>
+      </form>
+      {error && (
+        <Text size="sm" mt="sm" c="red">
+          {error}
+        </Text>
+      )}
+    </Paper>
+  );
+}
 
 export default function Home() {
   const [auth, setAuth] = useState<null | {
@@ -1634,10 +1808,6 @@ export default function Home() {
   const pendingScrollRef = useRef<number | null>(null);
   const feedCursorRef = useRef<string | null>(null);
   const feedSentinelRef = useRef<HTMLDivElement | null>(null);
-  const [postText, setPostText] = useState("");
-  const [pendingImages, setPendingImages] = useState<string[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [posting, setPosting] = useState(false);
   // Composer collapsed to a small "+" by default (clean timeline); opens into the full form on click.
   const [composerOpen, setComposerOpen] = useState(false);
 
@@ -1659,7 +1829,6 @@ export default function Home() {
   const [dnUploadingHeader, setDnUploadingHeader] = useState(false);
 
   // ---- Feed edit/delete state ----
-  const [postError, setPostError] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [editingPost, setEditingPost] = useState<FeedPost | null>(null);
   const [editText, setEditText] = useState("");
@@ -1716,7 +1885,6 @@ export default function Home() {
     };
   }, []);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const editFileRef = useRef<HTMLInputElement>(null);
 
   // ---- Notifications state ----
@@ -2678,9 +2846,6 @@ export default function Home() {
     }
   };
 
-  const onPickImages = (files: FileList | null) =>
-    uploadImages(files, pendingImages, setPendingImages, setUploading, (s) => setPostError(s));
-
   const onThreadReplyPick = (files: FileList | null) =>
     uploadImages(files, threadReplyImages, setThreadReplyImages, setThreadUploading, (s) =>
       setReplyError(s)
@@ -2700,26 +2865,11 @@ export default function Home() {
   const removeInlineReplyImage = (i: number) =>
     setInlineReplyImages((prev) => prev.filter((_, idx) => idx !== i));
 
-  const removeImage = (i: number) => {
-    setPendingImages((prev) => prev.filter((_, idx) => idx !== i));
-  };
-
-  const submitPost = useCallback(
-    async (e?: React.FormEvent) => {
-      e?.preventDefault();
-      const text = postText.trim();
-      const images = pendingImages;
-      if ((!text && images.length === 0) || posting) return;
-      setPosting(true);
-      setPostError(null);
-      // Optimistic insert: show the post at the top of the timeline IMMEDIATELY
-      // (before the network round-trip) instead of waiting for /api/publish —
-      // which used to make URL posts appear only after a multi-second OG fetch.
-      // `groupFeed` re-sorts by lastActivityAt every render, so the temp post
-      // (created now) always renders at the top even if a concurrent
-      // silentRefreshFeed momentarily changes the array order.
-      setPostText("");
-      setPendingImages([]);
+  // Publish a new root post. Text/images come in as args (the composer owns its
+  // own local text/image state — see ComposerPaper) so typing doesn't re-render
+  // the whole page. Does the optimistic insert + API round-trip + swap.
+  const publishComposer = useCallback(
+    async (text: string, images: string[]) => {
       const tempId = Date.now();
       const tempPost: FeedPost = {
         id: tempId,
@@ -2762,14 +2912,13 @@ export default function Home() {
         }
         setComposerOpen(false); // collapse back to the "+" after a successful post
       } catch (err: any) {
-        setPostError(err.message);
         setFeedPosts((prev) => prev.filter((p) => p.id !== tempId));
+        throw err; // let ComposerPaper render the error
       } finally {
         clearTimeout(timer);
-        setPosting(false);
       }
     },
-    [postText, pendingImages, posting, auth, avatarSrc]
+    [auth, avatarSrc]
   );
 
   // Reply button: open that post's thread view and show the reply box.
@@ -3322,16 +3471,6 @@ export default function Home() {
       })
       .catch((err) => setActionError(err.message))
       .finally(() => setDeleting(false));
-  };
-
-  // Cmd/Ctrl + Enter to submit
-  const onComposerKeyDown = (e: React.KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      // Avoid firing during IME composition
-      if ((e.nativeEvent as any).isComposing) return;
-      e.preventDefault();
-      submitPost();
-    }
   };
 
   // Close full-screen lightbox with Escape
@@ -4101,111 +4240,16 @@ export default function Home() {
                   Collapsed to a small "+" by default to keep the timeline clean; click expands into the full form. */}
               {activeNav === "feed" && !threadPost && !searchActive && (
                 composerOpen ? (
-                  <Paper p="md" radius="md" withBorder shadow="sm">
-                    <Group align="flex-start" gap="sm" mb="xs">
-                      <Avatar src={avatarSrc} alt={displayName} radius="xl" size="md" color="green">
-                        {displayName.charAt(0).toUpperCase()}
-                      </Avatar>
-                      <Text fw={600} size="sm" c="inherit" style={{ flex: 1 }}>
-                        {auth.name || auth.email}
-                      </Text>
-                      <ActionIcon
-                        variant="subtle"
-                        color="gray"
-                        radius="xl"
-                        size="sm"
-                        aria-label="投稿フォームを閉じる"
-                        title="閉じる"
-                        onClick={() => setComposerOpen(false)}
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <line x1="18" y1="6" x2="6" y2="18" />
-                          <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                      </ActionIcon>
-                    </Group>
-                    <form onSubmit={submitPost}>
-                      <MentionTextarea
-                        placeholder="今なにしてる？ (画像投稿もできます)"
-                        autosize
-                        minRows={2}
-                        autoFocus
-                        value={postText}
-                        onChange={setPostText}
-                        onKeyDown={onComposerKeyDown}
-                        mb="sm"
-                      />
-                      {pendingImages.length > 0 && (
-                        <Group gap="xs" mb="sm">
-                          {pendingImages.map((src, i) => (
-                            <Box key={i} style={{ position: "relative" }}>
-                              <Image
-                                src={src}
-                                width={72}
-                                height={72}
-                                fit="contain"
-                                radius="md"
-                                style={{ cursor: "pointer" }}
-                                onClick={() => setPreviewImage(src)}
-                              />
-                              <ActionIcon
-                                size="sm"
-                                variant="filled"
-                                color="red"
-                                radius="xl"
-                                style={{ position: "absolute", top: -6, right: -6 }}
-                                onClick={() => removeImage(i)}
-                              >
-                                ×
-                              </ActionIcon>
-                            </Box>
-                          ))}
-                        </Group>
-                      )}
-                      <Group justify="space-between">
-                        <Group gap="xs">
-                          <Button
-                            size="xs"
-                            variant="light"
-                            color="gray"
-                            loading={uploading}
-                            disabled={pendingImages.length >= 5}
-                            onClick={() => fileInputRef.current?.click()}
-                          >
-                            📷 {pendingImages.length}/5
-                          </Button>
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept="image/*"
-                            multiple
-                            hidden
-                            onChange={(e) => {
-                              onPickImages(e.target.files);
-                              e.target.value = "";
-                            }}
-                          />
-                          <Text size="xs" c="dimmed">
-                            Cmd/Ctrl + Enter で投稿
-                          </Text>
-                        </Group>
-                        <Button
-                          type="submit"
-                          size="sm"
-                          color="green"
-                          loading={posting}
-                          disabled={(!postText.trim() && pendingImages.length === 0) || uploading}
-                        >
-                          投稿
-                        </Button>
-                      </Group>
-                    </form>
-                    {postError && (
-                      <Text size="sm" mt="sm" c="red">
-                        {postError}
-                      </Text>
-                    )}
-                  </Paper>
+                  <ComposerPaper
+                    auth={auth}
+                    avatarSrc={avatarSrc}
+                    displayName={displayName}
+                    mentionMembers={mentionMembers}
+                    uploadImages={uploadImages}
+                    onPublish={publishComposer}
+                    onClose={() => setComposerOpen(false)}
+                    onPreviewImage={setPreviewImage}
+                  />
                 ) : (
                   <Box style={{ display: "flex", justifyContent: "center", padding: "4px 0", lineHeight: 0 }}>
                     <UnstyledButton
