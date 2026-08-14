@@ -44,6 +44,7 @@ import {
   removeReplyTemp,
   mergeFreshFeed,
 } from "@/lib/feed";
+import type { ChatMessage } from "@/lib/chat";
 
 type View = "login" | "otp";
 
@@ -2234,34 +2235,90 @@ export default function Home() {
       .catch(() => setOnlineMembers([]));
   }, [auth]);
 
-  // Real-time "wave" (👋 flying up from bottom-right, Insta-live style).
-  // waves: { id, fromName, kind } — kind "received" = someone waved at me
-  // (show their name), "sent" = I waved at someone (just a hand, feedback).
-  const [waves, setWaves] = useState<
-    { id: number; fromName: string; kind: "sent" | "received" }[]
-  >([]);
-  const waveIdRef = useRef(0);
-  // Stable callbacks: showWave/sendWave only touch functional setState + a ref,
-  // so they can be safely listed in the SSE effect deps without recreating the
-  // EventSource on every render (see the SSE "Effect dependency" pitfall).
-  const showWave = useCallback((fromName: string, kind: "sent" | "received") => {
-    const id = ++waveIdRef.current;
-    setWaves((w) => [...w, { id, fromName, kind }]);
-    window.setTimeout(() => setWaves((w) => w.filter((x) => x.id !== id)), 3000);
+  // ---- Realtime chat (single global room) — bottom-right bubble widget ----
+  // Opens a mini chat window where online members chat live over SSE. This
+  // replaces the old "wave" (👋) feature: the bubble sits where the wave
+  // animation used to float, and clicking an online member opens the chat.
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatUnread, setChatUnread] = useState(0);
+  const [chatText, setChatText] = useState("");
+  const [chatSending, setChatSending] = useState(false);
+  const chatOpenRef = useRef(false); // ref so the SSE handler stays stable
+  const chatListRef = useRef<HTMLDivElement>(null);
+
+  // Load history + unread count. When `open`, also mark everything read and
+  // clear the badge (bubble was just tapped). Uses functional setState + a ref
+  // so it can be listed in the SSE effect deps without recreating the
+  // EventSource (see the SSE "Effect dependency" pitfall).
+  const loadChat = useCallback(async (open?: boolean) => {
+    try {
+      const r = await fetch("/api/chat", { cache: "no-store" });
+      if (!r.ok) return;
+      const d = await r.json();
+      setChatMessages(d.messages ?? []);
+      if (open) {
+        setChatUnread(0);
+        fetch("/api/chat/read", { method: "POST" }).catch(() => {});
+      } else {
+        setChatUnread(d.unreadCount ?? 0);
+      }
+    } catch {
+      /* ignore */
+    }
   }, []);
-  const sendWave = useCallback((toEmail: string, toName: string) => {
-    if (!auth || toEmail === auth.email) return;
-    fetch("/api/wave", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ to: toEmail }),
-    })
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.ok) showWave(toName, "sent"); // instant sender feedback
-      })
-      .catch(() => {});
-  }, [auth, showWave]);
+
+  // Open the chat window (fresh history + mark read).
+  const openChat = useCallback(() => {
+    chatOpenRef.current = true;
+    setChatOpen(true);
+    loadChat(true);
+  }, [loadChat]);
+
+  // Close the chat window (messages kept so reopening is instant).
+  const closeChat = useCallback(() => {
+    chatOpenRef.current = false;
+    setChatOpen(false);
+  }, []);
+
+  // Send a chat message (callback memo ties to current input text).
+  const sendChat = useCallback(async () => {
+    const body = chatText.trim();
+    if (!body || chatSending) return;
+    setChatSending(true);
+    try {
+      const r = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body }),
+        cache: "no-store",
+      });
+      const d = await r.json();
+      if (d.ok && d.message) {
+        setChatMessages((prev) =>
+          prev.some((m) => m.id === d.message.id) ? prev : [...prev, d.message]
+        );
+        setChatText("");
+        setChatUnread(0); // our own message counts as read
+      }
+    } catch {
+      /* ignore */
+    }
+    setChatSending(false);
+  }, [chatText, chatSending]);
+
+  // Auto-scroll the message list to the bottom when it grows while open.
+  useEffect(() => {
+    if (chatOpenRef.current && chatListRef.current) {
+      const el = chatListRef.current;
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [chatMessages, chatOpen]);
+
+  // Load initial chat history + unread badge on login (before opening).
+  useEffect(() => {
+    if (auth) loadChat(false);
+  }, [auth, loadChat]);
 
   // ---- TEMP diagnostic (2026-08-13, drikin): surface client JS errors on the
   // page so a freeze during commenting (form not closing / not reflecting while
@@ -2446,28 +2503,42 @@ export default function Home() {
     const onPresenceChange = () => {
       loadOnline(); // refresh the right-sidebar online panel
     };
-    const onWave = (e: MessageEvent) => {
+    // Realtime chat: append created messages live; drop deleted ones. When the
+    // chat window is closed and the message isn't ours, bump the unread badge.
+    // When open, clear the badge and mark read.
+    const onChat = (e: MessageEvent) => {
       let d: any;
       try {
         d = JSON.parse(e.data);
       } catch {
         return;
       }
-      if (!d || d.type !== "wave" || !auth) return;
-      if (d.to === auth.email) {
-        showWave(d.from?.name || d.from?.email || "", "received");
-      } else if (d.from?.email === auth.email) {
-        showWave(d.from?.name || "", "sent");
+      if (!d || d.type !== "chat" || !auth) return;
+      if (d.action === "create" && d.message?.id) {
+        const msg = d.message as ChatMessage;
+        setChatMessages((prev) =>
+          prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
+        );
+        if (chatOpenRef.current) {
+          setChatUnread(0);
+          fetch("/api/chat/read", { method: "POST" }).catch(() => {});
+        } else if (msg.authorEmail !== auth.email) {
+          setChatUnread((u) => u + 1);
+        }
+      } else if (d.action === "delete" && d.message?.id != null) {
+        const delId = d.message.id as number;
+        setChatMessages((prev) => prev.filter((m) => m.id !== delId));
       }
     };
     es.addEventListener("post", onChange);
     es.addEventListener("pin", onPinChange);
     es.addEventListener("presence", onPresenceChange);
-    es.addEventListener("wave", onWave);
+    es.addEventListener("chat", onChat);
     es.onopen = () => {
       loadPinned();
       loadHot();
       loadOnline();
+      loadChat(chatOpenRef.current); // recover chat missed during a disconnect
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) silentRefreshFeed();
     };
     es.onerror = () => {
@@ -2478,7 +2549,7 @@ export default function Home() {
     return () => {
       es.close();
     };
-  }, [auth, silentRefreshFeed, loadPinned, loadHot, loadOnline, showWave]);
+  }, [auth, silentRefreshFeed, loadPinned, loadHot, loadOnline, loadChat]);
 
   // Scroll to a post after its reply bumps it (or after inline insertion).
   // pendingScrollRef is set by submitInlineReply / submitThreadReply on
@@ -4313,16 +4384,8 @@ export default function Home() {
                   return (
                     <UnstyledButton
                       key={m.email}
-                      title={
-                        isSelf
-                          ? "自分に手を振る（動作確認）"
-                          : `${m.name || m.email} に手を振る`
-                      }
-                      onClick={() =>
-                        isSelf
-                          ? showWave("自分", "received")
-                          : sendWave(m.email, m.name || m.email)
-                      }
+                      title="オンラインでチャット"
+                      onClick={openChat}
                       style={{
                         display: "block",
                         width: "100%",
@@ -4347,11 +4410,6 @@ export default function Home() {
                             </Text>
                           )}
                         </Text>
-                        {!isSelf && (
-                          <Text span c="dimmed" size="sm" ml="auto">
-                            👋
-                          </Text>
-                        )}
                       </Group>
                     </UnstyledButton>
                   );
@@ -5392,59 +5450,273 @@ export default function Home() {
         </Stack>
       </Modal>
 
-      {/* Wave animation overlay — 👋 floats up from bottom-right (Insta-live style) */}
-      <style>{`
-        @keyframes bguruWaveFly {
-          0%   { transform: translate(0, 0) scale(0.5) rotate(-8deg); opacity: 0; }
-          12%  { opacity: 1; }
-          100% { transform: translate(-90px, -360px) scale(1.15) rotate(8deg); opacity: 0; }
-        }
-        .bguru-wave {
-          position: absolute;
-          bottom: 0;
-          animation: bguruWaveFly 2.6s ease-out forwards;
-          will-change: transform, opacity;
-          user-select: none;
-          white-space: nowrap;
-          pointer-events: none;
-        }
-      `}</style>
-      {waves.length > 0 && (
-        <div
+      {/* Realtime chat widget — bottom-right bubble that opens a mini chat
+          window for the global room (replaces the old wave 👋 feature). */}
+      {chatOpen ? (
+        <Paper
+          radius="lg"
+          withBorder
+          shadow="xl"
           style={{
             position: "fixed",
             right: 24,
             bottom: 20,
-            zIndex: 3000,
-            pointerEvents: "none",
+            zIndex: 2900,
+            width: 340,
+            maxWidth: "calc(100vw - 32px)",
+            height: 440,
+            maxHeight: "calc(100vh - 48px)",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            background: "var(--bg-surface)",
+            borderColor: "var(--border-green)",
           }}
         >
-          {waves.map((w, i) => (
-            <div
-              key={w.id}
-              className="bguru-wave"
-              style={{ right: (i % 5) * 16, transformOrigin: "bottom center" }}
+          {/* Header */}
+          <Group
+            justify="space-between"
+            align="center"
+            wrap="nowrap"
+            p="xs"
+            style={{
+              borderBottom: "1px solid var(--border-green)",
+              background: "var(--bg-subtle)",
+              flexShrink: 0,
+            }}
+          >
+            <Group gap={6} align="center" wrap="nowrap">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                stroke="none"
+                color="var(--text-green)"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="5" />
+              </svg>
+              <Text fw={700} size="sm">
+                チャット
+              </Text>
+              <Text size="xs" c="dimmed">
+                {onlineMembers.length > 0
+                  ? `${onlineMembers.length}人在線`
+                  : "オフライン"}
+              </Text>
+            </Group>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              onClick={closeChat}
+              aria-label="チャットを閉じる"
             >
-              <div style={{ fontSize: 44, lineHeight: 1, textAlign: "center" }}>👋</div>
-              {w.kind === "received" && w.fromName && (
-                <div
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: "var(--text-primary)",
-                    background: "rgba(255,255,255,0.85)",
-                    borderRadius: 8,
-                    padding: "2px 6px",
-                    textAlign: "center",
-                    marginTop: 2,
-                    display: "inline-block",
-                  }}
-                >
-                  {w.fromName}
-                </div>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </ActionIcon>
+          </Group>
+
+          {/* Message list */}
+          <ScrollArea.Autosize
+            type="auto"
+            scrollbarSize={8}
+            offsetScrollbars
+            style={{ flex: 1, minHeight: 0 }}
+          >
+            <div
+              ref={chatListRef}
+              style={{
+                padding: "8px 10px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 6,
+              }}
+            >
+              {chatMessages.length === 0 ? (
+                <Text size="sm" c="dimmed" ta="center" py="lg">
+                  まだメッセージはありません。さっそく話しかけてみましょう。
+                </Text>
+              ) : (
+                chatMessages.map((m) => {
+                  const mine = !!auth && m.authorEmail === auth.email;
+                  return (
+                    <div
+                      key={m.id}
+                      style={{
+                        display: "flex",
+                        justifyContent: mine ? "flex-end" : "flex-start",
+                      }}
+                    >
+                      <div
+                        style={{
+                          maxWidth: "82%",
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: mine ? "flex-end" : "flex-start",
+                        }}
+                      >
+                        {!mine && (
+                          <Group
+                            gap={5}
+                            align="center"
+                            wrap="nowrap"
+                            mb={2}
+                          >
+                            <SafeAvatar
+                              src={m.avatar}
+                              initial={m.authorName || m.authorEmail}
+                              size="xs"
+                            />
+                            <Text size="xs" c="dimmed">
+                              {m.authorName || m.authorEmail}
+                            </Text>
+                          </Group>
+                        )}
+                        <div
+                          style={{
+                            background: mine
+                              ? "var(--bg-surface)"
+                              : "var(--bg-subtle)",
+                            border: mine
+                              ? "1px solid var(--border-green)"
+                              : "1px solid transparent",
+                            borderRadius: mine
+                              ? "14px 14px 2px 14px"
+                              : "14px 14px 14px 2px",
+                            padding: "6px 10px",
+                            fontSize: 13,
+                            lineHeight: 1.45,
+                            whiteSpace: "pre-wrap",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {m.body}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
               )}
             </div>
-          ))}
+          </ScrollArea.Autosize>
+
+          {/* Composer */}
+          <Group
+            align="flex-end"
+            gap={8}
+            wrap="nowrap"
+            p="xs"
+            style={{ borderTop: "1px solid var(--border-green)", flexShrink: 0 }}
+          >
+            <Textarea
+              value={chatText}
+              onChange={(e) => setChatText(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if ((e.nativeEvent as any).isComposing) return;
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendChat();
+                }
+              }}
+              placeholder="メッセージを入力（Enter で送信）"
+              autosize
+              minRows={1}
+              maxRows={4}
+              style={{ flex: 1 }}
+              aria-label="チャットメッセージ"
+            />
+            <ActionIcon
+              variant="filled"
+              color="green"
+              size="md"
+              onClick={sendChat}
+              disabled={chatSending || !chatText.trim()}
+              aria-label="送信"
+              style={{ flexShrink: 0, marginBottom: 4 }}
+            >
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="m22 2-7 20-4-9-9-4Z" />
+                <path d="M22 2 11 13" />
+              </svg>
+            </ActionIcon>
+          </Group>
+        </Paper>
+      ) : (
+        <div style={{ position: "fixed", right: 24, bottom: 20, zIndex: 2900 }}>
+          <UnstyledButton
+            onClick={openChat}
+            aria-label="チャットを開く"
+            style={{
+              width: 48,
+              height: 48,
+              borderRadius: "50%",
+              background: "var(--bg-surface)",
+              border: "1px solid var(--border-green)",
+              boxShadow: "0 2px 4px rgba(0,0,0,0.18)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+              color: "var(--text-green-soft)",
+              position: "relative",
+            }}
+          >
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
+          </UnstyledButton>
+          {chatUnread > 0 && (
+            <div
+              style={{
+                position: "absolute",
+                top: -4,
+                right: -4,
+                minWidth: 18,
+                height: 18,
+                borderRadius: 9,
+                padding: "0 5px",
+                background: "#e03131",
+                color: "#fff",
+                fontSize: 11,
+                fontWeight: 700,
+                lineHeight: "18px",
+                textAlign: "center",
+                boxShadow: "0 1px 3px rgba(0,0,0,.3)",
+                pointerEvents: "none",
+              }}
+            >
+              {chatUnread > 99 ? "99+" : chatUnread}
+            </div>
+          )}
         </div>
       )}
 

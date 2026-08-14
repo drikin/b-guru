@@ -1,4 +1,9 @@
 import { EventEmitter } from "events";
+import type { ChatMessage } from "./chat";
+
+// Chat delete events only carry the message id; create events carry the full
+// message. A chat event's `message` always has at least `id`.
+type ChatLiveMessage = { id: number } & Partial<ChatMessage>;
 
 /**
  * In-process event bus used to push timeline changes to connected clients via
@@ -27,7 +32,7 @@ export type LiveEvent =
   | { type: "post"; postId: number; action: "create" | "update" | "delete"; authorEmail?: string }
   | { type: "pin"; postId: number; action: "toggle" }
   | { type: "presence"; emails: string[] }
-  | { type: "wave"; from: { email: string; name: string }; to: string };
+  | { type: "chat"; message: ChatLiveMessage; action: "create" | "delete" };
 
 export function emitLive(event: LiveEvent): void {
   // fire-and-forget; guard against listener errors crashing the API route

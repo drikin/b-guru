@@ -175,5 +175,24 @@ export async function initSchema() {
       ('ネタ帳', '🗒️', 'https://neta.backspace.fm/', 2)
     ) AS v(label, icon, href, sort_order)
     WHERE NOT EXISTS (SELECT 1 FROM menu_links);
+
+    -- Realtime community chat (single global room) — the bubble widget
+    -- bottom-right. Lightweight, ephemeral back-and-forth between online
+    -- members (as opposed to the persistent timeline posts).
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id SERIAL PRIMARY KEY,
+      author_email TEXT NOT NULL,
+      author_name TEXT,
+      body TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_created ON chat_messages(id DESC);
+
+    -- Per-user read cursor for the chat unread badge.
+    CREATE TABLE IF NOT EXISTS chat_read_state (
+      email TEXT PRIMARY KEY,
+      last_read_id INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 }
