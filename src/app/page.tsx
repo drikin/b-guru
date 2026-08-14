@@ -5500,7 +5500,7 @@ export default function Home() {
                 <circle cx="12" cy="12" r="5" />
               </svg>
               <Text fw={700} size="sm">
-                チャット
+                ビーグルチャット
               </Text>
               <Text size="xs" c="dimmed">
                 {onlineMembers.length > 0

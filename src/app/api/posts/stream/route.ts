@@ -7,6 +7,7 @@ import {
   markOffline,
   markOnline,
 } from "@/lib/presence";
+import { ensureChatSweeper } from "@/lib/chat";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,6 +21,7 @@ const encoder = new TextEncoder();
 // logged-in member online, and closing it marks them offline.
 export async function GET(req: NextRequest) {
   ensurePresenceSweeper();
+  ensureChatSweeper();
   const email = await getSessionEmail();
 
   let send: (event: LiveEvent | { type: "ping" }) => void = () => {};

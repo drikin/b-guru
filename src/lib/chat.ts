@@ -8,6 +8,7 @@
  */
 import { pool } from "./db";
 import { gravatarUrl } from "./posts";
+import { emitLive } from "./live";
 
 export interface ChatMessage {
   id: number;
@@ -22,6 +23,38 @@ export interface ChatMessage {
 export const CHAT_MAX_BODY = 1000;
 /** Default page size returned by GET /api/chat. */
 export const CHAT_PAGE_SIZE = 50;
+/** Chat messages are ephemeral: each one disappears this long after posting. */
+export const CHAT_TTL = "24 hours";
+
+/** Delete chat messages older than the TTL and return the removed ids so they
+ *  can be broadcast over SSE (open chat panels remove them live). */
+export async function purgeExpiredChat(): Promise<number[]> {
+  const res = await pool.query(
+    `DELETE FROM chat_messages
+     WHERE created_at < now() - ($1::text)::interval
+     RETURNING id`,
+    [CHAT_TTL]
+  );
+  return res.rows.map((r) => r.id);
+}
+
+/** Start a single process-wide sweeper that removes expired chat messages and
+ *  broadcasts each removal over SSE. Idempotent (mirrors ensurePresenceSweeper). */
+let chatSweeperStarted = false;
+export function ensureChatSweeper(): void {
+  if (chatSweeperStarted) return;
+  chatSweeperStarted = true;
+  setInterval(async () => {
+    try {
+      const ids = await purgeExpiredChat();
+      for (const id of ids) {
+        emitLive({ type: "chat", action: "delete", message: { id } });
+      }
+    } catch (e) {
+      console.error("chat sweeper error:", (e as any)?.message);
+    }
+  }, 60_000);
+}
 
 /** Map a chat_messages row into the API shape. */
 function mapRow(r: {
@@ -50,9 +83,10 @@ export async function listChatMessages(opts: {
   const res = await pool.query(
     `SELECT * FROM chat_messages
      WHERE ($1::int IS NULL OR id < $1)
+       AND created_at >= now() - ($2::text)::interval
      ORDER BY id DESC
-     LIMIT $2`,
-    [opts.before ?? null, limit]
+     LIMIT $3`,
+    [opts.before ?? null, CHAT_TTL, limit]
   );
   // Reverse so the returned array is chronological (oldest first).
   return res.rows.reverse().map(mapRow);
@@ -95,8 +129,9 @@ export async function getUnreadCount(email: string): Promise<number> {
   );
   const lastRead = res.rows[0].last_read;
   const cnt = await pool.query(
-    `SELECT count(*)::int AS c FROM chat_messages WHERE id > $1`,
-    [lastRead]
+    `SELECT count(*)::int AS c FROM chat_messages
+     WHERE id > $1 AND created_at >= now() - ($2::text)::interval`,
+    [lastRead, CHAT_TTL]
   );
   return cnt.rows[0].c;
 }
