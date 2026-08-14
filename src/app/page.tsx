@@ -4063,15 +4063,17 @@ export default function Home() {
           )}
           <span>{isDark ? "ライトモード" : "ダークモード"}</span>
         </UnstyledButton>
-        {/* Auto unread management on/off — below the dark mode toggle */}
-        <Divider my="xs" />
+        {/* Auto unread management on/off — directly below dark mode, no separator */}
         <Group
           wrap="nowrap"
           align="center"
           justify="space-between"
-          style={{ padding: "8px 12px", borderRadius: 8 }}
+          style={{ padding: "10px 12px", borderRadius: 8 }}
         >
-          <span style={{ color: "var(--text-primary)", fontSize: 14 }}>オート未読管理</span>
+          <Group gap="sm" wrap="nowrap" align="center">
+            <span style={{ lineHeight: 1 }}>👁</span>
+            <span style={{ color: "var(--text-primary)", fontSize: 14 }}>オート未読管理</span>
+          </Group>
           <Switch
             checked={autoUnreadOn}
             onChange={(e) => setUnreadEnabled(e.currentTarget.checked)}
