@@ -1321,7 +1321,6 @@ function ReplyBubble({
       style={{
         borderLeft: "2px solid var(--border-green-soft)",
         paddingLeft: 8,
-        background: "var(--bg-reply)",
         borderRadius: 8,
       }}
     >
