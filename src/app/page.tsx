@@ -1366,6 +1366,174 @@ function BarkIcon({ size = 14, color = "currentColor" }: { size?: number; color?
   );
 }
 
+// Self-contained inline "insert between cards" comment box. Owns its own
+// text/image/upload/posting state so TYPING HERE does NOT re-render the whole
+// timeline. This is the same isolation that was already applied to the main
+// composer (ComposerPaper) but was still missing for the inline reply box — the
+// reply text used to live at the page root, so every keystroke re-rendered all
+// ~500 cards (the "text input feels slow" report). Mirror of ComposerPaper.
+function InlineReplyBox({
+  postId,
+  authorLabel,
+  uploadImages,
+  onSubmit,
+  onCancel,
+  onPreview,
+}: {
+  postId: number;
+  authorLabel: string;
+  uploadImages: (
+    files: FileList | null,
+    current: string[],
+    setter: (fn: (prev: string[]) => string[]) => void,
+    setUp: (v: boolean) => void,
+    setErr: (v: string) => void
+  ) => Promise<void>;
+  onSubmit: (id: number, text: string, images: string[], whisper: boolean) => Promise<void>;
+  onCancel: () => void;
+  onPreview: (src: string) => void;
+}) {
+  const [text, setText] = useState("");
+  const [images, setImages] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [posting, setPosting] = useState<"comment" | "whisper" | false>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const canSend = (text.trim() !== "" || images.length > 0) && posting === false;
+
+  const onPick = (files: FileList | null) =>
+    uploadImages(files, images, setImages, setUploading, (s) => setError(s));
+  const removeImage = (i: number) => setImages((prev) => prev.filter((_, idx) => idx !== i));
+
+  const handleSubmit = async (whisper: boolean) => {
+    if (!canSend) return;
+    const t = text;
+    const imgs = images;
+    setPosting(whisper ? "whisper" : "comment");
+    setError(null);
+    try {
+      await onSubmit(postId, t, imgs, whisper);
+    } catch (err: any) {
+      setError(err?.message || "コメントに失敗しました");
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  return (
+    <Stack
+      gap={6}
+      p="xs"
+      style={{ background: "var(--bg-subtle)", borderRadius: 8, border: "1px solid var(--border-green-soft)" }}
+    >
+      <Text size="xs" c="dimmed">
+        この位置にコメントします
+      </Text>
+      <MentionTextarea
+        value={text}
+        autoFocus
+        onChange={setText}
+        placeholder={`${authorLabel} の投稿にコメント…（Shift+Enter でささやく）`}
+        minRows={2}
+        autosize
+        maxRows={5}
+        onKeyDown={(e) => {
+          if ((e.nativeEvent as any).isComposing) return;
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+            e.preventDefault();
+            handleSubmit(false);
+          } else if (e.shiftKey && e.key === "Enter") {
+            e.preventDefault();
+            handleSubmit(true);
+          }
+        }}
+      />
+      {error && (
+        <Text size="xs" c="red">
+          {error}
+        </Text>
+      )}
+      {/* Comment image attachments (same as main post) */}
+      {images.length > 0 && (
+        <Group gap="xs" mb={4}>
+          {images.map((src, i) => (
+            <Box key={i} style={{ position: "relative" }}>
+              <Image
+                src={src}
+                width={56}
+                height={56}
+                fit="contain"
+                radius="md"
+                style={{ cursor: "pointer" }}
+                onClick={() => onPreview(src)}
+              />
+              <ActionIcon
+                size="sm"
+                variant="filled"
+                color="red"
+                radius="xl"
+                style={{ position: "absolute", top: -6, right: -6 }}
+                onClick={() => removeImage(i)}
+              >
+                ×
+              </ActionIcon>
+            </Box>
+          ))}
+        </Group>
+      )}
+      <Group gap="xs" mb={4}>
+        <label style={{ cursor: "pointer", display: "inline-block" }}>
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              onPick(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <Button
+            size="xs"
+            variant="light"
+            color="gray"
+            component="span"
+            loading={uploading}
+            disabled={images.length >= 5}
+          >
+            📷 {images.length}/5
+          </Button>
+        </label>
+      </Group>
+      <Group justify="space-between" align="center" gap="xs">
+        <Button size="xs" variant="subtle" color="gray" onClick={onCancel}>
+          キャンセル
+        </Button>
+        <Group gap="xs">
+          <Button
+            size="xs"
+            color="blue"
+            variant="light"
+            loading={posting === "whisper"}
+            disabled={!canSend}
+            onClick={() => handleSubmit(true)}
+          >
+            ささやく
+          </Button>
+          <Button
+            size="xs"
+            loading={posting === "comment"}
+            disabled={!canSend}
+            onClick={() => handleSubmit(false)}
+          >
+            コメント
+          </Button>
+        </Group>
+      </Group>
+    </Stack>
+  );
+}
+
 function TimelineFeed({
   groups,
   auth,
@@ -1373,16 +1541,9 @@ function TimelineFeed({
   mentionMembers,
   searchQuery,
   inlineReplyFor,
-  inlineReplyText,
-  inlineWhisper,
-  inlineReplyImages,
-  inlineUploading,
-  inlineReplying,
-  onInlineReplyChange,
+  uploadImages,
   onToggleInlineReply,
   onInlineReplySubmit,
-  onInlineReplyPick,
-  onRemoveInlineReplyImage,
   onOpenThread,
   onOpenThreadReply,
   onLike,
@@ -1400,16 +1561,15 @@ function TimelineFeed({
   mentionMembers?: MentionMember[];
   searchQuery?: string;
   inlineReplyFor: number | null;
-  inlineReplyText: string;
-  inlineWhisper?: boolean;
-  inlineReplyImages: string[];
-  inlineUploading: boolean;
-  inlineReplying: 'comment' | 'whisper' | false;
-  onInlineReplyChange: (t: string) => void;
+  uploadImages: (
+    files: FileList | null,
+    current: string[],
+    setter: (fn: (prev: string[]) => string[]) => void,
+    setUp: (v: boolean) => void,
+    setErr: (v: string) => void
+  ) => Promise<void>;
   onToggleInlineReply: (id: number) => void;
-  onInlineReplySubmit: (id: number, whisper?: boolean) => void;
-  onInlineReplyPick: (files: FileList | null) => void;
-  onRemoveInlineReplyImage: (i: number) => void;
+  onInlineReplySubmit: (id: number, text: string, images: string[], whisper: boolean) => Promise<void>;
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
   onLike: (id: number) => void;
@@ -1523,116 +1683,14 @@ function TimelineFeed({
              * between cards. Center placement is intuitive ("insert here"),
              * while the single narrow row keeps vertical space tight. */}
             {inlineReplyFor === post.id ? (
-              <Stack
-                gap={6}
-                p="xs"
-                style={{ background: "var(--bg-subtle)", borderRadius: 8, border: "1px solid var(--border-green-soft)" }}
-              >
-                <Text size="xs" c="dimmed">
-                  この位置にコメントします
-                </Text>
-                <MentionTextarea
-                  value={inlineReplyText}
-                  autoFocus
-                  onChange={onInlineReplyChange}
-                  placeholder={`${g.authorName || g.authorEmail.split("@")[0]} の投稿にコメント…（Shift+Enter でささやく）`}
-                  minRows={2}
-                  autosize
-                  maxRows={5}
-                  onKeyDown={(e) => {
-                    if ((e.nativeEvent as any).isComposing) return;
-                    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                      e.preventDefault();
-                      onInlineReplySubmit(post.id, false);
-                    } else if (e.shiftKey && e.key === "Enter") {
-                      e.preventDefault();
-                      onInlineReplySubmit(post.id, true);
-                    }
-                  }}
-                />
-                {/* Comment image attachments (same as main post) */}
-                {inlineReplyImages.length > 0 && (
-                  <Group gap="xs" mb={4}>
-                    {inlineReplyImages.map((src, i) => (
-                      <Box key={i} style={{ position: "relative" }}>
-                        <Image
-                          src={src}
-                          width={56}
-                          height={56}
-                          fit="contain"
-                          radius="md"
-                          style={{ cursor: "pointer" }}
-                          onClick={() => onPreview(src)}
-                        />
-                        <ActionIcon
-                          size="sm"
-                          variant="filled"
-                          color="red"
-                          radius="xl"
-                          style={{ position: "absolute", top: -6, right: -6 }}
-                          onClick={() => onRemoveInlineReplyImage(i)}
-                        >
-                          ×
-                        </ActionIcon>
-                      </Box>
-                    ))}
-                  </Group>
-                )}
-                <Group gap="xs" mb={4}>
-                  <label style={{ cursor: "pointer", display: "inline-block" }}>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      hidden
-                      onChange={(e) => {
-                        onInlineReplyPick(e.target.files);
-                        e.target.value = "";
-                      }}
-                    />
-                    <Button
-                      size="xs"
-                      variant="light"
-                      color="gray"
-                      component="span"
-                      loading={inlineUploading}
-                      disabled={inlineReplyImages.length >= 5}
-                    >
-                      📷 {inlineReplyImages.length}/5
-                    </Button>
-                  </label>
-                </Group>
-                <Group justify="space-between" align="center" gap="xs">
-                  <Button
-                    size="xs"
-                    variant="subtle"
-                    color="gray"
-                    onClick={() => onToggleInlineReply(post.id)}
-                  >
-                    キャンセル
-                  </Button>
-                  <Group gap="xs">
-                    <Button
-                      size="xs"
-                      color="blue"
-                      variant="light"
-                      loading={inlineReplying === 'whisper'}
-                      disabled={(!inlineReplyText.trim() && inlineReplyImages.length === 0) || inlineReplying !== false}
-                      onClick={() => onInlineReplySubmit(post.id, true)}
-                    >
-                      ささやく
-                    </Button>
-                    <Button
-                      size="xs"
-                      loading={inlineReplying === 'comment'}
-                      disabled={(!inlineReplyText.trim() && inlineReplyImages.length === 0) || inlineReplying !== false}
-                      onClick={() => onInlineReplySubmit(post.id, false)}
-                    >
-                      コメント
-                    </Button>
-                  </Group>
-                </Group>
-              </Stack>
+              <InlineReplyBox
+                postId={post.id}
+                authorLabel={g.authorName || g.authorEmail.split("@")[0]}
+                uploadImages={uploadImages}
+                onSubmit={onInlineReplySubmit}
+                onCancel={() => onToggleInlineReply(post.id)}
+                onPreview={onPreview}
+              />
             ) : (
               <Box style={{ display: "flex", justifyContent: "center", lineHeight: 0 }}>
                 <UnstyledButton
@@ -2020,19 +2078,16 @@ export default function Home() {
   // Whisper mode for the thread reply box (is_whisper => no timeline bump).
   const [threadWhisper, setThreadWhisper] = useState(false);
   // Inline "insert between cards" reply state (timeline group comments).
+  // NOTE: the inline box's TEXT/IMAGE/UPLOAD state lives inside InlineReplyBox
+  // (self-contained, like ComposerPaper) so typing there no longer re-renders
+  // the whole page. Only the open/guard state lives at the page root.
   const [inlineReplyFor, setInlineReplyFor] = useState<number | null>(null);
-  const [inlineReplyText, setInlineReplyText] = useState("");
   const [inlineReplying, setInlineReplying] = useState<'comment' | 'whisper' | false>(false);
-  // Whisper mode for the inline box: posts the reply as a whisper (is_whisper),
-  // which does NOT bump the group to the top of the timeline.
-  const [inlineWhisper, setInlineWhisper] = useState(false);
 
-  // Image attachments for replies (thread + inline), kept separate from the
-  // main-post images so each box manages its own uploads.
+  // Image attachments for replies (thread just the thread box; the inline box
+  // owns its own images locally).
   const [threadReplyImages, setThreadReplyImages] = useState<string[]>([]);
   const [threadUploading, setThreadUploading] = useState(false);
-  const [inlineReplyImages, setInlineReplyImages] = useState<string[]>([]);
-  const [inlineUploading, setInlineUploading] = useState(false);
 
   // ---- Mobile keyboard detection ----
   // When the virtual keyboard opens on mobile, visualViewport shrinks.
@@ -3031,19 +3086,8 @@ export default function Home() {
       setReplyError(s)
     );
 
-  const onInlineReplyPick = (files: FileList | null) =>
-    uploadImages(files, inlineReplyImages, setInlineReplyImages, setInlineUploading, (s) => {
-      // Only append a real error to the box text. The helper calls setErr("")
-      // to CLEAR the error at the start of an upload, so ignore empty strings
-      // (otherwise a stray "(エラー: )" would be typed into the input).
-      if (s) setInlineReplyText((prev) => prev + (prev ? "\n\n" : "") + "(エラー: " + s + ")");
-    });
-
   const removeThreadReplyImage = (i: number) =>
     setThreadReplyImages((prev) => prev.filter((_, idx) => idx !== i));
-
-  const removeInlineReplyImage = (i: number) =>
-    setInlineReplyImages((prev) => prev.filter((_, idx) => idx !== i));
 
   // Publish a new root post. Text/images come in as args (the composer owns its
   // own local text/image state — see ComposerPaper) so typing doesn't re-render
@@ -3137,29 +3181,28 @@ export default function Home() {
   };
 
   // ---- Inline "insert between cards" comment (timeline group) ----
+  // Box is now self-contained (InlineReplyBox owns text/images locally), so
+  // open/close just toggles which post's box is rendered; no text to reset.
   const toggleInlineReply = (postId: number) => {
     setInlineReplyFor((prev) => (prev === postId ? null : postId));
-    setInlineReplyText("");
-    setInlineReplyImages([]);
-    setInlineWhisper(false);
   };
-  // Whisper: open the same inline box in whisper mode (reply stays in place).
+  // Whisper entry (from a card). The box exposes explicit 「ささやく」/「コメント」
+  // buttons regardless of entry mode, so opening is the same as a normal reply.
   const toggleWhisper = (postId: number) => {
-    setInlineWhisper(true);
-    // If already open for this post, keep it; otherwise open it.
     setInlineReplyFor((prev) => (prev === postId ? prev : postId));
-    setInlineReplyText("");
-    setInlineReplyImages([]);
   };
-  const submitInlineReply = async (postId: number, whisper?: boolean) => {
-    const isWhisper = whisper ?? inlineWhisper;
-    const text = inlineReplyText.trim();
-    if (!text && inlineReplyImages.length === 0) return;
+  const submitInlineReply = async (
+    postId: number,
+    text: string,
+    images: string[],
+    whisper: boolean
+  ) => {
+    if (!text.trim() && images.length === 0) return;
     await createReply({
       parentId: postId,
-      text,
-      images: inlineReplyImages,
-      whisper: isWhisper,
+      text: text.trim(),
+      images,
+      whisper,
       mode: "inline",
     });
   };
@@ -3197,9 +3240,7 @@ export default function Home() {
         return;
       }
       setInlineReplying(whisper ? "whisper" : "comment");
-      setInlineReplyFor(null);
-      setInlineReplyText("");
-      setInlineReplyImages([]);
+      setInlineReplyFor(null); // closes (unmounts) the InlineReplyBox
     }
 
     // Optimistic reply — appears instantly in the open thread and (when the
@@ -3326,14 +3367,13 @@ export default function Home() {
       }
     } catch (err: any) {
       // Rollback the optimistic reply (both the feed group and the thread) and
-      // restore the text.
+      // restore the THREAD text. The inline box handles its own error display
+      // (it is unmounted on submit, so nothing to restore here).
       setFeedPosts((prev) => removeReplyTemp(prev, parentId, tempId));
       if (mode === "thread") {
         setThreadReplies((prev) => prev.filter((rp) => rp.id !== tempId));
         setReplyText(text);
         setReplyError(err.message);
-      } else {
-        setInlineReplyText(text + "\n\n(エラー: " + err.message + ")");
       }
     } finally {
       clearTimeout(timer);
@@ -4727,16 +4767,9 @@ export default function Home() {
                   mentionMembers={mentionMembers}
                   searchQuery={searchActive ? searchQuery : undefined}
                   inlineReplyFor={inlineReplyFor}
-                  inlineReplyText={inlineReplyText}
-                  inlineWhisper={inlineWhisper}
-                  inlineReplyImages={inlineReplyImages}
-                  inlineUploading={inlineUploading}
-                  inlineReplying={inlineReplying}
-                  onInlineReplyChange={setInlineReplyText}
+                  uploadImages={uploadImages}
                   onToggleInlineReply={toggleInlineReply}
                   onInlineReplySubmit={submitInlineReply}
-                  onInlineReplyPick={onInlineReplyPick}
-                  onRemoveInlineReplyImage={removeInlineReplyImage}
                   onOpenThread={openThread}
                   onOpenThreadReply={openThreadReply}
                   onLike={handleLike}
