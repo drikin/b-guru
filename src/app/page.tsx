@@ -470,8 +470,8 @@ function PinCountdown({ pinnedAt }: { pinnedAt: string }) {
 // IntersectionObserver watches every [data-unread-id] card so dwell-based
 // auto-read works everywhere the card is rendered (feed + thread view).
 // =====================================================================
-const BGURU_READ_KEY = "bguru_read_posts_v1";
-const AUTO_READ_DWELL_MS = 1800;
+const BGURU_READ_KEY = "bguru_read_posts_v2";
+const AUTO_READ_DWELL_MS = 2500;
 
 type ReadStore = { read: Set<number> };
 
