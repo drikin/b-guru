@@ -41,3 +41,6 @@ next-env.d.ts
 *.bak.*
 *.bak_clamp
 *.revert.bak.*
+
+# ユーザーアップロード画像（ランタイムデータ・コミット対象外）
+public/uploads/

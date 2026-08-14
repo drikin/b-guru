@@ -1201,6 +1201,27 @@ function ReplyBubble({
 
 /** Grouped timeline: day separators + per-author groups. Posts are shown fully
  *  expanded (no collapse/stack) inside a group framed by a slim author header. */
+function BarkIcon({ size = 14, color = "currentColor" }: { size?: number; color?: string }) {
+  return (
+    <svg
+      viewBox="0 0 1194 742"
+      width={size}
+      height={Math.round(size * (742 / 1194))}
+      fill={color}
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+      style={{ display: "block" }}
+    >
+      <g transform="translate(0,742) scale(0.1,-0.1)">
+        <path d="M11232 7399 c-66 -21 -133 -73 -307 -239 -117 -112 -518 -485 -715 -664 -190 -174 -276 -256 -251 -241 10 6 12 4 7 -4 -5 -7 -10 -10 -13 -7 -8 8 -79 -56 -75 -67 1 -5 -2 -6 -8 -2 -14 8 -67 -79 -85 -139 -23 -77 -13 -206 16 -206 6 0 7 -4 4 -10 -3 -5 10 -35 30 -65 60 -95 193 -142 327 -115 97 19 80 7 413 295 76 66 177 154 225 195 47 41 133 116 189 165 113 99 252 219 376 325 274 234 303 267 326 379 55 267 -196 487 -459 400z" />
+        <path d="M4520 7183 c-286 -22 -720 -117 -975 -214 -194 -74 -220 -86 -460 -214 -268 -143 -665 -483 -820 -703 -22 -31 -62 -86 -88 -121 -148 -199 -281 -488 -378 -820 -29 -97 -39 -116 -171 -315 -78 -116 -141 -216 -141 -223 0 -7 -4 -10 -8 -7 -6 4 -22 -28 -24 -48 0 -3 -4 -10 -9 -15 -5 -5 -6 -2 -1 6 6 10 4 12 -4 7 -7 -5 -10 -14 -7 -22 3 -7 0 -16 -6 -20 -7 -5 -8 -2 -3 7 20 34 -18 -13 -79 -100 -36 -51 -63 -98 -59 -105 3 -6 2 -8 -2 -3 -11 9 -46 -43 -38 -56 3 -6 1 -7 -4 -4 -6 4 -35 -28 -64 -71 -63 -90 -293 -396 -376 -499 -32 -39 -80 -99 -108 -134 -27 -34 -75 -92 -105 -129 -324 -395 -379 -471 -460 -635 -315 -633 -30 -1360 680 -1738 58 -31 110 -57 115 -58 6 -1 34 -13 63 -26 404 -178 1030 -186 1462 -18 977 381 1340 1263 1029 2498 -92 368 -294 944 -450 1284 -68 148 -21 225 119 197 70 -14 318 -283 442 -479 35 -55 70 -106 79 -112 8 -7 11 -13 7 -13 -5 0 -3 -6 3 -14 43 -52 229 -464 306 -677 38 -106 45 -130 75 -244 81 -310 109 -495 117 -760 23 -795 -267 -1377 -859 -1718 -26 -15 -49 -35 -53 -46 -8 -25 12 -74 27 -65 6 4 8 3 4 -4 -7 -12 140 -150 233 -218 384 -279 881 -478 1309 -524 240 -26 317 22 434 271 98 209 373 717 452 836 282 423 536 627 982 787 205 73 512 133 1219 236 777 114 1008 196 1118 397 54 101 74 273 36 319 -6 8 -9 14 -5 14 11 0 -35 83 -70 126 -47 58 -149 108 -301 149 -70 18 -204 53 -298 78 -822 217 -995 292 -1070 462 -91 204 22 354 425 562 199 103 765 391 895 455 503 249 711 510 732 920 16 296 -96 592 -302 806 l-55 56 16 54 c95 327 -155 633 -517 632 -215 -1 -358 -69 -559 -266 -157 -154 -191 -173 -592 -339 -64 -27 -114 -53 -111 -58 3 -6 1 -7 -5 -3 -6 4 -82 -21 -169 -55 -369 -144 -315 -139 -399 -36 -454 556 -1257 841 -2174 770z m1200 -1183 c251 -85 433 -499 291 -661 -7 -8 -30 -42 -53 -77 -47 -74 -142 -154 -210 -179 -27 -10 -48 -21 -48 -25 0 -4 -7 -4 -17 -1 -10 4 -14 2 -10 -4 4 -6 -3 -8 -20 -5 -16 3 -24 1 -20 -5 8 -12 -110 -7 -189 8 -216 41 -379 234 -392 462 -2 48 -9 87 -14 87 -5 0 -2 7 7 16 9 10 14 26 11 36 -2 11 -2 17 1 14 3 -3 16 19 29 50 102 252 372 372 634 284z m-683 -432 c-3 -8 -6 -5 -6 6 -1 11 2 17 5 13 3 -3 4 -12 1 -19z" />
+        <path d="M11035 4669 c-1184 -17 -1073 -13 -1138 -38 -261 -101 -288 -460 -45 -592 l63 -34 590 4 c1011 6 1179 12 1245 42 320 149 200 648 -150 627 -14 -1 -268 -5 -565 -9z" />
+        <path d="M9750 3406 c-158 -46 -235 -147 -235 -311 0 -168 24 -202 296 -410 113 -86 301 -234 643 -505 475 -377 521 -401 689 -357 343 90 382 467 72 685 -29 20 -99 71 -155 112 -55 41 -129 95 -164 120 -35 25 -126 92 -203 150 -77 58 -160 119 -184 136 -24 17 -141 103 -260 191 -272 201 -353 232 -499 189z" />
+      </g>
+    </svg>
+  );
+}
+
 function TimelineFeed({
   groups,
   auth,
@@ -1470,21 +1491,19 @@ function TimelineFeed({
                   style={{ cursor: "pointer", padding: 2, background: "transparent", border: "none", lineHeight: 1 }}
                 >
                   <Box
+                    
+                    className="bguru-bark-btn"
                     style={{
-                      width: 22,
-                      height: 22,
+                      width: 32,
+                      height: 32,
                       borderRadius: "50%",
-                      border: "1px solid var(--border-green)",
                       color: "var(--text-green-soft)",
-                      background: "var(--bg-surface)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      fontSize: 14,
-                      boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
                     }}
                   >
-                    ＋
+                    <BarkIcon size={20} color="#1F90FF" />
                   </Box>
                 </UnstyledButton>
               </Box>
@@ -3614,7 +3633,7 @@ export default function Home() {
                 alignItems: "center",
               }}
             >
-              <Image
+<Image
                 src="/icon-192.png"
                 alt="B-guru"
                 w={28}
@@ -3636,19 +3655,21 @@ export default function Home() {
               padding: 0,
               lineHeight: 0,
               position: "absolute",
-              left: "50%",
+              // Align to the horizontal center of the CENTER timeline column
+              // (between the left navbar and right aside), not the window center.
+              left: "calc(var(--app-shell-navbar-width, 220px) + (100% - var(--app-shell-navbar-width, 220px) - var(--app-shell-aside-width, 280px)) / 2)",
               top: "50%",
               transform: "translate(-50%, -50%)",
             }}
           >
-            <Image
-              src="/icon-192.png"
-              alt="B-guru"
-              w={28}
-              h={28}
-              fit="contain"
-              style={{ display: "block", borderRadius: 6 }}
-            />
+<Image
+                src="/icon-192.png"
+                alt="B-guru"
+                w={28}
+                h={28}
+                fit="contain"
+                style={{ display: "block", borderRadius: 6 }}
+              />
           </UnstyledButton>
           {/* Right: hamburger (mobile/tablet) — opens the right sidebar + unread badge. Kept. */}
           <Group gap="sm" wrap="nowrap">
@@ -4259,21 +4280,19 @@ export default function Home() {
                       style={{ cursor: "pointer", padding: 2, background: "transparent", border: "none", lineHeight: 1 }}
                     >
                       <Box
-                        style={{
-                          width: 22,
-                          height: 22,
-                          borderRadius: "50%",
-                          border: "1px solid var(--border-green)",
-                          color: "var(--text-green-soft)",
-                          background: "var(--bg-surface)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: 14,
-                          boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
-                        }}
-                      >
-                        ＋
+                        
+                    className="bguru-bark-btn"
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: "50%",
+                      color: "var(--text-green-soft)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                        <BarkIcon size={20} color="#1F90FF" />
                       </Box>
                     </UnstyledButton>
                   </Box>
@@ -5241,6 +5260,21 @@ export default function Home() {
           <span style={{ opacity: 0.75 }}>({clientErr.at})</span>
         </div>
       )}
-    </AppShell>
+          <style>{`
+        .bguru-bark-btn {
+          background: var(--bg-surface);
+          border: 1px solid var(--border-green);
+          box-shadow: 0 2px 4px rgba(0,0,0,0.18);
+          transition: box-shadow 0.12s ease, transform 0.08s ease;
+        }
+        .bguru-bark-btn:hover {
+          box-shadow: 0 3px 7px rgba(0,0,0,0.26);
+        }
+        .bguru-bark-btn:active {
+          transform: translateY(1px);
+          box-shadow: 0 1px 2px rgba(0,0,0,0.16);
+        }
+      `}</style>
+</AppShell>
   );
 }
