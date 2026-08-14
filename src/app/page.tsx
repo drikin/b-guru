@@ -458,12 +458,12 @@ function PinCountdown({ pinnedAt }: { pinnedAt: string }) {
 // =====================================================================
 // Auto read/unread (per-card, client-side)
 // ---------------------------------------------------------------------
-// A card is "unread" (subtly highlighted) when it is NEWER than the last
-// time this browser was viewing the feed (`lastSeenAt`) and has not yet
-// been "read". Any unread card that stays in the viewport for
-// AUTO_READ_DWELL_MS is automatically marked read. Read state is persisted
-// per browser/user in localStorage, and judged per individual card (each
-// root card AND each reply has its own id — not per group).
+// A card is "unread" (subtly highlighted) when this browser has not yet
+// marked it "read". Read state is persisted per browser/user in
+// localStorage and judged per individual card (each root card AND each
+// reply has its own id — not per group), and survives reloads via the
+// persisted read-set. Any unread card that stays in the viewport for
+// AUTO_READ_DWELL_MS is automatically marked read (highlight removed).
 //
 // Implementation is self-contained: every PostCard subscribes to the same
 // module store via useSyncExternalStore, and a single shared
@@ -473,10 +473,10 @@ function PinCountdown({ pinnedAt }: { pinnedAt: string }) {
 const BGURU_READ_KEY = "bguru_read_posts_v1";
 const AUTO_READ_DWELL_MS = 1800;
 
-type ReadStore = { lastSeenAt: number; read: Set<number> };
+type ReadStore = { read: Set<number> };
 
 function loadReadStore(): ReadStore {
-  const fallback: ReadStore = { lastSeenAt: Date.now(), read: new Set<number>() };
+  const fallback: ReadStore = { read: new Set<number>() };
   try {
     const raw = localStorage.getItem(BGURU_READ_KEY);
     if (!raw) return fallback;
@@ -484,10 +484,7 @@ function loadReadStore(): ReadStore {
     const read = new Set<number>(
       Array.isArray(d.read) ? d.read.filter((n: unknown) => typeof n === "number") : []
     );
-    return {
-      lastSeenAt: typeof d.lastSeenAt === "number" ? d.lastSeenAt : Date.now(),
-      read,
-    };
+    return { read };
   } catch {
     return fallback;
   }
@@ -497,10 +494,7 @@ let readStore: ReadStore = loadReadStore();
 const readListeners = new Set<() => void>();
 function persistReadStore() {
   try {
-    localStorage.setItem(
-      BGURU_READ_KEY,
-      JSON.stringify({ lastSeenAt: readStore.lastSeenAt, read: [...readStore.read] })
-    );
+    localStorage.setItem(BGURU_READ_KEY, JSON.stringify({ read: [...readStore.read] }));
   } catch {}
 }
 function subscribeRead(l: () => void) {
@@ -517,13 +511,7 @@ function isReadId(id: number) {
 }
 function markReadId(id: number) {
   if (readStore.read.has(id)) return;
-  // Advance the "seen" boundary to this card's createdAt when it is newer, so
-  // a post is "new/unread" iff it is newer than the newest post actually read.
-  const created = readPostCreated.get(id);
-  readStore = {
-    lastSeenAt: created && created > readStore.lastSeenAt ? created : readStore.lastSeenAt,
-    read: new Set(readStore.read).add(id),
-  };
+  readStore = { read: new Set(readStore.read).add(id) };
   persistReadStore();
   readListeners.forEach((l) => l());
 }
@@ -532,9 +520,6 @@ function markReadId(id: number) {
 // marks it read once it stays in the viewport for AUTO_READ_DWELL_MS.
 let readObserver: IntersectionObserver | null = null;
 const readDwellTimers = new Map<number, ReturnType<typeof setTimeout>>();
-// id -> createdAt(ms), populated by PostCard while rendering, so markReadId can
-// advance the "seen" boundary to the newest post actually read.
-const readPostCreated = new Map<number, number>();
 function readIdOf(el: Element) {
   const n = Number(el.getAttribute("data-unread-id"));
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -619,15 +604,10 @@ function PostCard({
   const setUnreadRef = useCallback((el: HTMLElement | null) => {
     observeUnreadCard(el);
   }, []);
-  const createdMs = Date.parse(post.createdAt) || 0;
-  if (post.id > 0 && createdMs) readPostCreated.set(post.id, createdMs);
-  // Unread = newer than the newest post already read (boundary) and not yet
-  // read individually. Own posts are never highlighted (you just wrote them).
+  // Unread = a post this browser has not yet marked read. Own posts are never
+  // highlighted (you just wrote them).
   const isUnread =
-    post.id > 0 &&
-    auth.email !== post.authorEmail &&
-    !readSnap.read.has(post.id) &&
-    createdMs > readSnap.lastSeenAt;
+    post.id > 0 && auth.email !== post.authorEmail && !readSnap.read.has(post.id);
 
   return (
     <Card
