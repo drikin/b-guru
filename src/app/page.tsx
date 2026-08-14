@@ -1634,6 +1634,8 @@ export default function Home() {
   const [pendingImages, setPendingImages] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [posting, setPosting] = useState(false);
+  // Composer collapsed to a small "+" by default (clean timeline); opens into the full form on click.
+  const [composerOpen, setComposerOpen] = useState(false);
 
   // ---- Dori News state ----
   const [dnArticles, setDnArticles] = useState<DrinewsArticle[]>([]);
@@ -1863,6 +1865,31 @@ export default function Home() {
       .catch(() => {});
   }, [auth, showWave]);
 
+  // ---- TEMP diagnostic (2026-08-13, drikin): surface client JS errors on the
+  // page so a freeze during commenting (form not closing / not reflecting while
+  // the POST persists) can be traced to the exact exception. Remove after the
+  // root cause is found. Shows a red badge bottom-left; click to dismiss.
+  const [clientErr, setClientErr] = useState<{ msg: string; at: string } | null>(null);
+  useEffect(() => {
+    const onErr = (e: ErrorEvent) => {
+      const msg = e.message || String(e.error || "");
+      const at = `${e.filename ? e.filename.split("/").pop() + ":" + e.lineno : "?"}`;
+      setClientErr({ msg: msg.slice(0, 220), at });
+      console.error("[GlobalError]", e.error || e);
+    };
+    const onRej = (e: PromiseRejectionEvent) => {
+      const r = e.reason;
+      setClientErr({ msg: (r instanceof Error ? r.message : String(r)).slice(0, 220), at: "unhandledrejection" });
+      console.error("[GlobalError:rejection]", r);
+    };
+    window.addEventListener("error", onErr);
+    window.addEventListener("unhandledrejection", onRej);
+    return () => {
+      window.removeEventListener("error", onErr);
+      window.removeEventListener("unhandledrejection", onRej);
+    };
+  }, []);
+
   const FEED_PAGE = 50;
 
   const loadFeed = (filter?: string, search?: string) => {
@@ -1932,6 +1959,15 @@ export default function Home() {
   const feedPostsRef = useRef(feedPosts);
   feedPostsRef.current = feedPosts;
 
+  // TEMPORARY (2026-08-13, drikin request): disable SSE-triggered *timeline*
+  // auto-refresh to eliminate races with optimistic posting. Live push of
+  // OTHER members' timeline reordering is intentionally suspended; posting
+  // still works via the optimistic insert + POST-response swap. The Right
+  // sidebar panels (hot/pin/presence/wave) stay live — they don't touch the
+  // timeline's order. Re-enable by flipping this to `true` and re-reviewing
+  // the SSE merge (`mergeFreshFeed`) timing against optimistic inserts.
+  const ENABLE_PUSH_TIMELINE_REFRESH = false;
+
   // Debounce + abort controller for silentRefreshFeed: multiple SSE events
   // arriving in quick succession (e.g. rapid comments) used to fire several
   // concurrent fetches whose setState callbacks raced and caused duplicates
@@ -1998,12 +2034,12 @@ export default function Home() {
         return;
       }
       loadHot(); // new post/comment may change the hot-topics ranking
-      if (threadPostRef.current) return;
-      silentRefreshFeed();
+      // Timeline auto-refresh is disabled per drikin (ENABLE_PUSH_TIMELINE_REFRESH=false).
+      if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) silentRefreshFeed();
     };
     const onPinChange = () => {
       loadPinned(); // refresh the right-sidebar pin summary panel
-      if (!threadPostRef.current) silentRefreshFeed();
+      if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) silentRefreshFeed();
     };
     const onPresenceChange = () => {
       loadOnline(); // refresh the right-sidebar online panel
@@ -2030,7 +2066,7 @@ export default function Home() {
       loadPinned();
       loadHot();
       loadOnline();
-      if (!threadPostRef.current) silentRefreshFeed();
+      if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) silentRefreshFeed();
     };
     es.onerror = () => {
       // EventSource auto-reconnects. When it does, onopen fires and we
@@ -2713,6 +2749,7 @@ export default function Home() {
               : prev.map((p) => (p.id === tempId ? d.post : p))
           );
         }
+        setComposerOpen(false); // collapse back to the "+" after a successful post
       } catch (err: any) {
         setPostError(err.message);
         setFeedPosts((prev) => prev.filter((p) => p.id !== tempId));
@@ -2896,10 +2933,39 @@ export default function Home() {
         if (!bumped) return next;
         return [bumped, ...next.filter((r) => r !== bumped)];
       });
-      // If the parent group wasn't in the loaded feed at all, pull a fresh page
-      // so the new comment (which bumps a non-whisper parent into page 1) is
-      // never silently dropped from the timeline.
-      if (!parentWasInFeed) silentRefreshFeed();
+      // If the parent group wasn't in the loaded feed at all (e.g. we commented
+      // on a post beyond the currently loaded pages, opened from a hot topic,
+      // pin, or notification), a silentRefreshFeed() of page 1 can't reach it —
+      // the parent may sit deeper than the first FEED_PAGE entries, so the
+      // comment stayed hidden until a full reload (the "pagination-crossing"
+      // bug). Instead, fetch THAT exact parent group from the server and insert
+      // it into the local feed so the comment — and its bump — appears right
+      // away. groupFeed() re-sorts by lastActivityAt on render, so a non-whisper
+      // group lands at the top and a whisper slots into its natural position.
+      if (!parentWasInFeed) {
+        try {
+          const gr = await fetch(`/api/posts/${parentId}`, { cache: "no-store" });
+          const gd = await gr.json();
+          if (gr.ok && gd?.post) {
+            setFeedPosts((prev) =>
+              prev.some((p) => p.id === parentId)
+                ? prev
+                : [
+                    {
+                      ...(gd.post as FeedPost),
+                      replies: gd.replies ?? [],
+                      replyCount: (gd.replies ?? []).length,
+                    },
+                    ...prev,
+                  ]
+            );
+          } else {
+            silentRefreshFeed(); // degraded fallback (may still miss a deep parent)
+          }
+        } catch {
+          silentRefreshFeed(); // degraded fallback on network error
+        }
+      }
     } catch (err: any) {
       // Rollback the optimistic reply (both the feed group and the thread) and
       // restore the text.
@@ -3676,8 +3742,9 @@ export default function Home() {
       {/* Right sidebar: visible only on very wide screens. Hosts the pinned-post
        *  summary cards (pins were moved here from the timeline). */}
       <AppShell.Aside data-cx="aside" p="md" style={{ background: "var(--bg-primary)", borderLeft: "1px solid var(--border-default)" }}>
-        <ScrollArea>
-          <Stack gap="sm">
+        {/* offsetScrollbars: スクロールバー出現時もコンテンツがスクロールバーと重ならないよう、スクロールバー分を確保する（drikin 指摘 2026-08） */}
+        <ScrollArea offsetScrollbars scrollbarSize={8}>
+          <Stack pr="4" gap="sm">
           {/* Search box */}
           <Paper p="sm" radius="md" withBorder shadow="xs">
             <TextInput
@@ -3977,98 +4044,145 @@ export default function Home() {
         >
           {isCenterView && (
             <Stack gap="md">
-              {/* Composer (hidden on gallery/news? show only on home feed, and not during search) */}
+              {/* Composer (hidden on gallery/news? show only on home feed, and not during search).
+                  Collapsed to a small "+" by default to keep the timeline clean; click expands into the full form. */}
               {activeNav === "feed" && !threadPost && !searchActive && (
-                <Paper p="md" radius="md" withBorder shadow="sm">
-                  <Group align="flex-start" gap="sm" mb="xs">
-                    <Avatar src={avatarSrc} alt={displayName} radius="xl" size="md" color="green">
-                      {displayName.charAt(0).toUpperCase()}
-                    </Avatar>
-                    <Text fw={600} size="sm" c="inherit">
-                      {auth.name || auth.email}
-                    </Text>
-                  </Group>
-                  <form onSubmit={submitPost}>
-                    <MentionTextarea
-                      placeholder="今なにしてる？ (画像投稿もできます)"
-                      autosize
-                      minRows={2}
-                      value={postText}
-                      onChange={setPostText}
-                      onKeyDown={onComposerKeyDown}
-                      mb="sm"
-                    />
-                    {pendingImages.length > 0 && (
-                      <Group gap="xs" mb="sm">
-                        {pendingImages.map((src, i) => (
-                          <Box key={i} style={{ position: "relative" }}>
-                            <Image
-                              src={src}
-                              width={72}
-                              height={72}
-                              fit="contain"
-                              radius="md"
-                              style={{ cursor: "pointer" }}
-                              onClick={() => setPreviewImage(src)}
-                            />
-                            <ActionIcon
-                              size="sm"
-                              variant="filled"
-                              color="red"
-                              radius="xl"
-                              style={{ position: "absolute", top: -6, right: -6 }}
-                              onClick={() => removeImage(i)}
-                            >
-                              ×
-                            </ActionIcon>
-                          </Box>
-                        ))}
-                      </Group>
-                    )}
-                    <Group justify="space-between">
-                      <Group gap="xs">
-                        <Button
-                          size="xs"
-                          variant="light"
-                          color="gray"
-                          loading={uploading}
-                          disabled={pendingImages.length >= 5}
-                          onClick={() => fileInputRef.current?.click()}
-                        >
-                          📷 {pendingImages.length}/5
-                        </Button>
-                        <input
-                          ref={fileInputRef}
-                          type="file"
-                          accept="image/*"
-                          multiple
-                          hidden
-                          onChange={(e) => {
-                            onPickImages(e.target.files);
-                            e.target.value = "";
-                          }}
-                        />
-                        <Text size="xs" c="dimmed">
-                          Cmd/Ctrl + Enter で投稿
-                        </Text>
-                      </Group>
-                      <Button
-                        type="submit"
+                composerOpen ? (
+                  <Paper p="md" radius="md" withBorder shadow="sm">
+                    <Group align="flex-start" gap="sm" mb="xs">
+                      <Avatar src={avatarSrc} alt={displayName} radius="xl" size="md" color="green">
+                        {displayName.charAt(0).toUpperCase()}
+                      </Avatar>
+                      <Text fw={600} size="sm" c="inherit" style={{ flex: 1 }}>
+                        {auth.name || auth.email}
+                      </Text>
+                      <ActionIcon
+                        variant="subtle"
+                        color="gray"
+                        radius="xl"
                         size="sm"
-                        color="green"
-                        loading={posting}
-                        disabled={(!postText.trim() && pendingImages.length === 0) || uploading}
+                        aria-label="投稿フォームを閉じる"
+                        title="閉じる"
+                        onClick={() => setComposerOpen(false)}
                       >
-                        投稿
-                      </Button>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </ActionIcon>
                     </Group>
-                  </form>
-                  {postError && (
-                    <Text size="sm" mt="sm" c="red">
-                      {postError}
-                    </Text>
-                  )}
-                </Paper>
+                    <form onSubmit={submitPost}>
+                      <MentionTextarea
+                        placeholder="今なにしてる？ (画像投稿もできます)"
+                        autosize
+                        minRows={2}
+                        autoFocus
+                        value={postText}
+                        onChange={setPostText}
+                        onKeyDown={onComposerKeyDown}
+                        mb="sm"
+                      />
+                      {pendingImages.length > 0 && (
+                        <Group gap="xs" mb="sm">
+                          {pendingImages.map((src, i) => (
+                            <Box key={i} style={{ position: "relative" }}>
+                              <Image
+                                src={src}
+                                width={72}
+                                height={72}
+                                fit="contain"
+                                radius="md"
+                                style={{ cursor: "pointer" }}
+                                onClick={() => setPreviewImage(src)}
+                              />
+                              <ActionIcon
+                                size="sm"
+                                variant="filled"
+                                color="red"
+                                radius="xl"
+                                style={{ position: "absolute", top: -6, right: -6 }}
+                                onClick={() => removeImage(i)}
+                              >
+                                ×
+                              </ActionIcon>
+                            </Box>
+                          ))}
+                        </Group>
+                      )}
+                      <Group justify="space-between">
+                        <Group gap="xs">
+                          <Button
+                            size="xs"
+                            variant="light"
+                            color="gray"
+                            loading={uploading}
+                            disabled={pendingImages.length >= 5}
+                            onClick={() => fileInputRef.current?.click()}
+                          >
+                            📷 {pendingImages.length}/5
+                          </Button>
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            hidden
+                            onChange={(e) => {
+                              onPickImages(e.target.files);
+                              e.target.value = "";
+                            }}
+                          />
+                          <Text size="xs" c="dimmed">
+                            Cmd/Ctrl + Enter で投稿
+                          </Text>
+                        </Group>
+                        <Button
+                          type="submit"
+                          size="sm"
+                          color="green"
+                          loading={posting}
+                          disabled={(!postText.trim() && pendingImages.length === 0) || uploading}
+                        >
+                          投稿
+                        </Button>
+                      </Group>
+                    </form>
+                    {postError && (
+                      <Text size="sm" mt="sm" c="red">
+                        {postError}
+                      </Text>
+                    )}
+                  </Paper>
+                ) : (
+                  <Paper p="xs" radius="md" withBorder shadow="sm">
+                    <Box style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
+                      <UnstyledButton
+                        onClick={() => setComposerOpen(true)}
+                        aria-label="新しい投稿を作成"
+                        title="新しい投稿を作成"
+                        style={{ cursor: "pointer", background: "transparent", border: "none", lineHeight: 1 }}
+                      >
+                        <Box
+                          style={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: "50%",
+                            border: "1.5px solid var(--border-green)",
+                            color: "var(--text-green-soft)",
+                            background: "var(--bg-surface)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: 22,
+                            boxShadow: "0 1px 2px rgba(0,0,0,0.08)",
+                          }}
+                        >
+                          ＋
+                        </Box>
+                      </UnstyledButton>
+                    </Box>
+                  </Paper>
+                )
               )}
 
               {/* Section title (hidden during search — search has its own header) */}
@@ -4998,6 +5112,35 @@ export default function Home() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* TEMP diagnostic: client JS error badge (bottom-left). Remove with the
+          GlobalError listeners above after root cause is found. */}
+      {clientErr && (
+        <div
+          onClick={() => setClientErr(null)}
+          title="クリックで閉じる（一時診断用）"
+          style={{
+            position: "fixed",
+            left: 12,
+            bottom: 12,
+            zIndex: 9999,
+            maxWidth: "72vw",
+            background: "#c0392b",
+            color: "#fff",
+            padding: "8px 12px",
+            borderRadius: 8,
+            fontSize: 12,
+            lineHeight: 1.4,
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            cursor: "pointer",
+            boxShadow: "0 2px 10px rgba(0,0,0,.35)",
+            pointerEvents: "auto",
+          }}
+        >
+          <b>JSエラー:</b> {clientErr.msg}{" "}
+          <span style={{ opacity: 0.75 }}>({clientErr.at})</span>
         </div>
       )}
     </AppShell>
