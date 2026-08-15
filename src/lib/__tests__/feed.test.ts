@@ -77,14 +77,15 @@ describe("parentInFeed", () => {
 describe("appendReplyLocal (optimistic insert)", () => {
   const base = [makePost(1), makePost(2)];
 
-  it("comment: appends reply, increments count, bumps group to TOP and updates lastActivity", () => {
+  it("comment (OPTION B): appends reply, increments count, but STAYS IN PLACE and keeps lastActivity (reorder deferred to refresh)", () => {
     const now = "2026-08-13T10:00:00.000Z";
     const out = appendReplyLocal(base, 1, makeReply(20, 1, { createdAt: now }), false);
-    // Group moved to top (first element is the bumped group).
-    expect(out[0].id).toBe(1);
+    // OPTION B: comment no longer reorders — order stays [1, 2].
+    expect(out.map((g) => g.id)).toEqual([1, 2]);
     expect(out[0].replies?.map((r) => r.id)).toEqual([20]);
     expect(out[0].replyCount).toBe(1);
-    expect(out[0].lastActivityAt).toBe(now);
+    // lastActivity UNCHANGED (comment no longer bumps locally, same as whisper).
+    expect(out[0].lastActivityAt).toBe(base[0].lastActivityAt);
     // Other group untouched.
     expect(out[1].id).toBe(2);
     expect(out[1].replyCount).toBe(0);
@@ -192,13 +193,13 @@ describe("groupFeed (timeline sort + group key)", () => {
 });
 
 describe("full optimistic comment flow (temp → refresh race → real)", () => {
-  it("comment on a visible group leaves exactly one authoritative reply and bumps top", () => {
+  it("comment on a visible group leaves exactly one authoritative reply (OPTION B: stays in place)", () => {
     let feed = [makePost(1), makePost(2)];
     const after = "2026-08-13T11:00:00.000Z";
     const tempId = 111222333;
-    // user submits → optimistic temp insert (comment)
+    // user submits → optimistic temp insert (comment; no longer bumped to top)
     feed = appendReplyLocal(feed, 1, makeReply(tempId, 1, { createdAt: after }), false);
-    expect(feed[0].id).toBe(1);
+    expect(feed.map((g) => g.id)).toEqual([1, 2]); // stays in place
     // an SSE silentRefreshFeed races in and brings a server reply with the real id
     const realId = 900;
     feed = appendReplyLocal(feed, 1, makeReply(realId, 1, { createdAt: after }), false);
@@ -207,7 +208,8 @@ describe("full optimistic comment flow (temp → refresh race → real)", () => 
     const ids = feed[0].replies?.map((r) => r.id) ?? [];
     expect(ids).toEqual([realId]);
     expect(feed[0].replyCount).toBe(1);
-    expect(feed[0].lastActivityAt).toBe(after);
+    // OPTION B: lastActivity stays at the post's original value (not bumped locally).
+    expect(feed[0].lastActivityAt).toBe("2026-08-13T09:00:00.000Z");
   });
 });
 

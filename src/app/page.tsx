@@ -3865,18 +3865,12 @@ export default function Home() {
         if (!whisper) pendingScrollRef.current = parentId;
       }
       setFeedPosts((prev) => {
-        const next = parentInFeed(prev, parentId)
+        // OPTION B: comments no longer bump the group to the top locally; the
+        // new order appears only after a server refresh (groupFeed re-sorts by
+        // the server's bumped lastActivityAt on the next load).
+        return parentInFeed(prev, parentId)
           ? replaceReplyInFeed(prev, parentId, tempId, realReply, whisper)
           : prev;
-        if (whisper) return next;
-        // Non-whisper: bring the bumped group to the top.
-        const bumped = next.find(
-          (r) =>
-            r.id === parentId ||
-            (r.replies ?? []).some((rp) => rp.id === created.id)
-        );
-        if (!bumped) return next;
-        return [bumped, ...next.filter((r) => r !== bumped)];
       });
       // If the parent group wasn't in the loaded feed at all (e.g. we commented
       // on a post beyond the currently loaded pages, opened from a hot topic,

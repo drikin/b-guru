@@ -86,8 +86,10 @@ export function groupFeed(posts: FeedPost[]): FeedGroup[] {
  *
  * - whisper: the group stays put (lastActivity UNCHANGED); only the new reply
  *   is appended inside it, and its reply count still increments.
- * - comment: the group's lastActivity follows the new reply and the group is
- *   bumped to the top of the timeline.
+ * - comment: OPTION B — a comment now behaves like a whisper for the LOCAL
+ *   optimistic insert: the group stays put and lastActivity is NOT bumped
+ *   locally. The new order (server-side last_activity bump) only appears
+ *   after a server refresh/reload via groupFeed().
  *
  * If the parent group is not present in `feed` at all, returns the input
  * UNCHANGED (the caller must fall back to a server refresh rather than
@@ -131,9 +133,10 @@ export function appendReplyLocal(
       // same reply id — otherwise an SSE race that re-runs the insert would
       // inflate replyCount without adding a reply).
       replyCount: (root.replyCount ?? 0) + (exists ? 0 : 1),
-      // Normal comments move the group up (its lastActivity follows the new
-      // reply); whispers deliberately leave lastActivity unchanged.
-      lastActivityAt: whisper ? root.lastActivityAt : now,
+      // OPTION B: comments no longer bump lastActivity locally (same as
+      // whispers). The reorder appears only after a server refresh, when
+      // groupFeed() re-sorts by the server's (bumped) lastActivityAt.
+      lastActivityAt: root.lastActivityAt,
     };
     return bumped;
   };
@@ -153,14 +156,8 @@ export function appendReplyLocal(
 
   if (!changed) return feed;
 
-  if (whisper) return next;
-
-  // For a normal comment, bring the bumped group to the top.
-  const bumped = next.find(
-    (r) => r.id === parentId || (r.replies ?? []).some((rp) => rp.id === parentId)
-  );
-  if (!bumped) return next;
-  return [bumped, ...next.filter((r) => r !== bumped)];
+  // OPTION B: comment no longer reorders the group locally (same as whisper).
+  return next;
 }
 
 /** True if `parentId` appears as a root post or as a reply nested in some root
@@ -210,7 +207,8 @@ export function replaceReplyInFeed(
       ...root,
       replies: sorted,
       replyCount: sorted.length,
-      lastActivityAt: whisper ? root.lastActivityAt : created.lastActivityAt || created.createdAt,
+      // OPTION B: comments no longer bump lastActivity locally (same as whisper).
+      lastActivityAt: root.lastActivityAt,
     };
   });
 }
