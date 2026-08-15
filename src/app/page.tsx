@@ -619,6 +619,16 @@ function PostCard({
   const CLAMP_THRESHOLD = 500;
   const [expanded, setExpanded] = useState(false);
   const needsClamp = post.text && post.text.length > CLAMP_THRESHOLD;
+  // Timeline video: click anywhere on the video area to start playback (not just
+  // the native play button). Once started, native controls appear.
+  const [videoPlayed, setVideoPlayed] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const startVideo = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.play().catch(() => {});
+    setVideoPlayed(true);
+  };
 
   // ---- Auto read/unread (self-contained per card) ----
   const readSnap = useSyncExternalStore(subscribeRead, getReadSnapshot, () => readServerSnapshot);
@@ -799,14 +809,18 @@ function PostCard({
         </Group>
       )}
 
-      {/* Video attachment (at most one per post) */}
+      {/* Video attachment (at most one per post). Clicking anywhere on the video
+       * area starts playback (not just the native play button); once playing the
+       * native controls appear so the viewer can pause/seek/scrub. */}
       {post.videoUrl && (
-        <Box mt="sm" style={{ width: "100%", maxWidth: 560 }}>
+        <Box mt="sm" style={{ position: "relative", width: "100%", maxWidth: 560 }}>
           <video
+            ref={videoRef}
             src={post.videoUrl}
-            controls
             playsInline
             preload="metadata"
+            controls={videoPlayed}
+            onClick={(e) => e.stopPropagation()}
             style={{
               width: "100%",
               display: "block",
@@ -815,6 +829,42 @@ function PostCard({
               maxHeight: 420,
             }}
           />
+          {!videoPlayed && (
+            <Box
+              onClick={(e) => {
+                e.stopPropagation();
+                startVideo();
+              }}
+              role="button"
+              aria-label="動画を再生"
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                background: "rgba(0,0,0,0.22)",
+                borderRadius: 12,
+              }}
+            >
+              <Box
+                style={{
+                  width: 52,
+                  height: 52,
+                  borderRadius: "50%",
+                  background: "rgba(0,0,0,0.7)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 20,
+                  color: "#fff",
+                }}
+              >
+                ▶
+              </Box>
+            </Box>
+          )}
         </Box>
       )}
 
