@@ -5,25 +5,28 @@ import { updateMenuLink, deleteMenuLink } from "@/lib/menulinks";
 
 export const dynamic = "force-dynamic";
 
+// Never cache menu-links responses (see ./route.ts GET).
+const NO_CACHE = { "Cache-Control": "no-store, no-cache, must-revalidate" };
+
 type Ctx = { params: Promise<{ id: string }> };
 
 /** PATCH: update an external-link menu bookmark (admin only). */
 export async function PATCH(req: Request, ctx: Ctx) {
   const email = await getSessionEmail();
-  if (!email) return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
+  if (!email) return NextResponse.json({ error: "認証が必要です" }, { status: 401, headers: NO_CACHE });
   if (!isAdmin(email)) {
-    return NextResponse.json({ error: "権限がありません" }, { status: 403 });
+    return NextResponse.json({ error: "権限がありません" }, { status: 403, headers: NO_CACHE });
   }
   const { id } = await ctx.params;
   const numId = Number(id);
   if (!Number.isInteger(numId) || numId <= 0) {
-    return NextResponse.json({ error: "不正なIDです" }, { status: 400 });
+    return NextResponse.json({ error: "不正なIDです" }, { status: 400, headers: NO_CACHE });
   }
   let body: { label?: string; icon?: string; href?: string };
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ error: "不正なリクエストです" }, { status: 400 });
+    return NextResponse.json({ error: "不正なリクエストです" }, { status: 400, headers: NO_CACHE });
   }
   const link = await updateMenuLink(numId, {
     label: body.label ?? "",
@@ -31,26 +34,26 @@ export async function PATCH(req: Request, ctx: Ctx) {
     href: body.href ?? "",
   });
   if (!link) {
-    return NextResponse.json({ error: "ラベルとURLは必須です、または見つかりません" }, { status: 400 });
+    return NextResponse.json({ error: "ラベルとURLは必須です、または見つかりません" }, { status: 400, headers: NO_CACHE });
   }
-  return NextResponse.json({ link });
+  return NextResponse.json({ link }, { headers: NO_CACHE });
 }
 
 /** DELETE: remove an external-link menu bookmark (admin only). */
 export async function DELETE(_req: Request, ctx: Ctx) {
   const email = await getSessionEmail();
-  if (!email) return NextResponse.json({ error: "認証が必要です" }, { status: 401 });
+  if (!email) return NextResponse.json({ error: "認証が必要です" }, { status: 401, headers: NO_CACHE });
   if (!isAdmin(email)) {
-    return NextResponse.json({ error: "権限がありません" }, { status: 403 });
+    return NextResponse.json({ error: "権限がありません" }, { status: 403, headers: NO_CACHE });
   }
   const { id } = await ctx.params;
   const numId = Number(id);
   if (!Number.isInteger(numId) || numId <= 0) {
-    return NextResponse.json({ error: "不正なIDです" }, { status: 400 });
+    return NextResponse.json({ error: "不正なIDです" }, { status: 400, headers: NO_CACHE });
   }
   const ok = await deleteMenuLink(numId);
   if (!ok) {
-    return NextResponse.json({ error: "見つかりません" }, { status: 404 });
+    return NextResponse.json({ error: "見つかりません" }, { status: 404, headers: NO_CACHE });
   }
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true }, { headers: NO_CACHE });
 }

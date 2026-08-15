@@ -2165,7 +2165,9 @@ export default function Home() {
 
   const isAdminAuth = !!auth && ADMIN_EMAILS.has(auth.email);
   const loadMenuLinks = useCallback(() => {
-    fetch("/api/menu-links")
+    // cache: "no-store" — the GET list is re-read right after add/edit/delete,
+    // so the sidebar must always reflect the latest state (never a stale copy).
+    fetch("/api/menu-links", { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
         if (d && Array.isArray(d.links)) setMenuLinks(d.links);
