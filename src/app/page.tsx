@@ -1525,7 +1525,7 @@ function InlineReplyBox({
         value={text}
         autoFocus
         onChange={setText}
-        placeholder={`${authorLabel} の投稿にコメント…（Shift+Enter でささやく）`}
+        placeholder={`${authorLabel} の投稿にコメント…（Shift+Enter でうなる）`}
         minRows={2}
         autosize
         maxRows={5}
@@ -1653,7 +1653,7 @@ function InlineReplyBox({
             disabled={!canSend}
             onClick={() => handleSubmit(true)}
           >
-            ささやく
+            うなる
           </Button>
           <Button
             size="xs"
@@ -1661,7 +1661,7 @@ function InlineReplyBox({
             disabled={!canSend}
             onClick={() => handleSubmit(false)}
           >
-            コメント
+            吠える
           </Button>
         </Group>
       </Group>
@@ -2096,7 +2096,7 @@ function ComposerPaper({
               }}
             />
             <Text size="xs" c="dimmed">
-              Cmd/Ctrl + Enter で投稿
+              Cmd/Ctrl + Enter で吠える
             </Text>
           </Group>
           <Button
@@ -2106,7 +2106,7 @@ function ComposerPaper({
             loading={posting}
             disabled={(!text.trim() && images.length === 0 && !video) || uploading || videoUploading}
           >
-            投稿
+            吠える
           </Button>
         </Group>
       </form>
@@ -4957,7 +4957,7 @@ export default function Home() {
                           <MentionTextarea
                             autosize
                             minRows={2}
-                            placeholder={`${threadPost.authorName || "この投稿"} に返信…（Shift+Enter でささやく）`}
+                            placeholder={`${threadPost.authorName || "この投稿"} に返信…（Shift+Enter でうなる）`}
                             value={replyText}
                             onChange={setReplyText}
                             mb="xs"
@@ -5097,7 +5097,7 @@ export default function Home() {
                                   disabled={(replyText.trim() === "" && threadReplyImages.length === 0 && !threadReplyVideo) || replying !== false}
                                   onClick={() => submitThreadReply(true)}
                                 >
-                                  ささやく
+                                  うなる
                                 </Button>
                                 <Button
                                   size="xs"
@@ -5106,7 +5106,7 @@ export default function Home() {
                                   disabled={(!replyText.trim() && threadReplyImages.length === 0 && !threadReplyVideo) || replying !== false}
                                   type="submit"
                                 >
-                                  返信する
+                                  吠える
                                 </Button>
                               </Group>
                             </Group>
