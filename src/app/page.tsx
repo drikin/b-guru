@@ -220,6 +220,70 @@ function highlightMentions(text: string, members: MentionMember[]): string {
     });
 }
 
+/** Normalize a member/mention name for matching: lower-case and strip all
+ *  whitespace (half + full-width) so `@柳家`, `@柳家三之助` and `@[柳家 三之助]`
+ *  all resolve to the same member. */
+const normWs = (s: string) => String(s || "").toLowerCase().replace(/[\s\u3000]/g, "");
+
+/** True when the chat body contains an @mention token matching any of the
+ *  caller's own names (used to decide whether to make the beagle bark). */
+function isMentionedIn(body: string, myNames: Set<string>): boolean {
+  if (!myNames || myNames.size === 0) return false;
+  let hit = false;
+  body.replace(/@\[([^\]]+)\]/g, (m, name) => {
+    if (myNames.has(normWs(name))) hit = true;
+    return m;
+  });
+  body.replace(/@([^\s@\[\]]+)/g, (m, name) => {
+    if (myNames.has(normWs(name))) hit = true;
+    return m;
+  });
+  return hit;
+}
+
+/** Render a chat message body with @mention tokens highlighted. Tokens that
+ *  match a member get a subtle blue tint; the current user's own name (if
+ *  mentioned) is emphasised in the brand blue + bold. Plain text is untouched. */
+function renderChatBody(
+  body: string,
+  members: MentionMember[],
+  myEmail: string
+): React.ReactNode {
+  const nameSet = new Set(members.map((m) => normWs(m.name)));
+  const myNameSet = new Set(
+    members.filter((m) => m.email === myEmail).map((m) => normWs(m.name))
+  );
+  const parts: React.ReactNode[] = [];
+  const re = /(@\[[^\]]+\]|@[^\s@\[\]]+)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let k = 0;
+  while ((m = re.exec(body))) {
+    if (m.index > last) parts.push(body.slice(last, m.index));
+    const token = m[0];
+    const nm = normWs(token.slice(1).replace(/^\[|\]$/g, ""));
+    const isMember = nameSet.has(nm);
+    const isMe = myNameSet.has(nm);
+    parts.push(
+      <span
+        key={k++}
+        style={{
+          background: isMember ? "rgba(31,144,255,0.14)" : undefined,
+          color: isMe ? "#1F90FF" : isMember ? "inherit" : undefined,
+          fontWeight: isMe ? 700 : undefined,
+          borderRadius: 4,
+          padding: isMember ? "0 2px" : undefined,
+        }}
+      >
+        {token}
+      </span>
+    );
+    last = m.index + token.length;
+  }
+  if (last < body.length) parts.push(body.slice(last));
+  return parts.length ? parts : body;
+}
+
 /** Highlight search keyword in rendered HTML by wrapping matches in <mark>.
  *  Escapes regex special chars in the keyword. Only operates outside HTML tags
  *  (between > and <) to avoid corrupting attributes. */
@@ -238,7 +302,7 @@ function highlightSearchTerm(html: string, keyword: string): string {
  *  user types @ followed by characters. Selecting a member inserts @name. */
 function MentionTextarea({
   value, onChange, onKeyDown, placeholder, autosize, minRows, maxRows, mb,
-  maxLength, label, description, autoFocus,
+  maxLength, label, description, autoFocus, ariaLabel, suggestUp, wrapperStyle,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -252,6 +316,12 @@ function MentionTextarea({
   label?: string;
   description?: React.ReactNode;
   autoFocus?: boolean;
+  ariaLabel?: string;
+  /** Render the suggestion popover above the input (for compact widgets like
+   *  the chat composer where opening downward would be clipped). */
+  suggestUp?: boolean;
+  /** Extra style on the outer wrapper (e.g. flex:1 inside a Group). */
+  wrapperStyle?: React.CSSProperties;
 }) {
   const [members, setMembers] = useState<MentionMember[]>([]);
   const [query, setQuery] = useState<string | null>(null);
@@ -365,7 +435,7 @@ function MentionTextarea({
   };
 
   return (
-    <div style={{ position: "relative" }}>
+    <div style={{ position: "relative", ...(wrapperStyle ? wrapperStyle : {}) }}>
       <Textarea
         ref={taRef}
         value={value}
@@ -378,6 +448,7 @@ function MentionTextarea({
           const ta = taRef.current;
           if (ta) updateQuery(ta.value);
         }}
+        aria-label={ariaLabel}
         placeholder={placeholder}
         autosize={autosize}
         minRows={minRows}
@@ -395,6 +466,8 @@ function MentionTextarea({
             zIndex: 1000,
             left: 0,
             right: 0,
+            top: suggestUp ? undefined : "100%",
+            bottom: suggestUp ? "calc(100% + 4px)" : undefined,
             background: "var(--bg-surface)",
             border: "1px solid var(--border-default)",
             borderRadius: 8,
@@ -2496,6 +2569,25 @@ export default function Home() {
   const [chatSending, setChatSending] = useState(false);
   const chatOpenRef = useRef(false); // ref so the SSE handler stays stable
   const chatListRef = useRef<HTMLDivElement>(null);
+  // Beagle "bark" when the current user is @mentioned while the chat window is
+  // closed: bumps `barkKey` to remount the center-screen bark overlay, and
+  // remembers who barked for the caption. `myNameRef` holds this user's own
+  // display names so the SSE handler can detect mentions without re-creating
+  // the EventSource (refs never retrigger the effect).
+  const [barkKey, setBarkKey] = useState(0);
+  const [barkFrom, setBarkFrom] = useState("");
+  const myNameRef = useRef<Set<string>>(new Set());
+
+  // Keep `myNameRef` in sync with the current user's name(s) — from the member
+  // list (authoritative) plus the session's name/email as fallbacks.
+  useEffect(() => {
+    const s = new Set<string>();
+    const me = mentionMembers.find((m) => m.email === auth?.email);
+    if (me?.name) s.add(normWs(me.name));
+    if (auth?.name) s.add(normWs(auth.name));
+    if (auth?.email) s.add(normWs(auth.email.split("@")[0]));
+    myNameRef.current = s;
+  }, [auth, mentionMembers]);
 
   // Load history + unread count. When `open`, also mark everything read and
   // clear the badge (bubble was just tapped). Uses functional setState + a ref
@@ -2774,6 +2866,13 @@ export default function Home() {
           fetch("/api/chat/read", { method: "POST" }).catch(() => {});
         } else if (msg.authorEmail !== auth.email) {
           setChatUnread((u) => u + 1);
+          // This message @mentions the current user: on top of the unread
+          // badge, make the beagle bark in the center of the screen so the
+          // message really demands attention (remount via barkKey restart).
+          if (isMentionedIn(msg.body, myNameRef.current)) {
+            setBarkKey((k) => k + 1);
+            setBarkFrom(msg.authorName || msg.authorEmail);
+          }
         }
       } else if (d.action === "delete" && d.message?.id != null) {
         const delId = d.message.id as number;
@@ -6131,7 +6230,7 @@ export default function Home() {
                             wordBreak: "break-word",
                           }}
                         >
-                          {m.body}
+                        {renderChatBody(m.body, mentionMembers, auth?.email || "")}
                         </div>
                       </div>
                     </div>
@@ -6149,9 +6248,9 @@ export default function Home() {
             p="xs"
             style={{ borderTop: "1px solid var(--border-green)", flexShrink: 0 }}
           >
-            <Textarea
+            <MentionTextarea
               value={chatText}
-              onChange={(e) => setChatText(e.currentTarget.value)}
+              onChange={(v) => setChatText(v)}
               onKeyDown={(e) => {
                 if ((e.nativeEvent as any).isComposing) return;
                 if (e.key === "Enter" && !e.shiftKey) {
@@ -6159,12 +6258,13 @@ export default function Home() {
                   sendChat();
                 }
               }}
-              placeholder="メッセージを入力（Enter で送信）"
+              placeholder="メッセージ（@名前 でメンション・Enter 送信）"
               autosize
               minRows={1}
               maxRows={4}
-              style={{ flex: 1 }}
-              aria-label="チャットメッセージ"
+              suggestUp
+              wrapperStyle={{ flex: 1 }}
+              ariaLabel="チャットメッセージ"
             />
             <ActionIcon
               variant="filled"
@@ -6244,6 +6344,27 @@ export default function Home() {
         </div>
       )}
 
+      {/* Beagle bark: when the chat window is closed and someone @mentions the
+          current user, the beagle icon barks in the center of the screen for
+          extra attention (on top of the unread badge below). Remounts on each
+          new mention via `key={barkKey}` so the CSS animation restarts. */}
+      {barkKey > 0 && (
+        <div key={barkKey} className="bguru-bark-overlay" aria-hidden="true">
+          <div className="bguru-bark-ring" style={{ animationDelay: "0.00s" }} />
+          <div className="bguru-bark-ring" style={{ animationDelay: "0.18s" }} />
+          <div className="bguru-bark-ring" style={{ animationDelay: "0.36s" }} />
+          <div className="bguru-bark-beagle">
+            <img src="/icon-chat.png" alt="" draggable={false} />
+            <span className="bguru-bark-woof">ワン！</span>
+          </div>
+          {barkFrom && (
+            <div className="bguru-bark-caption">
+              {barkFrom} さんがあなたに吠えました
+            </div>
+          )}
+        </div>
+      )}
+
       {/* TEMP diagnostic: client JS error badge (bottom-left). Remove with the
           GlobalError listeners above after root cause is found. */}
       {clientErr && (
@@ -6285,6 +6406,77 @@ export default function Home() {
         .bguru-bark-btn:active {
           transform: translateY(1px);
           box-shadow: 0 1px 2px rgba(0,0,0,0.16);
+        }
+        /* Beagle "bark" overlay — the bubble icon barks in the center of the
+           screen when the user is @mentioned while the chat is closed. */
+        .bguru-bark-overlay {
+          position: fixed;
+          inset: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          z-index: 3200;
+          pointer-events: none;
+          animation: bguruBarkFade 2.6s ease forwards;
+        }
+        @keyframes bguruBarkFade {
+          0%, 68% { opacity: 1; }
+          100% { opacity: 0; }
+        }
+        .bguru-bark-beagle {
+          position: relative;
+          width: 96px;
+          height: 96px;
+          animation: bguruBarkBounce 0.9s cubic-bezier(.18,.89,.32,1.2) both;
+        }
+        .bguru-bark-beagle img {
+          width: 100%;
+          height: 100%;
+          object-fit: contain;
+          filter: drop-shadow(0 5px 12px rgba(0,0,0,0.32));
+        }
+        @keyframes bguruBarkBounce {
+          0% { transform: scale(0); opacity: 0; }
+          40% { transform: scale(1.18); opacity: 1; }
+          62% { transform: scale(0.96); }
+          80% { transform: scale(1.04); }
+          100% { transform: scale(1); }
+        }
+        .bguru-bark-woof {
+          position: absolute;
+          top: -34px;
+          left: 50%;
+          transform: translateX(-50%);
+          font-size: 21px;
+          font-weight: 800;
+          color: #1F90FF;
+          white-space: nowrap;
+          text-shadow: 0 2px 6px rgba(255,255,255,0.92);
+        }
+        .bguru-bark-ring {
+          position: absolute;
+          width: 120px;
+          height: 120px;
+          border-radius: 50%;
+          border: 3px solid rgba(31,144,255,0.65);
+          opacity: 0;
+          animation: bguruBarkRing 1.5s ease-out forwards;
+        }
+        @keyframes bguruBarkRing {
+          0% { transform: scale(0.4); opacity: 0.95; }
+          100% { transform: scale(2.6); opacity: 0; }
+        }
+        .bguru-bark-caption {
+          margin-top: 14px;
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--text-body);
+          background: var(--bg-surface);
+          border: 1px solid var(--border-green);
+          padding: 6px 12px;
+          border-radius: 999px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.12);
         }
       `}</style>
 </AppShell>
