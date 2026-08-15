@@ -5919,33 +5919,27 @@ export default function Home() {
           <UnstyledButton
             onClick={openChat}
             aria-label="チャットを開く"
+            title="ビーグルチャットを開く"
             style={{
-              width: 48,
-              height: 48,
-              borderRadius: "50%",
-              background: "var(--bg-surface)",
-              border: "1px solid var(--border-green)",
-              boxShadow: "0 2px 4px rgba(0,0,0,0.18)",
+              width: 56,
+              height: 56,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               cursor: "pointer",
-              color: "var(--text-green-soft)",
+              background: "transparent",
+              border: "none",
+              padding: 0,
               position: "relative",
+              filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.18))",
             }}
           >
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-            </svg>
+            <img
+              src="/icon-chat.png"
+              alt=""
+              draggable={false}
+              style={{ width: "100%", height: "100%", objectFit: "contain" }}
+            />
           </UnstyledButton>
           {chatUnread > 0 && (
             <div
