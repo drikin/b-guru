@@ -614,7 +614,7 @@ function PostCard({
   onPin: (id: number) => void;
   onEdit: (post: FeedPost) => void;
   onDelete: (post: FeedPost) => void;
-  onPreview: (src: string) => void;
+  onPreview: (src: string, group?: string[]) => void;
 }) {
   const CLAMP_THRESHOLD = 500;
   const [expanded, setExpanded] = useState(false);
@@ -803,7 +803,7 @@ function PostCard({
                 height: "auto",
                 display: "block",
               }}
-              onClick={() => onPreview(src)}
+              onClick={() => onPreview(src, post.images)}
             />
           ))}
         </Group>
@@ -1235,7 +1235,7 @@ function CollapsibleReplies({
   onEdit: (post: FeedPost) => void;
   onDelete: (post: FeedPost) => void;
   onPin: (id: number) => void;
-  onPreview: (src: string) => void;
+  onPreview: (src: string, group?: string[]) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -1382,7 +1382,7 @@ function ReplyBubble({
   onLike: (id: number) => void;
   onEdit: (post: FeedPost) => void;
   onDelete: (post: FeedPost) => void;
-  onPreview: (src: string) => void;
+  onPreview: (src: string, group?: string[]) => void;
 }) {
   return (
     <Box
@@ -1476,7 +1476,7 @@ function InlineReplyBox({
     videoUrl?: string | null
   ) => Promise<void>;
   onCancel: () => void;
-  onPreview: (src: string) => void;
+  onPreview: (src: string, group?: string[]) => void;
 }) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<string[]>([]);
@@ -1557,7 +1557,7 @@ function InlineReplyBox({
                 fit="contain"
                 radius="md"
                 style={{ cursor: "pointer" }}
-                onClick={() => onPreview(src)}
+                onClick={() => onPreview(src, images)}
               />
               <ActionIcon
                 size="sm"
@@ -1727,7 +1727,7 @@ function TimelineFeed({
   onEdit: (p: FeedPost) => void;
   onDelete: (p: FeedPost) => void;
   onPin: (id: number) => void;
-  onPreview: (src: string) => void;
+  onPreview: (src: string, group?: string[]) => void;
   skipFirstDate?: boolean;
 }) {
   // When the parent renders the topmost date separator itself (above the
@@ -1921,7 +1921,7 @@ function ComposerPaper({
   ) => Promise<void>;
   onPublish: (text: string, images: string[], videoUrl?: string | null) => Promise<void>;
   onClose: () => void;
-  onPreviewImage: (src: string) => void;
+  onPreviewImage: (src: string, group?: string[]) => void;
 }) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<string[]>([]);
@@ -2015,7 +2015,7 @@ function ComposerPaper({
                   fit="contain"
                   radius="md"
                   style={{ cursor: "pointer" }}
-                  onClick={() => onPreviewImage(src)}
+                  onClick={() => onPreviewImage(src, images)}
                 />
                 <ActionIcon
                   size="sm"
@@ -2266,6 +2266,45 @@ export default function Home() {
 
   // ---- Feed edit/delete state ----
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  // Lightbox navigation + zoom: `previewImages` is the group the current image
+  // belongs to (so left/right & swipe move within it); `previewScale`/`previewPan`
+  // drive pinch-zoom & pan.
+  const [previewImages, setPreviewImages] = useState<string[]>([]);
+  const [previewScale, setPreviewScale] = useState(1);
+  const [previewPan, setPreviewPan] = useState({ x: 0, y: 0 });
+  // Pinch / pan / swipe gesture bookkeeping for the lightbox.
+  const lbPointers = useRef(new Map<number, { x: number; y: number }>());
+  const lbGesture = useRef({
+    startDist: 0,
+    startScale: 1,
+    startX: 0,
+    startY: 0,
+    startT: 0,
+    startPan: { x: 0, y: 0 },
+    mode: "none" as "none" | "pinch" | "pan" | "tap",
+  });
+  // Open the full-screen lightbox, remembering the surrounding image group so
+  // keyboard arrows / swipes can switch between images.
+  const openPreview = useCallback((src: string, group?: string[]) => {
+    setPreviewImages(group && group.length ? group : [src]);
+    setPreviewScale(1);
+    setPreviewPan({ x: 0, y: 0 });
+    setPreviewImage(src);
+  }, []);
+  const navigatePreview = useCallback(
+    (delta: number) => {
+      const cur = previewImage;
+      if (!cur) return;
+      const group = previewImages.length ? previewImages : [cur];
+      const idx = group.indexOf(cur);
+      if (idx === -1) return;
+      const next = group[(idx + delta + group.length) % group.length];
+      setPreviewScale(1);
+      setPreviewPan({ x: 0, y: 0 });
+      setPreviewImage(next);
+    },
+    [previewImage, previewImages]
+  );
   const [editingPost, setEditingPost] = useState<FeedPost | null>(null);
   const [editText, setEditText] = useState("");
   const [editImages, setEditImages] = useState<string[]>([]);
@@ -4026,15 +4065,17 @@ export default function Home() {
       .finally(() => setDeleting(false));
   };
 
-  // Close full-screen lightbox with Escape
+  // Close full-screen lightbox with Escape; arrow keys switch images
   useEffect(() => {
     if (!previewImage) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setPreviewImage(null);
+      else if (e.key === "ArrowLeft") navigatePreview(-1);
+      else if (e.key === "ArrowRight") navigatePreview(1);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [previewImage]);
+  }, [previewImage, navigatePreview]);
 
   // ---------- Auth gates ----------
   if (checking) {
@@ -4809,7 +4850,7 @@ export default function Home() {
                     uploadVideo={uploadVideo}
                     onPublish={publishComposer}
                     onClose={() => setComposerOpen(false)}
-                    onPreviewImage={setPreviewImage}
+                    onPreviewImage={openPreview}
                   />
                 ) : (
                   <Box style={{ display: "flex", justifyContent: "center", padding: "4px 0", lineHeight: 0 }}>
@@ -4914,7 +4955,7 @@ export default function Home() {
                           onEdit={openEdit}
                           onDelete={setDeleteTarget}
                           onPin={handlePin}
-                          onPreview={setPreviewImage}
+                          onPreview={openPreview}
                         />
                       )}
 
@@ -4935,7 +4976,7 @@ export default function Home() {
                           onEdit={openEdit}
                           onDelete={setDeleteTarget}
                           onPin={handlePin}
-                          onPreview={setPreviewImage}
+                          onPreview={openPreview}
                         />
                         </Box>
                       ))}
@@ -4983,7 +5024,7 @@ export default function Home() {
                                     fit="contain"
                                     radius="md"
                                     style={{ cursor: "pointer" }}
-                                    onClick={() => setPreviewImage(src)}
+                                    onClick={() => openPreview(src, threadReplyImages)}
                                   />
                                   <ActionIcon
                                     size="sm"
@@ -5139,7 +5180,7 @@ export default function Home() {
                   onEdit={openEdit}
                   onDelete={setDeleteTarget}
                   onPin={handlePin}
-                  onPreview={setPreviewImage}
+                  onPreview={openPreview}
                 />
                 {/* Infinite scroll sentinel + load-more fallback */}
                 {feedHasMore && feedPosts.length > 0 ? (
@@ -5521,10 +5562,9 @@ export default function Home() {
         </div>
       </AppShell.Main>
 
-      {/* Full-screen image lightbox */}
+      {/* Full-screen image lightbox (arrow keys / swipe switch images, pinch zoom & pan) */}
       {previewImage && (
         <div
-          onClick={() => setPreviewImage(null)}
           style={{
             position: "fixed",
             inset: 0,
@@ -5533,13 +5573,88 @@ export default function Home() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            cursor: "zoom-out",
+            overflow: "hidden",
+            touchAction: "none",
+            userSelect: "none",
+            WebkitUserSelect: "none",
             padding: 0,
             margin: 0,
+          }}
+          onPointerDown={(e) => {
+            try {
+              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            } catch {}
+            const x = e.clientX;
+            const y = e.clientY;
+            lbPointers.current.set(e.pointerId, { x, y });
+            const g = lbGesture.current;
+            if (lbPointers.current.size === 2) {
+              const pts = [...lbPointers.current.values()];
+              g.startDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+              g.startScale = previewScale;
+              g.mode = "pinch";
+            } else {
+              g.startX = x;
+              g.startY = y;
+              g.startT = Date.now();
+              g.startPan = previewPan;
+              g.mode = previewScale > 1 ? "pan" : "tap";
+            }
+          }}
+          onPointerMove={(e) => {
+            const g = lbGesture.current;
+            const prev = lbPointers.current.get(e.pointerId);
+            if (!prev) return;
+            const x = e.clientX;
+            const y = e.clientY;
+            lbPointers.current.set(e.pointerId, { x, y });
+            if (g.mode === "pinch" && lbPointers.current.size === 2) {
+              const pts = [...lbPointers.current.values()];
+              const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+              const ns = Math.min(6, Math.max(1, (g.startScale * dist) / g.startDist));
+              setPreviewScale(ns);
+            } else if (g.mode === "pan") {
+              setPreviewPan({
+                x: g.startPan.x + (x - g.startX),
+                y: g.startPan.y + (y - g.startY),
+              });
+            }
+          }}
+          onPointerUp={(e) => {
+            const g = lbGesture.current;
+            const pt = lbPointers.current.get(e.pointerId);
+            lbPointers.current.delete(e.pointerId);
+            if (lbPointers.current.size === 0) {
+              const dx = pt ? e.clientX - g.startX : 0;
+              const dy = pt ? e.clientY - g.startY : 0;
+              const dt = Date.now() - g.startT;
+              if (g.mode === "tap") {
+                if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) && dt < 400) {
+                  navigatePreview(dx < 0 ? 1 : -1);
+                } else if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && dt < 350) {
+                  setPreviewImage(null);
+                }
+              }
+              if (g.mode === "pan") {
+                const maxX = Math.max(0, ((previewScale - 1) * window.innerWidth) / 2);
+                const maxY = Math.max(0, ((previewScale - 1) * window.innerHeight) / 2);
+                setPreviewPan((p) => ({
+                  x: Math.max(-maxX, Math.min(maxX, p.x)),
+                  y: Math.max(-maxY, Math.min(maxY, p.y)),
+                }));
+              }
+              if (g.mode === "pinch" && previewScale <= 1) setPreviewPan({ x: 0, y: 0 });
+            }
+            if (g.mode !== "pinch" && lbPointers.current.size < 2) g.mode = "none";
+          }}
+          onPointerCancel={() => {
+            lbPointers.current.clear();
+            lbGesture.current.mode = "none";
           }}
         >
           {/* Close button */}
           <div
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
               setPreviewImage(null);
@@ -5568,10 +5683,47 @@ export default function Home() {
           >
             ✕
           </div>
+
+          {/* Image counter */}
+          {previewImages.length > 1 && (() => {
+            const idx = previewImages.indexOf(previewImage);
+            return (
+              <div
+                style={{
+                  position: "fixed",
+                  top: 22,
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  zIndex: 10000,
+                  color: "rgba(255,255,255,0.85)",
+                  fontSize: 14,
+                  pointerEvents: "none",
+                  userSelect: "none",
+                }}
+              >
+                {idx + 1} / {previewImages.length}
+              </div>
+            );
+          })()}
+
           <img
             src={previewImage}
             alt="プレビュー"
-            onClick={(e) => e.stopPropagation()}
+            draggable={false}
+            onDoubleClick={() => {
+              if (previewScale > 1) {
+                setPreviewScale(1);
+                setPreviewPan({ x: 0, y: 0 });
+              } else {
+                setPreviewScale(2.5);
+                setPreviewPan({ x: 0, y: 0 });
+              }
+            }}
+            onWheel={(e) => {
+              e.preventDefault();
+              const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+              setPreviewScale((s) => Math.min(6, Math.max(1, s * factor)));
+            }}
             style={{
               maxWidth: "100vw",
               maxHeight: "100vh",
@@ -5579,8 +5731,81 @@ export default function Home() {
               height: "auto",
               objectFit: "contain",
               display: "block",
+              userSelect: "none",
+              WebkitUserSelect: "none",
+              transform: `translate(${previewPan.x}px, ${previewPan.y}px) scale(${previewScale})`,
+              transition: lbPointers.current.size > 0 ? "none" : "transform 0.18s ease",
+              cursor: previewScale > 1 ? "grab" : "zoom-in",
             }}
           />
+
+          {/* Prev / next buttons (shown when a group of images is open) */}
+          {previewImages.length > 1 && (
+            <>
+              <button
+                aria-label="前の画像"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigatePreview(-1);
+                }}
+                style={{
+                  position: "fixed",
+                  left: 14,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  zIndex: 10000,
+                  width: 44,
+                  height: 44,
+                  borderRadius: "50%",
+                  background: "rgba(255,255,255,0.14)",
+                  color: "#fff",
+                  border: "none",
+                  fontSize: 30,
+                  lineHeight: 1,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  userSelect: "none",
+                  boxShadow: "0 2px 10px rgba(0,0,0,0.3)",
+                }}
+              >
+                ‹
+              </button>
+              <button
+                aria-label="次の画像"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigatePreview(1);
+                }}
+                style={{
+                  position: "fixed",
+                  right: 14,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  zIndex: 10000,
+                  width: 44,
+                  height: 44,
+                  borderRadius: "50%",
+                  background: "rgba(255,255,255,0.14)",
+                  color: "#fff",
+                  border: "none",
+                  fontSize: 30,
+                  lineHeight: 1,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  userSelect: "none",
+                  boxShadow: "0 2px 10px rgba(0,0,0,0.3)",
+                }}
+              >
+                ›
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -5618,7 +5843,7 @@ export default function Home() {
                       height={60}
                       fit="contain"
                       radius="md"
-                      onClick={() => setPreviewImage(src)}
+                      onClick={() => openPreview(src, editImages)}
                       style={{ cursor: "pointer" }}
                     />
                     <ActionIcon
