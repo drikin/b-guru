@@ -284,6 +284,61 @@ function renderChatBody(
   return parts.length ? parts : body;
 }
 
+/* ---- Beagle bark sound (SE) ----
+ * The center-screen bark also plays a short recorded dog-bark sound effect via
+ * Web Audio. An AudioContext is created lazily and resumed on the first user
+ * interaction (browsers block audio that starts outside a user gesture), and
+ * the /bark.mp3 buffer is preloaded on mount so the first bark plays at once.
+ */
+let barkCtx: AudioContext | null = null;
+let barkBuf: AudioBuffer | null = null;
+
+function ensureBarkCtx(): AudioContext | null {
+  if (typeof window === "undefined") return null;
+  if (!barkCtx) {
+    const AC: typeof AudioContext | undefined =
+      window.AudioContext || (window as any).webkitAudioContext;
+    if (!AC) return null;
+    barkCtx = new AC();
+  }
+  if (barkCtx.state === "suspended") barkCtx.resume().catch(() => {});
+  return barkCtx;
+}
+
+async function loadBarkBuf(): Promise<void> {
+  if (barkBuf || typeof window === "undefined") return;
+  const ctx = ensureBarkCtx();
+  if (!ctx) return;
+  try {
+    const r = await fetch("/bark.mp3", { cache: "no-store" });
+    if (!r.ok) return;
+    const ab = await r.arrayBuffer();
+    barkBuf = await ctx.decodeAudioData(ab);
+  } catch {
+    /* ignore — the bark just stays silent if the sound can't load */
+  }
+}
+
+function playBark(): void {
+  const ctx = ensureBarkCtx();
+  if (!ctx) return;
+  if (!barkBuf) {
+    loadBarkBuf(); // preload for the next bark
+    return;
+  }
+  try {
+    const src = ctx.createBufferSource();
+    src.buffer = barkBuf;
+    const gain = ctx.createGain();
+    gain.gain.value = 0.8;
+    src.connect(gain);
+    gain.connect(ctx.destination);
+    src.start();
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Highlight search keyword in rendered HTML by wrapping matches in <mark>.
  *  Escapes regex special chars in the keyword. Only operates outside HTML tags
  *  (between > and <) to avoid corrupting attributes. */
@@ -2588,6 +2643,28 @@ export default function Home() {
     if (auth?.email) s.add(normWs(auth.email.split("@")[0]));
     myNameRef.current = s;
   }, [auth, mentionMembers]);
+
+  // Bark sound: preload the /bark.mp3 buffer on mount and resume the (lazily
+  // created) AudioContext on the first user gesture. Browsers refuse audio
+  // that starts outside a user gesture, so we resume on pointer/key input —
+  // once the user has interacted, the bark SE can play.
+  useEffect(() => {
+    loadBarkBuf();
+    const resume = () => ensureBarkCtx();
+    window.addEventListener("pointerdown", resume, { once: true });
+    window.addEventListener("keydown", resume, { once: true });
+    window.addEventListener("touchstart", resume, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", resume);
+      window.removeEventListener("keydown", resume);
+      window.removeEventListener("touchstart", resume);
+    };
+  }, []);
+
+  // Play the bark sound effect every time a bark animation starts.
+  useEffect(() => {
+    if (barkKey > 0) playBark();
+  }, [barkKey]);
 
   // Load history + unread count. When `open`, also mark everything read and
   // clear the badge (bubble was just tapped). Uses functional setState + a ref
