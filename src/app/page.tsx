@@ -5931,7 +5931,7 @@ export default function Home() {
               border: "none",
               padding: 0,
               position: "relative",
-              filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.18))",
+              filter: "drop-shadow(0 3px 6px rgba(0,0,0,0.32)) drop-shadow(0 1px 2px rgba(0,0,0,0.18))",
             }}
           >
             <img
