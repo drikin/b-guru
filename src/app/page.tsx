@@ -4129,16 +4129,28 @@ export default function Home() {
 
   // Open the individual thread view (post + chronological replies)
   const openThread = (postId: number) => {
-    setThreadLoading(true);
-    setThreadPost(null);
-    setThreadReplies([]);
+    // Seed the thread view INSTANTLY from already-loaded data (the clicked
+    // root post is in feedPosts and carries its replies in `.replies`) instead
+    // of blanking the screen and waiting on a network round-trip. This is what
+    // made "card click → filtered timeline" feel slow. The server fetch below
+    // then refreshes in the background so counts / new replies stay current.
+    const local = findPostLocal(postId);
+    setThreadLoading(!local);
+    setThreadPost(local);
+    setThreadReplies(local ? local.replies ?? [] : []);
     setReplyText("");
     setThreadReplyImages([]);
     setThreadReplyBoxOpen(false);
     setThreadWhisper(false);
     setReplyError(null);
-    // Allow the browser back button to close the thread view.
-    window.history.pushState({ thread: postId }, "", `#/post/${postId}`);
+    // Allow the browser back button to close the thread view. Push the hash
+    // ONLY when entering a thread from the timeline; if we're already inside a
+    // thread (e.g. tapping a reply card in the thread view) REPLACE it so
+    // #/post never stacks up — stacking was why "タイムラインに戻る" needed 2 taps.
+    const inThread = (window.location.hash || "").startsWith("#/post/");
+    const url = `#/post/${postId}`;
+    if (inThread) window.history.replaceState({ thread: postId }, "", url);
+    else window.history.pushState({ thread: postId }, "", url);
     fetch(`/api/posts/${postId}`, { cache: "no-store" })
       .then(async (r) => {
         const d = await r.json();
@@ -4150,18 +4162,42 @@ export default function Home() {
       .finally(() => setThreadLoading(false));
   };
 
-  const closeThread = () => {
-    // If we navigated to a #/post hash, go back so the URL (and browser back
-    // history) returns to the timeline; popstate handler resets the state.
-    if (/(^|\/)#?\/?post\//.test(window.location.hash) || (window.location.hash || "").startsWith("#/post/")) {
-      window.history.back();
-    } else {
-      setThreadPost(null);
-      setThreadReplies([]);
-      // Use silent diff refresh instead of full reload — preserves scroll
-      // position and loaded older pages while syncing reply counts.
-      silentRefreshFeed();
+  // Find a post we've already loaded (root cards, their nested inline replies,
+  // and pinned/hot sidebar posts) by id — used to seed thread views instantly.
+  const findPostLocal = (postId: number): FeedPost | null => {
+    for (const root of feedPosts) {
+      if (root.id === postId) return root;
+      const inReplies = (root.replies ?? []).find((r) => r.id === postId);
+      if (inReplies) return inReplies;
     }
+    return (
+      pinnedPosts.find((p) => p.id === postId) ??
+      hotPosts.find((p) => p.id === postId) ??
+      null
+    );
+  };
+
+  const closeThread = () => {
+    // Deterministically close the thread: clear the view and normalize the URL
+    // back to the timeline with replaceState (NOT history.back()). This always
+    // returns in a single tap regardless of how the thread was entered (card
+    // click, nested reply, deep link). With openThread now using replaceState
+    // for nested navigation, there is never more than one #/post entry that
+    // could stack the back button. Browser back/forward on a pushed hash is
+    // still handled by the popstate listener.
+    setThreadPost(null);
+    setThreadReplies([]);
+    setThreadReplyBoxOpen(false);
+    if ((window.location.hash || "").startsWith("#/post/")) {
+      try {
+        window.history.replaceState(null, "", window.location.pathname);
+      } catch {
+        // ignore — hash normalization is best-effort
+      }
+    }
+    // Use silent diff refresh instead of full reload — preserves scroll
+    // position and loaded older pages while syncing reply counts.
+    silentRefreshFeed();
   };
 
   // Return to the top/home (feed) view from anywhere — including from a thread.
