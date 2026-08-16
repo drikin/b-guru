@@ -154,16 +154,21 @@ export async function POST(req: NextRequest) {
     // a redundant silentRefreshFeed (it already did an optimistic update).
     emitLive({ type: "post", postId: post.id, action: "create", authorEmail: email });
 
-    // Web Push notification for a NEW ROOT POST (not for replies — those use the
-    // in-app reply/mention notifications). Every push-enabled member except the
-    // author gets an OS/browser notification. Fire-and-forget (not awaited) so
-    // the publish response stays fast; sendWebPush never throws.
-    if (!parentId) {
+    // Web Push notification — sent for EVERY new post AND every new comment, but
+    // NEVER for whispers (ささやき = quiet by design). Every push-enabled member
+    // except the actor gets an OS/browser notification. Fire-and-forget (not
+    // awaited) so the publish response stays fast; sendWebPush never throws.
+    // Comments are only ever attached to a root post, so parentId (when present)
+    // IS the root post id — clicking a comment push opens that thread.
+    if (!isWhisper) {
       const preview = text.replace(/\s+/g, " ").trim().slice(0, 60);
+      const isRoot = !parentId;
+      const who = authorName || email.split("@")[0];
+      const action = isRoot ? "が吠えた" : "がコメント";
       sendWebPush({
-        title: "B-guru 新着投稿",
-        body: preview ? `🐾 ${authorName || email.split("@")[0]} が吠えた: ${preview}` : `🐾 ${authorName || email.split("@")[0]} が吠えた`,
-        url: `#/post/${post.id}`,
+        title: isRoot ? "B-guru 新着投稿" : "B-guru 新着コメント",
+        body: preview ? `🐾 ${who}${action}: ${preview}` : `🐾 ${who}${action}`,
+        url: `#/post/${parentId ?? post.id}`,
         excludeEmail: email,
       }).catch(() => {});
     }
