@@ -6151,8 +6151,10 @@ export default function Home() {
       </Modal>
 
       {/* Realtime chat widget — bottom-right bubble that opens a mini chat
-          window for the global room (replaces the old wave 👋 feature). */}
-      {chatOpen ? (
+          window for the global room (replaces the old wave 👋 feature).
+          Hidden while the edit modal is open so the fixed bubble (bottom-right,
+          zIndex 2900) doesn't overlap the modal's 保存 button on mobile. */}
+      {!editingPost && (chatOpen ? (
         <Paper
           radius="lg"
           withBorder
@@ -6413,7 +6415,7 @@ export default function Home() {
             </div>
           )}
         </div>
-      )}
+      ))}
 
       {/* Beagle bark: when the chat window is closed and someone @mentions the
           current user, the beagle icon barks in the center of the screen for
