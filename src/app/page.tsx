@@ -48,8 +48,17 @@ import type { ChatMessage } from "@/lib/chat";
 
 type View = "login" | "otp";
 
-/** Format a timestamp in JST (primary) + PDT (secondary). e.g.
- *  "2026/8/7 20:30 JST / 04:30 PDT" */
+/** Decode a base64url VAPID public key into a Uint8Array for pushManager.subscribe. */
+function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
+  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
+  const b64 = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(b64);
+  const buf = new ArrayBuffer(raw.length);
+  const arr = new Uint8Array(buf);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
 function formatJSTPDT(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -2667,6 +2676,10 @@ export default function Home() {
 
   // ---- Notifications state ----
   const [notifications, setNotifications] = useState<any[]>([]);
+  // ---- Web Push (自動新着通知) state ----
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
   const [notifUnread, setNotifUnread] = useState(0);
 
   const displayName = auth?.name || auth?.email?.split("@")[0] || "";
@@ -2739,6 +2752,88 @@ export default function Home() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth]);
+
+  // ---- Web Push: register SW (once) and reflect current subscription state ----
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    setPushSupported(true);
+    let disposed = false;
+    (async () => {
+      try {
+        await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (!disposed) setPushEnabled(!!sub);
+      } catch (e) {
+        console.error("SW/Push init:", e);
+      }
+    })();
+    return () => {
+      disposed = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Toggle 自動新着通知 (Web Push) on/off. Requests permission when enabling.
+  const onTogglePush = useCallback(
+    async (enabled: boolean) => {
+      if (!pushSupported || typeof window === "undefined") return;
+      setPushBusy(true);
+      try {
+        if (enabled) {
+          const perm = await Notification.requestPermission();
+          if (perm !== "granted") {
+            setPushEnabled(false);
+            return;
+          }
+          const reg = await navigator.serviceWorker.ready;
+          const r = await fetch("/api/push/vapid-public-key", { cache: "no-store" });
+          if (!r.ok) throw new Error("vapid key 取得失敗");
+          const data = await r.json();
+          let sub = await reg.pushManager.getSubscription();
+          if (!sub) {
+            sub = await reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: urlBase64ToUint8Array(data.publicKey),
+            });
+          }
+          const raw = sub.toJSON();
+          const save = await fetch("/api/push/subscribe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              endpoint: sub.endpoint,
+              keys: { p256dh: raw.keys?.p256dh, auth: raw.keys?.auth },
+              userAgent: navigator.userAgent,
+            }),
+          });
+          if (!save.ok) throw new Error("subscribe 保存失敗");
+          setPushEnabled(true);
+        } else {
+          const reg = await navigator.serviceWorker.ready;
+          const sub = await reg.pushManager.getSubscription();
+          if (sub) {
+            const endpoint = sub.endpoint;
+            try {
+              await sub.unsubscribe();
+            } catch {}
+            await fetch("/api/push/subscribe", {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ endpoint }),
+            }).catch(() => {});
+          }
+          setPushEnabled(false);
+        }
+      } catch (e) {
+        console.error("push toggle:", e);
+      } finally {
+        setPushBusy(false);
+      }
+    },
+    [pushSupported]
+  );
 
   // Fetch the currently active pins (within 24h, oldest-pinned first) for the
   // right-sidebar summary panel. Refreshed on login, on SSE "pin" events and
@@ -4979,6 +5074,32 @@ export default function Home() {
               </Text>
             )}
           </Paper>
+
+          {/* 自動新着通知 (Web Push) toggle */}
+          {pushSupported && (
+            <Paper p="sm" radius="md" withBorder shadow="xs">
+              <Group justify="space-between" wrap="nowrap" align="center" gap="xs">
+                <div style={{ minWidth: 0 }}>
+                  <Text size="sm" fw={600} c="inherit">
+                    自動新着通知
+                  </Text>
+                  <Text size="xs" c="dimmed" style={{ lineHeight: 1.35, wordBreak: "break-word" }}>
+                    新しい投稿をスマホ/ブラウザにPush通知
+                    {/iPad|iPhone|iPod/.test(navigator.userAgent) && !(window.matchMedia("(display-mode: standalone)").matches) && (
+                      <>（iOSはホーム画面に追加が必要）</>
+                    )}
+                  </Text>
+                </div>
+                <Switch
+                  size="sm"
+                  checked={pushEnabled}
+                  disabled={pushBusy}
+                  onChange={(e) => onTogglePush(e.currentTarget.checked)}
+                  aria-label="自動新着通知"
+                />
+              </Group>
+            </Paper>
+          )}
 
           {/* Notifications panel (moved here from header popover) */}
           <Paper p={0} radius="md" withBorder shadow="xs">

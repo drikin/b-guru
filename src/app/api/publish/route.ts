@@ -5,6 +5,7 @@ import { findMemberByEmail, listMembers } from "@/lib/ghost";
 import { getSessionEmail } from "@/lib/session";
 import { pool } from "@/lib/db";
 import { emitLive } from "@/lib/live";
+import { sendWebPush } from "@/lib/push";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -152,6 +153,20 @@ export async function POST(req: NextRequest) {
     // Include the author's email so the author's own client can skip
     // a redundant silentRefreshFeed (it already did an optimistic update).
     emitLive({ type: "post", postId: post.id, action: "create", authorEmail: email });
+
+    // Web Push notification for a NEW ROOT POST (not for replies — those use the
+    // in-app reply/mention notifications). Every push-enabled member except the
+    // author gets an OS/browser notification. Fire-and-forget (not awaited) so
+    // the publish response stays fast; sendWebPush never throws.
+    if (!parentId) {
+      const preview = text.replace(/\s+/g, " ").trim().slice(0, 60);
+      sendWebPush({
+        title: "B-guru 新着投稿",
+        body: preview ? `🐾 ${authorName || email.split("@")[0]} が吠えた: ${preview}` : `🐾 ${authorName || email.split("@")[0]} が吠えた`,
+        url: `#/post/${post.id}`,
+        excludeEmail: email,
+      }).catch(() => {});
+    }
 
     // Record in dedup map so a double-submit within 30s returns this post.
     recentPosts.set(dedupKey, { at: Date.now(), post });

@@ -20,7 +20,8 @@
     "postcss-preset-mantine": "^1.18.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "sanitize-html": "^2.17.6"
+    "sanitize-html": "^2.17.6",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
