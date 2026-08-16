@@ -2271,6 +2271,155 @@ function ComposerPaper({
   );
 }
 
+/**
+ * iOS-only custom "pull to refresh" for the timeline.
+ *
+ * On Android Chrome the browser's native pull-to-refresh already reloads the
+ * page, so we leave it alone here. On iOS (Safari browser AND standalone PWA)
+ * the native gesture is either missing (standalone) or flaky, so we implement
+ * our own: pulling down while the window is at the top reveals a pill
+ * indicator, and releasing past the threshold calls onRefresh() (a feed
+ * reload). We preventDefault only while actively pulling so our gesture
+ * replaces Safari's rubber-band/bounce instead of doubling up with it, and we
+ * never interfere with vertical scrolling once scrollY > 0.
+ */
+function PullToRefresh({
+  onRefresh,
+  active = true,
+}: {
+  onRefresh: () => void | Promise<void>;
+  active?: boolean;
+}) {
+  const [refreshing, setRefreshing] = useState(false);
+  const barRef = useRef<HTMLDivElement | null>(null);
+  const startY = useRef<number | null>(null);
+  const pulling = useRef(false);
+  const pullPx = useRef(0);
+  const refreshingRef = useRef(false);
+  const onRefreshRef = useRef(onRefresh);
+  onRefreshRef.current = onRefresh;
+
+  const MAX = 110;
+  const THRESH = 64;
+
+  const applyPull = (px: number) => {
+    pullPx.current = px;
+    const el = barRef.current;
+    if (!el) return;
+    if (px <= 0) {
+      el.style.transform = "translateY(-70px)";
+      el.style.opacity = "0";
+      return;
+    }
+    el.style.transform = `translateY(${-70 + Math.min(px, MAX)}px)`;
+    el.style.opacity = String(Math.min(1, px / 44));
+  };
+
+  const finishRefresh = () => {
+    refreshingRef.current = false;
+    setRefreshing(false);
+    applyPull(0);
+  };
+
+  useEffect(() => {
+    const isIOS =
+      typeof window !== "undefined" &&
+      /iPad|iPhone|iPod/.test(navigator.userAgent as string) &&
+      !(window as any).MSStream;
+    if (!active || !isIOS) return;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (refreshingRef.current || window.scrollY > 0) {
+        startY.current = null;
+        return;
+      }
+      startY.current = e.touches[0].clientY;
+      pulling.current = false;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (startY.current === null) return;
+      if (window.scrollY > 0) {
+        startY.current = null;
+        pulling.current = false;
+        applyPull(0);
+        return;
+      }
+      const dy = e.touches[0].clientY - startY.current;
+      if (dy > 0 && !refreshingRef.current) {
+        pulling.current = true;
+        if (e.cancelable) e.preventDefault();
+        applyPull(dy);
+      } else {
+        pulling.current = false;
+        applyPull(0);
+      }
+    };
+    const onTouchEnd = () => {
+      const p = pulling.current;
+      startY.current = null;
+      pulling.current = false;
+      if (p && pullPx.current >= THRESH && !refreshingRef.current) {
+        refreshingRef.current = true;
+        setRefreshing(true);
+        applyPull(MAX); // pin the pill visible while loading
+        Promise.resolve(onRefreshRef.current()).finally(finishRefresh);
+      } else {
+        applyPull(0);
+      }
+    };
+
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchmove", onTouchMove, { passive: false });
+    window.addEventListener("touchend", onTouchEnd);
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchmove", onTouchMove);
+      window.removeEventListener("touchend", onTouchEnd);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
+
+  return (
+    <div
+      ref={barRef}
+      aria-hidden="true"
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        display: "flex",
+        justifyContent: "center",
+        pointerEvents: "none",
+        zIndex: 9999,
+        transform: "translateY(-70px)",
+        opacity: 0,
+        transition: "opacity 0.15s ease",
+      }}
+    >
+      <Paper
+        radius="xl"
+        p="xs"
+        withBorder
+        shadow="lg"
+        style={{
+          background: "var(--bg-surface)",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          paddingLeft: 14,
+          paddingRight: 14,
+        }}
+      >
+        <Loader size="xs" color="green" />
+        <Text size="xs" fw={600}>
+          {refreshing ? "更新中…" : "引っ張って更新"}
+        </Text>
+      </Paper>
+    </div>
+  );
+}
+
 export default function Home() {
   const [auth, setAuth] = useState<null | {
     email: string;
@@ -2817,7 +2966,7 @@ export default function Home() {
     feedCursorRef.current = null;
     const s = search?.trim();
     const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
-    fetch(`/api/posts${q}`, { cache: "no-store" })
+    return fetch(`/api/posts${q}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
         const posts = d.posts ?? [];
@@ -2835,6 +2984,21 @@ export default function Home() {
       })
       .finally(() => setFeedLoading(false));
   };
+
+  // Pull-to-refresh: reload the current feed view. Invoked by the iOS-only
+  // custom pull gesture (<PullToRefresh/>). Android Chrome keeps its native
+  // pull-to-refresh (full page reload), so this is only wired up on iOS.
+  const pullRefresh = useCallback(() => {
+    const filter =
+      activeNav === "gallery"
+        ? "images"
+        : activeNav === "news"
+        ? "links"
+        : activeNav === "episodes"
+        ? "episodes"
+        : undefined;
+    return loadFeed(filter, searchQueryRef.current.trim() || undefined);
+  }, [activeNav]);
 
   // Load the next, older page of the feed and append it (infinite scroll).
   const loadMoreFeed = () => {
@@ -5025,6 +5189,10 @@ export default function Home() {
           closeThread();
         }}
       >
+        <PullToRefresh
+          active={!threadPost && isCenterView && !editingPost && !deleteTarget && !linkModal.open}
+          onRefresh={pullRefresh}
+        />
         <div
           className="mx-auto px-3 py-4 sm:px-6 sm:py-6"
           style={{ maxWidth: 640 }}
