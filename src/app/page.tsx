@@ -358,6 +358,7 @@ function highlightSearchTerm(html: string, keyword: string): string {
 function MentionTextarea({
   value, onChange, onKeyDown, placeholder, autosize, minRows, maxRows, mb,
   maxLength, label, description, autoFocus, ariaLabel, suggestUp, wrapperStyle,
+  initialMention,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -377,12 +378,35 @@ function MentionTextarea({
   suggestUp?: boolean;
   /** Extra style on the outer wrapper (e.g. flex:1 inside a Group). */
   wrapperStyle?: React.CSSProperties;
+  /** When non-null, pre-open the @-suggestion for this member name and focus
+   *  the textarea (used when the user clicks an online member in the chat
+   *  widget so they can immediately mention that person). */
+  initialMention?: string | null;
 }) {
   const [members, setMembers] = useState<MentionMember[]>([]);
   const [query, setQuery] = useState<string | null>(null);
   const [suggestIndex, setSuggestIndex] = useState(0);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const membersLoaded = useRef(false);
+
+  // When a caller pre-fills a mention (e.g. clicking an online member in the
+  // chat widget), open the suggestion dropdown for that person and focus the
+  // input with the caret at the end — the user can immediately hit Enter/Tab
+  // to insert the mention, or keep typing to filter.
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (!initialMention) return;
+    seededRef.current = true;
+    setQuery(initialMention.replace(/^\[/, ""));
+    setSuggestIndex(0);
+    const ta = taRef.current;
+    if (ta) {
+      ta.focus();
+      const p = ta.value.length;
+      ta.setSelectionRange(p, p);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialMention]);
 
   useEffect(() => {
     if (membersLoaded.current) return;
@@ -2621,6 +2645,8 @@ export default function Home() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatUnread, setChatUnread] = useState(0);
   const [chatText, setChatText] = useState("");
+  // Target member for a mention-pre-filled chat open (clicking an online row).
+  const [chatMention, setChatMention] = useState<string | null>(null);
   const [chatSending, setChatSending] = useState(false);
   const chatOpenRef = useRef(false); // ref so the SSE handler stays stable
   const chatListRef = useRef<HTMLDivElement>(null);
@@ -2694,10 +2720,25 @@ export default function Home() {
     loadChat(true);
   }, [loadChat]);
 
+  // Open the chat pre-filled with a mention to `name` and focus the composer.
+  // Used when the user clicks an online member: open + @mention + focus.
+  const openChatMention = useCallback(
+    (name: string) => {
+      const token = name.includes(" ") ? `@[${name}] ` : `@${name} `;
+      setChatText(token);
+      setChatMention(name);
+      chatOpenRef.current = true;
+      setChatOpen(true);
+      loadChat(true);
+    },
+    [loadChat]
+  );
+
   // Close the chat window (messages kept so reopening is instant).
   const closeChat = useCallback(() => {
     chatOpenRef.current = false;
     setChatOpen(false);
+    setChatMention(null);
   }, []);
 
   // Send a chat message (callback memo ties to current input text).
@@ -4856,7 +4897,7 @@ export default function Home() {
                     <UnstyledButton
                       key={m.email}
                       title="オンラインでチャット"
-                      onClick={openChat}
+                      onClick={() => openChatMention(m.name || m.email)}
                       style={{
                         display: "block",
                         width: "100%",
@@ -6324,6 +6365,7 @@ export default function Home() {
             <MentionTextarea
               value={chatText}
               onChange={(v) => setChatText(v)}
+              initialMention={chatMention}
               onKeyDown={(e) => {
                 if ((e.nativeEvent as any).isComposing) return;
                 if (e.key === "Enter" && !e.shiftKey) {
