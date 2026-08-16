@@ -4999,6 +4999,34 @@ export default function Home() {
             size="sm"
           />
         </Group>
+        {/* 自動新着通知 (Web Push) — below オート未読管理, no separator */}
+        {pushSupported && (
+          <Group
+            wrap="nowrap"
+            align="center"
+            justify="space-between"
+            style={{ padding: "10px 12px", borderRadius: 8 }}
+          >
+            <Group gap="sm" wrap="nowrap" align="center" style={{ minWidth: 0 }}>
+              <span style={{ lineHeight: 1 }}>🔔</span>
+              <div style={{ minWidth: 0, lineHeight: 1.3 }}>
+                <div style={{ color: "var(--text-primary)", fontSize: 14, fontWeight: 500, whiteSpace: "nowrap" }}>
+                  自動新着通知
+                </div>
+                {/iPad|iPhone|iPod/.test(navigator.userAgent) && !(window.matchMedia("(display-mode: standalone)").matches) && (
+                  <div style={{ color: "var(--text-muted)", fontSize: 11 }}>iOSはホーム画面に追加が必要</div>
+                )}
+              </div>
+            </Group>
+            <Switch
+              checked={pushEnabled}
+              disabled={pushBusy}
+              onChange={(e) => onTogglePush(e.currentTarget.checked)}
+              aria-label="自動新着通知"
+              size="sm"
+            />
+          </Group>
+        )}
         {/* Account: profile + logout — moved from header to bottom of left sidebar */}
         <Divider my="xs" />
         <Group wrap="nowrap" align="center" gap={10} style={{ padding: "10px 6px", borderRadius: 8 }}>
@@ -5074,32 +5102,6 @@ export default function Home() {
               </Text>
             )}
           </Paper>
-
-          {/* 自動新着通知 (Web Push) toggle */}
-          {pushSupported && (
-            <Paper p="sm" radius="md" withBorder shadow="xs">
-              <Group justify="space-between" wrap="nowrap" align="center" gap="xs">
-                <div style={{ minWidth: 0 }}>
-                  <Text size="sm" fw={600} c="inherit">
-                    自動新着通知
-                  </Text>
-                  <Text size="xs" c="dimmed" style={{ lineHeight: 1.35, wordBreak: "break-word" }}>
-                    新しい投稿をスマホ/ブラウザにPush通知
-                    {/iPad|iPhone|iPod/.test(navigator.userAgent) && !(window.matchMedia("(display-mode: standalone)").matches) && (
-                      <>（iOSはホーム画面に追加が必要）</>
-                    )}
-                  </Text>
-                </div>
-                <Switch
-                  size="sm"
-                  checked={pushEnabled}
-                  disabled={pushBusy}
-                  onChange={(e) => onTogglePush(e.currentTarget.checked)}
-                  aria-label="自動新着通知"
-                />
-              </Group>
-            </Paper>
-          )}
 
           {/* Notifications panel (moved here from header popover) */}
           <Paper p={0} radius="md" withBorder shadow="xs">
