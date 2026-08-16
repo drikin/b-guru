@@ -168,7 +168,9 @@ export async function POST(req: NextRequest) {
       sendWebPush({
         title: isRoot ? "B-guru 新着投稿" : "B-guru 新着コメント",
         body: preview ? `🐾 ${who}${action}: ${preview}` : `🐾 ${who}${action}`,
-        url: `#/post/${parentId ?? post.id}`,
+        // Absolute URL — a relative "#/post/<id>" would resolve against the SW
+        // path (/sw.js) in a cached service worker and open the SW source.
+        url: `${(process.env.APP_URL || "").replace(/\/+$/, "")}#/post/${parentId ?? post.id}`,
         excludeEmail: email,
       }).catch(() => {});
     }

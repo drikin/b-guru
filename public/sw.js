@@ -36,8 +36,16 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const target =
-    event.notification.data && event.notification.data.url ? event.notification.data.url : "/";
+  const raw =
+    event.notification.data && event.notification.data.url
+      ? event.notification.data.url
+      : "/";
+
+  // Resolve the target against the SITE ROOT, NOT the SW path. The SW lives at
+  // /sw.js, so a relative payload URL (e.g. "#/post/123") must resolve to
+  // https://bsm.backspace.fm/#/post/123, never to /sw.js#/post/123 (which would
+  // open this source file instead of the post).
+  const target = new URL(raw, self.location.origin + "/").href;
 
   event.waitUntil(
     self.clients
@@ -45,6 +53,7 @@ self.addEventListener("notificationclick", (event) => {
       .then((clientList) => {
         for (const client of clientList) {
           if ("focus" in client) {
+            // Client.navigate requires an absolute http(s) URL.
             client.navigate(target);
             return client.focus();
           }
