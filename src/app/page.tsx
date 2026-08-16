@@ -2704,6 +2704,10 @@ export default function Home() {
       .finally(() => setChecking(false));
   }, []);
 
+  // Holds the latest openThread so the mount-time hashchange listener never
+  // captures a stale closure (openThread is a plain fn recreated every render).
+  const openThreadRef = useRef<(postId: number) => void>(() => {});
+
   useEffect(() => {
     checkAuth();
     // Support browser back button: when the #/post hash is removed (via the
@@ -2715,8 +2719,29 @@ export default function Home() {
         setThreadReplyBoxOpen(false);
       }
     };
+    // A hash-only change on an already-open tab (e.g. a Web Push notification
+    // click that navigates the existing window/browser tab to #/post/<id>)
+    // fires `hashchange`, NOT `popstate`. Without this, tapping a push while
+    // B-guru is already open leaves the app on the top feed instead of jumping
+    // to the post. `history.pushState` (used by openThread) does NOT fire
+    // hashchange, so this never loops.
+    const onHash = () => {
+      const h = window.location.hash || "";
+      if (h.startsWith("#/post/")) {
+        const pid = Number(h.slice("#/post/".length));
+        if (pid && pid > 0) openThreadRef.current(pid);
+      } else {
+        setThreadPost(null);
+        setThreadReplies([]);
+        setThreadReplyBoxOpen(false);
+      }
+    };
     window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
+    window.addEventListener("hashchange", onHash);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("hashchange", onHash);
+    };
   }, [checkAuth]);
 
   useEffect(() => {
@@ -4256,6 +4281,7 @@ export default function Home() {
       .catch((err) => setReplyError(err.message))
       .finally(() => setThreadLoading(false));
   };
+  openThreadRef.current = openThread;
 
   // Find a post we've already loaded (root cards, their nested inline replies,
   // and pinned/hot sidebar posts) by id — used to seed thread views instantly.
