@@ -214,5 +214,14 @@ export async function initSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE (email, endpoint)
     );
+
+    -- Trend keywords (右SBトレンド・直近24h解析・6時間ごと再生成)
+    CREATE TABLE IF NOT EXISTS trend_keywords (
+      id SERIAL PRIMARY KEY,
+      keyword TEXT NOT NULL UNIQUE,
+      rank INT NOT NULL,
+      hits INT NOT NULL DEFAULT 0,
+      generated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 }

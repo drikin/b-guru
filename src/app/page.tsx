@@ -2547,6 +2547,10 @@ export default function Home() {
   // Hot topics: top active root posts in the last 7 days (right sidebar).
   const [hotPosts, setHotPosts] = useState<FeedPost[]>([]);
   const [hotLoading, setHotLoading] = useState(false);
+  // Trend keywords (right sidebar): AI search keywords from last 24h, 6h refresh.
+  const [trendKeywords, setTrendKeywords] = useState<
+    { keyword: string; rank: number; hits: number }[]
+  >([]);
   // Post currently being jumped-to from a right-sidebar card (feeds the card's
   // loading indicator while it pages back to fetch the post).
   const [scrollingPostId, setScrollingPostId] = useState<number | null>(null);
@@ -2752,6 +2756,7 @@ export default function Home() {
     loadFeed();
     loadPinned();
     loadHot();
+    loadTrends();
     loadNotifications();
     loadMenuLinks();
     // Deep-link from the drinews email CTA: /?drinews=<id>
@@ -2890,6 +2895,19 @@ export default function Home() {
       .then((d) => setHotPosts(d.posts ?? []))
       .catch(() => setHotPosts([]))
       .finally(() => setHotLoading(false));
+  }, [auth]);
+
+  const loadTrends = useCallback(() => {
+    if (!auth) {
+      setTrendKeywords([]);
+      return;
+    }
+    fetch("/api/trends", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && Array.isArray(d.keywords)) setTrendKeywords(d.keywords);
+      })
+      .catch(() => {});
   }, [auth]);
 
   const [onlineMembers, setOnlineMembers] = useState<
@@ -3288,6 +3306,7 @@ export default function Home() {
     es.onopen = () => {
       loadPinned();
       loadHot();
+      loadTrends();
       loadOnline();
       loadChat(chatOpenRef.current); // recover chat missed during a disconnect
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) silentRefreshFeed();
@@ -5126,6 +5145,45 @@ export default function Home() {
               <Text size="xs" c="green" mt={6}>
                 「{searchQuery}」で検索中
               </Text>
+            )}
+          </Paper>
+
+          {/* トレンド: 直近24hの投稿/コメントからAI抽出した検索キーワード（6時間ごと更新・タップで検索） */}
+          <Paper p="sm" radius="md" withBorder shadow="xs">
+            <Group justify="space-between" align="center" mb={6} wrap="nowrap">
+              <Group gap={6} align="center" wrap="nowrap">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" color="var(--text-green)" aria-hidden="true">
+                  <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+                  <polyline points="17 6 23 6 23 12" />
+                </svg>
+                <Text fw={700} size="sm">トレンド</Text>
+              </Group>
+            </Group>
+            {trendKeywords.length === 0 ? (
+              <Text size="xs" c="dimmed">トレンドキーワードはまだ生成されていません。</Text>
+            ) : (
+              <Stack gap={4}>
+                {trendKeywords.map((t) => (
+                  <UnstyledButton
+                    key={t.keyword}
+                    onClick={() => setSearchQuery(t.keyword)}
+                    aria-label={`トレンドキーワード「${t.keyword}」で検索`}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8, width: "100%",
+                      padding: "5px 8px", borderRadius: 8, textAlign: "left",
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-subtle)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                  >
+                    <Text size="xs" fw={700} c="green" style={{ width: 16, flexShrink: 0 }}>
+                      {t.rank}
+                    </Text>
+                    <Text size="sm" c="inherit" style={{ flex: 1, minWidth: 0 }} truncate>
+                      {t.keyword}
+                    </Text>
+                  </UnstyledButton>
+                ))}
+              </Stack>
             )}
           </Paper>
 

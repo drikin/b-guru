@@ -8,6 +8,7 @@ import {
   markOnline,
 } from "@/lib/presence";
 import { ensureChatSweeper } from "@/lib/chat";
+import { ensureTrendSweeper } from "@/lib/trends";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -22,6 +23,7 @@ const encoder = new TextEncoder();
 export async function GET(req: NextRequest) {
   ensurePresenceSweeper();
   ensureChatSweeper();
+  ensureTrendSweeper();
   const email = await getSessionEmail();
 
   let send: (event: LiveEvent | { type: "ping" }) => void = () => {};
