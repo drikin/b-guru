@@ -2177,6 +2177,7 @@ function ComposerPaper({
   const [previewHidden, setPreviewHidden] = useState(false);
   const isMarkdown = detectMarkdown(text); // auto-show rendered preview when markdown detected
   const showPreview = isMarkdown && !previewHidden && text.trim().length > 0;
+  const charCount = text.trim().length; // matches the AI校正 enable condition (>500)
   const fileRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLInputElement>(null);
 
@@ -2271,8 +2272,23 @@ function ComposerPaper({
           value={text}
           onChange={setText}
           onKeyDown={onKeyDown}
-          mb="sm"
+          mb="xs"
         />
+        <Group justify="flex-end" gap={6} mb="sm">
+          <Text size="xs" c={charCount >= AI_PROOFREAD_MIN ? "indigo" : "dimmed"} style={{ fontWeight: charCount >= AI_PROOFREAD_MIN ? 600 : undefined }}>
+            {charCount}文字
+          </Text>
+          {charCount > 0 && charCount < AI_PROOFREAD_MIN && (
+            <Text size="xs" c="dimmed">
+              あと{AI_PROOFREAD_MIN - charCount}文字でAI校正が使えます
+            </Text>
+          )}
+          {charCount >= AI_PROOFREAD_MIN && (
+            <Text size="xs" c="indigo" style={{ fontWeight: 600 }}>
+              AI校正が使えます
+            </Text>
+          )}
+        </Group>
         {showPreview && (
           <Box mb="sm" style={{ borderRadius: 8, background: "var(--bg-light, rgba(127,127,127,0.06))", padding: "0.6em 0.9em" }}>
             <Group justify="space-between" mb={4}>
