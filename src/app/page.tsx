@@ -784,9 +784,41 @@ function markAllFeedRead(feed: FeedPost[]) {
   readListeners.forEach((l) => l());
 }
 
+// ---- Pending "new" counter (drikin 2026-08) ----
+// Driven by SSE. Because live timeline refresh is disabled
+// (ENABLE_PUSH_TIMELINE_REFRESH=false), an incoming post/comment from someone
+// else is NOT merged into feedPosts — so the unread-in-feedPosts count alone
+// would never reflect live arrivals while the page is open. This counter tracks
+// those arrivals ("things you haven't loaded/cleared yet") and is added to the
+// badge count. Tapping the beagle logo (mark-all-read) also clears it.
+let pendingNew = 0;
+const pendingListeners = new Set<() => void>();
+const pendingServerSnapshot = 0;
+function subscribePending(l: () => void) {
+  pendingListeners.add(l);
+  return () => {
+    pendingListeners.delete(l);
+  };
+}
+function getPendingSnap() {
+  return pendingNew;
+}
+function bumpPendingNew(n = 1) {
+  if (!(n > 0)) return;
+  pendingNew += n;
+  pendingListeners.forEach((l) => l());
+}
+function clearPendingNew() {
+  if (pendingNew === 0) return;
+  pendingNew = 0;
+  pendingListeners.forEach((l) => l());
+}
+
 function FeedNewBadge({ feed, email }: { feed: FeedPost[]; email: string }) {
-  const snap = useSyncExternalStore(subscribeRead, getReadSnapshot, () => readServerSnapshot);
-  const n = countUnreadFeed(feed, email, snap);
+  const readSnap = useSyncExternalStore(subscribeRead, getReadSnapshot, () => readServerSnapshot);
+  const pending = useSyncExternalStore(subscribePending, getPendingSnap, () => pendingServerSnapshot);
+  const unread = countUnreadFeed(feed, email, readSnap);
+  const n = unread + pending;
   if (n <= 0) return null;
   const label = n > 99 ? "99+" : String(n);
   return (
@@ -3512,17 +3544,23 @@ export default function Home() {
       // update, and a silentRefreshFeed here would race with the POST response
       // handler, causing duplicates / missing replies.
       let authorEmail: string | undefined;
+      let action: string | undefined;
       try {
         const d = JSON.parse(e.data);
         authorEmail = d?.authorEmail;
+        action = d?.action;
       } catch {}
       if (auth && authorEmail && authorEmail === auth.email) {
         // Still refresh hot topics (other people's view of activity changed)
         loadHot();
         return;
       }
+      // Timeline auto-refresh is disabled per drikin, so an incoming new
+      // post/comment does NOT enter feedPosts while the page is open. Count it
+      // as pending so the beagle NEW badge appears live for arrivals not yet
+      // loaded (cleared by tapping the logo / reload).
+      if (action === "create") bumpPendingNew();
       loadHot(); // new post/comment may change the hot-topics ranking
-      // Timeline auto-refresh is disabled per drikin (ENABLE_PUSH_TIMELINE_REFRESH=false).
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) silentRefreshFeed();
     };
     const onPinChange = () => {
@@ -4974,6 +5012,7 @@ export default function Home() {
                 // Beagle logo: tapping it while the NEW badge is showing marks
                 // all loaded posts/comments as read (clears the badge).
                 markAllFeedRead(feedPosts);
+                clearPendingNew();
               }}
               aria-label="メニューを開く"
               hiddenFrom="sm"
@@ -5006,6 +5045,7 @@ export default function Home() {
               // Beagle logo: tapping it while the NEW badge is showing marks
               // all loaded posts/comments as read (clears the badge).
               markAllFeedRead(feedPosts);
+              clearPendingNew();
             }}
             aria-label="タイムラインへ戻る"
             visibleFrom="sm"
