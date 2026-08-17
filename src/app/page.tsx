@@ -2106,6 +2106,29 @@ function TimelineFeed({
 // Optimistic feed mutation helpers (appendReplyLocal / parentInFeed /
 // replaceReplyInFeed / removeReplyTemp) now live in @/lib/feed (pure + tested).
 
+/**
+ * Detect whether a draft contains meaningful Markdown structure (headings,
+ * lists, blockquotes, code fences, bold, links). Used to auto-show a rendered
+ * Markdown preview in the composer. A modest score threshold avoids false
+ * positives on plain prose that merely contains a single `*` or a link.
+ */
+function detectMarkdown(raw: string): boolean {
+  const text = raw ?? "";
+  if (!text.trim()) return false;
+  let score = 0;
+  for (const line of text.split("\n")) {
+    const l = line.trim();
+    if (/^(#{1,6})\s+\S/.test(l)) score += 2; // heading
+    else if (/^```/.test(l)) score += 2; // code fence
+    else if (/^(\s*[-*+]\s+\S|\s*\d+\.\s+\S)/.test(l)) score += 1; // list item
+    else if (/^>\s?/.test(l)) score += 1; // blockquote
+    else if (/^(:?-{3,}|\*{3,}|_{3,})\s*$/.test(l)) score += 1; // horizontal rule
+    else if (/\*\*[^*\n]+\*\*/.test(line)) score += 1; // bold
+    else if (/\[[^\]\n]+\]\([^\s)]+\)/.test(line)) score += 1; // link
+  }
+  return score >= 2;
+}
+
 // Composer rendered when the top "+" is expanded. Owns its text/image/upload/
 // posting state locally so that typing (or attaching images) does NOT re-render
 // the entire page (which contains the full timeline feed) on every keystroke.
@@ -2151,6 +2174,9 @@ function ComposerPaper({
   const [videoUploading, setVideoUploading] = useState(false);
   const [proofreading, setProofreading] = useState(false);
   const AI_PROOFREAD_MIN = 500; // "AI校正" button enables >500 chars
+  const [previewHidden, setPreviewHidden] = useState(false);
+  const isMarkdown = detectMarkdown(text); // auto-show rendered preview when markdown detected
+  const showPreview = isMarkdown && !previewHidden && text.trim().length > 0;
   const fileRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLInputElement>(null);
 
@@ -2247,6 +2273,32 @@ function ComposerPaper({
           onKeyDown={onKeyDown}
           mb="sm"
         />
+        {showPreview && (
+          <Box mb="sm" style={{ borderRadius: 8, background: "var(--bg-light, rgba(127,127,127,0.06))", padding: "0.6em 0.9em" }}>
+            <Group justify="space-between" mb={4}>
+              <Text size="xs" c="dimmed" style={{ fontWeight: 600 }}>
+                👁 プレビュー
+              </Text>
+              <ActionIcon
+                size="xs"
+                variant="subtle"
+                color="gray"
+                aria-label="プレビューを隠す"
+                title="プレビューを隠す"
+                onClick={() => setPreviewHidden(true)}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </ActionIcon>
+            </Group>
+            <div
+              className="post-body"
+              dangerouslySetInnerHTML={{ __html: mdToHtml(highlightMentions(text, mentionMembers ?? [])) }}
+            />
+          </Box>
+        )}
         {images.length > 0 && (
           <Group gap="xs" mb="sm">
             {images.map((src, i) => (
