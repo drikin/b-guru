@@ -64,7 +64,7 @@ async function extractCandidateKeywords(text: string): Promise<string[]> {
         content: `以下が直近24時間の投稿・コメント一覧です。トレンドキーワードを抽出してください。\n\n---\n${text.slice(0, 60000)}\n---`,
       },
     ],
-    max_tokens: 800,
+    max_tokens: 10000,
   });
   const seen = new Set<string>();
   const out: string[] = [];
