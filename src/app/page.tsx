@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   AppShell,
   NavLink,
@@ -1829,6 +1829,64 @@ function InlineReplyBox({
     </Stack>
   );
 }
+
+// 検索窓を self-contained(無 hooks 問題なし): ローカルstate で入力中はページ再レンダリングさせない。
+const SearchBox = memo(function SearchBox({
+  value,
+  onCommit,
+  onClear,
+}: {
+  value: string;
+  onCommit: (q: string) => void;
+  onClear: () => void;
+}) {
+  const [text, setText] = useState(value);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastCommittedRef = useRef(value);
+  // 外部からの変更（トレンドtap・ナビ切替で parent が setSearchQuery した場合）を表示に反映
+  useEffect(() => {
+    if (value !== lastCommittedRef.current) {
+      lastCommittedRef.current = value;
+      setText(value);
+    }
+  }, [value]);
+  const handleChange = (v: string) => {
+    setText(v);
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      lastCommittedRef.current = v.trim();
+      onCommit(v.trim());
+    }, 300);
+  };
+  const handleClear = () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    lastCommittedRef.current = "";
+    setText("");
+    onClear();
+  };
+  return (
+    <TextInput
+      placeholder="タイムラインを検索"
+      value={text}
+      onChange={(e) => handleChange(e.currentTarget.value)}
+      size="sm"
+      leftSection={
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="8" />
+          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+        </svg>
+      }
+      rightSection={
+        text ? (
+          <ActionIcon size="sm" variant="subtle" color="gray" onClick={handleClear} aria-label="検索をクリア">
+            ×
+          </ActionIcon>
+        ) : null
+      }
+      aria-label="タイムラインを検索"
+    />
+  );
+});
 
 function TimelineFeed({
   groups,
@@ -3755,17 +3813,13 @@ export default function Home() {
     } else {
       setSearchActive(false);
     }
-    const t = setTimeout(() => {
-      if (!auth) return;
-      const q = searchQueryRef.current.trim();
-      if (q) {
-        loadFeed(undefined, q);
-      } else if (searchActive) {
-        // Search was cleared — reload normal feed
-        loadFeed();
-      }
-    }, 300);
-    return () => clearTimeout(t);
+    const q = searchQueryRef.current.trim();
+    if (q) {
+      loadFeed(undefined, q);
+    } else if (searchActive) {
+      // Search was cleared — reload normal feed
+      loadFeed();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery, auth]);
 
@@ -5115,31 +5169,10 @@ export default function Home() {
           <Stack pr="4" gap="sm">
           {/* Search box */}
           <Paper p="sm" radius="md" withBorder shadow="xs">
-            <TextInput
-              placeholder="タイムラインを検索"
+            <SearchBox
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.currentTarget.value)}
-              size="sm"
-              leftSection={
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <circle cx="11" cy="11" r="8" />
-                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                </svg>
-              }
-              rightSection={
-                searchQuery ? (
-                  <ActionIcon
-                    size="sm"
-                    variant="subtle"
-                    color="gray"
-                    onClick={() => setSearchQuery("")}
-                    aria-label="検索をクリア"
-                  >
-                    ×
-                  </ActionIcon>
-                ) : null
-              }
-              aria-label="タイムラインを検索"
+              onCommit={(q) => setSearchQuery(q)}
+              onClear={() => setSearchQuery("")}
             />
             {searchActive && (
               <Text size="xs" c="green" mt={6}>
