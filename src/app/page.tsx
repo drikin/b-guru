@@ -742,6 +742,56 @@ function observeUnreadCard(el: HTMLElement | null) {
   readObserver.observe(el);
 }
 
+// ---- Header logo "NEW" badge (drikin 2026-08) ----
+// Mirrors PostCard's unread rule exactly: auto-unread ON AND this browser has
+// not yet marked the post read AND it's not an own post. Counts root posts plus
+// their inline replies currently in the loaded timeline (feedPosts), so the
+// badge counts down live as auto-read marks cards read and reappears when SSE
+// streams a new post/comment in — an in-site "there's something new" indicator
+// distinct from the OS-level Web Push.
+function countUnreadFeed(feed: FeedPost[], email: string, snap: ReadStore): number {
+  if (!snap.enabled) return 0;
+  let n = 0;
+  for (const p of feed) {
+    if (p.id > 0 && email !== p.authorEmail && !snap.read.has(p.id)) n++;
+    for (const r of p.replies ?? []) {
+      if (r.id > 0 && email !== r.authorEmail && !snap.read.has(r.id)) n++;
+    }
+  }
+  return n;
+}
+
+function FeedNewBadge({ feed, email }: { feed: FeedPost[]; email: string }) {
+  const snap = useSyncExternalStore(subscribeRead, getReadSnapshot, () => readServerSnapshot);
+  const n = countUnreadFeed(feed, email, snap);
+  if (n <= 0) return null;
+  const label = n > 99 ? "99+" : String(n);
+  return (
+    <span
+      aria-label={`新着${n}件`}
+      style={{
+        position: "absolute",
+        top: -5,
+        right: -7,
+        minWidth: 16,
+        height: 16,
+        padding: "0 4px",
+        background: "#fa5252",
+        color: "#fff",
+        borderRadius: 999,
+        fontSize: 10,
+        fontWeight: 700,
+        lineHeight: "16px",
+        textAlign: "center",
+        boxShadow: "0 0 0 2px var(--bg-surface)",
+        zIndex: 5,
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
 function PostCard({
   post,
   auth,
@@ -4907,6 +4957,7 @@ export default function Home() {
                 lineHeight: 0,
                 display: "flex",
                 alignItems: "center",
+                position: "relative",
               }}
             >
 <Image
@@ -4917,6 +4968,7 @@ export default function Home() {
                 fit="contain"
                 style={{ display: "block", borderRadius: 6 }}
               />
+              {auth && <FeedNewBadge feed={feedPosts} email={auth.email} />}
             </UnstyledButton>
           </Group>
           {/* Center: beagle logo on desktop */}
@@ -4946,7 +4998,8 @@ export default function Home() {
                 fit="contain"
                 style={{ display: "block", borderRadius: 6 }}
               />
-          </UnstyledButton>
+              {auth && <FeedNewBadge feed={feedPosts} email={auth.email} />}
+            </UnstyledButton>
           {/* Right: hamburger (mobile/tablet) — opens the right sidebar + unread badge. Kept. */}
           <Group gap="sm" wrap="nowrap">
             <Burger
