@@ -2846,6 +2846,30 @@ export default function Home() {
     };
   }, []);
 
+  // ---- Composer focus detection ----
+  // When the user is typing in any text field on mobile, the floating chat
+  // bubble (bottom-right, zIndex 2900) sits right above the iOS/Android
+  // keyboard and covers the reply composer's action row (📷/うなる/吠える).
+  // Hide the widget whenever a text input has focus (unless the CHAT itself is
+  // the thing being typed — then the chat panel must stay up). Generalizes the
+  // earlier edit-modal-only guard (0e06eec).
+  const [inputFocused, setInputFocused] = useState(false);
+  useEffect(() => {
+    const onFocus = () => {
+      const t = document.activeElement as HTMLElement | null;
+      setInputFocused(
+        !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")
+      );
+    };
+    const onBlur = () => setInputFocused(false);
+    document.addEventListener("focusin", onFocus);
+    document.addEventListener("focusout", onBlur);
+    return () => {
+      document.removeEventListener("focusin", onFocus);
+      document.removeEventListener("focusout", onBlur);
+    };
+  }, []);
+
   const editFileRef = useRef<HTMLInputElement>(null);
 
   // ---- Notifications state ----
@@ -6709,7 +6733,7 @@ export default function Home() {
           window for the global room (replaces the old wave 👋 feature).
           Hidden while the edit modal is open so the fixed bubble (bottom-right,
           zIndex 2900) doesn't overlap the modal's 保存 button on mobile. */}
-      {!editingPost && (chatOpen ? (
+      {!editingPost && !(inputFocused && !chatOpen) && (chatOpen ? (
         <Paper
           radius="lg"
           withBorder
