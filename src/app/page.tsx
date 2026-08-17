@@ -2726,10 +2726,8 @@ export default function Home() {
   // Post currently being jumped-to from a right-sidebar card (feeds the card's
   // loading indicator while it pages back to fetch the post).
   const [scrollingPostId, setScrollingPostId] = useState<number | null>(null);
-  // After posting a comment/whisper, we scroll to the (potentially bumped)
-  // parent post so the user sees their contribution in context. Set via ref,
-  // consumed by a useEffect that watches feedPosts and performs the scroll.
-  const pendingScrollRef = useRef<number | null>(null);
+  // Post auto-scroll/highlight ref removed (2026-08-17): posting never
+  // auto-scrolls the timeline per user request.
   const feedCursorRef = useRef<string | null>(null);
   const feedSentinelRef = useRef<HTMLDivElement | null>(null);
   // Composer collapsed to a small "+" by default (clean timeline); opens into the full form on click.
@@ -3493,37 +3491,9 @@ export default function Home() {
     };
   }, [auth, silentRefreshFeed, loadPinned, loadHot, loadOnline, loadChat]);
 
-  // Scroll to a post after its reply bumps it (or after inline insertion).
-  // pendingScrollRef is set by submitInlineReply / submitThreadReply on
-  // success. We wait for the next feedPosts commit (which reflects the
-  // optimistic / server update), then scrollIntoView the [data-post-id]
-  // element. A double-rAF ensures React has painted the DOM.
-  useEffect(() => {
-    const targetId = pendingScrollRef.current;
-    if (targetId == null) return;
-    const el = document.querySelector(
-      `[data-post-id="${targetId}"]`
-    ) as HTMLElement | null;
-    if (!el) return; // not rendered (e.g. filtered view) — give up silently
-    pendingScrollRef.current = null;
-    // If the target group is already inside the current viewport (e.g. the
-    // card sits at the top of the timeline), there is nothing to scroll or
-    // highlight — just reflect the comment in place. Only move the viewport
-    // when the group genuinely went out of sight (e.g. a non-whisper comment
-    // floated it to the top while the user is scrolled further down).
-    const rect = el.getBoundingClientRect();
-    const vh = window.innerHeight || document.documentElement.clientHeight;
-    const alreadyVisible = rect.top >= 0 && rect.top <= vh * 0.9;
-    if (alreadyVisible) return;
-    // Double rAF: wait for the browser to paint the updated layout.
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        el.classList.add("pin-target-flash");
-        window.setTimeout(() => el.classList.remove("pin-target-flash"), 2400);
-      })
-    );
-  }, [feedPosts]);
+  // Posting never auto-scrolls or auto-highlights the timeline (disabled per
+  // user request, 2026-08-17): a new reply is simply added to the feed in
+  // place and the viewport is left untouched.
 
   // Periodic self-heal for the online panel: refresh even if a presence SSE
   // event or onopen callback was missed (e.g. iOS Safari dropping the stream).
@@ -4359,23 +4329,9 @@ export default function Home() {
         setThreadReplies((prev) =>
           prev.map((rp) => (rp.id === tempId ? realReply : rp))
         );
-        // Scroll to the new reply inside the thread view.
-        requestAnimationFrame(() => {
-          const el = document.querySelector(
-            `[data-reply-id="${created.id}"]`
-          ) as HTMLElement | null;
-          if (el) {
-            el.scrollIntoView({ behavior: "smooth", block: "center" });
-            el.classList.add("pin-target-flash");
-            window.setTimeout(() => el.classList.remove("pin-target-flash"), 2400);
-          }
-        });
-      } else {
-        // Scroll to the parent post so the user sees their comment in context,
-        // but ONLY for normal comments. Whispers stay put (their whole point),
-        // so they must never auto-scroll or flash the timeline.
-        if (!whisper) pendingScrollRef.current = parentId;
       }
+      // No auto-scroll / highlight after posting (disabled per user request,
+      // 2026-08-17): the new reply is reflected in place, viewport untouched.
       setFeedPosts((prev) => {
         // OPTION B: comments no longer bump the group to the top locally; the
         // new order appears only after a server refresh (groupFeed re-sorts by
