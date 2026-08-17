@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   } catch (e: any) {
     console.error("drinews proofread:", e.message);
     return NextResponse.json(
-      { error: e.message.includes("OPENROUTER_API_KEY") ? "AIキーが設定されていません" : "AI校正に失敗しました" },
+      { error: e.message.includes("SAKURA_AI_API_KEY") ? "AIキーが設定されていません" : "AI校正に失敗しました" },
       { status: 500 }
     );
   }

@@ -1,11 +1,9 @@
 /* AI proofreading / drafting helper for Dori News.
- * Calls DeepSeek V4 Flash via OpenRouter to restructure, markdown-format and
- * proofread a drinews article body. The result is sanitized markdown ready to
- * drop back into the drinews editor.
+ * Calls さくらのAI Engine to restructure, markdown-format and proofread a
+ * drinews article body. The result is sanitized markdown ready to drop back
+ * into the drinews editor.
  */
-export const OPENROUTER_BASE = "https://openrouter.ai/api/v1/chat/completions";
-export const DRINEWS_AI_MODEL =
-  process.env.DRINEWS_AI_MODEL || "deepseek/deepseek-v4-flash-0731";
+import { sakuraChat, SAKURA_MODEL } from "./sakura";
 
 export interface ProofreadResult {
   title: string | null;
@@ -29,45 +27,28 @@ const SYSTEM_PROMPT = `あなたはドリキンの日刊ニュースレター「
 7. タイトル案も必要なら1行目に付けるが、必須ではない。`;
 
 /**
- * Proofread / restructure a drinews article body via OpenRouter (DeepSeek V4 Flash).
+ * Proofread / restructure a drinews article body via さくらのAI Engine.
  * Strips any accidental wrapping code fences from the model output.
  * Throws on missing API key / network / non-200 so the route can 5xx.
  */
 export async function proofreadDrinews(input: { title?: string; bodyMd: string }): Promise<ProofreadResult> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) throw new Error("OPENROUTER_API_KEY が設定されていません");
-
   const userText = [
     input.title ? `タイトル案: ${input.title}` : "",
     "",
     input.bodyMd.trim() || "（本文なし。ドリニュースの話題・メモを書いてください）",
   ].join("\n");
 
-  const res = await fetch(OPENROUTER_BASE, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: DRINEWS_AI_MODEL,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userText },
-      ],
-      temperature: 0.4,
-      max_tokens: 4000,
-    }),
+  const result = await sakuraChat({
+    model: SAKURA_MODEL,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userText },
+    ],
+    temperature: 0.4,
+    max_tokens: 4000,
   });
 
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`OpenRouter error ${res.status}: ${body.slice(0, 300)}`);
-  }
-
-  const data = await res.json();
-  const raw: string = data?.choices?.[0]?.message?.content ?? "";
-  if (!raw) throw new Error("OpenRouter が空の応答を返しました");
+  const raw = result.content;
 
   // Strip accidental ```markdown ... ``` wrapping fences.
   let md = raw.trim();
