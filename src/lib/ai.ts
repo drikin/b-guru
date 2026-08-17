@@ -69,3 +69,42 @@ export async function proofreadDrinews(input: { title?: string; bodyMd: string }
 
   return { title, markdown: md, raw };
 }
+
+/* General timeline-post proofreading.
+ * Used for B-guru feed parent posts (all logged-in users). Corrects and
+ * reformats a long post into readable markdown while respecting the original
+ * content, length and tone.
+ */
+const POST_SYSTEM_PROMPT = `あなたはSNS型タイムライン「B-guru」の投稿校正アシスタントです。
+ユーザーの長文投稿を、内容・情報・言いたいことを尊重したまま、Markdownで見やすく校正・整形してください。
+
+1. 内容をそのまま活かす。オリジナルの内容・情報・事実・言いたいことを尊重し、勝手に増やさない・削らない。
+2. 無理に短縮・要約しない。元の長さ・情報量を基本とし、冗長や重複が明らかにあって読みにくい箇所だけ、要点を残しつつ適度に整える。
+3. 文調・文体はオリジナルを尊重する。砕けた話し言葉ならその調子を保ち、固有名詞・呼び方・言い回し・語尾のニュアンスを勝手に改変しない。誤字脱字・曖昧・不自然な箇所だけ自然に直す。
+4. Markdownで見やすく整形する:
+   - 長い本文はトピックごとに ## 見出しや **太字** で区切る
+   - 列挙は - リストや 1. 番号リストを使う
+   - 強調・リンクを自然に使う
+5. 出力はMarkdownのみ。コードブロックや、見出し以外の説明・挨拶・言い訳は一切書かない。
+6. 見出しを付けすぎず、本文の流れと読みやすさのバランスを保つ。`;
+
+/**
+ * Proofread / restructure a general timeline post body via さくらのAI Engine.
+ * Returns corrected markdown only. Throws on missing key / network / non-200.
+ */
+export async function proofreadPost(bodyMd: string): Promise<string> {
+  const result = await sakuraChat({
+    model: SAKURA_MODEL,
+    messages: [
+      { role: "system", content: POST_SYSTEM_PROMPT },
+      { role: "user", content: bodyMd.trim() || "（本文なし）" },
+    ],
+    temperature: 0.4,
+    max_tokens: 4000,
+  });
+
+  let md = result.content.trim();
+  const fence = md.match(/^```[a-zA-Z]*\s*\n?([\s\S]*?)```$/);
+  if (fence) md = fence[1].trim();
+  return md;
+}

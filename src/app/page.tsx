@@ -2149,6 +2149,8 @@ function ComposerPaper({
   const [error, setError] = useState<string | null>(null);
   const [video, setVideo] = useState<string | null>(null);
   const [videoUploading, setVideoUploading] = useState(false);
+  const [proofreading, setProofreading] = useState(false);
+  const AI_PROOFREAD_MIN = 500; // "AI校正" button enables >500 chars
   const fileRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLInputElement>(null);
 
@@ -2176,6 +2178,28 @@ function ComposerPaper({
       setError(err.message);
     } finally {
       setPosting(false);
+    }
+  };
+
+  // AI校正 — send the draft to /api/posts/proofread and replace the input with
+  // the corrected markdown. Enabled when the text exceeds AI_PROOFREAD_MIN chars.
+  const handleProofread = async () => {
+    if (text.trim().length <= AI_PROOFREAD_MIN || proofreading) return;
+    setError(null);
+    setProofreading(true);
+    try {
+      const r = await fetch("/api/posts/proofread", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bodyMd: text }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.error || "AI校正に失敗しました");
+      setText(d?.markdown ?? "");
+    } catch (err: any) {
+      setError(err?.message || "AI校正に失敗しました");
+    } finally {
+      setProofreading(false);
     }
   };
 
@@ -2318,15 +2342,37 @@ function ComposerPaper({
               Cmd/Ctrl + Enter で吠える
             </Text>
           </Group>
-          <Button
-            type="submit"
-            size="sm"
-            color="green"
-            loading={posting}
-            disabled={(!text.trim() && images.length === 0 && !video) || uploading || videoUploading}
-          >
-            吠える
-          </Button>
+          <Group gap="xs">
+            <Button
+              size="xs"
+              variant="light"
+              color="indigo"
+              loading={proofreading}
+              disabled={text.trim().length <= AI_PROOFREAD_MIN || posting || uploading || videoUploading}
+              onClick={handleProofread}
+              title={
+                text.trim().length > AI_PROOFREAD_MIN
+                  ? "AIが本文をMarkdownで校正します"
+                  : `AI校正は${AI_PROOFREAD_MIN}文字以上で利用できます`
+              }
+              leftSection={
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" />
+                </svg>
+              }
+            >
+              AI校正
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              color="green"
+              loading={posting}
+              disabled={(!text.trim() && images.length === 0 && !video) || uploading || videoUploading}
+            >
+              吠える
+            </Button>
+          </Group>
         </Group>
       </form>
       {error && (
