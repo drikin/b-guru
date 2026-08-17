@@ -761,6 +761,29 @@ function countUnreadFeed(feed: FeedPost[], email: string, snap: ReadStore): numb
   return n;
 }
 
+// Mark every currently-loaded timeline post + inline reply as read (drikin:
+// tapping the beagle logo while the NEW badge is showing clears it). No-op when
+// nothing is unread, and never unmarks already-read ids.
+function markAllFeedRead(feed: FeedPost[]) {
+  if (!readStore.enabled) return;
+  let changed = false;
+  const next = new Set(readStore.read);
+  const add = (id: number) => {
+    if (id > 0 && !next.has(id)) {
+      next.add(id);
+      changed = true;
+    }
+  };
+  for (const p of feed) {
+    add(p.id);
+    for (const r of p.replies ?? []) add(r.id);
+  }
+  if (!changed) return;
+  readStore = { ...readStore, read: next };
+  persistReadStore();
+  readListeners.forEach((l) => l());
+}
+
 function FeedNewBadge({ feed, email }: { feed: FeedPost[]; email: string }) {
   const snap = useSyncExternalStore(subscribeRead, getReadSnapshot, () => readServerSnapshot);
   const n = countUnreadFeed(feed, email, snap);
@@ -4946,7 +4969,12 @@ export default function Home() {
               The center logo (back to timeline top) is dropped on mobile. */}
           <Group gap="xs" wrap="nowrap">
             <UnstyledButton
-              onClick={() => setNavOpened((o) => !o)}
+              onClick={() => {
+                setNavOpened((o) => !o);
+                // Beagle logo: tapping it while the NEW badge is showing marks
+                // all loaded posts/comments as read (clears the badge).
+                markAllFeedRead(feedPosts);
+              }}
               aria-label="メニューを開く"
               hiddenFrom="sm"
               style={{
@@ -4973,7 +5001,12 @@ export default function Home() {
           </Group>
           {/* Center: beagle logo on desktop */}
           <UnstyledButton
-            onClick={goHome}
+            onClick={() => {
+              goHome();
+              // Beagle logo: tapping it while the NEW badge is showing marks
+              // all loaded posts/comments as read (clears the badge).
+              markAllFeedRead(feedPosts);
+            }}
             aria-label="タイムラインへ戻る"
             visibleFrom="sm"
             style={{
