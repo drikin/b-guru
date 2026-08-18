@@ -6,7 +6,7 @@ import type { BeagleAction, BeagleDecision } from "./types";
 
 const MAX_TEXT = 1500;
 const MAX_POSTS = 1; // 1 tick でルート投稿は最大1本（proactive を抑制）
-const MAX_REPLIES = 4; // 1 tick で返信は最大4件（言及は優先）
+const MAX_REPLIES = 3; // 1 tick で返信は最大3件（言及は優先）
 
 async function parentExists(id: number): Promise<boolean> {
   const res = await pool.query(`SELECT 1 FROM posts WHERE id = $1`, [id]);

@@ -47,14 +47,14 @@ export async function runBeagleTick(opts: {
   const postsToday = await countBeaglePostsToday();
   const overCap = postsToday >= DAILY_POST_CAP;
 
-  // 頻度抑制: 直近10分以内に投稿済みなら、新しい言及への返信以外は控える
+  // 頻度抑制: 直近15分以内に投稿済みなら、新しい言及への返信以外は控える
   const agoMin = Math.round((await lastBeaglePostAgoMs()) / 60000);
   let guidance: string | undefined;
-  if (agoMin < 10) {
+  if (agoMin < 15) {
     guidance =
       `直近${Math.max(agoMin, 1)}分以内に投稿済み。新しいメンションへの返信だけを優先し、` +
       `追加のニュース投稿・孤立/ホットスレッドへの新規コメントは行わない。` +
-      `next_activity_at は20〜40分先に控えめに設定する。`;
+      `次回まで控えめに間隔を空け、next_activity_at は30〜50分先に設定する。`;
   }
 
   let decision: BeagleDecision;

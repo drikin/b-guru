@@ -55,10 +55,10 @@ describe("normalizeNextActivityAt", () => {
     );
   });
 
-  it("enforces cooldown (>= now + 15min)", () => {
+  it("enforces cooldown (>= now + 20min)", () => {
     const proposed = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
     const out = normalizeNextActivityAt(proposed, now);
-    expect(out.getTime()).toBe(now.getTime() + 15 * 60 * 1000);
+    expect(out.getTime()).toBe(now.getTime() + 20 * 60 * 1000);
   });
 
   it("enforces watchdog (<= now + 6h)", () => {
