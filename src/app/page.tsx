@@ -1970,6 +1970,18 @@ function ProfileView({
                   href={l.href}
                   target="_blank"
                   rel="noreferrer"
+                  onClick={(e) => {
+                    // Never let a same-origin / hash reference link navigate the
+                    // current page (especially back into this SPA's #/user URL,
+                    // which would reload → "Page cannot be loaded"). Cross-origin
+                    // links still open in a new tab.
+                    try {
+                      const target = new URL(l.href, window.location.origin);
+                      if (target.origin === window.location.origin) e.preventDefault();
+                    } catch {
+                      e.preventDefault();
+                    }
+                  }}
                   style={{
                     fontSize: 13,
                     color: "var(--text-green)",
@@ -7526,7 +7538,15 @@ export default function Home() {
         withCloseButton
         title="プロフィールを編集"
       >
-        <Stack gap="sm">
+        {/* An explicit form with a no-op submit handler so the Enter key never
+         * triggers Mantine Modal's implicit-submit behavior (which unmounts the
+         * modal and loses the user's input, or navigates). */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+          }}
+        >
+          <Stack gap="sm">
           <TextInput
             label="表示名"
             value={profileForm.displayName}
@@ -7588,21 +7608,42 @@ export default function Home() {
                     placeholder="名前（例: X / ブログ）"
                     value={l.label}
                     style={{ flex: 1 }}
-                    onChange={(e) =>
+                    onKeyDown={(e) => {
+                      // Never let Enter in a link field commit the modal /
+                      // trigger any form-submit navigation (which would reload
+                      // the page at the current #/user/<email> URL).
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }
+                    }}
+                    onChange={(e) => {
+                      // Capture the value BEFORE the functional updater: React runs
+                      // updaters on the next render, by which time e.currentTarget
+                      // is null. Reading it inside the updater throws a TypeError
+                      // that crashes/unmounts the modal (the "link can't be set" bug).
+                      const v = e.currentTarget.value;
                       setProfileLinks((prev) =>
-                        prev.map((x, j) => (j === i ? { ...x, label: e.currentTarget.value } : x))
-                      )
-                    }
+                        prev.map((x, j) => (j === i ? { ...x, label: v } : x))
+                      );
+                    }}
                   />
                   <TextInput
                     placeholder="https://…"
                     value={l.href}
                     style={{ flex: 2 }}
-                    onChange={(e) =>
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }
+                    }}
+                    onChange={(e) => {
+                      const v = e.currentTarget.value;
                       setProfileLinks((prev) =>
-                        prev.map((x, j) => (j === i ? { ...x, href: e.currentTarget.value } : x))
-                      )
-                    }
+                        prev.map((x, j) => (j === i ? { ...x, href: v } : x))
+                      );
+                    }}
                   />
                   <ActionIcon
                     size="sm"
@@ -7638,7 +7679,8 @@ export default function Home() {
               保存
             </Button>
           </Group>
-        </Stack>
+          </Stack>
+        </form>
       </Modal>
 
       {/* Header-image banner crop modal */}
