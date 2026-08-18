@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { parseDecision } from "../beagle/decide";
 import { normalizeNextActivityAt } from "../beagle/schedule";
 import { parseRssItems } from "../beagle/sources";
+import { dedupeLearnings } from "../beagle/learn";
 
 describe("parseDecision", () => {
   it("parses valid JSON", () => {
@@ -99,5 +100,35 @@ describe("parseRssItems", () => {
   it("skips empty items", () => {
     const xml = `<rss><channel><item></item></channel></rss>`;
     expect(parseRssItems(xml, "podcast")).toHaveLength(0);
+  });
+});
+
+describe("dedupeLearnings", () => {
+  const existing = [
+    "メンションには即座に返信してエンゲージを高める",
+    "孤立ポストにコメントするとスレッドが活性化する",
+  ];
+
+  it("drops learnings that duplicate existing memory", () => {
+    // 既存と同じ趣旨（言い換え）は除去される
+    const out = dedupeLearnings(
+      ["メンションには即時返信でエンゲージが上がる", "まったく新しい学びだわん"],
+      existing
+    );
+    expect(out).toContain("まったく新しい学びだわん");
+    expect(out.filter((l) => l.includes("メンション"))).toHaveLength(0);
+  });
+
+  it("drops exact duplicates within the batch", () => {
+    const out = dedupeLearnings(["短くポジティブな文体が好まれる", "短くポジティブな文体が好まれる"], []);
+    expect(out).toHaveLength(1);
+  });
+
+  it("keeps distinct learnings", () => {
+    const out = dedupeLearnings(
+      ["短くポジティブな文体が好まれる", "実在ニュースは感想付きで投稿する"],
+      []
+    );
+    expect(out).toHaveLength(2);
   });
 });
