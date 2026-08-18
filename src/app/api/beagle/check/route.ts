@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runBeagleTick } from "@/lib/beagle";
 import { getState } from "@/lib/beagle/store";
+import { countNewMentions } from "@/lib/beagle/observe";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// POST /api/beagle/check — 軽量な目覚まし。beagle_state.next_activity_at が
-// 現在時刻を過ぎていたら tick を実行、過ぎていなければ {due:false} を返す。
-// スケジューラ（5分ポーラ等）はこれを叩くだけでよい。
+// POST /api/beagle/check — 軽量な目覚まし。次回予約時刻を過ぎている OR 新規メンションが
+// ある場合に tick を実行（メンションには予約より早く反応）。それ以外は {due:false}。
+// スケジューラ（数分ポーラ）はこれを叩くだけでよい。
 export async function POST(req: NextRequest) {
   const auth = req.headers.get("authorization") || "";
   const secret =
@@ -24,11 +25,13 @@ export async function POST(req: NextRequest) {
     const state = await getState();
     const now = Date.now();
     const due = !state.nextActivityAt || new Date(state.nextActivityAt).getTime() <= now;
-    if (!due) {
+    const newMentions = await countNewMentions(state.lastTickAt);
+    if (!due && newMentions === 0) {
       return NextResponse.json({ due: false, nextActivityAt: state.nextActivityAt });
     }
+    const trigger = newMentions > 0 ? "mention" : "due";
     const result = await runBeagleTick({ dry });
-    return NextResponse.json({ due: true, ...result });
+    return NextResponse.json({ due: true, trigger, ...result });
   } catch (e: any) {
     console.error("beagle/check:", e?.message);
     return NextResponse.json({ error: e?.message || "beagle check failed" }, { status: 500 });

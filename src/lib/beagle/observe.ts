@@ -94,3 +94,17 @@ export async function getRecentTimeline(limit = 8): Promise<string[]> {
     (r) => `${r.author}: ${r.text.slice(0, 140)}`
   );
 }
+
+/** lastTickAt 以降の「ビーグルへの新規言及」数（メンション高速レスポンス判定用）。
+ *  ビーグル自身の投稿は除外し、自己発火を防ぐ。 */
+export async function countNewMentions(sinceIso: string | null): Promise<number> {
+  const since = sinceIso ? new Date(sinceIso) : new Date(0);
+  const res = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM posts
+      WHERE created_at > $1 AND author_email <> $2
+        AND (text ILIKE '%ビーグル%'
+             OR parent_id IN (SELECT id FROM posts WHERE author_email = $2))`,
+    [since, SYSTEM_EMAIL]
+  );
+  return (res.rows[0] as { n: number }).n ?? 0;
+}
