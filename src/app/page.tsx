@@ -654,10 +654,12 @@ function loadReadStore(): ReadStore {
     const read = new Set<number>(
       Array.isArray(d.read) ? d.read.filter((n: unknown) => typeof n === "number") : []
     );
-    // dismissed is intentionally NOT persisted: it is a session-only "clear the
-    // header badge" flag. On reload the badge re-evaluates from the real unread
-    // state, which is what the user expects.
-    return { enabled, read, dismissed: false };
+    // dismissed IS persisted (drikin 2026-08): once the user acknowledges the
+    // header badge, it must NOT resurrect on reload just because the timeline
+    // posts are still (intentionally) unread. It only re-arms when a genuinely
+    // new post/comment arrives (bumpPendingNew) or after a stage-2 mark-all-read.
+    const dismissed = typeof d.dismissed === "boolean" ? d.dismissed : false;
+    return { enabled, read, dismissed };
   } catch {
     return fallback;
   }
@@ -671,7 +673,7 @@ const readServerSnapshot: ReadStore = { enabled: true, read: new Set<number>(), 
 const readListeners = new Set<() => void>();
 function persistReadStore() {
   try {
-    localStorage.setItem(BGURU_READ_KEY, JSON.stringify({ read: [...readStore.read] }));
+    localStorage.setItem(BGURU_READ_KEY, JSON.stringify({ read: [...readStore.read], dismissed: readStore.dismissed }));
     localStorage.setItem(BGURU_UNREAD_ON_KEY, readStore.enabled ? "1" : "0");
   } catch {}
 }
@@ -764,6 +766,30 @@ function countUnreadFeed(feed: FeedPost[], email: string, snap: ReadStore): numb
   return n;
 }
 
+// Mark every currently-loaded timeline post + inline reply as read. Used ONLY
+// by the stage-2 header-logo click (badge already hidden), which first marks
+// the CURRENT timeline read and then reloads — so freshly fetched posts are
+// never swallowed as read. No-op when nothing is unread; never unmarks.
+function markAllFeedRead(feed: FeedPost[]) {
+  if (!readStore.enabled) return;
+  let changed = false;
+  const next = new Set(readStore.read);
+  const add = (id: number) => {
+    if (id > 0 && !next.has(id)) {
+      next.add(id);
+      changed = true;
+    }
+  };
+  for (const p of feed) {
+    add(p.id);
+    for (const r of p.replies ?? []) add(r.id);
+  }
+  if (!changed) return;
+  readStore = { ...readStore, read: next };
+  persistReadStore();
+  readListeners.forEach((l) => l());
+}
+
 // ---- Pending "new" counter (drikin 2026-08) ----
 // Driven by SSE. Because live timeline refresh is disabled
 // (ENABLE_PUSH_TIMELINE_REFRESH=false), an incoming post/comment from someone
@@ -802,11 +828,21 @@ function clearPendingNew() {
 // Clear ONLY the header NEW badge (drikin 2026-08): dismisses the unread badge
 // without marking any timeline post/comment as read, so the timeline's own
 // per-post unread markers keep working. The badge returns on the next real
-// arrival (bumpPendingNew resets dismissed). Does NOT touch readStore.read.
+// arrival (bumpPendingNew resets dismissed) or after a stage-2 mark-all-read.
+// Does NOT touch readStore.read.
 function dismissBadge() {
   clearPendingNew();
   if (readStore.dismissed) return;
   readStore = { ...readStore, dismissed: true };
+  persistReadStore();
+  readListeners.forEach((l) => l());
+}
+// Re-arm the header badge after a stage-2 mark-all-read (or on new arrivals via
+// bumpPendingNew): the user has caught up, so the badge can show again for
+// genuinely new posts.
+function rearmBadge() {
+  if (!readStore.dismissed) return;
+  readStore = { ...readStore, dismissed: false };
   persistReadStore();
   readListeners.forEach((l) => l());
 }
@@ -4651,6 +4687,30 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  // Two-stage header-logo read logic (drikin 2026-08):
+  //  Stage 1 — badge is showing: acknowledge + refresh the timeline to the
+  //            latest, but KEEP the per-post unread markers (only the header
+  //            badge is dismissed).
+  //  Stage 2 — badge hidden (dismissed) AND the loaded timeline still has
+  //            unread: truly mark the CURRENT timeline read FIRST, then reload,
+  //            so a fresh post fetched by the reload is never swallowed as read.
+  // `withRefresh` controls the reload: the center logo is the home button and
+  // reloads; the mobile left logo is the menu button and merely toggles the
+  // menu + runs the read logic without reloading.
+  const handleLogoClick = (withRefresh: boolean) => {
+    if (readStore.dismissed) {
+      // Stage 2
+      if (countUnreadFeed(feedPosts, auth?.email ?? "", getReadSnapshot()) > 0) {
+        markAllFeedRead(feedPosts); // mark CURRENT timeline read BEFORE reload
+      }
+      rearmBadge(); // caught up — re-arm so genuinely new posts show again
+    } else {
+      // Stage 1
+      dismissBadge(); // clear ONLY the header badge, keep timeline unread
+    }
+    if (withRefresh) goHome(); // reload (goHome re-fetches page 1 when on feed)
+  };
+
   // Toggle like optimistically on the feed list AND the current thread view
   // (threadPost + threadReplies use separate state, so update both). Also
   // recurse into nested replies (inline group comments) so their likes update.
@@ -5033,10 +5093,10 @@ export default function Home() {
             <UnstyledButton
               onClick={() => {
                 setNavOpened((o) => !o);
-                // Beagle logo: tapping it clears ONLY the header NEW badge —
-                // it must NOT mark the whole timeline as read (that would make
-                // the timeline's per-post unread markers meaningless).
-                dismissBadge();
+                // Beagle logo (mobile, menu button): two-stage read logic —
+                // stage 1 dismisses only the badge, stage 2 marks the timeline
+                // read. No reload here (this is the menu button, not home).
+                handleLogoClick(false);
               }}
               aria-label="メニューを開く"
               hiddenFrom="sm"
@@ -5065,10 +5125,11 @@ export default function Home() {
           {/* Center: beagle logo on desktop */}
           <UnstyledButton
             onClick={() => {
-              goHome();
-              // Beagle logo: clears ONLY the header NEW badge — never marks the
-              // whole timeline as read (that kills its unread markers).
-              dismissBadge();
+              // Beagle logo (desktop, home button): two-stage read logic + reload.
+              // Stage 1 dismisses only the badge; stage 2 marks the CURRENT
+              // timeline read BEFORE goHome reloads it, so a fresh post fetched
+              // by the reload is never swallowed as read.
+              handleLogoClick(true);
             }}
             aria-label="タイムラインへ戻る"
             visibleFrom="sm"
