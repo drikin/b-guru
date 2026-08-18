@@ -108,9 +108,15 @@ export async function appendBeagleLog(entry: {
 
 /** 今日(Japan時)にビーグルが投稿した件数。 */
 export async function countBeaglePostsToday(): Promise<number> {
+  return countBeagleRootPostsToday();
+}
+
+/** 今日(Japan時)のビーグルによるルート投稿（parent_id IS NULL=ニュース/proactive のみ）件数。
+ *  返信（メンション含む）はカウントしない → メンション対応がこの上限でブロックされないように。 */
+export async function countBeagleRootPostsToday(): Promise<number> {
   const res = await pool.query(
     `SELECT COUNT(*)::int AS n FROM posts
-      WHERE author_email = $1
+      WHERE author_email = $1 AND parent_id IS NULL
         AND created_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Tokyo') AT TIME ZONE 'Asia/Tokyo'`,
     [SYSTEM_EMAIL]
   );
