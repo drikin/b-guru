@@ -3639,6 +3639,31 @@ export default function Home() {
     return () => window.clearInterval(t);
   }, [auth, loadOnline]);
 
+  // Presence heartbeat: POST /api/presence/ping every 30s so the server keeps
+  // us "online" even when the SSE stream is briefly dropped (mobile tab
+  // suspension, network blips). Also ping + refresh when the tab becomes
+  // visible again so returning restores presence immediately instead of waiting
+  // for the SSE reconnect.
+  useEffect(() => {
+    if (!auth) return;
+    const ping = () => {
+      fetch("/api/presence/ping", { method: "POST", cache: "no-store" }).catch(() => {});
+    };
+    const onVis = () => {
+      if (document.visibilityState === "visible") {
+        ping();
+        loadOnline();
+      }
+    };
+    ping();
+    const t = window.setInterval(ping, 30000);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(t);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [auth, loadOnline]);
+
   const loadNotifications = useCallback(() => {
     if (!auth) return;
     fetch("/api/notifications")

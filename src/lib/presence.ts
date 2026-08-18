@@ -55,11 +55,12 @@ export function markOnline(email: string): void {
 export function markOffline(email: string): void {
   const cur = online.get(email);
   if (!cur) return;
-  cur.connCount -= 1;
-  if (cur.connCount <= 0) {
-    online.delete(email);
-    broadcast();
-  }
+  cur.connCount = Math.max(0, cur.connCount - 1);
+  // Do NOT evict here. Eviction is left to the lastSeenAt sweep so a client
+  // that briefly loses its SSE stream (mobile tab suspension, network blip)
+  // but keeps heartbeating stays "online" — fixes the "タブ開いてるのに
+  // オフライン" symptom. A fully-closed client stops pinging and is evicted
+  // by the sweep (~OFFLINE_AFTER_MS later).
 }
 
 /** Emails of all members currently online (sorted). */
@@ -70,7 +71,15 @@ export function getOnlineEmails(): string[] {
 /** Heartbeat from the client — refresh this member's last seen time. */
 export function touch(email: string): void {
   const cur = online.get(email);
-  if (cur) cur.lastSeenAt = Date.now();
+  if (cur) {
+    cur.lastSeenAt = Date.now();
+  } else {
+    // A pinging client is by definition a live tab with the site open, even if
+    // its SSE stream isn't currently connected. Re-register as online so the
+    // presence panel isn't wrongly blank after the stream drops.
+    online.set(email, { connCount: 0, lastSeenAt: Date.now() });
+    broadcast();
+  }
 }
 
 export interface PresenceMember {
