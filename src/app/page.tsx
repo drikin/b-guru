@@ -364,14 +364,36 @@ function highlightSearchTerm(html: string, keyword: string): string {
 
 /** Textarea with @mention autocomplete. Shows a suggestion popover when the
  *  user types @ followed by characters. Selecting a member inserts @name. */
+// Copy-paste image support. Extracts image file(s) from a paste event and
+// returns them as a FileList (built via DataTransfer so it matches
+// uploadImages' signature). Returns null when there is no image in the
+// clipboard, letting the browser's normal text paste proceed untouched.
+function imagesFromPaste(e: React.ClipboardEvent): FileList | null {
+  const items = e.clipboardData?.items;
+  if (!items || items.length === 0) return null;
+  const files: File[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.kind === "file" && item.type.startsWith("image/")) {
+      const f = item.getAsFile();
+      if (f) files.push(f);
+    }
+  }
+  if (files.length === 0) return null;
+  const dt = new DataTransfer();
+  files.forEach((f) => dt.items.add(f));
+  return dt.files;
+}
+
 function MentionTextarea({
-  value, onChange, onKeyDown, placeholder, autosize, minRows, maxRows, mb,
+  value, onChange, onKeyDown, onPaste, placeholder, autosize, minRows, maxRows, mb,
   maxLength, label, description, autoFocus, ariaLabel, suggestUp, wrapperStyle,
   initialMention,
 }: {
   value: string;
   onChange: (v: string) => void;
   onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   placeholder?: string;
   autosize?: boolean;
   minRows?: number;
@@ -529,6 +551,7 @@ function MentionTextarea({
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
+        onPaste={onPaste}
         onCompositionEnd={() => {
           // After IME commits 2-byte text (Japanese etc.), re-detect the
           // mention query from the real value — onChange may not have delivered
@@ -1711,6 +1734,15 @@ function InlineReplyBox({
 
   const onPick = (files: FileList | null) =>
     uploadImages(files, images, setImages, setUploading, (s) => setError(s));
+  // Copy-paste image attachment: route clipboard images through the same
+  // upload flow as the 📷 picker (respecting the 5-image cap in uploadImages).
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = imagesFromPaste(e);
+    if (files) {
+      e.preventDefault();
+      onPick(files);
+    }
+  };
   const removeImage = (i: number) => setImages((prev) => prev.filter((_, idx) => idx !== i));
   const onPickVideo = (files: FileList | null) =>
     uploadVideo(files, setVideo, setVideoUploading, (s) => setError(s));
@@ -1745,6 +1777,7 @@ function InlineReplyBox({
         value={text}
         autoFocus
         onChange={setText}
+        onPaste={handlePaste}
         placeholder={`${authorLabel} の投稿にコメント…（Shift+Enter でうなる）`}
         minRows={2}
         autosize
@@ -2242,6 +2275,15 @@ function ComposerPaper({
 
   const onPick = (files: FileList | null) =>
     uploadImages(files, images, setImages, setUploading, (s) => setError(s));
+  // Copy-paste image attachment: route clipboard images through the same
+  // upload flow as the 📷 picker (respecting the 5-image cap in uploadImages).
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = imagesFromPaste(e);
+    if (files) {
+      e.preventDefault();
+      onPick(files);
+    }
+  };
   const removeImage = (i: number) => setImages((prev) => prev.filter((_, idx) => idx !== i));
   const onPickVideo = (files: FileList | null) =>
     uploadVideo(files, setVideo, setVideoUploading, (s) => setError(s));
@@ -2331,6 +2373,7 @@ function ComposerPaper({
           value={text}
           onChange={setText}
           onKeyDown={onKeyDown}
+          onPaste={handlePaste}
           mb="xs"
         />
         <Group justify="flex-end" gap={6} mb="sm">
@@ -5857,6 +5900,13 @@ export default function Home() {
                             value={replyText}
                             onChange={setReplyText}
                             mb="xs"
+                            onPaste={(e) => {
+                              const files = imagesFromPaste(e);
+                              if (files) {
+                                e.preventDefault();
+                                onThreadReplyPick(files);
+                              }
+                            }}
                             onKeyDown={(e) => {
                               if ((e.nativeEvent as any).isComposing) return;
                               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
@@ -6687,6 +6737,13 @@ export default function Home() {
               placeholder="本文"
               value={editText}
               onChange={setEditText}
+              onPaste={(e) => {
+                const files = imagesFromPaste(e);
+                if (files) {
+                  e.preventDefault();
+                  onEditPickImages(files);
+                }
+              }}
             />
             {editImages.length > 0 && (
               <Group gap="xs">
