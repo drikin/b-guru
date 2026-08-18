@@ -27,7 +27,8 @@ export async function POST(req: NextRequest) {
     const due = !state.nextActivityAt || new Date(state.nextActivityAt).getTime() <= now;
     const newMentions = await countNewMentions(state.lastTickAt);
     if (!due && newMentions === 0) {
-      return NextResponse.json({ due: false, nextActivityAt: state.nextActivityAt });
+      // idle: HTTP 204・本文なし（ポーラは HTTP コードで簡潔に判定できる）
+      return new NextResponse(null, { status: 204 });
     }
     const trigger = newMentions > 0 ? "mention" : "due";
     const result = await runBeagleTick({ dry });
