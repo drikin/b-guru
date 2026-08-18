@@ -1685,6 +1685,173 @@ function ReplyBubble({
   );
 }
 
+/** Banner crop editor: pan the image (drag) + zoom (wheel / buttons) inside a
+ *  fixed 3:1 frame, then apply → crops to the banner region and renders a
+ *  resized JPEG (1600px wide) ready for upload. */
+const BANNER_ASPECT = 3; // width:height of the banner display area
+const BANNER_OUT_W = 1600;
+
+function BannerCropper({
+  src,
+  onApply,
+  onCancel,
+  uploading,
+}: {
+  src: string;
+  onApply: (blob: Blob) => void;
+  onCancel: () => void;
+  uploading: boolean;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [cw, setCw] = useState(0);
+  const [img, setImg] = useState<{ w: number; h: number } | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ px: number; py: number; pan: { x: number; y: number } } | null>(null);
+
+  const ch = Math.round(cw / BANNER_ASPECT);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const measure = () => setCw(el.clientWidth);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const im = new window.Image();
+    im.onload = () => setImg({ w: im.naturalWidth, h: im.naturalHeight });
+    im.src = src;
+  }, [src]);
+
+  // base cover scale (image must cover the frame), multiplied by user zoom.
+  const base = img && cw ? Math.max(cw / img.w, ch / img.h) : 0;
+  const s = base * zoom;
+  const dispW = img ? img.w * s : 0;
+  const dispH = img ? img.h * s : 0;
+  const minX = Math.min(0, cw - dispW);
+  const minY = Math.min(0, ch - dispH);
+  const ox = Math.min(0, Math.max(minX, pan.x));
+  const oy = Math.min(0, Math.max(minY, pan.y));
+
+  const onWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    setZoom((z) => Math.min(6, Math.max(1, Number((z - e.deltaY * 0.001).toFixed(2)))));
+  };
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (!(e.target as HTMLElement).setPointerCapture) return;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    dragRef.current = { px: e.clientX, py: e.clientY, pan: { x: ox, y: oy } };
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!dragRef.current) return;
+    setPan({
+      x: dragRef.current.pan.x + (e.clientX - dragRef.current.px),
+      y: dragRef.current.pan.y + (e.clientY - dragRef.current.py),
+    });
+  };
+  const endDrag = () => {
+    dragRef.current = null;
+  };
+
+  const apply = () => {
+    const el = imgRef.current;
+    if (!img || !cw || !el) return;
+    const outH = Math.round(BANNER_OUT_W / BANNER_ASPECT);
+    const canvas = document.createElement("canvas");
+    canvas.width = BANNER_OUT_W;
+    canvas.height = outH;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    // Visible region in intrinsic image coords (container origin maps to -ox,-oy).
+    const sx = -ox / s;
+    const sy = -oy / s;
+    const sw = cw / s;
+    const sh = ch / s;
+    ctx.drawImage(el, sx, sy, sw, sh, 0, 0, BANNER_OUT_W, outH);
+    canvas.toBlob(
+      (b) => {
+        if (b) onApply(b);
+      },
+      "image/jpeg",
+      0.85
+    );
+  };
+
+  return (
+    <div>
+      <Box
+        ref={wrapRef}
+        style={{
+          width: "100%",
+          aspectRatio: `${BANNER_ASPECT}/1`,
+          overflow: "hidden",
+          position: "relative",
+          cursor: "grab",
+          touchAction: "none",
+          background: "#e8ecef",
+          borderRadius: 8,
+        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endDrag}
+        onPointerLeave={endDrag}
+        onWheel={onWheel}
+      >
+        {img ? (
+          <img
+            ref={imgRef}
+            src={src}
+            alt=""
+            draggable={false}
+            style={{
+              position: "absolute",
+              left: ox,
+              top: oy,
+              width: dispW,
+              height: dispH,
+              maxWidth: "none",
+              userSelect: "none",
+            }}
+          />
+        ) : (
+          <Text size="sm" c="dimmed" style={{ padding: 12 }}>
+            読み込み中…
+          </Text>
+        )}
+      </Box>
+      <Group justify="space-between" mt="xs">
+        <Group gap="xs">
+          <Button size="xs" variant="light" color="gray" onClick={() => setZoom((z) => Math.min(6, z + 0.25))}>
+            拡大
+          </Button>
+          <Button size="xs" variant="light" color="gray" onClick={() => setZoom((z) => Math.max(1, z - 0.25))}>
+            縮小
+          </Button>
+          <Text size="xs" c="dimmed">
+            ドラッグで位置調整・ホイールでズーム
+          </Text>
+        </Group>
+        <Group gap="xs">
+          <Button size="xs" variant="subtle" color="gray" onClick={onCancel} disabled={uploading}>
+            キャンセル
+          </Button>
+          <Button size="xs" color="green" onClick={apply} loading={uploading} disabled={uploading}>
+            この範囲で設定
+          </Button>
+        </Group>
+      </Group>
+    </div>
+  );
+}
+
 /** X-style profile timeline view: profile header card + the user's post cards. */
 function ProfileView({
   email,
@@ -3180,6 +3347,9 @@ export default function Home() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileUploading, setProfileUploading] = useState(false);
   const profileHeaderRef = useRef<HTMLInputElement>(null);
+  // Header-image banner crop editor (drag-to-pan + zoom, then crop+resize)
+  const [cropModalOpen, setCropModalOpen] = useState(false);
+  const [cropSource, setCropSource] = useState<{ url: string; file: File } | null>(null);
 
   // ---- Reply / thread state ----
   const [replyText, setReplyText] = useState("");
@@ -4993,25 +5163,47 @@ export default function Home() {
     setEditingProfile(true);
   }, [profileData]);
 
-  const onProfileHeaderPick = useCallback(async (files: FileList | null) => {
+  // Open the header-image crop editor (drag-to-pan + zoom, then crop+resize to
+  // the banner aspect). The file itself is NOT uploaded until the user applies
+  // a crop, so "/uploads" never receives a full-resolution original.
+  const onProfileHeaderPick = useCallback((files: FileList | null) => {
     if (!files || !files[0]) return;
-    setProfileUploading(true);
-    try {
-      const fd = new FormData();
-      fd.append("image", files[0]);
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
-      const d = await res.json();
-      if (!res.ok || !d.urls || !d.urls[0]) {
-        setActionError("画像のアップロードに失敗しました");
-        return;
-      }
-      setProfileForm((f) => ({ ...f, headerImage: d.urls[0] }));
-    } catch {
-      setActionError("画像のアップロードに失敗しました");
-    } finally {
-      setProfileUploading(false);
-    }
+    const file = files[0];
+    setCropSource({ url: URL.createObjectURL(file), file });
+    setCropModalOpen(true);
+    setActionError(null);
   }, []);
+
+  // Upload the cropped banner. CRITICAL: /api/upload reads the "images" field
+  // (plural) — a singular "image" field returns "画像が選択されていません" 400.
+  const onBannerApply = useCallback(
+    (blob: Blob) => {
+      setProfileUploading(true);
+      (async () => {
+        try {
+          const fd = new FormData();
+          fd.append("images", new File([blob], "banner.jpg", { type: "image/jpeg" }));
+          const res = await fetch("/api/upload", { method: "POST", body: fd });
+          const d = await res.json();
+          if (!res.ok || !d.urls || !d.urls[0]) {
+            setActionError("画像のアップロードに失敗しました");
+            return;
+          }
+          setProfileForm((f) => ({ ...f, headerImage: d.urls[0] }));
+          setCropModalOpen(false);
+          setCropSource((cs) => {
+            if (cs) URL.revokeObjectURL(cs.url);
+            return null;
+          });
+        } catch {
+          setActionError("画像のアップロードに失敗しました");
+        } finally {
+          setProfileUploading(false);
+        }
+      })();
+    },
+    []
+  );
 
   const saveProfile = useCallback(async () => {
     if (!profileEmailRef.current || profileSaving) return;
@@ -7447,6 +7639,38 @@ export default function Home() {
             </Button>
           </Group>
         </Stack>
+      </Modal>
+
+      {/* Header-image banner crop modal */}
+      <Modal
+        opened={cropModalOpen}
+        onClose={() => {
+          if (profileUploading) return;
+          setCropModalOpen(false);
+          setCropSource((cs) => {
+            if (cs) URL.revokeObjectURL(cs.url);
+            return null;
+          });
+        }}
+        centered={!kbOpen}
+        withCloseButton
+        title="ヘッダー画像をクロップ"
+        size="md"
+      >
+        {cropSource ? (
+          <BannerCropper
+            src={cropSource.url}
+            uploading={profileUploading}
+            onApply={onBannerApply}
+            onCancel={() => {
+              setCropModalOpen(false);
+              setCropSource((cs) => {
+                if (cs) URL.revokeObjectURL(cs.url);
+                return null;
+              });
+            }}
+          />
+        ) : null}
       </Modal>
 
       {/* External-link menu add/edit modal (admin only) */}
