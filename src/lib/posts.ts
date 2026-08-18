@@ -206,6 +206,9 @@ export async function listPosts(options?: {
   /** Search keyword: ILIKE partial match on root post text, author name, or
    *  any reply text (matching replies pull in their parent root post). */
   search?: string;
+  /** Restrict to a single author's root posts (profile timeline). Combined
+   *  with cursor pagination via `before`. */
+  author?: string;
 }): Promise<FeedPost[]> {
   const limit = options?.limit ?? 100;
   const viewerEmail = options?.viewerEmail ?? "";
@@ -229,6 +232,15 @@ export async function listPosts(options?: {
   // text. Matching replies pull in their parent root post so the whole thread
   // is visible in results.
   const searchParams: unknown[] = [viewerEmail, limit];
+  // Author filter (profile timeline): restrict to one author's root posts.
+  // Param is appended after [viewerEmail, limit] so it lands at $3.
+  let authorSql = "";
+  const author = options?.author?.trim();
+  if (author && author.length > 0) {
+    searchParams.push(author);
+    const pat = `$${searchParams.length}`;
+    authorSql = ` AND p.author_email = ${pat}`;
+  }
   let searchSql = "";
   if (search && search.length > 0) {
     searchParams.push(`%${search}%`);
@@ -264,7 +276,7 @@ export async function listPosts(options?: {
 
   const res = await pool.query(
     `${POST_SELECT}
-     WHERE ${where}${searchSql}${cursorSql}
+     WHERE ${where}${authorSql}${searchSql}${cursorSql}
      GROUP BY p.id
      ORDER BY ${orderBy}
      LIMIT $2`,

@@ -259,5 +259,18 @@ export async function initSchema() {
       memory_bytes_after INT NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_beagle_log_run ON beagle_log(run_at);
+
+    -- User profiles (profile timeline). Keyed by posts.author_email.
+    -- display_name/bio/header_image are optional; fallback name = latest
+    -- posts.author_name, avatar = Gravatar (no custom avatar field).
+    CREATE TABLE IF NOT EXISTS user_profiles (
+      email TEXT PRIMARY KEY,
+      display_name TEXT,
+      bio TEXT,
+      header_image TEXT,
+      links JSONB NOT NULL DEFAULT '[]'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_profiles_updated ON user_profiles(updated_at DESC);
   `);
 }

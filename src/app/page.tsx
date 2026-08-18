@@ -33,6 +33,7 @@ import {
   useMantineColorScheme,
 } from "@mantine/core";
 import { mdToHtml } from "@/lib/md";
+import type { Profile as ProfileData } from "@/lib/profile";
 import {
   FeedPost,
   FeedGroup,
@@ -841,6 +842,7 @@ function PostCard({
   onDelete,
   onPin,
   onPreview,
+  onOpenProfile,
 }: {
   post: FeedPost;
   auth: { email: string };
@@ -858,6 +860,7 @@ function PostCard({
   onEdit: (post: FeedPost) => void;
   onDelete: (post: FeedPost) => void;
   onPreview: (src: string, group?: string[]) => void;
+  onOpenProfile?: (email: string) => void;
 }) {
   const CLAMP_THRESHOLD = 500;
   const [expanded, setExpanded] = useState(false);
@@ -964,18 +967,35 @@ function PostCard({
       )}
 
       <Group gap="sm" mb={6}>
-        <SafeAvatar
-          src={post.authorEmail === auth.email ? avatarSrc : post.authorAvatar || undefined}
-          initial={(post.authorName || post.authorEmail.split("@")[0] || "?")}
-        />
-        <div style={{ minWidth: 0 }}>
-          <Text size="sm" fw={600} c="inherit">
-            {post.authorName || post.authorEmail.split("@")[0]}
-          </Text>
-          <Text size="xs" c="dimmed">
-            {formatJSTPDT(post.createdAt)}
-          </Text>
-        </div>
+        <UnstyledButton
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenProfile?.(post.authorEmail);
+          }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flex: "1 1 auto",
+            minWidth: 0,
+            textAlign: "left",
+            color: "inherit",
+          }}
+          aria-label={`${post.authorName || post.authorEmail.split("@")[0]} のプロフィールを見る`}
+        >
+          <SafeAvatar
+            src={post.authorEmail === auth.email ? avatarSrc : post.authorAvatar || undefined}
+            initial={(post.authorName || post.authorEmail.split("@")[0] || "?")}
+          />
+          <div style={{ minWidth: 0 }}>
+            <Text size="sm" fw={600} c="inherit">
+              {post.authorName || post.authorEmail.split("@")[0]}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {formatJSTPDT(post.createdAt)}
+            </Text>
+          </div>
+        </UnstyledButton>
       </Group>
 
       {post.text && (
@@ -1464,6 +1484,7 @@ function CollapsibleReplies({
   onDelete,
   onPin,
   onPreview,
+  onOpenProfile,
 }: {
   replies: FeedPost[];
   auth: { email: string };
@@ -1479,6 +1500,7 @@ function CollapsibleReplies({
   onDelete: (post: FeedPost) => void;
   onPin: (id: number) => void;
   onPreview: (src: string, group?: string[]) => void;
+  onOpenProfile?: (email: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -1500,6 +1522,7 @@ function CollapsibleReplies({
             onEdit={onEdit}
             onDelete={onDelete}
             onPreview={onPreview}
+            onOpenProfile={onOpenProfile}
           />
         ))}
       </>
@@ -1576,6 +1599,7 @@ function CollapsibleReplies({
               onEdit={onEdit}
               onDelete={onDelete}
               onPreview={onPreview}
+              onOpenProfile={onOpenProfile}
             />
           ))}
         </Stack>
@@ -1595,6 +1619,7 @@ function CollapsibleReplies({
           onEdit={onEdit}
           onDelete={onDelete}
           onPreview={onPreview}
+          onOpenProfile={onOpenProfile}
         />
       ))}
     </>
@@ -1614,6 +1639,7 @@ function ReplyBubble({
   onEdit,
   onDelete,
   onPreview,
+  onOpenProfile,
 }: {
   rep: FeedPost;
   auth: { email: string };
@@ -1626,6 +1652,7 @@ function ReplyBubble({
   onEdit: (post: FeedPost) => void;
   onDelete: (post: FeedPost) => void;
   onPreview: (src: string, group?: string[]) => void;
+  onOpenProfile?: (email: string) => void;
 }) {
   return (
     <Box
@@ -1652,13 +1679,245 @@ function ReplyBubble({
         onDelete={onDelete}
         onPin={() => {}}
         onPreview={onPreview}
+        onOpenProfile={onOpenProfile}
       />
     </Box>
   );
 }
 
-/** Grouped timeline: day separators + per-author groups. Posts are shown fully
- *  expanded (no collapse/stack) inside a group framed by a slim author header. */
+/** X-style profile timeline view: profile header card + the user's post cards. */
+function ProfileView({
+  email,
+  profile,
+  posts,
+  loading,
+  hasMore,
+  isOwn,
+  auth,
+  avatarSrc,
+  mentionMembers,
+  searchQuery,
+  onClose,
+  onLoadMore,
+  onEdit,
+  onOpenThread,
+  onOpenThreadReply,
+  onLike,
+  onReply,
+  onWhisper,
+  onEditPost,
+  onDelete,
+  onPin,
+  onPreview,
+  onOpenProfile,
+}: {
+  email: string;
+  profile: ProfileData | null;
+  posts: FeedPost[];
+  loading: boolean;
+  hasMore: boolean;
+  isOwn: boolean;
+  auth: { email: string };
+  avatarSrc?: string | null;
+  mentionMembers?: MentionMember[];
+  searchQuery?: string;
+  onClose: () => void;
+  onLoadMore: () => void;
+  onEdit: () => void;
+  onOpenThread: (id: number) => void;
+  onOpenThreadReply: (id: number) => void;
+  onLike: (id: number) => void;
+  onReply: (id: number, name: string) => void;
+  onWhisper?: (id: number, name: string) => void;
+  onEditPost: (post: FeedPost) => void;
+  onDelete: (post: FeedPost) => void;
+  onPin: (id: number) => void;
+  onPreview: (src: string, group?: string[]) => void;
+  onOpenProfile?: (email: string) => void;
+}) {
+  return (
+    <Stack gap="md">
+      <Button
+        variant="subtle"
+        size="xs"
+        onClick={onClose}
+        leftSection={<span style={{ fontSize: 12 }}>←</span>}
+        mb="xs"
+        color="gray"
+      >
+        タイムラインに戻る
+      </Button>
+
+      {/* Profile header card (X-style) */}
+      <Paper radius="md" withBorder p={0} style={{ overflow: "hidden" }}>
+        <Box
+          style={{
+            height: 140,
+            background: profile?.headerImage
+              ? `url(${profile.headerImage}) center / cover`
+              : "linear-gradient(135deg, #e2f4e2, #cfe8cf)",
+          }}
+        />
+        <Box px="md" style={{ marginTop: -30, position: "relative" }}>
+          <SafeAvatar
+            src={profile?.avatar || undefined}
+            initial={profile?.name || email.split("@")[0] || "?"}
+            size="lg"
+          />
+          {isOwn && (
+            <Button
+              size="xs"
+              variant="light"
+              color="green"
+              style={{ position: "absolute", right: 12, top: 6 }}
+              onClick={onEdit}
+            >
+              プロフィールを編集
+            </Button>
+          )}
+        </Box>
+        <Box px="md" pb="md" style={{ marginTop: 8 }}>
+          <Text fw={700} size="lg">
+            {profile?.name || email.split("@")[0]}
+          </Text>
+          <Text size="sm" c="dimmed">
+            {email}
+          </Text>
+          {profile?.bio ? (
+            <div
+              className="post-body"
+              dangerouslySetInnerHTML={{ __html: mdToHtml(profile.bio) }}
+              style={{ marginTop: 8 }}
+            />
+          ) : null}
+          {profile && profile.postCount > 0 ? (
+            <Text size="sm" c="dimmed" mt={6}>
+              {profile.postCount}件の投稿
+            </Text>
+          ) : null}
+          {profile && profile.links && profile.links.length > 0 ? (
+            <Group gap="md" mt={8} wrap="wrap">
+              {profile.links.map((l, i) => (
+                <a
+                  key={i}
+                  href={l.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    fontSize: 13,
+                    color: "var(--text-green)",
+                    textDecoration: "none",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                  }}
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                    <path d="M15 3h6v6" />
+                    <path d="M10 14 21 3" />
+                  </svg>
+                  {l.label || l.href}
+                </a>
+              ))}
+            </Group>
+          ) : null}
+        </Box>
+      </Paper>
+
+      {/* The user's post cards (profile timeline) */}
+      {loading && posts.length === 0 ? (
+        <Text c="dimmed">読み込み中…</Text>
+      ) : posts.length === 0 ? (
+        <Text c="dimmed">まだ投稿がありません。</Text>
+      ) : (
+        <>
+          {groupFeed(posts).map((g) => {
+            const post = g.posts[0];
+            return (
+              <Box
+                key={`${g.dateKey}|${g.authorEmail}|${post.id}`}
+                data-post-id={post.id}
+                style={{
+                  borderLeft: "3px solid var(--border-green-soft)",
+                  borderTopLeftRadius: 8,
+                  borderBottomLeftRadius: 8,
+                  paddingLeft: 12,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                }}
+              >
+                <PostCard
+                  post={post}
+                  auth={auth}
+                  mentionMembers={mentionMembers}
+                  searchQuery={searchQuery}
+                  avatarSrc={avatarSrc}
+                  isThreadRoot={false}
+                  showReplyButton={false}
+                  onOpenThread={onOpenThread}
+                  onOpenThreadReply={onOpenThreadReply}
+                  onLike={onLike}
+                  onReply={onReply}
+                  onWhisper={onWhisper}
+                  onEdit={onEditPost}
+                  onDelete={onDelete}
+                  onPin={onPin}
+                  onPreview={onPreview}
+                  onOpenProfile={onOpenProfile}
+                />
+                <CollapsibleReplies
+                  replies={post.replies ?? []}
+                  auth={auth}
+                  avatarSrc={avatarSrc}
+                  mentionMembers={mentionMembers}
+                  searchQuery={searchQuery}
+                  onOpenThread={onOpenThread}
+                  onOpenThreadReply={onOpenThreadReply}
+                  onLike={onLike}
+                  onReply={onReply}
+                  onWhisper={onWhisper}
+                  onEdit={onEditPost}
+                  onDelete={onDelete}
+                  onPin={onPin}
+                  onPreview={onPreview}
+                  onOpenProfile={onOpenProfile}
+                />
+              </Box>
+            );
+          })}
+          {hasMore ? (
+            <Button
+              variant="subtle"
+              color="gray"
+              size="xs"
+              fullWidth
+              onClick={onLoadMore}
+              rightSection={<span style={{ fontSize: 12 }}>↓</span>}
+            >
+              {loading ? "読み込み中…" : "過去の投稿を読み込む"}
+            </Button>
+          ) : posts.length ? (
+            <Text size="sm" c="dimmed" ta="center" mt="md">
+              これより古い投稿はありません
+            </Text>
+          ) : null}
+        </>
+      )}
+    </Stack>
+  );
+}
 function BarkIcon({ size = 14, color = "currentColor" }: { size?: number; color?: string }) {
   return (
     <svg
@@ -2000,6 +2259,7 @@ function TimelineFeed({
   onDelete,
   onPin,
   onPreview,
+  onOpenProfile,
   skipFirstDate,
 }: {
   groups: FeedGroup[];
@@ -2039,6 +2299,7 @@ function TimelineFeed({
   onDelete: (p: FeedPost) => void;
   onPin: (id: number) => void;
   onPreview: (src: string, group?: string[]) => void;
+  onOpenProfile?: (email: string) => void;
   skipFirstDate?: boolean;
 }) {
   // When the parent renders the topmost date separator itself (above the
@@ -2118,6 +2379,7 @@ function TimelineFeed({
               onDelete={onDelete}
               onPin={onPin}
               onPreview={onPreview}
+              onOpenProfile={onOpenProfile}
             />
             {/* Interleaved comments = replies to this card, rendered right after
              * it so the position (between which cards) is preserved.
@@ -2138,6 +2400,7 @@ function TimelineFeed({
               onDelete={onDelete}
               onPin={onPin}
               onPreview={onPreview}
+              onOpenProfile={onOpenProfile}
             />
             {/* "+" insert control: a small circular button centered in a slim row
              * between cards. Center placement is intuitive ("insert here"),
@@ -2901,6 +3164,23 @@ export default function Home() {
   const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  // ---- Profile timeline view ----
+  const [profileEmail, setProfileEmail] = useState<string | null>(null);
+  const [profileData, setProfileData] = useState<ProfileData | null>(null);
+  const [profilePosts, setProfilePosts] = useState<FeedPost[]>([]);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileHasMore, setProfileHasMore] = useState(false);
+  const [profileBefore, setProfileBefore] = useState<string | null>(null);
+  const profileEmailRef = useRef<string | null>(null);
+  profileEmailRef.current = profileEmail;
+  // ---- Profile edit modal ----
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [profileForm, setProfileForm] = useState({ displayName: "", bio: "", headerImage: "" });
+  const [profileLinks, setProfileLinks] = useState<{ label: string; href: string }[]>([]);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileUploading, setProfileUploading] = useState(false);
+  const profileHeaderRef = useRef<HTMLInputElement>(null);
+
   // ---- Reply / thread state ----
   const [replyText, setReplyText] = useState("");
   const [replying, setReplying] = useState<'comment' | 'whisper' | false>(false);
@@ -3007,16 +3287,26 @@ export default function Home() {
   // Holds the latest openThread so the mount-time hashchange listener never
   // captures a stale closure (openThread is a plain fn recreated every render).
   const openThreadRef = useRef<(postId: number) => void>(() => {});
+  const openProfileRef = useRef<(email: string) => void>(() => {});
 
   useEffect(() => {
     checkAuth();
     // Support browser back button: when the #/post hash is removed (via the
     // back button or history.back()), close the thread view.
     const onPop = () => {
-      if (!(window.location.hash || "").startsWith("#/post/")) {
+      const h = window.location.hash || "";
+      if (h.startsWith("#/user/")) {
+        openProfileRef.current(decodeURIComponent(h.slice("#/user/".length)));
+        return;
+      }
+      if (!h.startsWith("#/post/")) {
         setThreadPost(null);
         setThreadReplies([]);
         setThreadReplyBoxOpen(false);
+        setProfileEmail(null);
+        setProfileData(null);
+        setProfilePosts([]);
+        setProfileBefore(null);
       }
     };
     // A hash-only change on an already-open tab (e.g. a Web Push notification
@@ -3027,6 +3317,11 @@ export default function Home() {
     // hashchange, so this never loops.
     const onHash = () => {
       const h = window.location.hash || "";
+      if (h.startsWith("#/user/")) {
+        const email = decodeURIComponent(h.slice("#/user/".length));
+        if (email && email.includes("@")) openProfileRef.current(email);
+        return;
+      }
       if (h.startsWith("#/post/")) {
         const pid = Number(h.slice("#/post/".length));
         if (pid && pid > 0) openThreadRef.current(pid);
@@ -3034,6 +3329,10 @@ export default function Home() {
         setThreadPost(null);
         setThreadReplies([]);
         setThreadReplyBoxOpen(false);
+        setProfileEmail(null);
+        setProfileData(null);
+        setProfilePosts([]);
+        setProfileBefore(null);
       }
     };
     window.addEventListener("popstate", onPop);
@@ -3073,6 +3372,15 @@ export default function Home() {
       const pid = Number(postHash.slice("#/post/".length));
       if (pid && pid > 0) {
         const t = window.setTimeout(() => openThread(pid), 300);
+        return () => window.clearTimeout(t);
+      }
+    }
+    // Deep-link from a profile permalink: #/user/<email>
+    const profileHash = window.location.hash || "";
+    if (profileHash.startsWith("#/user/")) {
+      const email = decodeURIComponent(profileHash.slice("#/user/".length));
+      if (email && email.includes("@")) {
+        const t = window.setTimeout(() => openProfileRef.current(email), 300);
         return () => window.clearTimeout(t);
       }
     }
@@ -4583,6 +4891,158 @@ export default function Home() {
   };
   openThreadRef.current = openThread;
 
+  // ---- Profile timeline ----
+  // Navigate to a user's profile timeline. On the first entry push #/user/<email>
+  // so the back button closes it; when already on a profile (avatar→avatar) REPLACE
+  // so the hash never stacks.
+  const openProfile = useCallback(
+    async (email: string) => {
+      const inProfile = (window.location.hash || "").startsWith("#/user/");
+      const url = `#/user/${encodeURIComponent(email)}`;
+      if (inProfile) window.history.replaceState({ profile: email }, "", url);
+      else window.history.pushState({ profile: email }, "", url);
+      setThreadPost(null);
+      setThreadReplies([]);
+      setProfileEmail(email);
+      setProfileData(null);
+      setProfilePosts([]);
+      setProfileLoading(true);
+      // Seed the header instantly from an already-loaded card (if any).
+      for (const root of feedPosts) {
+        for (const p of [root, ...(root.replies ?? [])]) {
+          if (p.authorEmail === email) {
+            setProfileData({
+              email,
+              name: p.authorName || email.split("@")[0],
+              avatar: avatarSrc || p.authorAvatar || "",
+              bio: "",
+              headerImage: null,
+              links: [],
+              postCount: 0,
+              firstPostAt: null,
+            });
+            break;
+          }
+        }
+      }
+      const enc = encodeURIComponent(email);
+      try {
+        const [hdr, posts] = await Promise.all([
+          fetch(`/api/user/${enc}`, { cache: "no-store" }),
+          fetch(`/api/user/${enc}/posts?limit=30`, { cache: "no-store" }),
+        ]);
+        const hd = await hdr.json();
+        const pd = await posts.json();
+        if (hd.profile) setProfileData(hd.profile);
+        setProfilePosts(pd.posts ?? []);
+        setProfileHasMore(!!pd.hasMore);
+        const last = pd.posts && pd.posts.length ? pd.posts[pd.posts.length - 1] : null;
+        setProfileBefore(last ? last.lastActivityAt || last.createdAt : null);
+      } catch {
+        // keep the seeded header on failure
+      } finally {
+        setProfileLoading(false);
+      }
+    },
+    [feedPosts, avatarSrc]
+  );
+  openProfileRef.current = openProfile;
+
+  const closeProfile = useCallback(() => {
+    setProfileEmail(null);
+    setProfileData(null);
+    setProfilePosts([]);
+    setProfileBefore(null);
+    window.history.replaceState({}, "", "#/");
+  }, []);
+
+  const loadMoreProfile = useCallback(async () => {
+    if (!profileEmailRef.current || !profileBefore || profileLoading) return;
+    setProfileLoading(true);
+    const enc = encodeURIComponent(profileEmailRef.current);
+    try {
+      const res = await fetch(
+        `/api/user/${enc}/posts?before=${encodeURIComponent(profileBefore)}&limit=30`,
+        { cache: "no-store" }
+      );
+      const pd = await res.json();
+      const more = pd.posts ?? [];
+      setProfilePosts((prev) => [...prev, ...more]);
+      setProfileHasMore(!!pd.hasMore);
+      const last = more.length ? more[more.length - 1] : null;
+      setProfileBefore(last ? last.lastActivityAt || last.createdAt : null);
+    } catch {
+      // ignore — pagination is best-effort
+    } finally {
+      setProfileLoading(false);
+    }
+  }, [profileBefore, profileLoading]);
+
+  // ---- Profile edit ----
+  const openEditProfile = useCallback(() => {
+    if (!profileData) return;
+    setProfileForm({
+      displayName: profileData.name === profileData.email.split("@")[0] ? "" : profileData.name,
+      bio: profileData.bio,
+      headerImage: profileData.headerImage || "",
+    });
+    const links = profileData.links.length
+      ? profileData.links.map((l) => ({ label: l.label || "", href: l.href || "" }))
+      : [{ label: "", href: "" }];
+    setProfileLinks(links);
+    setEditingProfile(true);
+  }, [profileData]);
+
+  const onProfileHeaderPick = useCallback(async (files: FileList | null) => {
+    if (!files || !files[0]) return;
+    setProfileUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("image", files[0]);
+      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      const d = await res.json();
+      if (!res.ok || !d.urls || !d.urls[0]) {
+        setActionError("画像のアップロードに失敗しました");
+        return;
+      }
+      setProfileForm((f) => ({ ...f, headerImage: d.urls[0] }));
+    } catch {
+      setActionError("画像のアップロードに失敗しました");
+    } finally {
+      setProfileUploading(false);
+    }
+  }, []);
+
+  const saveProfile = useCallback(async () => {
+    if (!profileEmailRef.current || profileSaving) return;
+    setProfileSaving(true);
+    try {
+      const res = await fetch(`/api/user/${encodeURIComponent(profileEmailRef.current)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          display_name: profileForm.displayName,
+          bio: profileForm.bio,
+          header_image: profileForm.headerImage || null,
+          links: profileLinks
+            .filter((l) => l.href.trim())
+            .map((l) => ({ label: l.label.trim(), href: l.href.trim() })),
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        setActionError(d.error || "保存に失敗しました");
+        return;
+      }
+      setProfileData(d.profile);
+      setEditingProfile(false);
+    } catch {
+      setActionError("保存に失敗しました");
+    } finally {
+      setProfileSaving(false);
+    }
+  }, [profileSaving, profileForm, profileLinks]);
+
   // Find a post we've already loaded (root cards, their nested inline replies,
   // and pinned/hot sidebar posts) by id — used to seed thread views instantly.
   const findPostLocal = (postId: number): FeedPost | null => {
@@ -5804,8 +6264,34 @@ export default function Home() {
                 </Title>
               )}
 
-              {/* Feed */}
-              {feedLoading ? (
+              {/* Profile timeline (avatar/name click) */}
+              {profileEmail ? (
+                <ProfileView
+                  email={profileEmail}
+                  profile={profileData}
+                  posts={profilePosts}
+                  loading={profileLoading}
+                  hasMore={profileHasMore}
+                  isOwn={!!auth && auth.email === profileEmail}
+                  auth={auth}
+                  avatarSrc={avatarSrc}
+                  mentionMembers={mentionMembers}
+                  searchQuery={searchActive ? searchQuery : undefined}
+                  onClose={closeProfile}
+                  onLoadMore={loadMoreProfile}
+                  onEdit={openEditProfile}
+                  onOpenThread={openThread}
+                  onOpenThreadReply={openThreadReply}
+                  onLike={handleLike}
+                  onReply={openThreadReply}
+                  onWhisper={toggleWhisper}
+                  onEditPost={openEdit}
+                  onDelete={setDeleteTarget}
+                  onPin={handlePin}
+                  onPreview={openPreview}
+                  onOpenProfile={openProfile}
+                />
+              ) : feedLoading ? (
                 <Text c="dimmed">読み込み中…</Text>
               ) : feedPosts.length === 0 ? (
                 <Text c="dimmed">
@@ -5854,6 +6340,7 @@ export default function Home() {
                           onDelete={setDeleteTarget}
                           onPin={handlePin}
                           onPreview={openPreview}
+                          onOpenProfile={openProfile}
                         />
                       )}
 
@@ -5875,6 +6362,7 @@ export default function Home() {
                           onDelete={setDeleteTarget}
                           onPin={handlePin}
                           onPreview={openPreview}
+                          onOpenProfile={openProfile}
                         />
                         </Box>
                       ))}
@@ -6086,6 +6574,7 @@ export default function Home() {
                   onDelete={setDeleteTarget}
                   onPin={handlePin}
                   onPreview={openPreview}
+                  onOpenProfile={openProfile}
                 />
                 {/* Infinite scroll sentinel + load-more fallback */}
                 {feedHasMore && feedPosts.length > 0 ? (
@@ -6835,6 +7324,129 @@ export default function Home() {
             削除する
           </Button>
         </Group>
+      </Modal>
+
+      {/* Profile edit modal (own profile only) */}
+      <Modal
+        opened={editingProfile}
+        onClose={() => setEditingProfile(false)}
+        centered={!kbOpen}
+        withCloseButton
+        title="プロフィールを編集"
+      >
+        <Stack gap="sm">
+          <TextInput
+            label="表示名"
+            value={profileForm.displayName}
+            onChange={(e) => setProfileForm((f) => ({ ...f, displayName: e.currentTarget.value }))}
+            placeholder="タイムラインに表示する名前（未設定なら投稿名）"
+          />
+          <Textarea
+            label="自己紹介"
+            value={profileForm.bio}
+            onChange={(e) => setProfileForm((f) => ({ ...f, bio: e.currentTarget.value }))}
+            minRows={3}
+            placeholder="自己紹介（Markdown 可）"
+          />
+          <Box>
+            <Text size="xs" c="dimmed" mb={4}>
+              ヘッダー画像
+            </Text>
+            <Group gap="xs">
+              {profileForm.headerImage ? (
+                <Image src={profileForm.headerImage} width={150} height={70} fit="cover" radius="md" />
+              ) : null}
+              <Button
+                size="xs"
+                variant="light"
+                color="gray"
+                loading={profileUploading}
+                disabled={profileUploading}
+                onClick={() => profileHeaderRef.current?.click()}
+              >
+                {profileForm.headerImage ? "ヘッダー画像を変更" : "ヘッダー画像を追加"}
+              </Button>
+              {profileForm.headerImage ? (
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  color="red"
+                  onClick={() => setProfileForm((f) => ({ ...f, headerImage: "" }))}
+                >
+                  解除
+                </Button>
+              ) : null}
+            </Group>
+            <input
+              ref={profileHeaderRef}
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={(e) => onProfileHeaderPick(e.currentTarget.files)}
+            />
+          </Box>
+          <Box>
+            <Text size="xs" c="dimmed" mb={4}>
+              関連リンク
+            </Text>
+            <Stack gap={6}>
+              {profileLinks.map((l, i) => (
+                <Group key={i} gap="xs" align="center" wrap="nowrap">
+                  <TextInput
+                    placeholder="名前（例: X / ブログ）"
+                    value={l.label}
+                    style={{ flex: 1 }}
+                    onChange={(e) =>
+                      setProfileLinks((prev) =>
+                        prev.map((x, j) => (j === i ? { ...x, label: e.currentTarget.value } : x))
+                      )
+                    }
+                  />
+                  <TextInput
+                    placeholder="https://…"
+                    value={l.href}
+                    style={{ flex: 2 }}
+                    onChange={(e) =>
+                      setProfileLinks((prev) =>
+                        prev.map((x, j) => (j === i ? { ...x, href: e.currentTarget.value } : x))
+                      )
+                    }
+                  />
+                  <ActionIcon
+                    size="sm"
+                    variant="subtle"
+                    color="red"
+                    onClick={() => setProfileLinks((prev) => prev.filter((_, j) => j !== i))}
+                  >
+                    ×
+                  </ActionIcon>
+                </Group>
+              ))}
+            </Stack>
+            <Button
+              size="xs"
+              variant="subtle"
+              color="green"
+              mt={6}
+              onClick={() => setProfileLinks((p) => [...p, { label: "", href: "" }])}
+            >
+              + リンクを追加
+            </Button>
+          </Box>
+          {actionError && (
+            <Text size="xs" c="red">
+              {actionError}
+            </Text>
+          )}
+          <Group justify="flex-end" mt="xs">
+            <Button size="xs" variant="subtle" color="gray" onClick={() => setEditingProfile(false)}>
+              キャンセル
+            </Button>
+            <Button size="xs" color="green" loading={profileSaving} onClick={saveProfile}>
+              保存
+            </Button>
+          </Group>
+        </Stack>
       </Modal>
 
       {/* External-link menu add/edit modal (admin only) */}
