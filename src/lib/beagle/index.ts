@@ -10,6 +10,9 @@ import {
   appendBeagleLog,
   countBeaglePostsToday,
   getState,
+  lastBeaglePostAgoMs,
+  markResponded,
+  resolveRoot,
   updateState,
 } from "./store";
 import type { BeagleDecision, BeagleTickResult } from "./types";
@@ -34,11 +37,25 @@ export async function runBeagleTick(opts: {
 
   const memoryBefore = await memoryBytes();
   const [agentMd, memoryMd] = await Promise.all([loadAgentMd(), loadMemoryMd()]);
-  const [signal, recent] = await Promise.all([buildTimelineSignal(), getRecentTimeline()]);
+  const respondedSet = new Set(state.respondedPosts);
+  const [signal, recent] = await Promise.all([
+    buildTimelineSignal(respondedSet),
+    getRecentTimeline(),
+  ]);
   const news = await collectNewNews(state.lastTickAt);
 
   const postsToday = await countBeaglePostsToday();
   const overCap = postsToday >= DAILY_POST_CAP;
+
+  // 頻度抑制: 直近10分以内に投稿済みなら、新しい言及への返信以外は控える
+  const agoMin = Math.round((await lastBeaglePostAgoMs()) / 60000);
+  let guidance: string | undefined;
+  if (agoMin < 10) {
+    guidance =
+      `直近${Math.max(agoMin, 1)}分以内に投稿済み。新しいメンションへの返信だけを優先し、` +
+      `追加のニュース投稿・孤立/ホットスレッドへの新規コメントは行わない。` +
+      `next_activity_at は20〜40分先に控えめに設定する。`;
+  }
 
   let decision: BeagleDecision;
   if (overCap) {
@@ -50,14 +67,20 @@ export async function runBeagleTick(opts: {
       note: `本日の投稿上限(${DAILY_POST_CAP})到達`,
     };
   } else {
-    decision = await decide({ agentMd, memoryMd, signal, news, recent, now });
+    decision = await decide({ agentMd, memoryMd, signal, news, recent, now, guidance });
   }
 
   const next = normalizeNextActivityAt(decision.next_activity_at);
 
   // 実行（dry なら投稿しない）
   const execute = !opts.dry;
-  const { postedIds } = await applyActions(decision, !execute);
+  const { postedIds, repliedTo } = await applyActions(decision, !execute, respondedSet);
+
+  // 返信した投稿（とそのルート）を記録 → 次回から同一投稿/スレッドへの再返信を防止
+  if (execute && repliedTo.length > 0) {
+    const roots = await Promise.all(repliedTo.map(resolveRoot));
+    await markResponded([...repliedTo, ...roots]);
+  }
 
   // 学習（dry ならメモリ書き込みはしない）
   let memoryAfter = memoryBefore;

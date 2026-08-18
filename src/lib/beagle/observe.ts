@@ -3,8 +3,9 @@ import { pool } from "../db";
 import { SYSTEM_EMAIL } from "./store";
 import type { BeagleTimelineSignal } from "./types";
 
-/** 賑わい・孤立ポスト・ホットスレッド・ビーグルへの言及を取得。 */
-export async function buildTimelineSignal(): Promise<BeagleTimelineSignal> {
+/** 賑わい・孤立ポスト・ホットスレッド・ビーグルへの言及を取得。
+ *  responded: ビーグルが既に返信/反応した投稿ID（重複返信防止）。 */
+export async function buildTimelineSignal(responded: Set<number>): Promise<BeagleTimelineSignal> {
   // 直近60分の投稿数
   const act = await pool.query(
     `SELECT COUNT(*)::int AS n FROM posts WHERE created_at >= now() - interval '60 minutes'`
@@ -67,17 +68,17 @@ export async function buildTimelineSignal(): Promise<BeagleTimelineSignal> {
     activityLastHour,
     activityAvgHour,
     trajectory,
-    orphanPosts: (orphan.rows as { id: number; author: string; text: string }[]).map((r) => ({
-      id: r.id,
-      author: r.author,
-      text: r.text,
-    })),
-    hotThreads: (hot.rows as { id: number; author: string; text: string; cc: number }[]).map(
-      (r) => ({ id: r.id, author: r.author, text: r.text, commentCount: r.cc })
-    ),
-    mentions: (men.rows as { id: number; parent_id: number | null; author: string; text: string }[]).map(
-      (r) => ({ id: r.id, parentId: r.parent_id, author: r.author, text: r.text })
-    ),
+    // 既に反応済みの投稿/スレッドは除外（重複返信防止）
+    orphanPosts: (orphan.rows as { id: number; author: string; text: string }[])
+      .filter((r) => !responded.has(r.id))
+      .map((r) => ({ id: r.id, author: r.author, text: r.text })),
+    hotThreads: (hot.rows as { id: number; author: string; text: string; cc: number }[])
+      .filter((r) => !responded.has(r.id))
+      .map((r) => ({ id: r.id, author: r.author, text: r.text, commentCount: r.cc })),
+    // 言及は「既に返信済みの投稿」だけ除外（新しい言及には必ず対応）
+    mentions: (men.rows as { id: number; parent_id: number | null; author: string; text: string }[])
+      .filter((r) => !responded.has(r.id))
+      .map((r) => ({ id: r.id, parentId: r.parent_id, author: r.author, text: r.text })),
   };
 }
 

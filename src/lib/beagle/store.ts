@@ -7,12 +7,18 @@ export const SYSTEM_NAME = "ビーグル";
 
 function rowToState(r: any): BeagleState {
   const posted: string[] = Array.isArray(r.posted_news) ? r.posted_news : [];
+  const responded: number[] = Array.isArray(r.responded_posts)
+    ? (r.responded_posts as unknown[])
+        .map((n) => Number(n))
+        .filter((n) => !isNaN(n))
+    : [];
   return {
     lastTickAt: r.last_tick_at ? new Date(r.last_tick_at).toISOString() : null,
     nextActivityAt: r.next_activity_at ? new Date(r.next_activity_at).toISOString() : null,
     enabled: !!r.enabled,
     memoryBytes: Number(r.memory_bytes) || 0,
     postedNews: posted,
+    respondedPosts: responded,
   };
 }
 
@@ -40,8 +46,32 @@ export async function updateState(
   if (typeof patch.enabled === "boolean") add("enabled", patch.enabled);
   if (typeof patch.memoryBytes === "number") add("memory_bytes", patch.memoryBytes);
   if (patch.postedNews) add("posted_news", JSON.stringify(patch.postedNews));
+  if (patch.respondedPosts) add("responded_posts", JSON.stringify(patch.respondedPosts));
   if (sets.length === 0) return;
   await pool.query(`UPDATE beagle_state SET ${sets.join(", ")} WHERE id = 1`, vals);
+}
+
+/** 既に返信/反応した投稿IDを記録（重複返信防止用・最新200件を保持）。 */
+export async function markResponded(ids: number[]): Promise<void> {
+  const uniq = [...new Set(ids.map(Number).filter((n) => !isNaN(n) && n > 0))];
+  if (uniq.length === 0) return;
+  const state = await getState();
+  const merged = [...new Set([...state.respondedPosts, ...uniq])].slice(-200);
+  await updateState({ respondedPosts: merged });
+}
+
+/** 返信先 postId のルート投稿IDを解決（自分の投稿への再反応防止で使う）。 */
+export async function resolveRoot(postId: number): Promise<number> {
+  let cur = postId;
+  const seen = new Set<number>();
+  let guard = 0;
+  while (guard++ < 20 && !seen.has(cur)) {
+    seen.add(cur);
+    const res = await pool.query(`SELECT parent_id FROM posts WHERE id = $1`, [cur]);
+    if (res.rows.length === 0 || res.rows[0].parent_id == null) return cur;
+    cur = (res.rows[0].parent_id as number) ?? cur;
+  }
+  return cur;
 }
 
 /** ログに1行追記。 */
@@ -85,6 +115,17 @@ export async function countBeaglePostsToday(): Promise<number> {
     [SYSTEM_EMAIL]
   );
   return (res.rows[0] as { n: number }).n ?? 0;
+}
+
+/** ビーグルが最後に投稿（root/reply）してから経過したミリ秒。無ければ Infinity。 */
+export async function lastBeaglePostAgoMs(): Promise<number> {
+  const res = await pool.query(
+    `SELECT MAX(created_at) AS m FROM posts WHERE author_email = $1`,
+    [SYSTEM_EMAIL]
+  );
+  const t = (res.rows[0] as { m: Date | null | undefined }).m;
+  if (!t) return Infinity;
+  return Date.now() - new Date(t).getTime();
 }
 
 /** 直近のビーグルによる投稿ID（言及の返信先などを除外判定等で使う）。 */

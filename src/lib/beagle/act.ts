@@ -5,8 +5,8 @@ import { SYSTEM_EMAIL, SYSTEM_NAME } from "./store";
 import type { BeagleAction, BeagleDecision } from "./types";
 
 const MAX_TEXT = 1500;
-const MAX_POSTS = 2;
-const MAX_REPLIES = 3;
+const MAX_POSTS = 1; // 1 tick でルート投稿は最大1本（proactive を抑制）
+const MAX_REPLIES = 4; // 1 tick で返信は最大4件（言及は優先）
 
 async function parentExists(id: number): Promise<boolean> {
   const res = await pool.query(`SELECT 1 FROM posts WHERE id = $1`, [id]);
@@ -20,15 +20,20 @@ function sanitizeText(text: string): string | null {
   return t;
 }
 
-/** 決定のアクションを検証して実行する。dry なら実行しない。 */
+/** 決定のアクションを検証して実行する。
+ *  dry: 実際には投稿しない。
+ *  responded: 既に反応済みの投稿ID（同一投稿への再返信をハードにスキップ）。
+ *  返り値 repliedTo: 実際に（または dry でなら想定して）返信した親投稿ID（記録用）。 */
 export async function applyActions(
   decision: BeagleDecision,
-  dry: boolean
-): Promise<{ postedIds: number[]; skipped: { type: string; reason: string }[] }> {
+  dry: boolean,
+  responded?: Set<number>
+): Promise<{ postedIds: number[]; skipped: { type: string; reason: string }[]; repliedTo: number[] }> {
   const postedIds: number[] = [];
   const skipped: { type: string; reason: string }[] = [];
+  const repliedTo: number[] = [];
   if (!Array.isArray(decision.actions) || decision.actions.length === 0) {
-    return { postedIds, skipped };
+    return { postedIds, skipped, repliedTo };
   }
 
   // 種別ごとのキャップ
@@ -47,6 +52,11 @@ export async function applyActions(
         skipped.push({ type: "reply", reason: `invalid parent ${a.parentId}` });
         continue;
       }
+      if (responded && responded.has(a.parentId)) {
+        skipped.push({ type: "reply", reason: `already_responded ${a.parentId}` });
+        continue;
+      }
+      repliedTo.push(a.parentId);
       if (dry) continue;
       const p = await createPost({
         authorEmail: SYSTEM_EMAIL,
@@ -65,7 +75,7 @@ export async function applyActions(
       postedIds.push(p.id);
     }
   }
-  return { postedIds, skipped };
+  return { postedIds, skipped, repliedTo };
 }
 
 /** ニュース投稿済みURLを memory 形式で返す（dedup 用に直接 call されることは少ない）。 */

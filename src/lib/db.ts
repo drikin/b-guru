@@ -232,9 +232,17 @@ export async function initSchema() {
       enabled BOOLEAN NOT NULL DEFAULT TRUE,
       memory_bytes INT NOT NULL DEFAULT 0,
       posted_news JSONB NOT NULL DEFAULT '[]'::jsonb,
-      watermarks JSONB NOT NULL DEFAULT '{}'::jsonb
+      watermarks JSONB NOT NULL DEFAULT '{}'::jsonb,
+      responded_posts JSONB NOT NULL DEFAULT '[]'::jsonb
     );
     INSERT INTO beagle_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+    -- 既存 DB に responded_posts カラムが無い場合に追加（冪等）
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='beagle_state' AND column_name='responded_posts') THEN
+        ALTER TABLE beagle_state ADD COLUMN responded_posts JSONB NOT NULL DEFAULT '[]'::jsonb;
+      END IF;
+    END $$;
 
     -- ビーグルエージェント: 監査ログ（全決定・実行を記録）
     CREATE TABLE IF NOT EXISTS beagle_log (

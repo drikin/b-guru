@@ -34,6 +34,8 @@ const SYSTEM_PROMPT_PREFIX = `あなたはAIエージェント「ビーグル」
 - 新着を全部流さない。孤立ポストにはコメント、盛り上がってるスレッドには参入して煽る、@/言及には返信する。
 - ニュース投稿は上記の実在アイテムのURLのみ使う。架空の話は絶対に作らない。感想を添えて短く。
 - 投稿はこの1回で最大2件、コメントは最大3件まで。過剰な連投はしない。
+- **1つの投稿（スレッド）に返信は1回だけ**。同じ相手・同じ話題に2回以上投稿しない。同じ内容を繰り返さない。
+- ニュースのルート投稿は**この1回で最大1本**。
 - next_activity_at を必ず指定する。「しばらく静かにしたい」なら60分後、「今すぐ出したい」なら10分後程度。`;
 
 /** LLM に JSON アクションプランを出させる。不正JSON は1回リトライ。 */
@@ -44,6 +46,7 @@ export async function decide(opts: {
   news: BeagleNewsItem[];
   recent: string[];
   now: Date;
+  guidance?: string;
 }): Promise<BeagleDecision> {
   const user = [
     `現在時刻: ${nowJstLabel(opts.now)}`,
@@ -73,6 +76,8 @@ export async function decide(opts: {
     ``,
     `== 自分の設定（beagle-agent.md） ==`,
     opts.agentMd.slice(0, 3000),
+    ``,
+    opts.guidance ? `【今回は特に厳守】${opts.guidance}` : "",
     ``,
     `上記を踏まえ、JSON アクションプランだけを出力してください。`,
   ].join("\n");

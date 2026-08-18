@@ -48,6 +48,8 @@ export interface BeagleState {
   enabled: boolean;
   memoryBytes: number;
   postedNews: string[];
+  /** ビーグルが既に返信/反応した投稿ID（重複返信防止）。 */
+  respondedPosts: number[];
 }
 
 /** runBeagleTick の結果。 */
