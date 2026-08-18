@@ -3,6 +3,7 @@ import { parseDecision } from "../beagle/decide";
 import { normalizeNextActivityAt } from "../beagle/schedule";
 import { parseRssItems } from "../beagle/sources";
 import { dedupeLearnings } from "../beagle/learn";
+import { isExplicitMention } from "../beagle/observe";
 
 describe("parseDecision", () => {
   it("parses valid JSON", () => {
@@ -130,5 +131,20 @@ describe("dedupeLearnings", () => {
       []
     );
     expect(out).toHaveLength(2);
+  });
+});
+
+describe("isExplicitMention", () => {
+  it("detects @ビーグル", () => {
+    expect(isExplicitMention("@ビーグル これどう思う？")).toBe(true);
+  });
+  it("detects @[ビーグル] bracket syntax", () => {
+    expect(isExplicitMention("@[ビーグル] こんにちは")).toBe(true);
+  });
+  it("does not flag natural-language mention", () => {
+    expect(isExplicitMention("ビーグルってすごいよね")).toBe(false);
+  });
+  it("does not flag other names", () => {
+    expect(isExplicitMention("@どりきん 見て")).toBe(false);
   });
 });

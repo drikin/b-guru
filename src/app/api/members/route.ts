@@ -25,13 +25,17 @@ export async function GET() {
 
   try {
     const members = await listMembers();
-    const data = members
-      .filter((m) => m.status === "paid" || m.status === "comped")
-      .map((m) => ({
-        email: m.email,
-        name: m.name || m.email.split("@")[0],
-        avatar: m.avatar_image || null,
-      }));
+    // ビーグル（システムアカウント）を先頭に追加 → @ビーグル で明示的にメンション可能に
+    const data = [
+      { email: "system@backspace.fm", name: "ビーグル", avatar: "/icon-192.png" },
+      ...members
+        .filter((m) => m.status === "paid" || m.status === "comped")
+        .map((m) => ({
+          email: m.email,
+          name: m.name || m.email.split("@")[0],
+          avatar: m.avatar_image || null,
+        })),
+    ];
     cache = { data, ts: Date.now() };
     return NextResponse.json({ members: data });
   } catch (e: any) {

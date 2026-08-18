@@ -37,8 +37,15 @@ export interface BeagleTimelineSignal {
   orphanPosts: { id: number; author: string; text: string }[];
   /** コメントが付いて盛り上がっている root 投稿。 */
   hotThreads: { id: number; author: string; text: string; commentCount: number }[];
-  /** ビーグルへの言及（@ビーグル / 本文に「ビーグル」/ 自分の投稿への返信）。 */
-  mentions: { id: number; parentId: number | null; author: string; text: string }[];
+  /** ビーグルへの言及（@ビーグル / 本文に「ビーグル」/ 自分の投稿への返信）。
+   *  explicit: true = 「@ビーグル」と明示的にメンションされた（最優先対応・学習対象）。 */
+  mentions: {
+    id: number;
+    parentId: number | null;
+    author: string;
+    text: string;
+    explicit: boolean;
+  }[];
 }
 
 /** beagle_state 行のスナップショット。 */

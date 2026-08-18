@@ -64,6 +64,7 @@ export async function buildTimelineSignal(responded: Set<number>): Promise<Beagl
     [SYSTEM_EMAIL]
   );
 
+  // 言及は「既に返信済みの投稿」だけ除外（新しい言及には必ず対応）
   return {
     activityLastHour,
     activityAvgHour,
@@ -75,11 +76,23 @@ export async function buildTimelineSignal(responded: Set<number>): Promise<Beagl
     hotThreads: (hot.rows as { id: number; author: string; text: string; cc: number }[])
       .filter((r) => !responded.has(r.id))
       .map((r) => ({ id: r.id, author: r.author, text: r.text, commentCount: r.cc })),
-    // 言及は「既に返信済みの投稿」だけ除外（新しい言及には必ず対応）
-    mentions: (men.rows as { id: number; parent_id: number | null; author: string; text: string }[])
+    mentions: (
+      men.rows as { id: number; parent_id: number | null; author: string; text: string }[]
+    )
       .filter((r) => !responded.has(r.id))
-      .map((r) => ({ id: r.id, parentId: r.parent_id, author: r.author, text: r.text })),
+      .map((r) => ({
+        id: r.id,
+        parentId: r.parent_id,
+        author: r.author,
+        text: r.text,
+        explicit: isExplicitMention(r.text),
+      })),
   };
+}
+
+/** 明示的 @ビーグル メンションかどうか（@ビーグル または @[ビーグル]）。 */
+export function isExplicitMention(text: string): boolean {
+  return /@\s*\[?\s*ビーグル\s*\]?/.test(text);
 }
 
 /** 直近のタイムライン本文（決定の文脈用）。root+reply を新しい順。 */

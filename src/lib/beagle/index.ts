@@ -46,6 +46,8 @@ export async function runBeagleTick(opts: {
 
   const postsToday = await countBeaglePostsToday();
   const overCap = postsToday >= DAILY_POST_CAP;
+  // 明示的 @ビーグル メンションの有無（日次cap到達時でも返信を許可する対象）
+  const hasExplicitMention = signal.mentions.some((m) => m.explicit);
 
   // 頻度抑制: 直近15分以内に投稿済みなら、新しい言及への返信以外は控える
   const agoMin = Math.round((await lastBeaglePostAgoMs()) / 60000);
@@ -56,9 +58,17 @@ export async function runBeagleTick(opts: {
       `追加のニュース投稿・孤立/ホットスレッドへの新規コメントは行わない。` +
       `次回まで控えめに間隔を空け、next_activity_at は30〜50分先に設定する。`;
   }
+  // 日次ルート投稿上限到達でも、明示的 @ビーグル には返信する（返信はカウントしない）
+  if (overCap && hasExplicitMention) {
+    guidance =
+      `本日のルート投稿上限(${DAILY_POST_CAP})に達しています。` +
+      `明示的 @ビーグル メンションへの返信のみを行い、` +
+      `ニュース投稿・孤立/ホットスレッドへの新規コメントは行わない。` +
+      `next_activity_at は30〜50分先に設定する。`;
+  }
 
   let decision: BeagleDecision;
-  if (overCap) {
+  if (overCap && !hasExplicitMention) {
     decision = {
       intent: "none",
       actions: [],
