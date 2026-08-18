@@ -7,6 +7,14 @@ import type { BeagleAction, BeagleDecision } from "./types";
 const MAX_TEXT = 1500;
 const MAX_POSTS = 1; // 1 tick でルート投稿は最大1本（proactive を抑制）
 const MAX_REPLIES = 3; // 1 tick で返信は最大3件（言及は優先）
+const MAX_REPLIES_HARD = 8; // 明示 @ビーグル 多数時も暴走させない絶対上限
+
+/** 返信予算: 明示メンション数 + 余裕を下限に（同一スレッド内の複数コメントにも必ず反応）。
+ *  暴走防止のため絶対上限でクランプ。 */
+export function replyBudget(explicitMentionCount: number): number {
+  if (explicitMentionCount <= 0) return MAX_REPLIES;
+  return Math.min(MAX_REPLIES_HARD, explicitMentionCount + 2);
+}
 
 async function parentExists(id: number): Promise<boolean> {
   const res = await pool.query(`SELECT 1 FROM posts WHERE id = $1`, [id]);
@@ -23,11 +31,13 @@ function sanitizeText(text: string): string | null {
 /** 決定のアクションを検証して実行する。
  *  dry: 実際には投稿しない。
  *  responded: 既に反応済みの投稿ID（同一投稿への再返信をハードにスキップ）。
+ *  replyLimit: この tick で実行する返信の上限（明示メンション数に応じて拡張）。
  *  返り値 repliedTo: 実際に（または dry でなら想定して）返信した親投稿ID（記録用）。 */
 export async function applyActions(
   decision: BeagleDecision,
   dry: boolean,
-  responded?: Set<number>
+  responded?: Set<number>,
+  replyLimit: number = MAX_REPLIES
 ): Promise<{ postedIds: number[]; skipped: { type: string; reason: string }[]; repliedTo: number[] }> {
   const postedIds: number[] = [];
   const skipped: { type: string; reason: string }[] = [];
@@ -38,7 +48,7 @@ export async function applyActions(
 
   // 種別ごとのキャップ
   const posts = decision.actions.filter((a) => a.type === "post").slice(0, MAX_POSTS);
-  const replies = decision.actions.filter((a) => a.type === "reply").slice(0, MAX_REPLIES);
+  const replies = decision.actions.filter((a) => a.type === "reply").slice(0, replyLimit);
   const plan: BeagleAction[] = [...posts, ...replies];
 
   for (const a of plan) {

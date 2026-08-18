@@ -4,8 +4,8 @@ import { collectNewNews } from "./sources";
 import { buildTimelineSignal, getRecentTimeline } from "./observe";
 import { normalizeNextActivityAt } from "./schedule";
 import { decide } from "./decide";
-import { applyActions, newsUrlFromText } from "./act";
-import { applyLearnings } from "./learn";
+import { applyActions, newsUrlFromText, replyBudget } from "./act";
+import { applyLearnings, extractLearningRequests } from "./learn";
 import {
   appendBeagleLog,
   countBeaglePostsToday,
@@ -82,9 +82,18 @@ export async function runBeagleTick(opts: {
 
   const next = normalizeNextActivityAt(decision.next_activity_at);
 
+  // 明示 @ビーグル メンション数に応じて返信予算を拡張（同一スレッド内の複数コメントにも必ず反応）
+  const explicitMentionCount = signal.mentions.filter((m) => m.explicit).length;
+  const budget = replyBudget(explicitMentionCount);
+
   // 実行（dry なら投稿しない）
   const execute = !opts.dry;
-  const { postedIds, repliedTo } = await applyActions(decision, !execute, respondedSet);
+  const { postedIds, repliedTo } = await applyActions(
+    decision,
+    !execute,
+    respondedSet,
+    budget
+  );
 
   // 返信した投稿（とそのルート）を記録 → 次回から同一投稿/スレッドへの再返信を防止
   if (execute && repliedTo.length > 0) {
@@ -94,9 +103,19 @@ export async function runBeagleTick(opts: {
 
   // 学習（dry ならメモリ書き込みはしない）
   let memoryAfter = memoryBefore;
-  if (execute && decision.learnings.length > 0) {
-    const l = await applyLearnings(decision.learnings);
-    memoryAfter = l.bytesAfter;
+  if (execute) {
+    // メンション本文に明示的な学習指示があれば、LLM の learnings と合算して必ず学習する
+    const explicitRequests: string[] = [];
+    for (const m of signal.mentions) {
+      for (const req of extractLearningRequests(m.text)) {
+        if (!explicitRequests.includes(req)) explicitRequests.push(req);
+      }
+    }
+    const allLearnings = [...decision.learnings, ...explicitRequests];
+    if (allLearnings.length > 0) {
+      const l = await applyLearnings(allLearnings);
+      memoryAfter = l.bytesAfter;
+    }
   }
 
   // ニュース重複防止: 実際に投稿された本文のURLを記録（live のみ）

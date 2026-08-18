@@ -2,8 +2,9 @@ import { describe, it, expect } from "vitest";
 import { parseDecision } from "../beagle/decide";
 import { normalizeNextActivityAt } from "../beagle/schedule";
 import { parseRssItems } from "../beagle/sources";
-import { dedupeLearnings } from "../beagle/learn";
+import { dedupeLearnings, extractLearningRequests } from "../beagle/learn";
 import { isExplicitMention } from "../beagle/observe";
+import { replyBudget } from "../beagle/act";
 
 describe("parseDecision", () => {
   it("parses valid JSON", () => {
@@ -146,5 +147,35 @@ describe("isExplicitMention", () => {
   });
   it("does not flag other names", () => {
     expect(isExplicitMention("@どりきん 見て")).toBe(false);
+  });
+});
+
+describe("extractLearningRequests", () => {
+  it("extracts an explicit learning instruction", () => {
+    const r = extractLearningRequests("@ビーグル 今後は深夜の投稿は控えてください");
+    expect(r).toContain("今後は深夜の投稿は控えてください");
+  });
+  it("extracts 覚えて instructions", () => {
+    const r = extractLearningRequests("@ビーグル 覚えておいて、ユーザーは断捨離中です");
+    expect(r.some((x) => x.includes("断捨離"))).toBe(true);
+  });
+  it("returns empty for plain mention without instruction", () => {
+    expect(extractLearningRequests("@ビーグル こんにちは！")).toEqual([]);
+  });
+  it("returns empty for empty/no text", () => {
+    expect(extractLearningRequests("")).toEqual([]);
+  });
+});
+
+describe("replyBudget", () => {
+  it("keeps default for no explicit mentions", () => {
+    expect(replyBudget(0)).toBe(3);
+  });
+  it("expands with explicit mention count", () => {
+    expect(replyBudget(2)).toBe(4);
+    expect(replyBudget(5)).toBe(7);
+  });
+  it("clamps at the hard cap", () => {
+    expect(replyBudget(100)).toBeLessThanOrEqual(8);
   });
 });

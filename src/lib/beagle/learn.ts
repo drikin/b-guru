@@ -22,6 +22,41 @@ function dice(a: string, b: string): number {
   return denom === 0 ? 0 : (2 * inter) / denom;
 }
 
+// 明示的な学習指示トリガー（「覚えて」「今後は〜」「次からは〜して」など）。
+const LEARN_TRIGGERS = [
+  "覚えておいて",
+  "覚えといて",
+  "覚えて",
+  "学習して",
+  "学んで",
+  "記憶して",
+  "今後は",
+  "次からは",
+  "次回からは",
+  "これからは",
+  "以後",
+  "教えておく",
+];
+
+/** メンション本文から明示的な学習指示を抽出して返す。無ければ空配列。
+ *  e.g.「@ビーグル 今後は深夜の投稿は控えて」→「今後は深夜の投稿は控えて」 */
+export function extractLearningRequests(text: string): string[] {
+  const t = (text || "").replace(/@\s*\[?\s*ビーグル\s*\]?/g, "").trim();
+  if (!t) return [];
+  const results: string[] = [];
+  // トリガーを含む文節を抽出（。/改行で区切る）
+  const sentences = t.split(/[。\n！？!?]/);
+  for (const s of sentences) {
+    const trimmed = s.trim();
+    if (trimmed.length < 4) continue;
+    if (LEARN_TRIGGERS.some((tr) => trimmed.includes(tr))) {
+      const clean = trimmed.replace(/^(ビーグル[、,\s]*|ビーグルさん[、,\s]*)/, "");
+      if (clean.length >= 4) results.push(clean);
+    }
+  }
+  return results;
+}
+
 /**
  * 学びの配列から、既存メモのバレット（existing）や配列内で相互に 55% 以上似ているものを
  * 除外した「新規の学び」だけを返す（ハードガード・純関数・テスト対象）。
