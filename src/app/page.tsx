@@ -637,10 +637,10 @@ const BGURU_READ_KEY = "bguru_read_posts_v2";
 const BGURU_UNREAD_ON_KEY = "bguru_auto_unread_v1";
 const AUTO_READ_DWELL_MS = 1000;
 
-type ReadStore = { enabled: boolean; read: Set<number> };
+type ReadStore = { enabled: boolean; read: Set<number>; dismissed: boolean };
 
 function loadReadStore(): ReadStore {
-  const fallback: ReadStore = { enabled: true, read: new Set<number>() };
+  const fallback: ReadStore = { enabled: true, read: new Set<number>(), dismissed: false };
   try {
     // Auto-unread highlight on/off (default ON, persisted).
     let enabled = true;
@@ -649,12 +649,15 @@ function loadReadStore(): ReadStore {
       if (en !== null) enabled = en === "1";
     } catch {}
     const raw = localStorage.getItem(BGURU_READ_KEY);
-    if (!raw) return { enabled, read: new Set<number>() };
+    if (!raw) return { enabled, read: new Set<number>(), dismissed: false };
     const d = JSON.parse(raw);
     const read = new Set<number>(
       Array.isArray(d.read) ? d.read.filter((n: unknown) => typeof n === "number") : []
     );
-    return { enabled, read };
+    // dismissed is intentionally NOT persisted: it is a session-only "clear the
+    // header badge" flag. On reload the badge re-evaluates from the real unread
+    // state, which is what the user expects.
+    return { enabled, read, dismissed: false };
   } catch {
     return fallback;
   }
@@ -664,7 +667,7 @@ let readStore: ReadStore = loadReadStore();
 // Server-render/pre-render snapshot: useSyncExternalStore requires a stable
 // getServerSnapshot when the component is server-rendered. The client then
 // immediately hydrates with the real localStorage-backed store.
-const readServerSnapshot: ReadStore = { enabled: true, read: new Set<number>() };
+const readServerSnapshot: ReadStore = { enabled: true, read: new Set<number>(), dismissed: false };
 const readListeners = new Set<() => void>();
 function persistReadStore() {
   try {
@@ -761,29 +764,6 @@ function countUnreadFeed(feed: FeedPost[], email: string, snap: ReadStore): numb
   return n;
 }
 
-// Mark every currently-loaded timeline post + inline reply as read (drikin:
-// tapping the beagle logo while the NEW badge is showing clears it). No-op when
-// nothing is unread, and never unmarks already-read ids.
-function markAllFeedRead(feed: FeedPost[]) {
-  if (!readStore.enabled) return;
-  let changed = false;
-  const next = new Set(readStore.read);
-  const add = (id: number) => {
-    if (id > 0 && !next.has(id)) {
-      next.add(id);
-      changed = true;
-    }
-  };
-  for (const p of feed) {
-    add(p.id);
-    for (const r of p.replies ?? []) add(r.id);
-  }
-  if (!changed) return;
-  readStore = { ...readStore, read: next };
-  persistReadStore();
-  readListeners.forEach((l) => l());
-}
-
 // ---- Pending "new" counter (drikin 2026-08) ----
 // Driven by SSE. Because live timeline refresh is disabled
 // (ENABLE_PUSH_TIMELINE_REFRESH=false), an incoming post/comment from someone
@@ -805,6 +785,12 @@ function getPendingSnap() {
 }
 function bumpPendingNew(n = 1) {
   if (!(n > 0)) return;
+  // A genuinely new post/comment re-arms the header badge after it was
+  // dismissed via the logo click.
+  if (readStore.dismissed) {
+    readStore = { ...readStore, dismissed: false };
+    readListeners.forEach((l) => l());
+  }
   pendingNew += n;
   pendingListeners.forEach((l) => l());
 }
@@ -813,10 +799,23 @@ function clearPendingNew() {
   pendingNew = 0;
   pendingListeners.forEach((l) => l());
 }
+// Clear ONLY the header NEW badge (drikin 2026-08): dismisses the unread badge
+// without marking any timeline post/comment as read, so the timeline's own
+// per-post unread markers keep working. The badge returns on the next real
+// arrival (bumpPendingNew resets dismissed). Does NOT touch readStore.read.
+function dismissBadge() {
+  clearPendingNew();
+  if (readStore.dismissed) return;
+  readStore = { ...readStore, dismissed: true };
+  persistReadStore();
+  readListeners.forEach((l) => l());
+}
 
 function FeedNewBadge({ feed, email }: { feed: FeedPost[]; email: string }) {
   const readSnap = useSyncExternalStore(subscribeRead, getReadSnapshot, () => readServerSnapshot);
   const pending = useSyncExternalStore(subscribePending, getPendingSnap, () => pendingServerSnapshot);
+  // A dismissed badge stays hidden until a genuinely new post/comment arrives.
+  if (readSnap.dismissed) return null;
   const unread = countUnreadFeed(feed, email, readSnap);
   const n = unread + pending;
   if (n <= 0) return null;
@@ -5034,10 +5033,10 @@ export default function Home() {
             <UnstyledButton
               onClick={() => {
                 setNavOpened((o) => !o);
-                // Beagle logo: tapping it while the NEW badge is showing marks
-                // all loaded posts/comments as read (clears the badge).
-                markAllFeedRead(feedPosts);
-                clearPendingNew();
+                // Beagle logo: tapping it clears ONLY the header NEW badge —
+                // it must NOT mark the whole timeline as read (that would make
+                // the timeline's per-post unread markers meaningless).
+                dismissBadge();
               }}
               aria-label="メニューを開く"
               hiddenFrom="sm"
@@ -5067,10 +5066,9 @@ export default function Home() {
           <UnstyledButton
             onClick={() => {
               goHome();
-              // Beagle logo: tapping it while the NEW badge is showing marks
-              // all loaded posts/comments as read (clears the badge).
-              markAllFeedRead(feedPosts);
-              clearPendingNew();
+              // Beagle logo: clears ONLY the header NEW badge — never marks the
+              // whole timeline as read (that kills its unread markers).
+              dismissBadge();
             }}
             aria-label="タイムラインへ戻る"
             visibleFrom="sm"
