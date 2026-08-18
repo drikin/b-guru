@@ -44,3 +44,7 @@ next-env.d.ts
 
 # ユーザーアップロード画像（ランタイムデータ・コミット対象外）
 public/uploads/
+
+# ビーグルエージェントのデータ（memory.md / beagle-agent.md 等・コミット対象外）
+data/
+.hermes/

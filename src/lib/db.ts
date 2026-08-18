@@ -223,5 +223,33 @@ export async function initSchema() {
       hits INT NOT NULL DEFAULT 0,
       generated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    -- ビーグルエージェント: 単一状態行（id=1）
+    CREATE TABLE IF NOT EXISTS beagle_state (
+      id INT PRIMARY KEY DEFAULT 1,
+      last_tick_at TIMESTAMPTZ,
+      next_activity_at TIMESTAMPTZ,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      memory_bytes INT NOT NULL DEFAULT 0,
+      posted_news JSONB NOT NULL DEFAULT '[]'::jsonb,
+      watermarks JSONB NOT NULL DEFAULT '{}'::jsonb
+    );
+    INSERT INTO beagle_state (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+    -- ビーグルエージェント: 監査ログ（全決定・実行を記録）
+    CREATE TABLE IF NOT EXISTS beagle_log (
+      id SERIAL PRIMARY KEY,
+      run_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      mode TEXT NOT NULL DEFAULT 'dry',        -- dry | live
+      intent TEXT,
+      decision JSONB,
+      actions JSONB DEFAULT '[]'::jsonb,
+      posted_ids INT[] DEFAULT '{}',
+      next_activity_at TIMESTAMPTZ,
+      error TEXT,
+      memory_bytes_before INT NOT NULL DEFAULT 0,
+      memory_bytes_after INT NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_beagle_log_run ON beagle_log(run_at);
   `);
 }
