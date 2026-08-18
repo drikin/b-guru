@@ -8,6 +8,28 @@ export const runtime = "nodejs";
 
 const NO_CACHE = { "Cache-Control": "no-store, no-cache, must-revalidate" };
 
+// ---- Caller allowlist (defense in depth) ----
+// Only nicenaito's app at bsm-contents-club.nicenaito.workers.dev may call this.
+// Browsers always send an Origin on cross-origin requests; a server-side caller
+// sends a Referer when it sets one. We require a matching Origin OR Referer, else 403.
+const ALLOWED_ORIGIN =
+  process.env.BSM_CHECK_ALLOWED_ORIGIN ??
+  "https://bsm-contents-club.nicenaito.workers.dev";
+
+function allowedCaller(req: NextRequest): boolean {
+  const origin = (req.headers.get("origin") || "").trim().toLowerCase();
+  if (origin && origin.startsWith(ALLOWED_ORIGIN.toLowerCase())) return true;
+  const referer = (req.headers.get("referer") || "").trim().toLowerCase();
+  if (referer) {
+    try {
+      return new URL(referer).origin.toLowerCase() === ALLOWED_ORIGIN.toLowerCase();
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 // ---- In-process rate limit (per source IP) ----
 // This endpoint is only called by nicenaito's app with a shared secret token.
 // Allow a modest burst to absorb the member-facing load while capping abuse.
@@ -55,6 +77,10 @@ export async function GET(req: NextRequest) {
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   if (!token || !safeEqual(token, expected)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401, headers: NO_CACHE });
+  }
+
+  if (!allowedCaller(req)) {
+    return NextResponse.json({ error: "forbidden origin" }, { status: 403, headers: NO_CACHE });
   }
 
   const ip = (req.headers.get("x-forwarded-for") || "unknown").split(",")[0].trim();
