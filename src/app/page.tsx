@@ -909,6 +909,7 @@ function PostCard({
       shadow="sm"
       ref={setUnreadRef as unknown as React.Ref<HTMLDivElement>}
       data-unread-id={post.id}
+      data-kbd-id={post.id}
       style={{
         cursor: isThreadRoot ? "default" : "pointer",
         position: "relative",
@@ -3404,6 +3405,19 @@ export default function Home() {
   const [threadReplyBoxOpen, setThreadReplyBoxOpen] = useState(false);
   // Whisper mode for the thread reply box (is_whisper => no timeline bump).
   const [threadWhisper, setThreadWhisper] = useState(false);
+
+  // X-style keyboard navigation: the post currently under keyboard focus.
+  const [kbdCursorId, setKbdCursorId] = useState<number | null>(null);
+  // Hold the latest action handlers so the singleton keydown listener never
+  // reads a stale closure (these plain fns are recreated every render).
+  const kbdRef = useRef<{
+    openThread: (id: number) => void;
+    openThreadReply: (id: number) => void;
+    closeThread: () => void;
+    like: (id: number) => void;
+    openComposer: () => void;
+    hasThread: boolean;
+  } | null>(null);
   // Inline "insert between cards" reply state (timeline group comments).
   // NOTE: the inline box's TEXT/IMAGE/UPLOAD state lives inside InlineReplyBox
   // (self-contained, like ComposerPaper) so typing there no longer re-renders
@@ -5613,6 +5627,113 @@ export default function Home() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [previewImage, navigatePreview]);
+
+  // Wire the singleton keydown handler to the current render's action closures
+  // (plain fns are recreated every render; never read a stale one).
+  kbdRef.current = {
+    openThread,
+    openThreadReply,
+    closeThread,
+    like: handleLike,
+    openComposer: () => setComposerOpen(true),
+    hasThread: !!threadPost,
+  };
+
+  // X-style keyboard navigation (like X / Twitter):
+  //   j / ↓ ... next card,  k / ↑ ... previous card (wraps)
+  //   Enter ... open the focused thread,  Esc ... close thread / clear focus
+  //   Space ... scroll the focused card into view,  r ... reply,  l ... like
+  //   c ... open the new-post composer,  G ... scroll to bottom
+  // Skipped on touch devices and while typing in an input.
+  useEffect(() => {
+    if ("ontouchstart" in window) return;
+    const isEditable = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      if (!el) return false;
+      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
+      return !!el.closest?.("input, textarea, select, [contenteditable=true]");
+    };
+    // Only cards in the center column (excludes sidebar/navbar pinned cards).
+    const mainCards = () => {
+      const main = document.querySelector<HTMLElement>('[data-cx="main"]');
+      return main
+        ? Array.from(main.querySelectorAll<HTMLElement>("[data-kbd-id]")).map((el) => Number(el.dataset.kbdId))
+        : [];
+    };
+    const setRing = (id: number | null) => {
+      document.querySelectorAll<HTMLElement>(".kbd-focus").forEach((el) => {
+        el.classList.remove("kbd-focus");
+        el.style.outline = "";
+        el.style.outlineOffset = "";
+      });
+      if (id == null) return;
+      const el = document
+        .querySelector<HTMLElement>('[data-cx="main"]')
+        ?.querySelector<HTMLElement>(`[data-kbd-id="${id}"]`);
+      if (el) {
+        el.classList.add("kbd-focus");
+        el.style.outline = "3px solid var(--mantine-color-green-6, #2f9e44)";
+        el.style.outlineOffset = "2px";
+        requestAnimationFrame(() => el.scrollIntoView({ block: "nearest" }));
+      }
+    };
+    const move = (dir: 1 | -1) => {
+      const ids = mainCards();
+      if (!ids.length) return;
+      let next: number;
+      if (kbdCursorId == null) {
+        next = dir === 1 ? ids[0] : ids[ids.length - 1];
+      } else {
+        const i = ids.indexOf(kbdCursorId);
+        next =
+          dir === 1
+            ? i < 0
+              ? ids[0]
+              : i + 1 < ids.length
+                ? ids[i + 1]
+                : ids[0]
+            : i < 0
+              ? ids[ids.length - 1]
+              : i - 1 >= 0
+                ? ids[i - 1]
+                : ids[ids.length - 1];
+      }
+      setKbdCursorId(next);
+      setRing(next);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isEditable(e.target)) return;
+      switch (e.key) {
+        case "j": case "J": case "ArrowDown": e.preventDefault(); move(1); break;
+        case "k": case "K": case "ArrowUp": e.preventDefault(); move(-1); break;
+        case "Enter":
+          if (kbdCursorId != null && kbdRef.current) kbdRef.current.openThread(kbdCursorId);
+          break;
+        case "Escape":
+          if (!kbdRef.current) break;
+          if (kbdRef.current.hasThread) kbdRef.current.closeThread();
+          else if (kbdCursorId != null) { setKbdCursorId(null); setRing(null); }
+          break;
+        case " ":
+          if (kbdCursorId != null) {
+            e.preventDefault();
+            document
+              .querySelector<HTMLElement>('[data-cx="main"]')
+              ?.querySelector<HTMLElement>(`[data-kbd-id="${kbdCursorId}"]`)
+              ?.scrollIntoView({ block: "center", behavior: "smooth" });
+          }
+          break;
+        case "r": case "R": if (kbdCursorId != null && kbdRef.current) kbdRef.current.openThreadReply(kbdCursorId); break;
+        case "l": case "L": if (kbdCursorId != null && kbdRef.current) kbdRef.current.like(kbdCursorId); break;
+        case "c": case "C": if (kbdRef.current) kbdRef.current.openComposer(); break;
+        case "G": window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }); break;
+        default: break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [kbdCursorId]);
 
   // ---------- Auth gates ----------
   if (checking) {
