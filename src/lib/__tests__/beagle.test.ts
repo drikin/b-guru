@@ -4,7 +4,7 @@ import { normalizeNextActivityAt } from "../beagle/schedule";
 import { parseRssItems } from "../beagle/sources";
 import { dedupeLearnings, extractLearningRequests } from "../beagle/learn";
 import { isExplicitMention } from "../beagle/observe";
-import { replyBudget } from "../beagle/act";
+import { replyBudget, isDuplicateNewsUrl, normalizeNewsUrl } from "../beagle/act";
 
 describe("parseDecision", () => {
   it("parses valid JSON", () => {
@@ -177,5 +177,45 @@ describe("replyBudget", () => {
   });
   it("clamps at the hard cap", () => {
     expect(replyBudget(100)).toBeLessThanOrEqual(8);
+  });
+});
+
+describe("normalizeNewsUrl", () => {
+  it("null/undefined stays null", () => {
+    expect(normalizeNewsUrl(null)).toBeNull();
+    expect(normalizeNewsUrl(undefined as unknown as string)).toBeNull();
+  });
+  it("strips query and fragment", () => {
+    expect(normalizeNewsUrl("https://a.example.com/x?utm_source=nn&utm_medium=ios#top")).toBe(
+      "https://a.example.com/x"
+    );
+  });
+  it("strips trailing punctuation and trailing slashes, lowercases", () => {
+    expect(normalizeNewsUrl("https://News.Example.COM/Article/123/。")).toBe(
+      "https://news.example.com/article/123"
+    );
+  });
+});
+
+describe("isDuplicateNewsUrl", () => {
+  it("detects the same URL despite trailing punctuation", () => {
+    const existing = ["ティーン向けChatGPT https://www.watch.impress.co.jp/docs/news/2133797.html"];
+    const cand = "ティーン向けChatGPTが始まったわん https://www.watch.impress.co.jp/docs/news/2133797.html。";
+    expect(isDuplicateNewsUrl(existing, cand)).toBe(true);
+  });
+  it("treats URLs with different UTM params as the same news", () => {
+    const existing = ["https://www.gizmodo.jp/article/gemma/?utm_source=smartnews&utm_medium=ios"];
+    const cand = "https://www.gizmodo.jp/article/gemma/";
+    expect(isDuplicateNewsUrl(existing, cand)).toBe(true);
+  });
+  it("returns false when no URL in candidate", () => {
+    expect(isDuplicateNewsUrl(["https://a.example.com/x"], "ただの感想だわん")).toBe(false);
+  });
+  it("returns false for different URLs", () => {
+    const existing = ["https://a.example.com/x"];
+    expect(isDuplicateNewsUrl(existing, "https://b.example.com/y")).toBe(false);
+  });
+  it("returns false for empty existing list", () => {
+    expect(isDuplicateNewsUrl([], "https://a.example.com/xだわん")).toBe(false);
   });
 });

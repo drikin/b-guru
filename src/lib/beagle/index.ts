@@ -109,13 +109,25 @@ export async function runBeagleTick(opts: {
     budget
   );
 
+  // ニュース重複防止: 投稿しようとしたニュースURLを applyActions 直後に即座に記録する。
+  // （後段の学習・ログが LLM 空応答等で失敗しても重複防止リストが失われず、同一ニュースの再投稿を防ぐ）
+  let postedNews = state.postedNews;
+  if (execute && postedIds.length > 0) {
+    for (const a of decision.actions) {
+      const url = newsUrlFromText(a.text);
+      if (url && !postedNews.includes(url)) {
+        postedNews = [...postedNews, url].slice(-200);
+      }
+    }
+  }
+
   // 返信した投稿（とそのルート）を記録 → 次回から同一投稿/スレッドへの再返信を防止
   if (execute && repliedTo.length > 0) {
     const roots = await Promise.all(repliedTo.map(resolveRoot));
     await markResponded([...repliedTo, ...roots]);
   }
 
-  // 学習（dry ならメモリ書き込みはしない）
+  // 学習（dry ならメモリ書き込みはしない）。LLM の空応答等で失敗しても、投稿済み状態・重複防止を破棄しない。
   let memoryAfter = memoryBefore;
   if (execute) {
     // メンション本文に明示的な学習指示があれば、LLM の learnings と合算して必ず学習する
@@ -127,22 +139,16 @@ export async function runBeagleTick(opts: {
     }
     const allLearnings = [...decision.learnings, ...explicitRequests];
     if (allLearnings.length > 0) {
-      const l = await applyLearnings(allLearnings);
-      memoryAfter = l.bytesAfter;
-    }
-  }
-
-  // ニュース重複防止: 実際に投稿された本文のURLを記録（live のみ）
-  let postedNews = state.postedNews;
-  if (execute && postedIds.length > 0) {
-    for (const a of decision.actions) {
-      const url = newsUrlFromText(a.text);
-      if (url && !postedNews.includes(url)) {
-        postedNews = [...postedNews, url].slice(-200);
+      try {
+        const l = await applyLearnings(allLearnings);
+        memoryAfter = l.bytesAfter;
+      } catch (e: any) {
+        console.error("[beagle] applyLearnings failed (memory unchanged):", e?.message);
       }
     }
   }
 
+  // state は学習失敗を食らっても必ず更新（重複防止URL・予約時刻を確実に永続化）
   await updateState({
     lastTickAtRaw: now,
     nextActivityAtRaw: next,
@@ -150,16 +156,21 @@ export async function runBeagleTick(opts: {
     postedNews,
   });
 
-  const logId = await appendBeagleLog({
-    mode: execute ? "live" : "dry",
-    intent: decision.intent,
-    decision,
-    actions: decision.actions,
-    postedIds,
-    nextActivityAt: next.toISOString(),
-    memoryBytesBefore: memoryBefore,
-    memoryBytesAfter: memoryAfter,
-  });
+  let logId: number | undefined;
+  try {
+    logId = await appendBeagleLog({
+      mode: execute ? "live" : "dry",
+      intent: decision.intent,
+      decision,
+      actions: decision.actions,
+      postedIds,
+      nextActivityAt: next.toISOString(),
+      memoryBytesBefore: memoryBefore,
+      memoryBytesAfter: memoryAfter,
+    });
+  } catch (e: any) {
+    console.error("[beagle] appendBeagleLog failed:", e?.message);
+  }
 
   return { mode: execute ? "live" : "dry", decision, postedIds, logId };
 }

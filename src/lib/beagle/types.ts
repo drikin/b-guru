@@ -77,6 +77,6 @@ export interface BeagleTickResult {
   mode: "dry" | "live";
   decision: BeagleDecision | null;
   postedIds: number[];
-  logId: number;
+  logId: number | undefined;
   disabled?: boolean;
 }

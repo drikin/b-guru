@@ -118,6 +118,11 @@ export async function applyActions(
         [a.email]
       );
     } else {
+      // ニュース重複ハードガード: 同じニュースURLを既にビーグルがルート投稿済みなら再投稿しない
+      if (await newsAlreadyPosted(text)) {
+        skipped.push({ type: "post", reason: "news_duplicate_url" });
+        continue;
+      }
       if (dry) continue;
       const p = await createPost({
         authorEmail: SYSTEM_EMAIL,
@@ -134,4 +139,41 @@ export async function applyActions(
 export function newsUrlFromText(text: string): string | null {
   const m = text.match(/https?:\/\/[^\s)\]"'<>]+/);
   return m ? m[0] : null;
+}
+
+/** URL の正規化: 末尾の句読点を除き、クエリ(utm 等)・フラグメントを落として比較用に整形（純関数・テスト対象）。 */
+export function normalizeNewsUrl(url: string | null): string | null {
+  if (!url) return null;
+  const trimmed = url.trim().replace(/[.,。、！!?？)）」']*$/, "");
+  const cut = trimmed.search(/[?#]/);
+  const clean = cut >= 0 ? trimmed.slice(0, cut) : trimmed;
+  const noSlash = clean.replace(/\/+$/, "");
+  return noSlash ? noSlash.toLowerCase() : null;
+}
+
+/** 既存の投稿本文配列の中に、候補本文と同一ニュースURLを持つものが1つでもあるか（純関数・テスト対象）。
+ *  同じニュースネタの二重投稿を判定するのに使う。URL が無い本文は常に false（対象外）。 */
+export function isDuplicateNewsUrl(
+  existingTexts: string[],
+  candidateText: string
+): boolean {
+  const cand = normalizeNewsUrl(newsUrlFromText(candidateText));
+  if (!cand) return false;
+  return existingTexts.some((t) => {
+    const e = normalizeNewsUrl(newsUrlFromText(t));
+    return !!e && e === cand;
+  });
+}
+
+/** ビーグルが既に同じニュースURLをルート投稿済みかDBで確認（ハードdedup・状態から独立した確実な保証）。 */
+async function newsAlreadyPosted(text: string): Promise<boolean> {
+  const url = normalizeNewsUrl(newsUrlFromText(text));
+  if (!url) return false;
+  const res = await pool.query(
+    `SELECT text FROM posts
+       WHERE author_email = $1 AND parent_id IS NULL
+       ORDER BY id DESC LIMIT 500`,
+    [SYSTEM_EMAIL]
+  );
+  return isDuplicateNewsUrl(res.rows.map((r) => r.text as string), text);
 }
