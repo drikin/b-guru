@@ -230,6 +230,17 @@ function highlightMentions(text: string, members: MentionMember[]): string {
     });
 }
 
+/** Convert `#/user/<email>` (bare or prefixed with the site origin) into a
+ *  clickable markdown link so it opens the profile timeline. Without this,
+ *  marked GFM turns only the `@gmail.com` part into a `mailto:` link and
+ *  leaves the `#/user/` prefix as plain text (the intro link "not working"). */
+function linkifyUserLinks(text: string): string {
+  return String(text || "").replace(
+    /(?:https?:\/\/bsm\.backspace\.fm)?\/?#\/user\/([^\s<)\]，。、]+)/g,
+    (_m, email) => "[#/user/" + email + "](#/user/" + email + ")"
+  );
+}
+
 /** Normalize a member/mention name for matching: lower-case and strip all
  *  whitespace (half + full-width) so `@柳家`, `@柳家三之助` and `@[柳家 三之助]`
  *  all resolve to the same member. */
@@ -1006,9 +1017,11 @@ function PostCard({
               __html: highlightSearchTerm(
                 mdToHtml(
                   highlightMentions(
-                    needsClamp && !expanded
-                      ? post.text.slice(0, CLAMP_THRESHOLD)
-                      : post.text,
+                    linkifyUserLinks(
+                      needsClamp && !expanded
+                        ? post.text.slice(0, CLAMP_THRESHOLD)
+                        : post.text
+                    ),
                     mentionMembers ?? []
                   )
                 ),
@@ -2714,6 +2727,26 @@ function ComposerPaper({
   const charCount = text.trim().length; // matches the AI校正 enable condition (>500)
   const fileRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLInputElement>(null);
+  // Markdown auto-preview is DEBOUNCED: re-rendering the whole doc through
+  // marked+sanitize on every keystroke heavy-handedly chokes on long text
+  // (freezes / OS-kills the tab on mobile). Render only after ~250ms of idle,
+  // which keeps long-input typing smooth while still auto-showing the preview.
+  const [previewHtml, setPreviewHtml] = useState<string>("");
+  const mentionMembersRef = useRef(mentionMembers);
+  mentionMembersRef.current = mentionMembers;
+  useEffect(() => {
+    const want = isMarkdown && !previewHidden && text.trim().length > 0;
+    if (!want) {
+      setPreviewHtml("");
+      return;
+    }
+    const t = setTimeout(() => {
+      setPreviewHtml(
+        mdToHtml(highlightMentions(linkifyUserLinks(text), mentionMembersRef.current ?? []))
+      );
+    }, 250);
+    return () => clearTimeout(t);
+  }, [text, isMarkdown, previewHidden]);
 
   const onPick = (files: FileList | null) =>
     uploadImages(files, images, setImages, setUploading, (s) => setError(s));
@@ -2833,7 +2866,7 @@ function ComposerPaper({
             </Text>
           )}
         </Group>
-        {showPreview && (
+        {showPreview && previewHtml && (
           <Box mb="sm" style={{ borderRadius: 8, background: "var(--bg-light, rgba(127,127,127,0.06))", padding: "0.6em 0.9em" }}>
             <Group justify="space-between" mb={4}>
               <Text size="xs" c="dimmed" style={{ fontWeight: 600 }}>
@@ -2855,7 +2888,9 @@ function ComposerPaper({
             </Group>
             <div
               className="post-body"
-              dangerouslySetInnerHTML={{ __html: mdToHtml(highlightMentions(text, mentionMembers ?? [])) }}
+              dangerouslySetInnerHTML={{
+                __html: previewHtml,
+              }}
             />
           </Box>
         )}
@@ -7727,25 +7762,28 @@ export default function Home() {
           <TextInput
             label="ラベル"
             value={linkModal.label}
-            onChange={(e) =>
-              setLinkModal((m) => ({ ...m, label: e.currentTarget.value }))
-            }
+            onChange={(e) => {
+              const v = e.currentTarget.value;
+              setLinkModal((m) => ({ ...m, label: v }));
+            }}
             placeholder="例: ネタ帳"
           />
           <TextInput
             label="URL"
             value={linkModal.href}
-            onChange={(e) =>
-              setLinkModal((m) => ({ ...m, href: e.currentTarget.value }))
-            }
+            onChange={(e) => {
+              const v = e.currentTarget.value;
+              setLinkModal((m) => ({ ...m, href: v }));
+            }}
             placeholder="https://..."
           />
           <TextInput
             label="アイコン（絵文字）"
             value={linkModal.icon}
-            onChange={(e) =>
-              setLinkModal((m) => ({ ...m, icon: e.currentTarget.value }))
-            }
+            onChange={(e) => {
+              const v = e.currentTarget.value;
+              setLinkModal((m) => ({ ...m, icon: v }));
+            }}
             placeholder="例: 🔖"
           />
           {linkError && (

@@ -2,6 +2,7 @@
 import { createPost } from "../posts";
 import { pool } from "../db";
 import { SYSTEM_EMAIL, SYSTEM_NAME } from "./store";
+import { PROFILE_INTRO_GRACE } from "./types";
 import type { BeagleAction, BeagleDecision } from "./types";
 
 const MAX_TEXT = 1500;
@@ -78,14 +79,17 @@ export async function applyActions(
       });
       postedIds.push(p.id);
     } else if (a.type === "introduce") {
-      // 紹介対象が今も未紹介（更新が最新）のときだけ導入する
+      // 紹介対象が今も未紹介（更新が最新・かつグレース期間経過済み）のときだけ導入
       const awaiting = await pool.query(
         `SELECT 1 FROM user_profiles u
           WHERE u.email = $1
             AND u.updated_at > now() - interval '30 days'
             AND ( NOT EXISTS (SELECT 1 FROM beagle_profile_intros b WHERE b.email = u.email)
-                  OR u.updated_at > (SELECT MAX(b.introduced_at)
-                                      FROM beagle_profile_intros b WHERE b.email = u.email) )`,
+                  OR ( u.updated_at > (SELECT MAX(b.introduced_at)
+                                        FROM beagle_profile_intros b WHERE b.email = u.email)
+                       AND (SELECT MAX(b.introduced_at)
+                             FROM beagle_profile_intros b WHERE b.email = u.email)
+                           < now() - interval '${PROFILE_INTRO_GRACE}' ) )`,
         [a.email]
       );
       if (awaiting.rows.length === 0) {

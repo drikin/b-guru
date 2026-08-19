@@ -1,6 +1,7 @@
 /* ビーグルエージェント: タイムライン観測（空気を読むための信号） */
 import { pool } from "../db";
 import { SYSTEM_EMAIL } from "./store";
+import { PROFILE_INTRO_GRACE } from "./types";
 import type { BeagleTimelineSignal } from "./types";
 
 /** 賑わい・孤立ポスト・ホットスレッド・ビーグルへの言及を取得。
@@ -117,9 +118,16 @@ export async function getAwaitingProfileUpdates(limit = 5): Promise<
             u.bio, u.header_image, u.updated_at
        FROM user_profiles u
       WHERE u.updated_at > now() - interval '30 days'
-        AND ( NOT EXISTS (SELECT 1 FROM beagle_profile_intros b WHERE b.email = u.email)
-              OR u.updated_at > (SELECT MAX(b.introduced_at)
-                                  FROM beagle_profile_intros b WHERE b.email = u.email) )
+        AND (
+          NOT EXISTS (SELECT 1 FROM beagle_profile_intros b WHERE b.email = u.email)
+          OR (
+            u.updated_at > (SELECT MAX(b.introduced_at)
+                             FROM beagle_profile_intros b WHERE b.email = u.email)
+            AND (SELECT MAX(b.introduced_at)
+                  FROM beagle_profile_intros b WHERE b.email = u.email)
+                < now() - interval '${PROFILE_INTRO_GRACE}'
+          )
+        )
       ORDER BY u.updated_at DESC
       LIMIT $1`,
     [limit]

@@ -6,6 +6,10 @@ export type BeagleAction =
   | { type: "reply"; parentId: number; text: string }
   | { type: "introduce"; email: string; text: string };
 
+/** プロフィール更新の紹介におけるグレース期間。
+ *  同一ユーザーはこの期間内に編集を繰り返しても再紹介しない（紹介の連投防止）。 */
+export const PROFILE_INTRO_GRACE = "24 hours";
+
 export interface BeagleDecision {
   intent: "none" | "post" | "reply" | "post_and_reply";
   actions: BeagleAction[];
