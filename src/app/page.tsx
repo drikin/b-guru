@@ -5653,18 +5653,34 @@ export default function Home() {
       if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
       return !!el.closest?.("input, textarea, select, [contenteditable=true]");
     };
-    // Only cards in the center column (excludes sidebar/navbar pinned cards).
+    // Only cards in the center column (excludes sidebar/navbar pinned cards),
+    // and only ones that are actually painted. The painted check skips both
+    // display:none cards and replies sitting inside a CLOSED Mantine <Collapse>
+    // (height:0 + overflow:hidden) — otherwise the focus ring lands on a hidden
+    // card and visually "disappears".
+    const isVisibleCard = (el: HTMLElement) => {
+      if (el.offsetParent === null) return false; // display:none somewhere up the chain
+      let n: HTMLElement | null = el;
+      while (n && n !== document.body) {
+        const cs = getComputedStyle(n);
+        if (/hidden|clip|auto|scroll/.test(cs.overflow) && n.clientHeight === 0) return false;
+        n = n.parentElement;
+      }
+      return true;
+    };
     const mainCards = () => {
       const main = document.querySelector<HTMLElement>('[data-cx="main"]');
-      return main
-        ? Array.from(main.querySelectorAll<HTMLElement>("[data-kbd-id]")).map((el) => Number(el.dataset.kbdId))
-        : [];
+      if (!main) return [];
+      return Array.from(main.querySelectorAll<HTMLElement>("[data-kbd-id]"))
+        .filter(isVisibleCard)
+        .map((el) => Number(el.dataset.kbdId));
     };
     const setRing = (id: number | null) => {
       document.querySelectorAll<HTMLElement>(".kbd-focus").forEach((el) => {
         el.classList.remove("kbd-focus");
         el.style.outline = "";
         el.style.outlineOffset = "";
+        el.style.scrollMarginTop = "";
       });
       if (id == null) return;
       const el = document
@@ -5674,6 +5690,9 @@ export default function Home() {
         el.classList.add("kbd-focus");
         el.style.outline = "3px solid var(--mantine-color-green-6, #2f9e44)";
         el.style.outlineOffset = "2px";
+        // A fixed 56px header overlays the top of the scroll area; offset the
+        // focus target so the card lands just below it, not under it.
+        el.style.scrollMarginTop = "60px";
         requestAnimationFrame(() => el.scrollIntoView({ block: "start" }));
       }
     };
