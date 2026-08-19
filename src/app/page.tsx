@@ -5743,10 +5743,42 @@ export default function Home() {
               ?.scrollIntoView({ block: "center", behavior: "smooth" });
           }
           break;
-        case "r": case "R": if (kbdCursorId != null && kbdRef.current) kbdRef.current.openThreadReply(kbdCursorId); break;
+        case "r": if (kbdCursorId != null && kbdRef.current) kbdRef.current.openThreadReply(kbdCursorId); break;
+        case "R": window.location.reload(); break; // Shift+r = hard reload
         case "l": case "L": if (kbdCursorId != null && kbdRef.current) kbdRef.current.like(kbdCursorId); break;
         case "c": case "C": if (kbdRef.current) kbdRef.current.openComposer(); break;
         case "G": window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }); break;
+        // T = return to the very top of the timeline (and clear keyboard focus)
+        case "t": case "T":
+          setKbdCursorId(null);
+          setRing(null);
+          window.scrollTo({ top: 0, behavior: "smooth" });
+          break;
+        // E = expand any comment sections that are currently folded (collapsed).
+        // A folded Mantine <Collapse> is an unstyled DIV with inline
+        // opacity:0 (+ display:none) that still holds [data-kbd-id] cards.
+        case "e": case "E": {
+          const main = document.querySelector<HTMLElement>('[data-cx="main"]');
+          if (!main) break;
+          const toggles = Array.from(main.querySelectorAll<HTMLElement>("*")).filter(
+            (el) => el.children.length === 0 && /件のコメントを表示/.test(el.textContent || "")
+          );
+          const folds = Array.from(main.querySelectorAll<HTMLElement>("div")).filter(
+            (el) => el.style.opacity === "0" && el.querySelector("[data-kbd-id]")
+          );
+          const seen = new Set<HTMLElement>();
+          for (const fold of folds) {
+            if (seen.has(fold)) continue;
+            seen.add(fold);
+            // Toggle = the last "件のコメントを表示" element that precedes this fold.
+            let toggle: HTMLElement | null = null;
+            for (const t of toggles) {
+              if (t.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING) toggle = t;
+            }
+            if (toggle) toggle.click();
+          }
+          break;
+        }
         default: break;
       }
     };
