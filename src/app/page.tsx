@@ -5704,18 +5704,15 @@ export default function Home() {
         next = dir === 1 ? ids[0] : ids[ids.length - 1];
       } else {
         const i = ids.indexOf(kbdCursorId);
-        next =
-          dir === 1
-            ? i < 0
-              ? ids[0]
-              : i + 1 < ids.length
-                ? ids[i + 1]
-                : ids[0]
-            : i < 0
-              ? ids[ids.length - 1]
-              : i - 1 >= 0
-                ? ids[i - 1]
-                : ids[ids.length - 1];
+        if (i < 0) {
+          next = dir === 1 ? ids[0] : ids[ids.length - 1];
+        } else if (dir === 1) {
+          // Clamp at the tail (no wrap): lets pagination append fresh cards.
+          next = i + 1 < ids.length ? ids[i + 1] : ids[i];
+        } else {
+          // Clamp at the head (no wrap).
+          next = i - 1 >= 0 ? ids[i - 1] : ids[i];
+        }
       }
       setKbdCursorId(next);
       setRing(next);
