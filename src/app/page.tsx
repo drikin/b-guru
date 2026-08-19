@@ -5364,8 +5364,9 @@ export default function Home() {
     setAsideOpened(false);
     // Clear search when going home
     if (searchQuery) setSearchQuery("");
-    if (window.location.hash.startsWith("#/post/")) {
-      // Replace the hash so we don't leave the thread in history.
+    if (window.location.hash.startsWith("#/post/") || window.location.hash.startsWith("#/user/")) {
+      // Replace the hash so we don't leave the thread/profile in history (a
+      // stale #/user/ would re-open the profile on reload after going home).
       try {
         window.history.replaceState(null, "", window.location.pathname);
       } catch {
