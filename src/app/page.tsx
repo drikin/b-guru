@@ -5701,7 +5701,10 @@ export default function Home() {
       if (!ids.length) return;
       let next: number;
       if (kbdCursorId == null) {
-        next = dir === 1 ? ids[0] : ids[ids.length - 1];
+        // No cursor yet: start from the very top for EITHER direction.
+        // (Jumping to ids[last] on an initial K would land at the tail of the
+        // paginated feed, which is confusing — always begin at the head.)
+        next = ids[0];
       } else {
         const i = ids.indexOf(kbdCursorId);
         if (i < 0) {
