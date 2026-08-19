@@ -230,14 +230,15 @@ function highlightMentions(text: string, members: MentionMember[]): string {
     });
 }
 
-/** Convert `#/user/<email>` (bare or prefixed with the site origin) into a
- *  clickable markdown link so it opens the profile timeline. Without this,
- *  marked GFM turns only the `@gmail.com` part into a `mailto:` link and
- *  leaves the `#/user/` prefix as plain text (the intro link "not working"). */
+/** Convert `#/user/<userId>` (or legacy `#/user/<email>`) — bare or prefixed
+ *  with the site origin — into a clickable markdown link that opens the
+ *  profile timeline. Without this, marked GFM turns only an `@gmail.com`
+ *  part into a `mailto:` link and leaves the `#/user/` prefix as plain text
+ *  (the intro link "not working"). */
 function linkifyUserLinks(text: string): string {
   return String(text || "").replace(
     /(?:https?:\/\/bsm\.backspace\.fm)?\/?#\/user\/([^\s<)\]，。、]+)/g,
-    (_m, email) => "[#/user/" + email + "](#/user/" + email + ")"
+    (_m, token) => "[#/user/" + token + "](#/user/" + token + ")"
   );
 }
 
@@ -1867,7 +1868,6 @@ function BannerCropper({
 
 /** X-style profile timeline view: profile header card + the user's post cards. */
 function ProfileView({
-  email,
   profile,
   posts,
   loading,
@@ -1891,7 +1891,6 @@ function ProfileView({
   onPreview,
   onOpenProfile,
 }: {
-  email: string;
   profile: ProfileData | null;
   posts: FeedPost[];
   loading: boolean;
@@ -1941,7 +1940,7 @@ function ProfileView({
         <Box px="md" style={{ marginTop: -30, position: "relative" }}>
           <SafeAvatar
             src={profile?.avatar || undefined}
-            initial={profile?.name || email.split("@")[0] || "?"}
+            initial={profile?.name || "?"}
             size="lg"
           />
           {isOwn && (
@@ -1958,10 +1957,7 @@ function ProfileView({
         </Box>
         <Box px="md" pb="md" style={{ marginTop: 8 }}>
           <Text fw={700} size="lg">
-            {profile?.name || email.split("@")[0]}
-          </Text>
-          <Text size="sm" c="dimmed">
-            {email}
+            {profile?.name || "?"}
           </Text>
           {profile?.bio ? (
             <div
@@ -3535,8 +3531,8 @@ export default function Home() {
     const onHash = () => {
       const h = window.location.hash || "";
       if (h.startsWith("#/user/")) {
-        const email = decodeURIComponent(h.slice("#/user/".length));
-        if (email && email.includes("@")) openProfileRef.current(email);
+        const id = decodeURIComponent(h.slice("#/user/".length));
+        if (id) openProfileRef.current(id);
         return;
       }
       if (h.startsWith("#/post/")) {
@@ -3592,12 +3588,12 @@ export default function Home() {
         return () => window.clearTimeout(t);
       }
     }
-    // Deep-link from a profile permalink: #/user/<email>
+    // Deep-link from a profile permalink: #/user/<userId> (or legacy email)
     const profileHash = window.location.hash || "";
     if (profileHash.startsWith("#/user/")) {
-      const email = decodeURIComponent(profileHash.slice("#/user/".length));
-      if (email && email.includes("@")) {
-        const t = window.setTimeout(() => openProfileRef.current(email), 300);
+      const id = decodeURIComponent(profileHash.slice("#/user/".length));
+      if (id) {
+        const t = window.setTimeout(() => openProfileRef.current(id), 300);
         return () => window.clearTimeout(t);
       }
     }
@@ -5130,6 +5126,7 @@ export default function Home() {
           if (p.authorEmail === email) {
             setProfileData({
               email,
+              isSelf: !!auth && auth.email === email,
               name: p.authorName || email.split("@")[0],
               avatar: avatarSrc || p.authorAvatar || "",
               bio: "",
@@ -5150,7 +5147,14 @@ export default function Home() {
         ]);
         const hd = await hdr.json();
         const pd = await posts.json();
-        if (hd.profile) setProfileData(hd.profile);
+        if (hd.profile) {
+          setProfileData(hd.profile);
+          // Canonicalize the public URL to the opaque userId (never email).
+          if (hd.profile.userId) {
+            const canon = `#/user/${encodeURIComponent(hd.profile.userId)}`;
+            window.history.replaceState({ profile: hd.profile.userId }, "", canon);
+          }
+        }
         setProfilePosts(pd.posts ?? []);
         setProfileHasMore(!!pd.hasMore);
         const last = pd.posts && pd.posts.length ? pd.posts[pd.posts.length - 1] : null;
@@ -5199,7 +5203,7 @@ export default function Home() {
   const openEditProfile = useCallback(() => {
     if (!profileData) return;
     setProfileForm({
-      displayName: profileData.name === profileData.email.split("@")[0] ? "" : profileData.name,
+      displayName: profileData.displayNameSet ? profileData.name : "",
       bio: profileData.bio,
       headerImage: profileData.headerImage || "",
     });
@@ -6506,12 +6510,11 @@ export default function Home() {
               {/* Profile timeline (avatar/name click) */}
               {profileEmail ? (
                 <ProfileView
-                  email={profileEmail}
                   profile={profileData}
                   posts={profilePosts}
                   loading={profileLoading}
                   hasMore={profileHasMore}
-                  isOwn={!!auth && auth.email === profileEmail}
+                  isOwn={!!profileData?.isSelf}
                   auth={auth}
                   avatarSrc={avatarSrc}
                   mentionMembers={mentionMembers}

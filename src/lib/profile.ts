@@ -11,6 +11,7 @@
  */
 import { pool } from "./db";
 import { gravatarUrl } from "./posts";
+import { ensureUserId } from "./user";
 
 export interface ProfileLink {
   label: string;
@@ -18,7 +19,16 @@ export interface ProfileLink {
 }
 
 export interface Profile {
-  email: string;
+  /** Opaque public user_id (canonical `#/user/<userId>` URL segment). */
+  userId?: string;
+  /** Internal email. Only returned by the API for the profile's own viewer
+   *  (isSelf) — stripping it for other viewers is how we stop exposing emails. */
+  email?: string;
+  /** True when the viewer is this profile's owner (computed server-side). */
+  isSelf?: boolean;
+  /** True when display_name was explicitly set (vs the author_name/email
+   *  fallback) — used by the editor to decide whether to prefill the field. */
+  displayNameSet?: boolean;
   name: string;
   avatar: string;
   bio: string;
@@ -101,7 +111,9 @@ export async function getProfile(email: string): Promise<Profile | null> {
     .map((l) => ({ label: l.label || l.href, href: l.href }));
 
   return {
+    userId: await ensureUserId(email),
     email,
+    displayNameSet: !!r?.display_name?.trim(),
     name: r?.display_name?.trim() || a?.name || email.split("@")[0],
     avatar: gravatarUrl(email),
     bio: r?.bio?.trim() ?? "",

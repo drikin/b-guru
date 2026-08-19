@@ -273,6 +273,17 @@ export async function initSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_user_profiles_updated ON user_profiles(updated_at DESC);
 
+    -- User identity mapping: opaque public user_id <-> internal email.
+    -- Canonical public profile URL is #/user/<user_id> (no email exposure).
+    -- email is still the internal key everywhere; this table lets any email
+    -- (and any user_id) resolve to the other. One row per known member.
+    CREATE TABLE IF NOT EXISTS users (
+      user_id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
     -- ビーグルが「プロフィール更新を紹介済み」の記録（email 単位で最新紹介時刻を保持）。
     -- 紹介後に再度更新 (updated_at) が進んだら再紹介の対象になる。
     CREATE TABLE IF NOT EXISTS beagle_profile_intros (

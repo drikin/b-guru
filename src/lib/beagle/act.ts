@@ -3,6 +3,7 @@ import { createPost } from "../posts";
 import { pool } from "../db";
 import { SYSTEM_EMAIL, SYSTEM_NAME } from "./store";
 import { PROFILE_INTRO_GRACE } from "./types";
+import { ensureUserId } from "../user";
 import type { BeagleAction, BeagleDecision } from "./types";
 
 const MAX_TEXT = 1500;
@@ -97,10 +98,17 @@ export async function applyActions(
         continue;
       }
       if (dry) continue;
+      // 紹介本文は公開 URL をユーザーIDベースにする（メール非公開）。
+      // LLM が #/user/<email> で書いてきたものを、決定論的に userId へ置換。
+      const esc = a.email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const finalText = text.replace(
+        new RegExp(`#/user/${esc}`, "gi"),
+        `#/user/${await ensureUserId(a.email)}`
+      );
       const p = await createPost({
         authorEmail: SYSTEM_EMAIL,
         authorName: SYSTEM_NAME,
-        text,
+        text: finalText,
       });
       postedIds.push(p.id);
       // 紹介済みとして記録（次回から同一更新への再紹介を防ぐ）
