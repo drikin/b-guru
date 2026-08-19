@@ -64,11 +64,15 @@ export async function buildTimelineSignal(responded: Set<number>): Promise<Beagl
     [SYSTEM_EMAIL]
   );
 
+  // 未紹介のプロフィール更新（ビーグルがまだ紹介していない人）
+  const prof = await getAwaitingProfileUpdates(5);
+
   // 言及は「既に返信済みの投稿」だけ除外（新しい言及には必ず対応）
   return {
     activityLastHour,
     activityAvgHour,
     trajectory,
+    profileUpdates: prof,
     // 既に反応済みの投稿/スレッドは除外（重複返信防止）
     orphanPosts: (orphan.rows as { id: number; author: string; text: string }[])
       .filter((r) => !responded.has(r.id))
@@ -93,6 +97,46 @@ export async function buildTimelineSignal(responded: Set<number>): Promise<Beagl
 /** 明示的 @ビーグル メンションかどうか（@ビーグル または @[ビーグル]）。 */
 export function isExplicitMention(text: string): boolean {
   return /@\s*\[?\s*ビーグル\s*\]?/.test(text);
+}
+
+/** プロフィールを更新したが、ビーグルがまだ紹介していない人（紹介対象）を取得。
+ * 「最後の紹介時刻」より新しい更新 (updated_at) があれば再紹介対象。 */
+export async function getAwaitingProfileUpdates(limit = 5): Promise<
+  { email: string; name: string; bio: string; headerImage: string | null; updatedAt: string }[]
+> {
+  const res = await pool.query(
+    `SELECT u.email,
+            COALESCE(
+              u.display_name,
+              (SELECT p.author_name FROM posts p
+                WHERE p.author_email = u.email
+                  AND p.author_name IS NOT NULL AND p.author_name <> ''
+                ORDER BY p.created_at DESC LIMIT 1),
+              split_part(u.email, '@', 1)
+            ) AS name,
+            u.bio, u.header_image, u.updated_at
+       FROM user_profiles u
+      WHERE u.updated_at > now() - interval '30 days'
+        AND ( NOT EXISTS (SELECT 1 FROM beagle_profile_intros b WHERE b.email = u.email)
+              OR u.updated_at > (SELECT MAX(b.introduced_at)
+                                  FROM beagle_profile_intros b WHERE b.email = u.email) )
+      ORDER BY u.updated_at DESC
+      LIMIT $1`,
+    [limit]
+  );
+  return (res.rows as {
+    email: string;
+    name: string;
+    bio: string | null;
+    header_image: string | null;
+    updated_at: Date;
+  }[]).map((r) => ({
+    email: r.email,
+    name: r.name,
+    bio: r.bio || "",
+    headerImage: r.header_image,
+    updatedAt: new Date(r.updated_at).toISOString(),
+  }));
 }
 
 /** 直近のタイムライン本文（決定の文脈用）。root+reply を新しい順。 */

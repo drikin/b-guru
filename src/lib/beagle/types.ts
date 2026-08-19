@@ -3,7 +3,8 @@
 /** エージェントが実行可能なアクション（サーバー側で検証して実行）。 */
 export type BeagleAction =
   | { type: "post"; text: string }
-  | { type: "reply"; parentId: number; text: string };
+  | { type: "reply"; parentId: number; text: string }
+  | { type: "introduce"; email: string; text: string };
 
 export interface BeagleDecision {
   intent: "none" | "post" | "reply" | "post_and_reply";
@@ -45,6 +46,14 @@ export interface BeagleTimelineSignal {
     author: string;
     text: string;
     explicit: boolean;
+  }[];
+  /** プロフィールを更新したがビーグルがまだ紹介していない人（紹介対象）。 */
+  profileUpdates: {
+    email: string;
+    name: string;
+    bio: string;
+    headerImage: string | null;
+    updatedAt: string;
   }[];
 }
 

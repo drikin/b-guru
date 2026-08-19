@@ -24,7 +24,7 @@ const SYSTEM_PROMPT_PREFIX = `あなたはAIエージェント「ビーグル」
 
 {
   "intent": "none" | "post" | "reply" | "post_and_reply",
-  "actions": [ {"type":"post","text":"..."} | {"type":"reply","parentId":<数値>,"text":"..."} ],
+  "actions": [ {"type":"post","text":"..."} | {"type":"reply","parentId":<数値>,"text":"..."} | {"type":"introduce","email":"<メールアドレス>","text":"..."} ],
   "learnings": ["...", "..."],
   "next_activity_at": "<次に活動する時刻を JST ISO で。例 2026-08-18T18:30:00+09:00>",
   "note": "判断理由（1行）"
@@ -32,6 +32,7 @@ const SYSTEM_PROMPT_PREFIX = `あなたはAIエージェント「ビーグル」
 
 行動ルール:
 - 新着を全部流さない。孤立ポストにはコメント、@/言及には返信する。
+- **「== プロフィールを更新した人（未紹介） ==」に1人以上いる場合:** その中の**最新1人**を **introduce アクション**（type: introduce, email: その人のメール, text: 紹介文）で**必ず投稿せよ（ニュース投稿・その他の root 投稿より最優先）**。text はその人への温かい紹介文（ビーグルらしい口調「〜だわん」）、名前を呼び、自己紹介(あれば)を自然に1行添え、最後に #/user/メールアドレス を示す。**1 tick で introduce は最大1件**（一番新しい人だけ）。欄に無い = 紹介済みなので手を出さない。この紹介を日次・頻度の抑制より優先し、next_activity_at は25〜40分後に設定してよい。
 - **すでにコメントが付いて盛り上がっているスレッドには、過度に絡まない。** 自然に一言自然な形で絡む程度に留め、さらに煽ったり追撃したりしない。既に十分盛り上がっているなら何もしなくてよい。
 - ニュース投稿は上記の実在アイテムのURLのみ使う。架空の話は絶対に作らない。感想を添えて短く。
 - 投稿はこの1回で最大2件、コメントは最大2件まで。過剰な連投はしない。
@@ -79,6 +80,17 @@ export async function decide(opts: {
       .filter((m) => !m.explicit)
       .map((m) => `- [#${m.id}] ${m.author}: ${m.text}`)
       .join("\n") || "（なし）",
+    ``,
+    `== プロフィールを更新した人（未紹介） ==`,
+    opts.signal.profileUpdates.length === 0
+      ? "（なし）"
+      : opts.signal.profileUpdates
+          .map(
+            (u) =>
+              `- ${u.name} (${u.email}) 更新: ${u.updatedAt}\n` +
+              `  自己紹介: ${(u.bio || "").slice(0, 120) || "（自己紹介なし）"}`
+          )
+          .join("\n"),
     ``,
     `== 新着ニュース（実在・投稿可能） ==`,
     newsText(opts.news),

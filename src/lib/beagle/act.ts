@@ -46,8 +46,10 @@ export async function applyActions(
     return { postedIds, skipped, repliedTo };
   }
 
-  // 種別ごとのキャップ
-  const posts = decision.actions.filter((a) => a.type === "post").slice(0, MAX_POSTS);
+  // 種別ごとのキャップ（introduce は post と同枠で root 投稿扱い）
+  const posts = decision.actions
+    .filter((a) => a.type === "post" || a.type === "introduce")
+    .slice(0, MAX_POSTS);
   const replies = decision.actions.filter((a) => a.type === "reply").slice(0, replyLimit);
   const plan: BeagleAction[] = [...posts, ...replies];
 
@@ -75,6 +77,34 @@ export async function applyActions(
         parentId: a.parentId,
       });
       postedIds.push(p.id);
+    } else if (a.type === "introduce") {
+      // 紹介対象が今も未紹介（更新が最新）のときだけ導入する
+      const awaiting = await pool.query(
+        `SELECT 1 FROM user_profiles u
+          WHERE u.email = $1
+            AND u.updated_at > now() - interval '30 days'
+            AND ( NOT EXISTS (SELECT 1 FROM beagle_profile_intros b WHERE b.email = u.email)
+                  OR u.updated_at > (SELECT MAX(b.introduced_at)
+                                      FROM beagle_profile_intros b WHERE b.email = u.email) )`,
+        [a.email]
+      );
+      if (awaiting.rows.length === 0) {
+        skipped.push({ type: "introduce", reason: `not awaiting ${a.email}` });
+        continue;
+      }
+      if (dry) continue;
+      const p = await createPost({
+        authorEmail: SYSTEM_EMAIL,
+        authorName: SYSTEM_NAME,
+        text,
+      });
+      postedIds.push(p.id);
+      // 紹介済みとして記録（次回から同一更新への再紹介を防ぐ）
+      await pool.query(
+        `INSERT INTO beagle_profile_intros (email) VALUES ($1)
+         ON CONFLICT (email) DO UPDATE SET introduced_at = now()`,
+        [a.email]
+      );
     } else {
       if (dry) continue;
       const p = await createPost({

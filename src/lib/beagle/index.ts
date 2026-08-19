@@ -58,17 +58,31 @@ export async function runBeagleTick(opts: {
       `追加のニュース投稿・孤立/ホットスレッドへの新規コメントは行わない。` +
       `次回まで控えめに間隔を空け、next_activity_at は30〜50分先に設定する。`;
   }
-  // 日次ルート投稿上限到達でも、明示的 @ビーグル には返信する（返信はカウントしない）
-  if (overCap && hasExplicitMention) {
+  // 未紹介のプロフィール更新 → 紹介（introduce）は root 投稿だが、日次上限・頻度の対象外として必ず実行
+  if (signal.profileUpdates.length > 0) {
     guidance =
-      `本日のルート投稿上限(${DAILY_POST_CAP})に達しています。` +
-      `明示的 @ビーグル メンションへの返信のみを行い、` +
-      `ニュース投稿・孤立/ホットスレッドへの新規コメントは行わない。` +
-      `next_activity_at は30〜50分先に設定する。`;
+      (guidance ? guidance + "\n" : "") +
+      `【最優先】「== プロフィールを更新した人（未紹介） ==」の最新1人を introduce アクションで必ず投稿せよ。` +
+      `このプロフィール紹介だけは root 投稿上限・頻度抑制の対象外として実行してよい（それ以外の新規 root 投稿は従来どおり控える）。` +
+      `1 tick で introduce は最大1件。next_activity_at は25〜40分後に設定してよい。`;
+  }
+  // 日次ルート投稿上限到達時でも、明示的 @ビーグル 返信・プロフィール紹介は許容（ルート容量を空けておく）
+  if (overCap) {
+    const allowed: string[] = [];
+    if (hasExplicitMention) allowed.push("明示的 @ビーグル メンションへの返信");
+    if (signal.profileUpdates.length > 0) allowed.push("プロフィール更新の紹介（introduce）");
+    if (allowed.length > 0) {
+      guidance =
+        (guidance ? guidance + "\n" : "") +
+        `本日のルート投稿上限(${DAILY_POST_CAP})に達しています。` +
+        `${allowed.join("、")}のみを行い、ニュース投稿・孤立/ホットスレッドへの新規コメントは行わない。`;
+    }
   }
 
   let decision: BeagleDecision;
-  if (overCap && !hasExplicitMention) {
+  // 上限到達・明示メンションなし・紹介対象なし のときだけ完全停止（紹介漏れを防ぐため紹介対象があれば必ず decide する）
+  const hardStop = overCap && !hasExplicitMention && signal.profileUpdates.length === 0;
+  if (hardStop) {
     decision = {
       intent: "none",
       actions: [],

@@ -272,5 +272,12 @@ export async function initSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_user_profiles_updated ON user_profiles(updated_at DESC);
+
+    -- ビーグルが「プロフィール更新を紹介済み」の記録（email 単位で最新紹介時刻を保持）。
+    -- 紹介後に再度更新 (updated_at) が進んだら再紹介の対象になる。
+    CREATE TABLE IF NOT EXISTS beagle_profile_intros (
+      email TEXT PRIMARY KEY,
+      introduced_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 }
