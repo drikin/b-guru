@@ -5674,7 +5674,7 @@ export default function Home() {
         el.classList.add("kbd-focus");
         el.style.outline = "3px solid var(--mantine-color-green-6, #2f9e44)";
         el.style.outlineOffset = "2px";
-        requestAnimationFrame(() => el.scrollIntoView({ block: "nearest" }));
+        requestAnimationFrame(() => el.scrollIntoView({ block: "start" }));
       }
     };
     const move = (dir: 1 | -1) => {
