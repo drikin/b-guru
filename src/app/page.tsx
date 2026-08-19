@@ -5084,6 +5084,11 @@ export default function Home() {
 
   // Open the individual thread view (post + chronological replies)
   const openThread = (postId: number) => {
+    // Opening a thread must leave any open profile view — ProfileView takes
+    // render priority over the thread, so a stale profileEmail would hide the
+    // thread the user just tapped (reported bug, 2026-08-19). The #/user hash
+    // (if any) is left alone so the back button still returns to the profile.
+    setProfileEmail(null);
     // Seed the thread view INSTANTLY from already-loaded data (the clicked
     // root post is in feedPosts and carries its replies in `.replies`) instead
     // of blanking the screen and waiting on a network round-trip. This is what
@@ -5351,6 +5356,12 @@ export default function Home() {
     setThreadReplies([]);
     setInlineReplyFor(null);
     setNavOpened(false);
+    // Closing the profile view + right panel here is what makes the sidebar
+    // 「タイムライン」link work while the profile (or the right drawer) is open —
+    // ProfileView takes priority over the feed in render order, so leaving
+    // profileEmail set would keep showing the profile (reported bug, 2026-08-19).
+    setProfileEmail(null);
+    setAsideOpened(false);
     // Clear search when going home
     if (searchQuery) setSearchQuery("");
     if (window.location.hash.startsWith("#/post/")) {
@@ -5905,7 +5916,13 @@ export default function Home() {
           <Group gap="xs" wrap="nowrap">
             <UnstyledButton
               onClick={() => {
+                // The mobile beagle logo opens the LEFT menu. If the right
+                // panel (header burger) is open, close it too — otherwise both
+                // drawers stay open and, at the same z-index, the right one
+                // (later in DOM order) always covers the left (reported bug,
+                // 2026-08-19).
                 setNavOpened((o) => !o);
+                setAsideOpened(false);
                 // Beagle logo (mobile, menu button): clears the live "新着"
                 // badge (SSE pending). Timeline unread is untouched.
                 clearPendingNew();
@@ -5993,6 +6010,12 @@ export default function Home() {
                 label={item.label}
                 leftSection={<span>{item.icon}</span>}
                 onClick={() => {
+                  // Switching views from the sidebar must also close the
+                  // profile / right panel — ProfileView takes render priority
+                  // over the feed, so a stale profileEmail would keep covering
+                  // the newly selected view (reported bug, 2026-08-19).
+                  setProfileEmail(null);
+                  setAsideOpened(false);
                   if (item.key === "feed") {
                     // "タイムライン" should always return to the full timeline
                     // (closing any open thread) and scroll to top — matching the
@@ -6249,7 +6272,13 @@ export default function Home() {
           <UnstyledButton
             display="flex"
             style={{ flex: 1, minWidth: 0, alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left" }}
-            onClick={() => auth && openProfile(auth.email)}
+            onClick={() => {
+              // Opening the own profile from inside the left drawer must close
+              // the drawer — otherwise the menu stays open over the profile
+              // (reported bug, 2026-08-19).
+              setNavOpened(false);
+              if (auth) openProfile(auth.email);
+            }}
             aria-label="自分のプロフィールを開く"
           >
             <Avatar src={avatarSrc} alt={displayName} radius="xl" size="md" color="green">
