@@ -6070,20 +6070,28 @@ export default function Home() {
             />
           </Group>
         )}
-        {/* Account: profile + logout — moved from header to bottom of left sidebar */}
+        {/* Account: profile + logout — moved from header to bottom of left sidebar.
+            Tapping the avatar/name opens the viewer's own profile timeline. */}
         <Divider my="xs" />
         <Group wrap="nowrap" align="center" gap={10} style={{ padding: "10px 6px", borderRadius: 8 }}>
-          <Avatar src={avatarSrc} alt={displayName} radius="xl" size="md" color="green">
-            {displayName.charAt(0).toUpperCase()}
-          </Avatar>
-          <div style={{ flex: 1, minWidth: 0, lineHeight: 1.2 }}>
-            <Text size="sm" fw={600} c="inherit" truncate>
-              {auth.name || auth.email}
-            </Text>
-            <Text size="xs" c="dimmed" truncate>
-              {auth.name ? auth.email : ""}
-            </Text>
-          </div>
+          <UnstyledButton
+            display="flex"
+            style={{ flex: 1, minWidth: 0, alignItems: "center", gap: 10, cursor: "pointer", textAlign: "left" }}
+            onClick={() => auth && openProfile(auth.email)}
+            aria-label="自分のプロフィールを開く"
+          >
+            <Avatar src={avatarSrc} alt={displayName} radius="xl" size="md" color="green">
+              {displayName.charAt(0).toUpperCase()}
+            </Avatar>
+            <div style={{ flex: 1, minWidth: 0, lineHeight: 1.2 }}>
+              <Text size="sm" fw={600} c="inherit" truncate>
+                {auth.name || auth.email}
+              </Text>
+              <Text size="xs" c="dimmed" truncate>
+                {auth.name ? auth.email : ""}
+              </Text>
+            </div>
+          </UnstyledButton>
           <Tooltip label="ログアウト" withArrow>
             <ActionIcon variant="subtle" color="gray" onClick={logout} aria-label="ログアウト">
               <svg
