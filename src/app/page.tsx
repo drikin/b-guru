@@ -807,6 +807,58 @@ function clearPendingNew() {
   pendingListeners.forEach((l) => l());
 }
 
+// ---- Tab favicon badge (drikin 2026-08) ----
+// Shows a red count badge in the browser tab's favicon whenever there is
+// attention to draw: unread new posts/comments streamed in via SSE
+// (pendingNew) OR unread chat messages / @mentions (favChatUnread). It lives
+// NEXT to the on-page beagle logo NEW badge (FeedNewBadge) and the OS Web Push,
+// so the tab itself also signals arrivals while the page is open. The favicon
+// reverts to the plain beagle logo when both counters are clear.
+let favChatUnread = 0;
+function refreshTabFavicon() {
+  const total = getPendingSnap() + favChatUnread;
+  const img = document.createElement("img");
+  img.src = "/icon-192.png";
+  img.onload = () => {
+    const S = 64;
+    const c = document.createElement("canvas");
+    c.width = S;
+    c.height = S;
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(img, 0, 0, S, S);
+    if (total > 0) {
+      const label = total > 99 ? "99+" : String(total);
+      const r = 19;
+      const cx = S - r;
+      const cy = r;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = "#e03131";
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 17px -apple-system, Segoe UI, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, cx, cy + 0.5);
+    }
+    let link = document.querySelector<HTMLLinkElement>('link[rel="icon"][data-bguru-favicon="1"]');
+    if (!link) {
+      link = document.createElement("link");
+      link.rel = "icon";
+      link.type = "image/png";
+      link.sizes = "64x64";
+      link.setAttribute("data-bguru-favicon", "1");
+      document.head.appendChild(link);
+    }
+    try {
+      link.href = c.toDataURL("image/png");
+    } catch {
+      /* canvas might be tainted only if the icon were cross-origin — it isn't */
+    }
+  };
+}
+
 function FeedNewBadge() {
   const pending = useSyncExternalStore(subscribePending, getPendingSnap, () => pendingServerSnapshot);
   if (pending <= 0) return null;
@@ -3762,6 +3814,18 @@ export default function Home() {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatUnread, setChatUnread] = useState(0);
+  // Tab-favicon badge: mirror chatUnread into the module var and refresh the
+  // favicon whenever it changes (unread chat / @mentions). New-post arrivals
+  // (pendingNew) are covered by the separate subscription effect below.
+  useEffect(() => {
+    favChatUnread = chatUnread;
+    refreshTabFavicon();
+  }, [chatUnread]);
+  useEffect(() => {
+    const unsub = subscribePending(() => refreshTabFavicon());
+    refreshTabFavicon(); // initial paint (clears any stale badge)
+    return unsub;
+  }, []);
   const [chatText, setChatText] = useState("");
   // Target member for a mention-pre-filled chat open (clicking an online row).
   const [chatMention, setChatMention] = useState<string | null>(null);
