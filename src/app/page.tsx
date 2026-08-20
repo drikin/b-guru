@@ -7811,13 +7811,13 @@ export default function Home() {
           <TextInput
             label="表示名"
             value={profileForm.displayName}
-            onChange={(e) => setProfileForm((f) => ({ ...f, displayName: e.currentTarget.value }))}
+            onChange={(e) => { const v = e.currentTarget.value; setProfileForm((f) => ({ ...f, displayName: v })); }}
             placeholder="タイムラインに表示する名前（未設定なら投稿名）"
           />
           <Textarea
             label="自己紹介"
             value={profileForm.bio}
-            onChange={(e) => setProfileForm((f) => ({ ...f, bio: e.currentTarget.value }))}
+            onChange={(e) => { const v = e.currentTarget.value; setProfileForm((f) => ({ ...f, bio: v })); }}
             minRows={3}
             placeholder="自己紹介（Markdown 可）"
           />
