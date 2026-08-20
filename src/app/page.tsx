@@ -5900,7 +5900,20 @@ export default function Home() {
       padding={0}
     >
       {/* Header */}
-      <AppShell.Header data-cx="header" style={{ background: "var(--bg-surface)", borderBottom: "1px solid var(--border-default)" }}>
+      <AppShell.Header
+        data-cx="header"
+        style={{
+          background: "var(--bg-surface)",
+          borderBottom: "1px solid var(--border-default)",
+          // Keep the header (and its mobile menu buttons: beagle logo + burger)
+          // ABOVE the AppShell navbar/aside drawers (z-index 101). Otherwise an
+          // open drawer covers the header, so on narrow screens tapping the
+          // beagle logo hits the drawer instead and both menus appear to close
+          // (flaky on real devices/iOS — reported 2026-08-20). Header stays
+          // below modals (9999), chat (2900) and bark (3200).
+          zIndex: 200,
+        }}
+      >
         <div
           style={{
             height: "100%",
