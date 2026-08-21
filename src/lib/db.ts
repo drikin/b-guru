@@ -290,5 +290,37 @@ export async function initSchema() {
       email TEXT PRIMARY KEY,
       introduced_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    -- ===== 投稿アンケート（投票） =====
+    -- 投稿ごとに1つ（0..1）のアンケート。post_id が PK なので1投稿1投票を保証。
+    -- ends_at = 締切（投稿 + 選択時間 1h/6h/12h/24h、最大24時間）。必ず持つ。
+    CREATE TABLE IF NOT EXISTS post_polls (
+      post_id    INT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+      question   TEXT NOT NULL,
+      ends_at    TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_post_polls_ends ON post_polls(ends_at);
+
+    -- 選択肢（デフォルト3・最大10）。並び順で保持。
+    CREATE TABLE IF NOT EXISTS post_poll_options (
+      id         SERIAL PRIMARY KEY,
+      post_id    INT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      label      TEXT NOT NULL,
+      sort_order INT NOT NULL,
+      UNIQUE(post_id, sort_order)
+    );
+
+    -- 投票。1票 / 1投稿 / 1ユーザー = UNIQUE(post_id, email) で DB 強制。
+    -- 投票変更（締切前）は option_id / updated_at の UPDATE で行う。
+    CREATE TABLE IF NOT EXISTS post_poll_votes (
+      id         SERIAL PRIMARY KEY,
+      post_id    INT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      option_id  INT NOT NULL REFERENCES post_poll_options(id) ON DELETE CASCADE,
+      email      TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE(post_id, email)
+    );
+    CREATE INDEX IF NOT EXISTS idx_post_poll_votes_post ON post_poll_votes(post_id);
   `);
 }

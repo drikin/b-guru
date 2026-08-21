@@ -9,6 +9,8 @@
  * isolation before any deploy.
  */
 
+import type { PostPoll } from "./poll";
+
 export interface UrlPreview {
   url: string;
   title?: string;
@@ -37,6 +39,8 @@ export interface FeedPost {
   likeCount: number;
   likedByMe: boolean;
   createdAt: string;
+  /** 投稿に付いたアンケート（投票）。返信には常に null。 */
+  poll?: PostPoll | null;
 }
 
 export interface FeedGroup {

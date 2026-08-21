@@ -46,6 +46,7 @@ import {
   mergeFreshFeed,
 } from "@/lib/feed";
 import type { ChatMessage } from "@/lib/chat";
+import type { PostPoll } from "@/lib/poll";
 
 type View = "login" | "otp";
 
@@ -889,6 +890,129 @@ function FeedNewBadge() {
   );
 }
 
+/** 締切までの残り時間の表示文字列 */
+function pollTimeLeft(endsAt: string): string {
+  const diff = new Date(endsAt).getTime() - Date.now();
+  if (!(diff > 0)) return "終了";
+  const m = Math.floor(diff / 60000);
+  if (m < 60) return `あと${m}分`;
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  const d = Math.floor(h / 24);
+  if (d > 0) return `あと${d}日${h % 24}時間`;
+  return mm > 0 ? `あと${h}時間${mm}分` : `あと${h}時間`;
+}
+
+/** 投稿アンケート（投票）カード。回答/変更・統計・お題編集を表示。
+ *  - 締切前: クリックで投票（投票済みなら別選択肢へ変更＝同じ1票）
+ *  - 締切後: 全員統計のみ（disabled）
+ *  - poll.editable（投稿者 & 投稿後1時間以内）→ お題編集ボタン
+ * compact は右SBウィジェット用（残り時間表示を省く）。 */
+function PollCard({
+  poll,
+  onVote,
+  onEdit,
+  compact = false,
+}: {
+  poll: PostPoll;
+  onVote: (optionId: number) => void;
+  onEdit?: () => void;
+  compact?: boolean;
+}) {
+  const closed = poll.closed;
+  return (
+    <Box
+      mt={10}
+      style={{
+        background: "var(--bg-subtle)",
+        borderRadius: 12,
+        padding: 12,
+        border: "1px solid var(--border-light)",
+      }}
+    >
+      <Group justify="space-between" align="center" mb={4} wrap="nowrap">
+        <Text fw={700} size="sm" style={{ flex: 1, minWidth: 0 }}>
+          {poll.question}
+        </Text>
+        {onEdit && poll.editable && (
+          <ActionIcon size="sm" variant="subtle" color="gray" onClick={onEdit} aria-label="お題を編集" title="お題を編集">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+            </svg>
+          </ActionIcon>
+        )}
+      </Group>
+
+      <Stack gap={6}>
+        {poll.options.map((o) => {
+          const isMine = poll.myVote === o.id;
+          return (
+            <UnstyledButton
+              key={o.id}
+              disabled={closed}
+              onClick={() => onVote(o.id)}
+              aria-label={closed ? "投票が終了しました" : isMine ? "投票済み" : "投票する"}
+              style={{
+                position: "relative",
+                overflow: "hidden",
+                width: "100%",
+                padding: "8px 10px",
+                borderRadius: 8,
+                background: "var(--bg-surface)",
+                border: isMine ? "2px solid #94d82d" : "1px solid var(--border-default)",
+                textAlign: "left",
+                cursor: closed ? "default" : "pointer",
+                opacity: closed ? 0.75 : 1,
+              }}
+            >
+              {poll.totalVotes > 0 && (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    width: `${o.pct}%`,
+                    background: "rgba(74,222,128,0.18)",
+                    pointerEvents: "none",
+                  }}
+                />
+              )}
+              <Group justify="space-between" wrap="nowrap" style={{ position: "relative" }}>
+                <Text size="sm" fw={isMine ? 700 : 500} c="inherit">
+                  {o.label}
+                </Text>
+                <Group gap={6} wrap="nowrap">
+                  {isMine && !closed && (
+                    <Badge size="xs" color="green" variant="light">
+                      あなたの投票
+                    </Badge>
+                  )}
+                  {poll.totalVotes > 0 && (
+                    <Text size="xs" c="dimmed">
+                      {o.votes}票 ({o.pct}%)
+                    </Text>
+                  )}
+                </Group>
+              </Group>
+            </UnstyledButton>
+          );
+        })}
+      </Stack>
+
+      <Group justify="space-between" mt={8} wrap="nowrap">
+        <Text size="xs" c="dimmed">
+          {closed
+            ? "締め切りました"
+            : poll.totalVotes > 0
+              ? `${poll.totalVotes}人が投票`
+              : "まだ投票はありません"}
+          {" · "}全{poll.totalVotes}票
+        </Text>
+        {!compact && <Text size="xs" c="dimmed">{closed ? "終了" : pollTimeLeft(poll.endsAt)}</Text>}
+      </Group>
+    </Box>
+  );
+}
+
 function PostCard({
   post,
   auth,
@@ -907,6 +1031,8 @@ function PostCard({
   onPin,
   onPreview,
   onOpenProfile,
+  onVotePoll,
+  onEditPoll,
 }: {
   post: FeedPost;
   auth: { email: string };
@@ -925,6 +1051,8 @@ function PostCard({
   onDelete: (post: FeedPost) => void;
   onPreview: (src: string, group?: string[]) => void;
   onOpenProfile?: (email: string) => void;
+  onVotePoll?: (post: FeedPost, optionId: number) => void;
+  onEditPoll?: (post: FeedPost) => void;
 }) {
   const CLAMP_THRESHOLD = 500;
   const [expanded, setExpanded] = useState(false);
@@ -1943,6 +2071,8 @@ function ProfileView({
   onPin,
   onPreview,
   onOpenProfile,
+  onVotePoll,
+  onEditPoll,
 }: {
   profile: ProfileData | null;
   posts: FeedPost[];
@@ -1966,6 +2096,8 @@ function ProfileView({
   onPin: (id: number) => void;
   onPreview: (src: string, group?: string[]) => void;
   onOpenProfile?: (email: string) => void;
+  onVotePoll?: (post: FeedPost, optionId: number) => void;
+  onEditPoll?: (post: FeedPost) => void;
 }) {
   return (
     <Stack gap="md">
@@ -2117,6 +2249,8 @@ function ProfileView({
                   onPin={onPin}
                   onPreview={onPreview}
                   onOpenProfile={onOpenProfile}
+                  onVotePoll={onVotePoll}
+                  onEditPoll={onEditPoll}
                 />
                 <CollapsibleReplies
                   replies={post.replies ?? []}
@@ -2501,6 +2635,8 @@ function TimelineFeed({
   onPin,
   onPreview,
   onOpenProfile,
+  onVotePoll,
+  onEditPoll,
   skipFirstDate,
 }: {
   groups: FeedGroup[];
@@ -2541,6 +2677,8 @@ function TimelineFeed({
   onPin: (id: number) => void;
   onPreview: (src: string, group?: string[]) => void;
   onOpenProfile?: (email: string) => void;
+  onVotePoll?: (post: FeedPost, optionId: number) => void;
+  onEditPoll?: (post: FeedPost) => void;
   skipFirstDate?: boolean;
 }) {
   // When the parent renders the topmost date separator itself (above the
@@ -2621,6 +2759,8 @@ function TimelineFeed({
               onPin={onPin}
               onPreview={onPreview}
               onOpenProfile={onOpenProfile}
+              onVotePoll={onVotePoll}
+              onEditPoll={onEditPoll}
             />
             {/* Interleaved comments = replies to this card, rendered right after
              * it so the position (between which cards) is preserved.
@@ -2757,7 +2897,12 @@ function ComposerPaper({
     setErr: (v: string) => void,
     clearPrev?: () => void
   ) => Promise<void>;
-  onPublish: (text: string, images: string[], videoUrl?: string | null) => Promise<void>;
+  onPublish: (
+    text: string,
+    images: string[],
+    videoUrl?: string | null,
+    poll?: { question: string; options: string[]; durationHours: number } | null
+  ) => Promise<void>;
   onClose: () => void;
   onPreviewImage: (src: string, group?: string[]) => void;
 }) {
@@ -2768,6 +2913,12 @@ function ComposerPaper({
   const [error, setError] = useState<string | null>(null);
   const [video, setVideo] = useState<string | null>(null);
   const [videoUploading, setVideoUploading] = useState(false);
+  // アンケート（投票）ビルダー: pollDraft が非 null のときビルダーを表示
+  const [pollDraft, setPollDraft] = useState<{
+    question: string;
+    options: string[];
+    durationHours: number;
+  } | null>(null);
   const [proofreading, setProofreading] = useState(false);
   const AI_PROOFREAD_MIN = 500; // "AI校正" button enables >500 chars
   const [previewHidden, setPreviewHidden] = useState(false);
@@ -2815,7 +2966,17 @@ function ComposerPaper({
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if ((!text.trim() && images.length === 0 && !video) || posting) return;
+    const poll =
+      pollDraft &&
+      pollDraft.question.trim().length > 0 &&
+      pollDraft.options.filter((o) => o.trim().length > 0).length >= 3
+        ? {
+            question: pollDraft.question.trim(),
+            options: pollDraft.options.map((o) => o.trim()).filter((o) => o.length > 0),
+            durationHours: pollDraft.durationHours,
+          }
+        : null;
+    if ((!text.trim() && images.length === 0 && !video && !poll) || posting) return;
     const t = text;
     const imgs = images;
     const v = video;
@@ -2824,8 +2985,9 @@ function ComposerPaper({
     setText("");
     setImages([]);
     setVideo(null);
+    setPollDraft(null);
     try {
-      await onPublish(t, imgs, v);
+      await onPublish(t, imgs, v, poll);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -2991,6 +3153,91 @@ function ComposerPaper({
             </ActionIcon>
           </Box>
         )}
+        {pollDraft && (
+          <Box
+            mt="sm"
+            p="sm"
+            style={{
+              background: "var(--bg-subtle)",
+              borderRadius: 12,
+              border: "1px solid var(--border-light)",
+            }}
+          >
+            <Group justify="space-between" mb={4} wrap="nowrap">
+              <Text size="sm" fw={700}>アンケート</Text>
+              <Group gap={4} wrap="nowrap" align="center">
+                <Text size="xs" c="dimmed">締切</Text>
+                {[1, 6, 12, 24].map((h) => (
+                  <Button
+                    key={h}
+                    size="compact-xs"
+                    variant={pollDraft.durationHours === h ? "filled" : "subtle"}
+                    color="green"
+                    onClick={() => setPollDraft((p) => (p ? { ...p, durationHours: h } : p))}
+                  >
+                    {h}時間
+                  </Button>
+                ))}
+              </Group>
+            </Group>
+            <TextInput
+              size="xs"
+              placeholder="質問（例: 来月のゲストは誰？）"
+              value={pollDraft.question}
+              onChange={(e) => setPollDraft((p) => (p ? { ...p, question: e.currentTarget.value } : p))}
+              mb={6}
+              aria-label="投票の質問"
+            />
+            <Stack gap={4}>
+              {pollDraft.options.map((opt, i) => (
+                <Group key={i} gap={6} wrap="nowrap">
+                  <TextInput
+                    size="xs"
+                    flex={1}
+                    placeholder={`回答 ${i + 1}`}
+                    value={opt}
+                    onChange={(e) =>
+                      setPollDraft((p) => {
+                        if (!p) return p;
+                        const o = [...p.options];
+                        o[i] = e.currentTarget.value;
+                        return { ...p, options: o };
+                      })
+                    }
+                    aria-label={`回答 ${i + 1}`}
+                  />
+                  <ActionIcon
+                    size="sm"
+                    variant="subtle"
+                    color="gray"
+                    disabled={pollDraft.options.length <= 3}
+                    onClick={() =>
+                      setPollDraft((p) =>
+                        p ? { ...p, options: p.options.filter((_, idx) => idx !== i) } : p
+                      )
+                    }
+                    aria-label={`回答 ${i + 1} を削除`}
+                  >
+                    ✕
+                  </ActionIcon>
+                </Group>
+              ))}
+            </Stack>
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              color="green"
+              mt={6}
+              disabled={pollDraft.options.length >= 10}
+              onClick={() => setPollDraft((p) => (p ? { ...p, options: [...p.options, ""] } : p))}
+            >
+              ＋ 回答を追加（{pollDraft.options.length}/10）
+            </Button>
+            <Text size="xs" c="dimmed" mt={6}>
+              投票は1人1回・締切まで回答を変更できます。
+            </Text>
+          </Box>
+        )}
         <Group justify="space-between">
           <Group gap="xs">
             <Button
@@ -3012,6 +3259,21 @@ function ComposerPaper({
               onClick={() => videoRef.current?.click()}
             >
               🎬 動画
+            </Button>
+            <Button
+              size="xs"
+              variant={pollDraft ? "light" : "subtle"}
+              color={pollDraft ? "green" : "gray"}
+              onClick={() => {
+                setPollDraft((prev) =>
+                  prev
+                    ? null
+                    : { question: "", options: ["", "", ""], durationHours: 24 }
+                );
+              }}
+              aria-pressed={!!pollDraft}
+            >
+              {pollDraft ? "投票を外す" : "投票を追加"}
             </Button>
             <input
               ref={fileRef}
@@ -3064,7 +3326,7 @@ function ComposerPaper({
               size="sm"
               color="green"
               loading={posting}
-              disabled={(!text.trim() && images.length === 0 && !video) || uploading || videoUploading}
+              disabled={((!text.trim() && images.length === 0 && !video && !(pollDraft && pollDraft.question.trim() && pollDraft.options.filter((o) => o.trim()).length >= 3))) || uploading || videoUploading}
             >
               吠える
             </Button>
@@ -3807,6 +4069,24 @@ export default function Home() {
       .catch(() => setOnlineMembers([]));
   }, [auth]);
 
+  // ---- 投票ウィジェット（右SB） ----
+  const [pollWidget, setPollWidget] = useState<
+    { postId: number; authorName: string | null; authorAvatar: string | null; poll: PostPoll }[]
+  >([]);
+  const loadPollWidget = useCallback(() => {
+    if (!auth) {
+      setPollWidget([]);
+      return;
+    }
+    fetch("/api/poll/feed", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setPollWidget(Array.isArray(d.items) ? d.items : []))
+      .catch(() => setPollWidget([]));
+  }, [auth]);
+  useEffect(() => {
+    loadPollWidget();
+  }, [loadPollWidget]);
+
   // ---- Realtime chat (single global room) — bottom-right bubble widget ----
   // Opens a mini chat window where online members chat live over SSE. This
   // replaces the old "wave" (👋) feature: the bubble sits where the wave
@@ -4166,6 +4446,21 @@ export default function Home() {
     const onPresenceChange = () => {
       loadOnline(); // refresh the right-sidebar online panel
     };
+    // 投票（アンケート）: 他ユーザーの投票/お題編集を全クライアントへ即時反映。
+    const onPoll = (e: MessageEvent) => {
+      let d: any;
+      try {
+        d = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      if (!d || d.type !== "poll" || !d.poll || !auth) return;
+      applyPostChange(d.postId, (p) => ({ ...p, poll: d.poll }));
+      setPollWidget((prev) =>
+        prev.map((w) => (w.postId === d.postId ? { ...w, poll: d.poll } : w))
+      );
+      if (d.action === "vote" && d.poll.totalVotes <= 1) loadPollWidget();
+    };
     // Realtime chat: append created messages live; drop deleted ones. When the
     // chat window is closed and the message isn't ours, bump the unread badge.
     // When open, clear the badge and mark read.
@@ -4204,11 +4499,13 @@ export default function Home() {
     es.addEventListener("pin", onPinChange);
     es.addEventListener("presence", onPresenceChange);
     es.addEventListener("chat", onChat);
+    es.addEventListener("poll", onPoll);
     es.onopen = () => {
       loadPinned();
       loadHot();
       loadTrends();
       loadOnline();
+      loadPollWidget();
       loadChat(chatOpenRef.current); // recover chat missed during a disconnect
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) silentRefreshFeed();
     };
@@ -4220,7 +4517,7 @@ export default function Home() {
     return () => {
       es.close();
     };
-  }, [auth, silentRefreshFeed, loadPinned, loadHot, loadOnline, loadChat]);
+  }, [auth, silentRefreshFeed, loadPinned, loadHot, loadOnline, loadChat, loadPollWidget]);
 
   // Posting never auto-scrolls or auto-highlights the timeline (disabled per
   // user request, 2026-08-17): a new reply is simply added to the feed in
@@ -4870,7 +5167,12 @@ export default function Home() {
   // own local text/image state — see ComposerPaper) so typing doesn't re-render
   // the whole page. Does the optimistic insert + API round-trip + swap.
   const publishComposer = useCallback(
-    async (text: string, images: string[], videoUrl?: string | null) => {
+    async (
+      text: string,
+      images: string[],
+      videoUrl?: string | null,
+      poll?: { question: string; options: string[]; durationHours: number } | null
+    ) => {
       const tempId = Date.now();
       const tempPost: FeedPost = {
         id: tempId,
@@ -4889,6 +5191,23 @@ export default function Home() {
         lastActivityAt: new Date().toISOString(),
         pinnedAt: null,
         replies: [],
+        poll: poll
+          ? {
+              question: poll.question,
+              endsAt: new Date(Date.now() + poll.durationHours * 3600 * 1000).toISOString(),
+              closed: false,
+              editable: true,
+              totalVotes: 0,
+              voterCount: 0,
+              myVote: null,
+              options: poll.options.map((label, i) => ({
+                id: -(i + 1),
+                label,
+                votes: 0,
+                pct: 0,
+              })),
+            }
+          : null,
       };
       setFeedPosts((prev) =>
         prev.some((p) => p.id === tempId) ? prev : [tempPost, ...prev]
@@ -4899,7 +5218,7 @@ export default function Home() {
         const r = await fetch("/api/publish", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, images, videoUrl }),
+          body: JSON.stringify({ text, images, videoUrl, poll: poll ?? null }),
           signal: ac.signal,
         });
         const d = await r.json();
@@ -5631,6 +5950,83 @@ export default function Home() {
     setFeedPosts((prev) => prev.map(apply));
     setThreadPost((prev) => (prev ? apply(prev) : prev));
     setThreadReplies((prev) => prev.map(apply));
+  };
+
+  // ---- 投票（アンケート）ハンドラ ----
+  const handleVotePoll = useCallback(
+    (post: FeedPost, optionId: number) => {
+      fetch("/api/poll/vote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId: post.id, optionId }),
+      })
+        .then(async (r) => {
+          if (!r.ok) {
+            const d = await r.json().catch(() => ({}));
+            throw new Error(d.error || "投票に失敗しました");
+          }
+          return r.json();
+        })
+        .then((d) => {
+          if (d.poll) {
+            applyPostChange(post.id, (p) => ({ ...p, poll: d.poll }));
+            setPollWidget((prev) =>
+              prev.map((w) => (w.postId === post.id ? { ...w, poll: d.poll } : w))
+            );
+          }
+        })
+        .catch((e) => setActionError((e as Error).message));
+    },
+    [applyPostChange]
+  );
+
+  const [editPollPost, setEditPollPost] = useState<FeedPost | null>(null);
+  const [pollEditDraft, setPollEditDraft] = useState<{
+    question: string;
+    options: { id: number | null; label: string; votes: number }[];
+  } | null>(null);
+  const [savingPollEdit, setSavingPollEdit] = useState(false);
+
+  const handleEditPoll = useCallback((post: FeedPost) => {
+    setEditPollPost(post);
+    setPollEditDraft({
+      question: post.poll?.question ?? "",
+      options: (post.poll?.options ?? []).map((o) => ({
+        id: o.id,
+        label: o.label,
+        votes: o.votes,
+      })),
+    });
+  }, []);
+
+  const submitPollEdit = async () => {
+    if (!editPollPost || !pollEditDraft || savingPollEdit) return;
+    setSavingPollEdit(true);
+    setActionError(null);
+    try {
+      const r = await fetch(`/api/poll/${editPollPost.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question: pollEditDraft.question,
+          options: pollEditDraft.options,
+        }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "お題の編集に失敗しました");
+      if (d.poll) {
+        applyPostChange(editPollPost.id, (p) => ({ ...p, poll: d.poll }));
+        setPollWidget((prev) =>
+          prev.map((w) => (w.postId === editPollPost.id ? { ...w, poll: d.poll } : w))
+        );
+      }
+      setEditPollPost(null);
+      setPollEditDraft(null);
+    } catch (e) {
+      setActionError((e as Error).message);
+    } finally {
+      setSavingPollEdit(false);
+    }
   };
 
   const saveEdit = () => {
@@ -6412,6 +6808,35 @@ export default function Home() {
             )}
           </Paper>
 
+          {/* 投票（アンケート）ウィジェット: 締切から+1日まで表示・リアルタイム更新 */}
+          {pollWidget.length > 0 && (
+            <Paper p="sm" radius="md" withBorder shadow="xs">
+              <Group justify="space-between" align="center" mb={6} wrap="nowrap">
+                <Group gap={6} align="center" wrap="nowrap">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" color="var(--text-green)" aria-hidden="true">
+                    <line x1="12" y1="20" x2="12" y2="10" />
+                    <line x1="18" y1="20" x2="18" y2="4" />
+                    <line x1="6" y1="20" x2="6" y2="16" />
+                  </svg>
+                  <Text fw={700} size="sm">投票</Text>
+                </Group>
+              </Group>
+              <Stack gap={8}>
+                {pollWidget.map((w) => (
+                  <Box key={w.postId}>
+                    <Group gap={6} mb={2} wrap="nowrap" align="center">
+                      <SafeAvatar src={w.authorAvatar} initial={w.authorName || ""} size="xs" />
+                      <Text size="xs" fw={600} c="dimmed" truncate style={{ flex: 1, minWidth: 0 }}>
+                        {w.authorName}
+                      </Text>
+                    </Group>
+                    <PollCard compact poll={w.poll} onVote={(oid) => handleVotePoll({ id: w.postId } as FeedPost, oid)} />
+                  </Box>
+                ))}
+              </Stack>
+            </Paper>
+          )}
+
           {/* トレンド: 直近24hの投稿/コメントからAI抽出した検索キーワード（6時間ごと更新・タップで検索） */}
           <Paper p="sm" radius="md" withBorder shadow="xs">
             <Group justify="space-between" align="center" mb={6} wrap="nowrap">
@@ -6819,6 +7244,8 @@ export default function Home() {
                   onPin={handlePin}
                   onPreview={openPreview}
                   onOpenProfile={openProfile}
+                  onVotePoll={handleVotePoll}
+                  onEditPoll={handleEditPoll}
                 />
               ) : feedLoading ? (
                 <Text c="dimmed">読み込み中…</Text>
@@ -6870,6 +7297,8 @@ export default function Home() {
                           onPin={handlePin}
                           onPreview={openPreview}
                           onOpenProfile={openProfile}
+                          onVotePoll={handleVotePoll}
+                          onEditPoll={handleEditPoll}
                         />
                       )}
 
@@ -7104,6 +7533,8 @@ export default function Home() {
                   onPin={handlePin}
                   onPreview={openPreview}
                   onOpenProfile={openProfile}
+                  onVotePoll={handleVotePoll}
+                  onEditPoll={handleEditPoll}
                 />
                 {/* Infinite scroll sentinel + load-more fallback */}
                 {feedHasMore && feedPosts.length > 0 ? (
@@ -7853,6 +8284,120 @@ export default function Home() {
             削除する
           </Button>
         </Group>
+      </Modal>
+
+      {/* Poll (survey) edit modal — author only, within 1h of posting */}
+      <Modal
+        opened={!!editPollPost}
+        onClose={() => setEditPollPost(null)}
+        centered
+        withCloseButton
+        title="アンケートのお題を編集"
+      >
+        {pollEditDraft && (
+          <Stack gap="xs">
+            <Text size="xs" c="dimmed">
+              お題（質問・回答）は投稿後1時間以内のみ編集できます。投票が付いた回答は削除できません。
+            </Text>
+            <TextInput
+              size="xs"
+              label="質問"
+              value={pollEditDraft.question}
+              onChange={(e) =>
+                setPollEditDraft((p) =>
+                  p ? { ...p, question: e.currentTarget.value } : p
+                )
+              }
+              aria-label="投票の質問"
+            />
+            <Stack gap={4}>
+              {pollEditDraft.options.map((opt, i) => {
+                const hasVotes = opt.votes > 0;
+                return (
+                  <Group key={opt.id ?? i} gap={6} wrap="nowrap">
+                    <TextInput
+                      size="xs"
+                      flex={1}
+                      placeholder={`回答 ${i + 1}`}
+                      value={opt.label}
+                      onChange={(e) =>
+                        setPollEditDraft((p) => {
+                          if (!p) return p;
+                          const o = [...p.options];
+                          o[i] = { ...o[i], label: e.currentTarget.value };
+                          return { ...p, options: o };
+                        })
+                      }
+                      aria-label={`回答 ${i + 1}`}
+                    />
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      color="gray"
+                      disabled={hasVotes || pollEditDraft.options.length <= 3}
+                      title={hasVotes ? "投票が付いているため削除できません" : "回答を削除"}
+                      onClick={() =>
+                        setPollEditDraft((p) =>
+                          p
+                            ? {
+                                ...p,
+                                options: p.options.filter((_, idx) => idx !== i),
+                              }
+                            : p
+                        )
+                      }
+                    >
+                      ✕
+                    </ActionIcon>
+                  </Group>
+                );
+              })}
+            </Stack>
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              color="green"
+              disabled={pollEditDraft.options.length >= 10}
+              onClick={() =>
+                setPollEditDraft((p) =>
+                  p
+                    ? {
+                        ...p,
+                        options: [
+                          ...p.options,
+                          { id: null, label: "", votes: 0 },
+                        ],
+                      }
+                    : p
+                )
+              }
+            >
+              ＋ 回答を追加（{pollEditDraft.options.length}/10）
+            </Button>
+            {actionError && (
+              <Text size="sm" c="red">
+                {actionError}
+              </Text>
+            )}
+            <Group justify="flex-end">
+              <Button variant="default" size="xs" onClick={() => setEditPollPost(null)}>
+                キャンセル
+              </Button>
+              <Button
+                size="xs"
+                color="green"
+                loading={savingPollEdit}
+                disabled={
+                  pollEditDraft.question.trim().length === 0 ||
+                  pollEditDraft.options.filter((o) => o.label.trim()).length < 3
+                }
+                onClick={submitPollEdit}
+              >
+                保存する
+              </Button>
+            </Group>
+          </Stack>
+        )}
       </Modal>
 
       {/* Profile edit modal (own profile only) */}

@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { pool } from "./db";
 import { fetchUrlPreview, UrlPreview } from "./urlpreview";
 import { emitLive } from "./live";
+import { buildPostPoll, endsAtOf, type PostPoll } from "./poll";
 
 export interface FeedPost {
   id: number;
@@ -30,6 +31,8 @@ export interface FeedPost {
   likeCount: number;
   likedByMe: boolean;
   createdAt: string;
+  /** 投稿に付いたアンケート（投票）。 */
+  poll?: PostPoll | null;
 }
 
 export interface NewPostInput {
@@ -47,6 +50,8 @@ export interface NewPostInput {
    *  (i.e. came FROM the drinews article side). It must NOT be re-mirrored
    *  back into drinews_comments (breaks the loop). */
   sourceDrinewsCommentId?: number | null;
+  /** 任意のアンケート（投票）。ルート投稿のみ（返信では無視）。 */
+  poll?: { question: string; options: string[]; durationHours: number } | null;
 }
 
 function firstUrl(text: string): string | null {
@@ -66,6 +71,7 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
   let postId: number = 0;
   let createdAt: string = "";
   let images: string[] = [];
+  let pollOut: PostPoll | null = null;
   try {
     await client.query("BEGIN");
     const ins = await client.query(
@@ -101,6 +107,31 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
         `INSERT INTO post_images (post_id, url, sort_order) VALUES ($1, $2, $3)`,
         [postId, images[i], i]
       );
+    }
+
+    // アンケート（投票）: ルート投稿のみ。同一トランザクションで poll+選択肢を INSERT。
+    if (!input.parentId && input.poll) {
+      const endsAt = endsAtOf(createdAt, input.poll.durationHours);
+      await client.query(
+        `INSERT INTO post_polls (post_id, question, ends_at) VALUES ($1, $2, $3)`,
+        [postId, input.poll.question, endsAt]
+      );
+      const optIds: number[] = [];
+      for (let i = 0; i < input.poll.options.length; i++) {
+        const r = await client.query(
+          `INSERT INTO post_poll_options (post_id, label, sort_order) VALUES ($1, $2, $3) RETURNING id`,
+          [postId, input.poll.options[i], i]
+        );
+        optIds.push(r.rows[0].id);
+      }
+      pollOut = buildPostPoll({
+        question: input.poll.question,
+        endsAt,
+        options: input.poll.options.map((label, i) => ({ id: optIds[i], label, votes: 0 })),
+        myVote: null,
+        isAuthor: true,
+        createdAt,
+      });
     }
     await client.query("COMMIT");
   } catch (e) {
@@ -147,6 +178,7 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
     lastActivityAt: isoCreated, // New post has no replies yet → activity = creation time
     pinnedAt: null,
     replies: [],
+    poll: pollOut,
   };
 }
 
@@ -167,7 +199,25 @@ const POST_SELECT = `
     p.video_url AS video_url,
     COUNT(DISTINCT l.user_email) AS like_count,
     BOOL_OR(l.user_email = $1) AS liked_by_me,
-    (SELECT COUNT(*) FROM posts c WHERE c.parent_id = p.id) AS reply_count
+    (SELECT COUNT(*) FROM posts c WHERE c.parent_id = p.id) AS reply_count,
+    -- アンケート（投票）。あれば生データを JSON で返し、mapRow が buildPostPoll で
+    -- UI 用モデルに組み立てる。GROUP BY p.id を壊さない相関サブクエリ。
+    CASE WHEN EXISTS (SELECT 1 FROM post_polls pp WHERE pp.post_id = p.id)
+      THEN (
+        SELECT json_build_object(
+          'question',  po.question,
+          'ends_at',   to_char(po.ends_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          'created_at', to_char(p.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          'is_author', (p.author_email = $1),
+          'my_vote',   (SELECT v.option_id FROM post_poll_votes v WHERE v.post_id = p.id AND v.email = $1),
+          'options',   (SELECT COALESCE(json_agg(
+                          json_build_object('id', o.id, 'label', o.label, 'votes',
+                            (SELECT count(*) FROM post_poll_votes vv WHERE vv.option_id = o.id)
+                          ) ORDER BY o.sort_order), '[]'::json)
+                        FROM post_poll_options o WHERE o.post_id = p.id)
+        ) FROM post_polls po WHERE po.post_id = p.id
+      )
+      ELSE NULL END AS poll_json
   FROM posts p
   LEFT JOIN post_likes l ON l.post_id = p.id
 `;
@@ -189,7 +239,24 @@ function mapRow(r: any): FeedPost {
     createdAt: new Date(r.created_at).toISOString(),
     lastActivityAt: new Date(r.last_activity).toISOString(),
     pinnedAt: r.pinned_at ? new Date(r.pinned_at).toISOString() : null,
+    poll: rebuildPoll(r.poll_json),
   };
+}
+
+/** poll_json（生データ）を UI 用 PostPoll に組み立てる。無ければ null。 */
+function rebuildPoll(pj: any): PostPoll | null {
+  if (!pj) return null;
+  const opts: { id: number; label: string; votes: number }[] = Array.isArray(pj.options)
+    ? pj.options.map((o: any) => ({ id: Number(o.id), label: String(o.label), votes: Number(o.votes) || 0 }))
+    : [];
+  return buildPostPoll({
+    question: String(pj.question ?? ""),
+    endsAt: pj.ends_at,
+    createdAt: pj.created_at,
+    isAuthor: !!pj.is_author,
+    myVote: pj.my_vote == null ? null : Number(pj.my_vote),
+    options: opts,
+  });
 }
 
 /** Fetch root posts newest first (optionally filtered), each with its direct
@@ -334,6 +401,19 @@ export async function getPostThread(
     post: postRes.rows.length ? mapRow(postRes.rows[0]) : null,
     replies: replyRes.rows.map(mapRow),
   };
+}
+
+/** 投稿1件のアンケート（投票）を、閲覧者(投票者)視点の UI モデルで返す。無ければ null。 */
+export async function getPostPoll(
+  postId: number,
+  viewerEmail: string
+): Promise<PostPoll | null> {
+  const res = await pool.query(`${POST_SELECT} WHERE p.id = $2 GROUP BY p.id LIMIT 1`, [
+    viewerEmail,
+    postId,
+  ]);
+  if (res.rows.length === 0 || !res.rows[0].poll_json) return null;
+  return rebuildPoll(res.rows[0].poll_json);
 }
 
 /** ホットトピック: 直近7日間で最もコメント（ささやき含む）が付いたルート投稿の上位 limit 件。

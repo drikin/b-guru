@@ -6,6 +6,7 @@ import { getSessionEmail } from "@/lib/session";
 import { pool } from "@/lib/db";
 import { emitLive } from "@/lib/live";
 import { sendWebPush } from "@/lib/push";
+import { validatePollInput } from "@/lib/poll";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
   }
 
-  let body: { text?: string; images?: unknown; parentId?: unknown; whisper?: unknown; videoUrl?: unknown };
+  let body: { text?: string; images?: unknown; parentId?: unknown; whisper?: unknown; videoUrl?: unknown; poll?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -41,8 +42,29 @@ export async function POST(req: NextRequest) {
       ? body.videoUrl.trim()
       : null;
 
-  if (!text && rawImages.length === 0 && !videoUrl) {
-    return NextResponse.json({ error: "テキスト・画像・動画のいずれかが必要です" }, { status: 400 });
+  // アンケート（投票）: 任意。ルート投稿のみ（返信では無視され、ここで弾かない）。
+  const pollRaw = body.poll as
+    | { question?: unknown; options?: unknown; durationHours?: unknown }
+    | null
+    | undefined;
+  let poll: { question: string; options: string[]; durationHours: number } | null = null;
+  if (pollRaw != null) {
+    const q = pollRaw.question ?? "";
+    const opts = Array.isArray(pollRaw.options) ? pollRaw.options : [];
+    const dur = typeof pollRaw.durationHours === "number" ? pollRaw.durationHours : 24;
+    const err = validatePollInput(q, opts, dur);
+    if (err) {
+      return NextResponse.json({ error: err }, { status: 400 });
+    }
+    poll = {
+      question: String(q).trim(),
+      options: opts.map((o: unknown) => String(o).trim()).filter(Boolean),
+      durationHours: dur,
+    };
+  }
+
+  if (!text && rawImages.length === 0 && !videoUrl && !poll) {
+    return NextResponse.json({ error: "テキスト・画像・動画・投票のいずれかが必要です" }, { status: 400 });
   }
   if (rawImages.length > 5) {
     return NextResponse.json({ error: "画像は最大5枚までです" }, { status: 400 });
@@ -81,6 +103,7 @@ export async function POST(req: NextRequest) {
       videoUrl,
       parentId,
       isWhisper,
+      poll,
     });
 
     // If this is a reply, notify the parent post's author

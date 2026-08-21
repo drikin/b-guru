@@ -1,3 +1,4 @@
+import type { PostPoll } from "./poll";
 import { EventEmitter } from "events";
 import type { ChatMessage } from "./chat";
 
@@ -32,7 +33,8 @@ export type LiveEvent =
   | { type: "post"; postId: number; action: "create" | "update" | "delete"; authorEmail?: string }
   | { type: "pin"; postId: number; action: "toggle" }
   | { type: "presence"; emails: string[] }
-  | { type: "chat"; message: ChatLiveMessage; action: "create" | "delete" };
+  | { type: "chat"; message: ChatLiveMessage; action: "create" | "delete" }
+  | { type: "poll"; action: "vote" | "edit"; postId: number; poll: PostPoll };
 
 export function emitLive(event: LiveEvent): void {
   // fire-and-forget; guard against listener errors crashing the API route
