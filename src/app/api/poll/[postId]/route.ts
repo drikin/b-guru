@@ -67,11 +67,15 @@ export async function PUT(
       )
     : [];
   const labels = optionsIn.map((o) => typeof o.label === "string" ? o.label : "");
-  const err = validatePollInput(body.question, labels);
+  // 質問（投稿の本文）が省略された場合は既存値を保持。お題編集は回答のみを対象とし、
+  // 本文（質問）の変更は通常の投稿編集で行う。
+  const question = body.question != null && String(body.question).trim() !== ""
+    ? String(body.question).trim()
+    : pollRow.rows[0].question;
+  const err = validatePollInput(question, labels);
   if (err) {
     return NextResponse.json({ error: err }, { status: 400, headers: NO_STORE });
   }
-  const question = String(body.question).trim();
   const newOptions = optionsIn.map((o, i) => ({
     id: typeof o.id === "number" && o.id > 0 ? o.id : null,
     label: String(o.label).trim(),

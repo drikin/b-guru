@@ -931,11 +931,17 @@ function PollCard({
       }}
     >
       <Group justify="space-between" align="center" mb={4} wrap="nowrap">
-        <Text fw={700} size="sm" style={{ flex: 1, minWidth: 0 }}>
-          {poll.question}
-        </Text>
+        {compact ? (
+          <Text fw={700} size="sm" style={{ flex: 1, minWidth: 0 }}>
+            {poll.question}
+          </Text>
+        ) : (
+          <Text size="xs" fw={700} c="dimmed" style={{ flex: 1, minWidth: 0 }}>
+            📊 投票（{poll.totalVotes}票）
+          </Text>
+        )}
         {onEdit && poll.editable && (
-          <ActionIcon size="sm" variant="subtle" color="gray" onClick={onEdit} aria-label="お題を編集" title="お題を編集">
+          <ActionIcon size="sm" variant="subtle" color="gray" onClick={onEdit} aria-label="回答を編集" title="回答を編集">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
             </svg>
@@ -2915,7 +2921,6 @@ function ComposerPaper({
   const [videoUploading, setVideoUploading] = useState(false);
   // アンケート（投票）ビルダー: pollDraft が非 null のときビルダーを表示
   const [pollDraft, setPollDraft] = useState<{
-    question: string;
     options: string[];
     durationHours: number;
   } | null>(null);
@@ -2966,17 +2971,23 @@ function ComposerPaper({
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
+    // 質問は投稿の本文で代替。本文が空なら投票は付けない。
     const poll =
       pollDraft &&
-      pollDraft.question.trim().length > 0 &&
+      text.trim().length > 0 &&
       pollDraft.options.filter((o) => o.trim().length > 0).length >= 3
         ? {
-            question: pollDraft.question.trim(),
+            question: text.trim(),
             options: pollDraft.options.map((o) => o.trim()).filter((o) => o.length > 0),
             durationHours: pollDraft.durationHours,
           }
         : null;
-    if ((!text.trim() && images.length === 0 && !video && !poll) || posting) return;
+    if (
+      (!text.trim() && images.length === 0 && !video) || // 本文/画像/動画なし
+      (pollDraft && !text.trim()) || // 投票付きで本文（質問）が空
+      posting
+    )
+      return;
     const t = text;
     const imgs = images;
     const v = video;
@@ -3180,14 +3191,9 @@ function ComposerPaper({
                 ))}
               </Group>
             </Group>
-            <TextInput
-              size="xs"
-              placeholder="質問（例: 来月のゲストは誰？）"
-              value={pollDraft.question}
-              onChange={(e) => setPollDraft((p) => (p ? { ...p, question: e.currentTarget.value } : p))}
-              mb={6}
-              aria-label="投票の質問"
-            />
+            <Text size="xs" c="dimmed" mb={6}>
+              質問は投稿の本文になります。本文に投票の質問を書いてね。
+            </Text>
             <Stack gap={4}>
               {pollDraft.options.map((opt, i) => (
                 <Group key={i} gap={6} wrap="nowrap">
@@ -3196,14 +3202,15 @@ function ComposerPaper({
                     flex={1}
                     placeholder={`回答 ${i + 1}`}
                     value={opt}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      const v = e.currentTarget.value; // 関数型更新の中で e.currentTarget を読まない（null クラッシュ防止）
                       setPollDraft((p) => {
                         if (!p) return p;
                         const o = [...p.options];
-                        o[i] = e.currentTarget.value;
+                        o[i] = v;
                         return { ...p, options: o };
-                      })
-                    }
+                      });
+                    }}
                     aria-label={`回答 ${i + 1}`}
                   />
                   <ActionIcon
@@ -3268,7 +3275,7 @@ function ComposerPaper({
                 setPollDraft((prev) =>
                   prev
                     ? null
-                    : { question: "", options: ["", "", ""], durationHours: 24 }
+                    : { options: ["", "", ""], durationHours: 24 }
                 );
               }}
               aria-pressed={!!pollDraft}
@@ -3326,7 +3333,13 @@ function ComposerPaper({
               size="sm"
               color="green"
               loading={posting}
-              disabled={((!text.trim() && images.length === 0 && !video && !(pollDraft && pollDraft.question.trim() && pollDraft.options.filter((o) => o.trim()).length >= 3))) || uploading || videoUploading}
+              disabled={
+                (!text.trim() && images.length === 0 && !video) || // 内容なし
+                (pollDraft &&
+                  (!text.trim() || pollDraft.options.filter((o) => o.trim()).length < 3)) || // 投票付きは本文(質問)+3択が必要
+                uploading ||
+                videoUploading
+              }
             >
               吠える
             </Button>
@@ -5982,7 +5995,6 @@ export default function Home() {
 
   const [editPollPost, setEditPollPost] = useState<FeedPost | null>(null);
   const [pollEditDraft, setPollEditDraft] = useState<{
-    question: string;
     options: { id: number | null; label: string; votes: number }[];
   } | null>(null);
   const [savingPollEdit, setSavingPollEdit] = useState(false);
@@ -5990,7 +6002,6 @@ export default function Home() {
   const handleEditPoll = useCallback((post: FeedPost) => {
     setEditPollPost(post);
     setPollEditDraft({
-      question: post.poll?.question ?? "",
       options: (post.poll?.options ?? []).map((o) => ({
         id: o.id,
         label: o.label,
@@ -6007,10 +6018,8 @@ export default function Home() {
       const r = await fetch(`/api/poll/${editPollPost.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question: pollEditDraft.question,
-          options: pollEditDraft.options,
-        }),
+        // 質問は投稿の本文（別の投稿編集で変更）。ここでは回答のみ更新。
+        body: JSON.stringify({ options: pollEditDraft.options }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || "お題の編集に失敗しました");
@@ -8286,30 +8295,21 @@ export default function Home() {
         </Group>
       </Modal>
 
-      {/* Poll (survey) edit modal — author only, within 1h of posting */}
+      {/* Poll (survey) edit modal — author only, within 1h of posting.
+          Question = the post body (edited via the normal post edit); here only
+          the answer choices are edited. */}
       <Modal
         opened={!!editPollPost}
         onClose={() => setEditPollPost(null)}
         centered
         withCloseButton
-        title="アンケートのお題を編集"
+        title="アンケートの回答を編集"
       >
         {pollEditDraft && (
           <Stack gap="xs">
             <Text size="xs" c="dimmed">
-              お題（質問・回答）は投稿後1時間以内のみ編集できます。投票が付いた回答は削除できません。
+              回答の編集は投稿後1時間以内のみです。投票が付いた回答は削除できません。
             </Text>
-            <TextInput
-              size="xs"
-              label="質問"
-              value={pollEditDraft.question}
-              onChange={(e) =>
-                setPollEditDraft((p) =>
-                  p ? { ...p, question: e.currentTarget.value } : p
-                )
-              }
-              aria-label="投票の質問"
-            />
             <Stack gap={4}>
               {pollEditDraft.options.map((opt, i) => {
                 const hasVotes = opt.votes > 0;
@@ -8320,14 +8320,15 @@ export default function Home() {
                       flex={1}
                       placeholder={`回答 ${i + 1}`}
                       value={opt.label}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const v = e.currentTarget.value; // 関数型更新の中で e.currentTarget を読まない（null クラッシュ防止）
                         setPollEditDraft((p) => {
                           if (!p) return p;
                           const o = [...p.options];
-                          o[i] = { ...o[i], label: e.currentTarget.value };
+                          o[i] = { ...o[i], label: v };
                           return { ...p, options: o };
-                        })
-                      }
+                        });
+                      }}
                       aria-label={`回答 ${i + 1}`}
                     />
                     <ActionIcon
@@ -8388,7 +8389,6 @@ export default function Home() {
                 color="green"
                 loading={savingPollEdit}
                 disabled={
-                  pollEditDraft.question.trim().length === 0 ||
                   pollEditDraft.options.filter((o) => o.label.trim()).length < 3
                 }
                 onClick={submitPollEdit}
