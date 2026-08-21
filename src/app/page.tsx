@@ -1403,6 +1403,15 @@ function PostCard({
         </Paper>
       )}
 
+      {/* 投票（アンケート）: 投稿本文が質問。カード内では本文(質問)を繰り返さず回答のみ表示。 */}
+      {post.poll && (
+        <PollCard
+          poll={post.poll}
+          onVote={(oid) => onVotePoll && onVotePoll(post, oid)}
+          onEdit={onEditPoll ? () => onEditPoll && onEditPoll(post) : undefined}
+        />
+      )}
+
       {/* Bottom action: 返信 only. (Whisper is available via the "+" insert
        * control between cards / inside the thread reply box — no separate
        * button on the card itself.) */}
