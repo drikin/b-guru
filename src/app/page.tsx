@@ -4228,6 +4228,9 @@ export default function Home() {
       setChatMention(name);
       chatViewRef.current = true;
       setChatView(true);
+      // Mobile: the online list lives in the right sidebar (overlay drawer), so
+      // close it so the chat tab + composer are visible for the mention.
+      setAsideOpened(false);
       loadChat(true);
     },
     [loadChat]
