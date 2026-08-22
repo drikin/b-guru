@@ -6294,31 +6294,65 @@ export default function Home() {
   swipeGateRef.current = showNavTabs && !previewImage;
   useEffect(() => {
     if (typeof window === "undefined") return;
-    // Swipe-to-switch works on both touch (coarse) and desktop (fine/mouse+trackpad)
-    // horizontal drag. It never fires while the touch/drag starts inside an input.
+    // Horizontal swipe to switch タイムライン ⇄ ビーグルチャット.
+    // Touch path uses touch events (touchstart/touchend/touchcancel) — reliable on
+    // iOS Safari, where the browser can fire pointercancel instead of pointerup and
+    // swallow the gesture. Desktop uses the pointer (mouse/pen) path. It never fires
+    // when the gesture starts inside an input/textarea.
+    const isEditable = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      return !!el && !!el.closest && !!el.closest("input,textarea,[contenteditable='true']");
+    };
+    const act = (dx: number) => {
+      if (dx < 0 && !chatViewRef.current) openChat();
+      else if (dx > 0 && chatViewRef.current) closeChat();
+    };
+    // ---- touch path (smartphones / tablets) ----
+    let tsx = 0, tsy = 0, tst = 0, tactive = false;
+    const onTouchStart = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (!t || isEditable(e.target)) { tactive = false; return; }
+      tsx = t.clientX; tsy = t.clientY; tst = Date.now(); tactive = true;
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!tactive) return;
+      tactive = false;
+      if (!swipeGateRef.current) return;
+      const t = e.changedTouches[0];
+      if (!t) return;
+      const dx = t.clientX - tsx, dy = t.clientY - tsy;
+      if (Math.abs(dx) < 70 || Math.abs(dx) <= Math.abs(dy)) return;
+      if (Date.now() - tst > 800) return;
+      act(dx);
+    };
+    // ---- pointer path (desktop mouse / pen) ----
     let sx = 0, sy = 0, st = 0, active = false;
-    const onStart = (e: PointerEvent) => {
-      const t = e.target as HTMLElement | null;
-      const insideEditable =
-        !!t && !!t.closest && !!t.closest("input,textarea,[contenteditable='true']");
-      if (insideEditable) { active = false; return; }
+    const onPtrStart = (e: PointerEvent) => {
+      if (e.pointerType === "touch") return; // touch is handled by the touch path
+      if (isEditable(e.target)) { active = false; return; }
       sx = e.clientX; sy = e.clientY; st = Date.now(); active = true;
     };
-    const onEnd = (e: PointerEvent) => {
+    const onPtrEnd = (e: PointerEvent) => {
+      if (e.pointerType === "touch") return;
       if (!active) return;
       active = false;
       if (!swipeGateRef.current) return;
       const dx = e.clientX - sx, dy = e.clientY - sy;
       if (Math.abs(dx) < 70 || Math.abs(dx) <= Math.abs(dy)) return;
       if (Date.now() - st > 800) return;
-      if (dx < 0 && !chatViewRef.current) openChat();
-      else if (dx > 0 && chatViewRef.current) closeChat();
+      act(dx);
     };
-    window.addEventListener("pointerdown", onStart);
-    window.addEventListener("pointerup", onEnd);
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    window.addEventListener("touchcancel", onTouchEnd, { passive: true });
+    window.addEventListener("pointerdown", onPtrStart);
+    window.addEventListener("pointerup", onPtrEnd);
     return () => {
-      window.removeEventListener("pointerdown", onStart);
-      window.removeEventListener("pointerup", onEnd);
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("touchcancel", onTouchEnd);
+      window.removeEventListener("pointerdown", onPtrStart);
+      window.removeEventListener("pointerup", onPtrEnd);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
