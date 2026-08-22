@@ -967,7 +967,7 @@ function PollCard({
           </Text>
         )}
         {onEdit && poll.editable && (
-          <ActionIcon size="sm" variant="subtle" color="gray" onClick={onEdit} aria-label="回答を編集" title="回答を編集">
+          <ActionIcon size="sm" variant="subtle" color="gray" onClick={(e) => { e.stopPropagation(); onEdit?.(); }} aria-label="回答を編集" title="回答を編集">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
             </svg>
@@ -982,7 +982,7 @@ function PollCard({
             <UnstyledButton
               key={o.id}
               disabled={closed}
-              onClick={() => onVote(o.id)}
+              onClick={(e) => { e.stopPropagation(); onVote(o.id); }}
               aria-label={closed ? "投票が終了しました" : isMine ? "投票済み" : "投票する"}
               style={{
                 position: "relative",
@@ -6871,7 +6871,7 @@ export default function Home() {
               </Group>
               <Stack gap={8}>
                 {pollWidget.map((w) => (
-                  <Box key={w.postId}>
+                  <Box key={w.postId} onClick={() => scrollToPinnedPost(w.postId)} style={{ cursor: "pointer" }}>
                     <Group gap={6} mb={2} wrap="nowrap" align="center">
                       <SafeAvatar src={w.authorAvatar} initial={w.authorName || ""} size="xs" />
                       <Text size="xs" fw={600} c="dimmed" truncate style={{ flex: 1, minWidth: 0 }}>
