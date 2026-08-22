@@ -403,7 +403,7 @@ function imagesFromPaste(e: React.ClipboardEvent): FileList | null {
 function MentionTextarea({
   value, onChange, onKeyDown, onPaste, placeholder, autosize, minRows, maxRows, mb,
   maxLength, label, description, autoFocus, ariaLabel, suggestUp, wrapperStyle,
-  initialMention,
+  initialMention, inputRef,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -424,6 +424,9 @@ function MentionTextarea({
   suggestUp?: boolean;
   /** Extra style on the outer wrapper (e.g. flex:1 inside a Group). */
   wrapperStyle?: React.CSSProperties;
+  /** Forward the inner <textarea> DOM node so a parent can focus/refocus it
+   *  (e.g. keep the mobile soft keyboard open after sending a chat message). */
+  inputRef?: React.MutableRefObject<HTMLTextAreaElement | null>;
   /** When non-null, pre-open the @-suggestion for this member name and focus
    *  the textarea (used when the user clicks an online member in the chat
    *  widget so they can immediately mention that person). */
@@ -562,7 +565,10 @@ function MentionTextarea({
   return (
     <div style={{ position: "relative", ...(wrapperStyle ? wrapperStyle : {}) }}>
       <Textarea
-        ref={taRef}
+        ref={(node: HTMLTextAreaElement | null) => {
+          taRef.current = node;
+          if (inputRef) inputRef.current = node;
+        }}
         value={value}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
@@ -4139,6 +4145,7 @@ export default function Home() {
   // Target member for a mention-pre-filled chat open (clicking an online row).
   const [chatMention, setChatMention] = useState<string | null>(null);
   const [chatSending, setChatSending] = useState(false);
+  const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const chatViewRef = useRef(false); // ref so the SSE handler stays stable
   const chatListRef = useRef<HTMLDivElement>(null);
   // Beagle "bark" when the current user is @mentioned while the chat window is
@@ -4251,6 +4258,8 @@ export default function Home() {
         );
         setChatText("");
         setChatUnread(0); // our own message counts as read
+        // Keep focus (and the mobile soft keyboard) on the composer after sending.
+        requestAnimationFrame(() => chatInputRef.current?.focus());
       }
     } catch {
       /* ignore */
@@ -7364,6 +7373,7 @@ export default function Home() {
                     <MentionTextarea
                       value={chatText}
                       onChange={(v) => setChatText(v)}
+                      inputRef={chatInputRef}
                       initialMention={chatMention}
                       onKeyDown={(e) => {
                         if ((e.nativeEvent as any).isComposing) return;
@@ -7385,6 +7395,10 @@ export default function Home() {
                       color="green"
                       size="md"
                       onClick={sendChat}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onPointerDown={(e) => {
+                        if (e.pointerType !== "mouse") e.preventDefault();
+                      }}
                       disabled={chatSending || !chatText.trim()}
                       aria-label="送信"
                       style={{ flexShrink: 0, marginBottom: 4 }}
