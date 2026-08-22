@@ -36,6 +36,78 @@ export function extractYoutubeId(rawUrl: string): string | null {
   return null;
 }
 
+/* ── Charset handling ────────────────────────────────────────────────────
+ * 日本語サイト（itmedia 等）は Content-Type ヘッダに charset を付けず、
+ * HTML の <meta http-equiv="content-type" content="text/html;charset=shift_jis">
+ * で宣言していることがある。fetch の res.text() は常に UTF-8 でデコードするため、
+ * Shift-JIS ページは文字化け（U+FFFD 菱形）になる。ここでは生のバイト列を
+ * 取得し、ヘッダ→HTML内metaの順に宣言された charset でデコードする。 */
+
+/** Content-Type ヘッダ内の charset 宣言を取り出す（例: "text/html; charset=Shift_JIS"）。無いなら undefined。 */
+export function charsetFromContentType(contentType: string | null | undefined): string | undefined {
+  if (!contentType) return undefined;
+  const m = contentType.match(/charset\s*=\s*["']?\s*([\w-]+)/i);
+  return m ? m[1] : undefined;
+}
+
+/**
+ * 生の HTML バイトから <head> 領域の charset 宣言を探す。
+ * 対象: <meta http-equiv="content-type" content="...;charset=X">
+ *       <meta charset="X">
+ * 宣言が見つからない（または UTF-8）なら "utf-8" を返す。
+ * バイト列の先頭を ASCII/Shift-JIS 両方で解読できる（meta タグ自体は ASCII なので
+ * どのcharsetでも meta 探査は安全）。
+ */
+export function charsetFromHead(headBytes: Uint8Array): string {
+  const ascii = new TextDecoder("ascii", { fatal: false }).decode(
+    headBytes.slice(0, Math.min(4096, headBytes.length))
+  );
+  const m1 = ascii.match(/<meta[^>]+http-equiv\s*=\s*["']?content-type["']?[^>]*content\s*=\s*["'][^"']*charset\s*=\s*([\w-]+)["']/i)
+    || ascii.match(/<meta[^>]+content\s*=\s*["'][^"']*charset\s*=\s*([\w-]+)["'][^>]+http-equiv\s*=\s*["']?content-type["']?/i);
+  const m2 = m1 || ascii.match(/<meta[^>]+charset\s*=\s*["']([\w-]+)["']/i);
+  if (m2 && m2[1]) {
+    const label = m2[1].toLowerCase();
+    if (label === "utf-8" || label === "us-ascii") return "utf-8";
+    return label;
+  }
+  return "utf-8";
+}
+
+/** TextDecoder が実際にそのラベルを支持するか（cp932 等は環境により不可）。 */
+export function canDecode(label: string): boolean {
+  try {
+    new TextDecoder(label);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * HTML のバイト列を宣言された charset でデコードする（純関数・テスト対象）。
+ * 解決順序: contentType 指定 → HTML 内 meta 指定 → utf-8。
+ * 指定されたラベルが TextDecoder で使えない場合（cp932 等）は utf-8 にフォールバック。
+ */
+export function decodeHtmlBytes(bytes: Uint8Array, contentType?: string | null): string {
+  const candidates: string[] = [];
+  const ct = charsetFromContentType(contentType);
+  if (ct) candidates.push(ct.toLowerCase());
+  candidates.push(charsetFromHead(bytes));
+  for (const label of candidates) {
+    if (label === "utf-8" || label === "us-ascii") {
+      return new TextDecoder("utf-8").decode(bytes);
+    }
+    if (canDecode(label)) {
+      try {
+        return new TextDecoder(label).decode(bytes);
+      } catch {
+        /* fallthrough to next candidate */
+      }
+    }
+  }
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
 /**
  * Fetch a URL's <head> and extract OG / basic meta.
  * Returns minimal info; never throws (returns the url alone on failure).
@@ -69,7 +141,7 @@ export async function fetchUrlPreview(rawUrl: string): Promise<UrlPreview> {
       });
       clearTimeout(timer);
       if (r.ok && (r.headers.get("content-type") || "").includes("text/html")) {
-        const html = await r.text();
+        const html = decodeHtmlBytes(Buffer.from(await r.arrayBuffer()), r.headers.get("content-type"));
         const m = parseMeta(url, html);
         return {
           url,
@@ -111,7 +183,7 @@ export async function fetchUrlPreview(rawUrl: string): Promise<UrlPreview> {
     const ct = res.headers.get("content-type") || "";
     if (!ct.includes("text/html")) return { url };
 
-    const html = await res.text();
+    const html = decodeHtmlBytes(Buffer.from(await res.arrayBuffer()), ct);
     return parseMeta(url, html);
   } catch {
     return { url };
