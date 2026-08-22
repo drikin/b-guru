@@ -4146,6 +4146,7 @@ export default function Home() {
   const [chatMention, setChatMention] = useState<string | null>(null);
   const [chatSending, setChatSending] = useState(false);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const chatViewportRef = useRef<HTMLDivElement | null>(null);
   const chatViewRef = useRef(false); // ref so the SSE handler stays stable
   const chatListRef = useRef<HTMLDivElement>(null);
   // Beagle "bark" when the current user is @mentioned while the chat window is
@@ -4301,6 +4302,43 @@ export default function Home() {
     el.addEventListener("load", onImgLoad, true);
     return () => el.removeEventListener("load", onImgLoad, true);
   }, [chatView, chatMessages]);
+
+  // Keep the chat composer pinned to the *visual* viewport bottom. iOS/Android
+  // vh/dvh don't all track the on-screen keyboard, so opening/closing it could
+  // leave whitespace below the input. We measure the container's current top and
+  // set its height from visualViewport.height: when the keyboard opens the
+  // viewport shrinks and the composer rides up above it; when it closes the
+  // container regrows to the real bottom with no leftover gap.
+  useEffect(() => {
+    const el = chatViewportRef.current;
+    if (!el || !chatViewRef.current) return;
+    const vv = typeof window !== "undefined" ? window.visualViewport : null;
+    const apply = () => {
+      const c = chatViewportRef.current;
+      if (!c) return;
+      const top = c.getBoundingClientRect().top;
+      const avail = (vv ? vv.height : window.innerHeight) - top;
+      c.style.height = Math.max(240, avail) + "px";
+    };
+    apply();
+    const onResize = () => apply();
+    vv?.addEventListener("resize", onResize);
+    vv?.addEventListener("scroll", onResize);
+    window.addEventListener("resize", onResize);
+    // account for the AppShell header staying taller than 56 on large devices
+    const ro = new ResizeObserver(onResize);
+    if (el.parentElement) ro.observe(el.parentElement);
+    // re-measure after the 180ms mount fade (translateY) settles, otherwise the
+    // top is measured ~8px low and leaves a sliver of gap below the composer.
+    const settle = window.setTimeout(apply, 260);
+    return () => {
+      vv?.removeEventListener("resize", onResize);
+      vv?.removeEventListener("scroll", onResize);
+      window.removeEventListener("resize", onResize);
+      ro.disconnect();
+      window.clearTimeout(settle);
+    };
+  }, [chatView]);
 
   // Load initial chat history + unread badge on login (before opening).
   useEffect(() => {
@@ -7334,6 +7372,7 @@ export default function Home() {
               {showChatView ? (
                 <div
                   key="chat-main"
+                  ref={chatViewportRef}
                   className="bguru-chat-view bguru-main-fade"
                   style={{
                     display: "flex",
