@@ -1,5 +1,6 @@
 /* Notifications library: reply/like notifications with read/unread state. */
 import { pool } from "./db";
+import { resolveDisplayNames } from "./display-name";
 
 export interface Notification {
   id: number;
@@ -88,18 +89,22 @@ export async function listNotifications(userEmail: string): Promise<Notification
     `SELECT * FROM notifications WHERE user_email = $1 ORDER BY id DESC LIMIT 50`,
     [userEmail]
   );
-  return res.rows.map((r) => ({
+  const rows = res.rows;
+  const names = await resolveDisplayNames(rows.map((r) => r.actor_email));
+  return rows.map((r) => {
+    const resolved = names.get(r.actor_email) ?? null;
+    return {
     id: r.id,
     userEmail: r.user_email,
     type: r.type,
     actorEmail: r.actor_email,
-    actorName: r.actor_name,
+    actorName: resolved ?? r.actor_name,
     postId: r.post_id,
     replyId: r.reply_id,
     text: r.text,
     readAt: r.read_at ? new Date(r.read_at).toISOString() : null,
     createdAt: new Date(r.created_at).toISOString(),
-  }));
+  };});
 }
 
 /** Count unread notifications for a user. */

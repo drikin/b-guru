@@ -1,5 +1,6 @@
 import { liveBus } from "./live";
 import { pool } from "./db";
+import { resolveDisplayNames } from "./display-name";
 import { gravatarUrl } from "./posts";
 
 /**
@@ -92,16 +93,7 @@ export interface PresenceMember {
 export async function getOnlineMembers(): Promise<PresenceMember[]> {
   const emails = currentList();
   if (emails.length === 0) return [];
-  const res = await pool.query(
-    `SELECT DISTINCT ON (author_email) author_email AS email, author_name AS name
-     FROM posts
-     WHERE author_email = ANY($1::text[])
-     ORDER BY author_email, created_at DESC`,
-    [emails]
-  );
-  const nameByEmail = new Map<string, string | null>(
-    res.rows.map((r) => [r.email, r.name])
-  );
+  const nameByEmail = await resolveDisplayNames(emails);
   return emails.map((em) => ({
     email: em,
     name: nameByEmail.get(em) ?? em,

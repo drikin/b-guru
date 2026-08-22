@@ -8,6 +8,7 @@
  */
 import { pool } from "./db";
 import { gravatarUrl } from "./posts";
+import { resolveDisplayNames } from "./display-name";
 import { emitLive } from "./live";
 
 export interface ChatMessage {
@@ -89,7 +90,16 @@ export async function listChatMessages(opts: {
     [opts.before ?? null, CHAT_TTL, limit]
   );
   // Reverse so the returned array is chronological (oldest first).
-  return res.rows.reverse().map(mapRow);
+  const rows = res.rows.reverse();
+  // Resolve each author's CURRENT display name at read time so profile
+  // display_name edits propagate to historical messages too.
+  const names = await resolveDisplayNames(rows.map((r) => r.author_email));
+  return rows.map((r) => {
+    const m = mapRow(r);
+    const resolved = names.get(r.author_email) ?? null;
+    if (resolved) m.authorName = resolved;
+    return m;
+  });
 }
 
 /** Insert a new chat message. Returns the created message. */

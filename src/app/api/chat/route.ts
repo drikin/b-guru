@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { emitLive } from "@/lib/live";
 import { getSessionEmail } from "@/lib/session";
-import { pool } from "@/lib/db";
+import { resolveDisplayName } from "@/lib/display-name";
 import {
   CHAT_MAX_BODY,
   CHAT_PAGE_SIZE,
@@ -20,15 +20,11 @@ const NO_STORE = {
   "Cache-Control": "no-store, no-cache, must-revalidate",
 } as const;
 
-/** Resolve a member's display name (most recent known from the timeline). */
+/** Resolve a member's current display name (profile display_name wins,
+ *  else last timeline name). Profile edits propagate to new chat messages. */
 async function resolveName(email: string): Promise<string | null> {
   try {
-    const res = await pool.query(
-      `SELECT author_name AS name FROM posts
-       WHERE author_email = $1 ORDER BY created_at DESC LIMIT 1`,
-      [email]
-    );
-    return res.rows[0]?.name ?? null;
+    return await resolveDisplayName(email);
   } catch {
     return null;
   }
