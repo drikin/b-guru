@@ -6294,10 +6294,14 @@ export default function Home() {
   swipeGateRef.current = showNavTabs && !previewImage;
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const coarse = window.matchMedia?.("(pointer: coarse)")?.matches;
-    if (!coarse) return;
+    // Swipe-to-switch works on both touch (coarse) and desktop (fine/mouse+trackpad)
+    // horizontal drag. It never fires while the touch/drag starts inside an input.
     let sx = 0, sy = 0, st = 0, active = false;
     const onStart = (e: PointerEvent) => {
+      const t = e.target as HTMLElement | null;
+      const insideEditable =
+        !!t && !!t.closest && !!t.closest("input,textarea,[contenteditable='true']");
+      if (insideEditable) { active = false; return; }
       sx = e.clientX; sy = e.clientY; st = Date.now(); active = true;
     };
     const onEnd = (e: PointerEvent) => {
@@ -6306,7 +6310,7 @@ export default function Home() {
       if (!swipeGateRef.current) return;
       const dx = e.clientX - sx, dy = e.clientY - sy;
       if (Math.abs(dx) < 70 || Math.abs(dx) <= Math.abs(dy)) return;
-      if (Date.now() - st > 500) return;
+      if (Date.now() - st > 800) return;
       if (dx < 0 && !chatViewRef.current) openChat();
       else if (dx > 0 && chatViewRef.current) closeChat();
     };
