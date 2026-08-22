@@ -17,6 +17,7 @@ import {
   Card,
   Divider,
   ScrollArea,
+  SegmentedControl,
   Switch,
   ThemeIcon,
   Box,
@@ -3821,30 +3822,6 @@ export default function Home() {
     };
   }, []);
 
-  // ---- Composer focus detection ----
-  // When the user is typing in any text field on mobile, the floating chat
-  // bubble (bottom-right, zIndex 2900) sits right above the iOS/Android
-  // keyboard and covers the reply composer's action row (📷/うなる/吠える).
-  // Hide the widget whenever a text input has focus (unless the CHAT itself is
-  // the thing being typed — then the chat panel must stay up). Generalizes the
-  // earlier edit-modal-only guard (0e06eec).
-  const [inputFocused, setInputFocused] = useState(false);
-  useEffect(() => {
-    const onFocus = () => {
-      const t = document.activeElement as HTMLElement | null;
-      setInputFocused(
-        !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")
-      );
-    };
-    const onBlur = () => setInputFocused(false);
-    document.addEventListener("focusin", onFocus);
-    document.addEventListener("focusout", onBlur);
-    return () => {
-      document.removeEventListener("focusin", onFocus);
-      document.removeEventListener("focusout", onBlur);
-    };
-  }, []);
-
   const editFileRef = useRef<HTMLInputElement>(null);
 
   // ---- Notifications state ----
@@ -4143,7 +4120,7 @@ export default function Home() {
   // Opens a mini chat window where online members chat live over SSE. This
   // replaces the old "wave" (👋) feature: the bubble sits where the wave
   // animation used to float, and clicking an online member opens the chat.
-  const [chatOpen, setChatOpen] = useState(false);
+  const [chatView, setChatView] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatUnread, setChatUnread] = useState(0);
   // Tab-favicon badge: mirror chatUnread into the module var and refresh the
@@ -4162,7 +4139,7 @@ export default function Home() {
   // Target member for a mention-pre-filled chat open (clicking an online row).
   const [chatMention, setChatMention] = useState<string | null>(null);
   const [chatSending, setChatSending] = useState(false);
-  const chatOpenRef = useRef(false); // ref so the SSE handler stays stable
+  const chatViewRef = useRef(false); // ref so the SSE handler stays stable
   const chatListRef = useRef<HTMLDivElement>(null);
   // Beagle "bark" when the current user is @mentioned while the chat window is
   // closed: bumps `barkKey` to remount the center-screen bark overlay, and
@@ -4229,8 +4206,8 @@ export default function Home() {
 
   // Open the chat window (fresh history + mark read).
   const openChat = useCallback(() => {
-    chatOpenRef.current = true;
-    setChatOpen(true);
+    chatViewRef.current = true;
+    setChatView(true);
     loadChat(true);
   }, [loadChat]);
 
@@ -4241,8 +4218,8 @@ export default function Home() {
       const token = name.includes(" ") ? `@[${name}] ` : `@${name} `;
       setChatText(token);
       setChatMention(name);
-      chatOpenRef.current = true;
-      setChatOpen(true);
+      chatViewRef.current = true;
+      setChatView(true);
       loadChat(true);
     },
     [loadChat]
@@ -4250,8 +4227,8 @@ export default function Home() {
 
   // Close the chat window (messages kept so reopening is instant).
   const closeChat = useCallback(() => {
-    chatOpenRef.current = false;
-    setChatOpen(false);
+    chatViewRef.current = false;
+    setChatView(false);
     setChatMention(null);
   }, []);
 
@@ -4283,11 +4260,11 @@ export default function Home() {
 
   // Auto-scroll the message list to the bottom when it grows while open.
   useEffect(() => {
-    if (chatOpenRef.current && chatListRef.current) {
+    if (chatViewRef.current && chatListRef.current) {
       const el = chatListRef.current;
       el.scrollTop = el.scrollHeight;
     }
-  }, [chatMessages, chatOpen]);
+  }, [chatMessages, chatView]);
 
   // Load initial chat history + unread badge on login (before opening).
   useEffect(() => {
@@ -4529,7 +4506,7 @@ export default function Home() {
         setChatMessages((prev) =>
           prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
         );
-        if (chatOpenRef.current) {
+        if (chatViewRef.current) {
           setChatUnread(0);
           fetch("/api/chat/read", { method: "POST" }).catch(() => {});
         } else if (msg.authorEmail !== auth.email) {
@@ -4558,7 +4535,7 @@ export default function Home() {
       loadTrends();
       loadOnline();
       loadPollWidget();
-      loadChat(chatOpenRef.current); // recover chat missed during a disconnect
+      loadChat(chatViewRef.current); // recover chat missed during a disconnect
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) silentRefreshFeed();
     };
     es.onerror = () => {
@@ -6306,6 +6283,42 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKey);
   }, [kbdCursorId]);
 
+  // Chat-tab view: shown only on the home feed root (switch between timeline & chat).
+  const showNavTabs =
+    activeNav === "feed" && !threadPost && !searchActive && !profileEmail;
+  const showChatView = showNavTabs && chatView;
+
+  // Mobile swipe-to-switch-tabs: gate + gesture. Only on the home feed root
+  // with the tab bar visible, and never while the image lightbox is open.
+  const swipeGateRef = useRef(false);
+  swipeGateRef.current = showNavTabs && !previewImage;
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const coarse = window.matchMedia?.("(pointer: coarse)")?.matches;
+    if (!coarse) return;
+    let sx = 0, sy = 0, st = 0, active = false;
+    const onStart = (e: PointerEvent) => {
+      sx = e.clientX; sy = e.clientY; st = Date.now(); active = true;
+    };
+    const onEnd = (e: PointerEvent) => {
+      if (!active) return;
+      active = false;
+      if (!swipeGateRef.current) return;
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (Math.abs(dx) < 70 || Math.abs(dx) <= Math.abs(dy)) return;
+      if (Date.now() - st > 500) return;
+      if (dx < 0 && !chatViewRef.current) openChat();
+      else if (dx > 0 && chatViewRef.current) closeChat();
+    };
+    window.addEventListener("pointerdown", onStart);
+    window.addEventListener("pointerup", onEnd);
+    return () => {
+      window.removeEventListener("pointerdown", onStart);
+      window.removeEventListener("pointerup", onEnd);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // ---------- Auth gates ----------
   if (checking) {
     return (
@@ -6398,6 +6411,7 @@ export default function Home() {
   // TimelineFeed to skip its own duplicate of that first separator.
   const composerGroups = activeNav === "feed" ? groupFeed(feedPosts) : [];
   const topDateKey = composerGroups.length > 0 ? composerGroups[0].dateKey : null;
+
 
   return (
     <AppShell
@@ -7179,6 +7193,189 @@ export default function Home() {
         >
           {isCenterView && (
             <Stack gap="md">
+              {/* Tab switcher: タイムライン / チャット (home feed root only). */}
+              {showNavTabs && (
+                <Box
+                  style={{
+                    position: "sticky",
+                    top: "var(--app-shell-header-height, 56px)",
+                    zIndex: 60,
+                    background: "var(--bg-primary)",
+                    paddingTop: 12,
+                    paddingBottom: 4,
+                  }}
+                >
+                  <SegmentedControl
+                    size="sm"
+                    fullWidth={false}
+                    value={chatView ? "chat" : "timeline"}
+                    onChange={(v) => {
+                      const toChat = v === "chat";
+                      chatViewRef.current = toChat;
+                      setChatView(toChat);
+                      if (toChat) loadChat(true);
+                      else setChatMention(null);
+                    }}
+                    data={[
+                      { label: "タイムライン", value: "timeline" },
+                      {
+                        label: (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            チャット
+                            {chatUnread > 0 && (
+                              <span
+                                style={{
+                                  minWidth: 18,
+                                  height: 18,
+                                  borderRadius: 9,
+                                  padding: "0 5px",
+                                  background: "#e03131",
+                                  color: "#fff",
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  lineHeight: "18px",
+                                  textAlign: "center",
+                                  display: "inline-block",
+                                }}
+                              >
+                                {chatUnread > 99 ? "99+" : chatUnread}
+                              </span>
+                            )}
+                          </span>
+                        ),
+                        value: "chat",
+                      },
+                    ]}
+                  />
+                </Box>
+              )}
+
+              {showChatView ? (
+                <div
+                  key="chat-main"
+                  className="bguru-main-fade"
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    height: "calc(100dvh - 56px - 84px)",
+                    minHeight: 320,
+                    overflow: "hidden",
+                  }}
+                >
+                  {/* Chat header */}
+                  <Group
+                    justify="space-between"
+                    align="center"
+                    wrap="nowrap"
+                    p="xs"
+                    style={{
+                      borderBottom: "1px solid var(--border-green)",
+                      background: "var(--bg-subtle)",
+                      flexShrink: 0,
+                      borderRadius: "12px 12px 0 0",
+                    }}
+                  >
+                    <Group gap={6} align="center" wrap="nowrap">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none" color="var(--text-green)" aria-hidden="true">
+                        <circle cx="12" cy="12" r="5" />
+                      </svg>
+                      <Text fw={700} size="sm">ビーグルチャット</Text>
+                      <Text size="xs" c="dimmed">
+                        {onlineMembers.length > 0 ? `${onlineMembers.length}人在線` : "オフライン"}
+                      </Text>
+                    </Group>
+                  </Group>
+                  {/* Message list */}
+                  <ScrollArea.Autosize
+                    type="auto"
+                    scrollbarSize={8}
+                    offsetScrollbars
+                    style={{ flex: 1, minHeight: 0 }}
+                    viewportRef={chatListRef}
+                  >
+                    <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
+                      {chatMessages.length === 0 ? (
+                        <Text size="sm" c="dimmed" ta="center" py="lg">
+                          まだメッセージはありません。さっそく話しかけてみましょう。
+                        </Text>
+                      ) : (
+                        chatMessages.map((m) => {
+                          const mine = !!auth && m.authorEmail === auth.email;
+                          return (
+                            <div key={m.id} style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start" }}>
+                              <div style={{ maxWidth: "82%", display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start" }}>
+                                {!mine && (
+                                  <Group gap={5} align="center" wrap="nowrap" mb={2}>
+                                    <SafeAvatar src={m.avatar} initial={m.authorName || m.authorEmail} size="xs" />
+                                    <Text size="xs" c="dimmed">{m.authorName || m.authorEmail}</Text>
+                                  </Group>
+                                )}
+                                <div
+                                  style={{
+                                    background: mine ? "var(--bg-surface)" : "var(--bg-subtle)",
+                                    border: mine ? "1px solid var(--border-green)" : "1px solid transparent",
+                                    borderRadius: mine ? "14px 14px 2px 14px" : "14px 14px 14px 2px",
+                                    padding: "6px 10px",
+                                    fontSize: 13,
+                                    lineHeight: 1.45,
+                                    whiteSpace: "pre-wrap",
+                                    wordBreak: "break-word",
+                                  }}
+                                >
+                                  {renderChatBody(m.body, mentionMembers, auth?.email || "")}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </ScrollArea.Autosize>
+                  {/* Composer */}
+                  <Group
+                    align="flex-end"
+                    gap={8}
+                    wrap="nowrap"
+                    p="xs"
+                    style={{ borderTop: "1px solid var(--border-green)", flexShrink: 0, background: "var(--bg-surface)", borderBottomLeftRadius: 12, borderBottomRightRadius: 12 }}
+                  >
+                    <MentionTextarea
+                      value={chatText}
+                      onChange={(v) => setChatText(v)}
+                      initialMention={chatMention}
+                      onKeyDown={(e) => {
+                        if ((e.nativeEvent as any).isComposing) return;
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          sendChat();
+                        }
+                      }}
+                      placeholder="メッセージ（@名前 でメンション・Enter 送信）"
+                      autosize
+                      minRows={1}
+                      maxRows={4}
+                      suggestUp
+                      wrapperStyle={{ flex: 1 }}
+                      ariaLabel="チャットメッセージ"
+                    />
+                    <ActionIcon
+                      variant="filled"
+                      color="green"
+                      size="md"
+                      onClick={sendChat}
+                      disabled={chatSending || !chatText.trim()}
+                      aria-label="送信"
+                      style={{ flexShrink: 0, marginBottom: 4 }}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="m22 2-7 20-4-9-9-4Z" />
+                        <path d="M22 2 11 13" />
+                      </svg>
+                    </ActionIcon>
+                  </Group>
+                </div>
+              ) : (
+              <>
               {/* Topmost date separator — rendered above the "+" composer so the
                   timeline opens with 日付 → プラス (feed only). TimelineFeed skips
                   its own duplicate via skipFirstDate. */}
@@ -7610,6 +7807,8 @@ export default function Home() {
                   </Text>
                 ) : null}
                 </>
+              )}
+              </>
               )}
             </Stack>
           )}
@@ -8680,273 +8879,9 @@ export default function Home() {
         </Stack>
       </Modal>
 
-      {/* Realtime chat widget — bottom-right bubble that opens a mini chat
-          window for the global room (replaces the old wave 👋 feature).
-          Hidden while the edit modal is open so the fixed bubble (bottom-right,
-          zIndex 2900) doesn't overlap the modal's 保存 button on mobile. */}
-      {!editingPost && !(inputFocused && !chatOpen) && (chatOpen ? (
-        <Paper
-          radius="lg"
-          withBorder
-          shadow="xl"
-          style={{
-            position: "fixed",
-            right: 24,
-            bottom: 20,
-            zIndex: 2900,
-            width: 340,
-            maxWidth: "calc(100vw - 32px)",
-            height: 440,
-            maxHeight: "calc(100vh - 48px)",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            background: "var(--bg-surface)",
-            borderColor: "var(--border-green)",
-          }}
-        >
-          {/* Header */}
-          <Group
-            justify="space-between"
-            align="center"
-            wrap="nowrap"
-            p="xs"
-            style={{
-              borderBottom: "1px solid var(--border-green)",
-              background: "var(--bg-subtle)",
-              flexShrink: 0,
-            }}
-          >
-            <Group gap={6} align="center" wrap="nowrap">
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                stroke="none"
-                color="var(--text-green)"
-                aria-hidden="true"
-              >
-                <circle cx="12" cy="12" r="5" />
-              </svg>
-              <Text fw={700} size="sm">
-                ビーグルチャット
-              </Text>
-              <Text size="xs" c="dimmed">
-                {onlineMembers.length > 0
-                  ? `${onlineMembers.length}人在線`
-                  : "オフライン"}
-              </Text>
-            </Group>
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              onClick={closeChat}
-              aria-label="チャットを閉じる"
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M18 6 6 18M6 6l12 12" />
-              </svg>
-            </ActionIcon>
-          </Group>
-
-          {/* Message list */}
-          <ScrollArea.Autosize
-            type="auto"
-            scrollbarSize={8}
-            offsetScrollbars
-            style={{ flex: 1, minHeight: 0 }}
-            viewportRef={chatListRef}
-          >
-            <div
-              style={{
-                padding: "8px 10px",
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-              }}
-            >
-              {chatMessages.length === 0 ? (
-                <Text size="sm" c="dimmed" ta="center" py="lg">
-                  まだメッセージはありません。さっそく話しかけてみましょう。
-                </Text>
-              ) : (
-                chatMessages.map((m) => {
-                  const mine = !!auth && m.authorEmail === auth.email;
-                  return (
-                    <div
-                      key={m.id}
-                      style={{
-                        display: "flex",
-                        justifyContent: mine ? "flex-end" : "flex-start",
-                      }}
-                    >
-                      <div
-                        style={{
-                          maxWidth: "82%",
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: mine ? "flex-end" : "flex-start",
-                        }}
-                      >
-                        {!mine && (
-                          <Group
-                            gap={5}
-                            align="center"
-                            wrap="nowrap"
-                            mb={2}
-                          >
-                            <SafeAvatar
-                              src={m.avatar}
-                              initial={m.authorName || m.authorEmail}
-                              size="xs"
-                            />
-                            <Text size="xs" c="dimmed">
-                              {m.authorName || m.authorEmail}
-                            </Text>
-                          </Group>
-                        )}
-                        <div
-                          style={{
-                            background: mine
-                              ? "var(--bg-surface)"
-                              : "var(--bg-subtle)",
-                            border: mine
-                              ? "1px solid var(--border-green)"
-                              : "1px solid transparent",
-                            borderRadius: mine
-                              ? "14px 14px 2px 14px"
-                              : "14px 14px 14px 2px",
-                            padding: "6px 10px",
-                            fontSize: 13,
-                            lineHeight: 1.45,
-                            whiteSpace: "pre-wrap",
-                            wordBreak: "break-word",
-                          }}
-                        >
-                        {renderChatBody(m.body, mentionMembers, auth?.email || "")}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </ScrollArea.Autosize>
-
-          {/* Composer */}
-          <Group
-            align="flex-end"
-            gap={8}
-            wrap="nowrap"
-            p="xs"
-            style={{ borderTop: "1px solid var(--border-green)", flexShrink: 0 }}
-          >
-            <MentionTextarea
-              value={chatText}
-              onChange={(v) => setChatText(v)}
-              initialMention={chatMention}
-              onKeyDown={(e) => {
-                if ((e.nativeEvent as any).isComposing) return;
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  sendChat();
-                }
-              }}
-              placeholder="メッセージ（@名前 でメンション・Enter 送信）"
-              autosize
-              minRows={1}
-              maxRows={4}
-              suggestUp
-              wrapperStyle={{ flex: 1 }}
-              ariaLabel="チャットメッセージ"
-            />
-            <ActionIcon
-              variant="filled"
-              color="green"
-              size="md"
-              onClick={sendChat}
-              disabled={chatSending || !chatText.trim()}
-              aria-label="送信"
-              style={{ flexShrink: 0, marginBottom: 4 }}
-            >
-              <svg
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="m22 2-7 20-4-9-9-4Z" />
-                <path d="M22 2 11 13" />
-              </svg>
-            </ActionIcon>
-          </Group>
-        </Paper>
-      ) : (
-        <div style={{ position: "fixed", right: 24, bottom: 20, zIndex: 2900 }}>
-          <UnstyledButton
-            onClick={openChat}
-            aria-label="チャットを開く"
-            title="ビーグルチャットを開く"
-            style={{
-              width: 56,
-              height: 56,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: "pointer",
-              background: "transparent",
-              border: "none",
-              padding: 0,
-              position: "relative",
-              filter: "drop-shadow(0 3px 6px rgba(0,0,0,0.32)) drop-shadow(0 1px 2px rgba(0,0,0,0.18))",
-            }}
-          >
-            <img
-              src="/icon-chat.png"
-              alt=""
-              draggable={false}
-              style={{ width: "100%", height: "100%", objectFit: "contain" }}
-            />
-          </UnstyledButton>
-          {chatUnread > 0 && (
-            <div
-              style={{
-                position: "absolute",
-                top: -4,
-                right: -4,
-                minWidth: 18,
-                height: 18,
-                borderRadius: 9,
-                padding: "0 5px",
-                background: "#e03131",
-                color: "#fff",
-                fontSize: 11,
-                fontWeight: 700,
-                lineHeight: "18px",
-                textAlign: "center",
-                boxShadow: "0 1px 3px rgba(0,0,0,.3)",
-                pointerEvents: "none",
-              }}
-            >
-              {chatUnread > 99 ? "99+" : chatUnread}
-            </div>
-          )}
-        </div>
-      ))}
+      {/* Realtime chat moved into the main-column チャット tab (SegmentedControl
+          next to タイムライン). The bottom-right floating bubble was removed;
+          chat is now a first-class tab with its own unread badge on the tab. */}
 
       {/* Beagle bark: when the chat window is closed and someone @mentions the
           current user, the beagle icon barks in the center of the screen for

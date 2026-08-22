@@ -351,3 +351,12 @@ body {
   padding-inline-start: calc(var(--shell-m) + var(--app-shell-navbar-offset, 0rem)) !important;
   padding-inline-end: calc(var(--shell-m) + var(--app-shell-aside-offset, 0rem)) !important;
 }
+
+/* ===== Chat tab: light fade + shallow rise when the chat view mounts ===== */
+.bguru-main-fade {
+  animation: bguruMainFade 180ms ease-out;
+}
+@keyframes bguruMainFade {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
