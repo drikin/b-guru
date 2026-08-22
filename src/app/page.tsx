@@ -7307,12 +7307,10 @@ export default function Home() {
               {showChatView ? (
                 <div
                   key="chat-main"
-                  className="bguru-main-fade"
+                  className="bguru-chat-view bguru-main-fade"
                   style={{
                     display: "flex",
                     flexDirection: "column",
-                    height: "calc(100dvh - 56px - 84px)",
-                    minHeight: 320,
                     overflow: "hidden",
                   }}
                 >

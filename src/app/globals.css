@@ -360,3 +360,15 @@ body {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: none; }
 }
+
+/* ===== Chat view height: pin composer to the visible bottom =====
+   vh fallback FIRST so browsers without dynamic-viewport (dvh) support still
+   give the container a real height (otherwise it collapsed to min-height and
+   left a large empty band below the input). dvh overrides on modern browsers.
+   Padding-bottom clears the iOS home indicator / safe area. */
+.bguru-chat-view {
+  height: calc(100vh - 140px);
+  height: calc(100dvh - 140px);
+  min-height: 320px;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
