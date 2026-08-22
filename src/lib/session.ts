@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { pool } from "./db";
 
 const SESSION_COOKIE = "bsm_session";
-const SESSION_TTL_SEC = 60 * 60 * 24 * 7; // 7 days
+const SESSION_TTL_SEC = 60 * 60 * 24 * 30; // 30 days (1 month)
 
 export async function createSession(email: string): Promise<string> {
   const token = crypto.randomBytes(32).toString("hex");
