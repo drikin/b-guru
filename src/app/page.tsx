@@ -652,6 +652,32 @@ function PinCountdown({ pinnedAt }: { pinnedAt: string }) {
   );
 }
 
+/** Live countdown to a poll's closing time. Ticks every second.
+ *  Shows "あと hh:mm:ss" style until expiry, then "終了". Used in the
+ *  right-sidebar poll widget (compact) where a real timer is wanted. */
+function PollCountdown({ endsAt }: { endsAt: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  const remainMs = new Date(endsAt).getTime() - now;
+  if (remainMs <= 0) return <Text size="xs" c="dimmed">終了</Text>;
+
+  const totalSec = Math.floor(remainMs / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  const pad = (n: number) => String(n).padStart(2, "0");
+
+  return (
+    <Text size="xs" c="green.7" fw={600} style={{ fontVariantNumeric: "tabular-nums" }}>
+      残り {pad(h)}:{pad(m)}:{pad(s)}
+    </Text>
+  );
+}
+
 /* Shared post card used both in the timeline feed and the thread view.
  * Holds the single implementation of like/reply/edit/delete/image/URL so we
  * never duplicate post UI between the timeline and thread views. */
@@ -1013,7 +1039,11 @@ function PollCard({
               : "まだ投票はありません"}
           {" · "}全{poll.totalVotes}票
         </Text>
-        {!compact && <Text size="xs" c="dimmed">{closed ? "終了" : pollTimeLeft(poll.endsAt)}</Text>}
+        {compact ? (
+          <PollCountdown endsAt={poll.endsAt} />
+        ) : (
+          <Text size="xs" c="dimmed">{closed ? "終了" : pollTimeLeft(poll.endsAt)}</Text>
+        )}
       </Group>
     </Box>
   );
