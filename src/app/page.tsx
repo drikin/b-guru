@@ -7203,6 +7203,8 @@ export default function Home() {
                     background: "var(--bg-primary)",
                     paddingTop: 12,
                     paddingBottom: 4,
+                    display: "flex",
+                    justifyContent: "center",
                   }}
                 >
                   <SegmentedControl
@@ -7221,7 +7223,7 @@ export default function Home() {
                       {
                         label: (
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                            チャット
+                            ビーグルチャット
                             {chatUnread > 0 && (
                               <span
                                 style={{
