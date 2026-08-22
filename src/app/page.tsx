@@ -7224,6 +7224,11 @@ export default function Home() {
                         label: (
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                             ビーグルチャット
+                            {onlineMembers.length > 0 && (
+                              <span style={{ opacity: 0.6, fontSize: 11, fontWeight: 500 }}>
+                                {onlineMembers.length}人在線
+                              </span>
+                            )}
                             {chatUnread > 0 && (
                               <span
                                 style={{
@@ -7264,29 +7269,6 @@ export default function Home() {
                     overflow: "hidden",
                   }}
                 >
-                  {/* Chat header */}
-                  <Group
-                    justify="space-between"
-                    align="center"
-                    wrap="nowrap"
-                    p="xs"
-                    style={{
-                      borderBottom: "1px solid var(--border-green)",
-                      background: "var(--bg-subtle)",
-                      flexShrink: 0,
-                      borderRadius: "12px 12px 0 0",
-                    }}
-                  >
-                    <Group gap={6} align="center" wrap="nowrap">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none" color="var(--text-green)" aria-hidden="true">
-                        <circle cx="12" cy="12" r="5" />
-                      </svg>
-                      <Text fw={700} size="sm">ビーグルチャット</Text>
-                      <Text size="xs" c="dimmed">
-                        {onlineMembers.length > 0 ? `${onlineMembers.length}人在線` : "オフライン"}
-                      </Text>
-                    </Group>
-                  </Group>
                   {/* Message list */}
                   <ScrollArea.Autosize
                     type="auto"
