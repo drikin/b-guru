@@ -4268,12 +4268,39 @@ export default function Home() {
   }, [chatText, chatSending]);
 
   // Auto-scroll the message list to the bottom when it grows while open.
+  // A single immediate scrollTop can come out short: fonts/avatars/the mount
+  // fade animation settle a moment later and grow the list, leaving it not
+  // fully at the bottom. So we scroll immediately *and* again after layout
+  // settles (double rAF + short delay + after the 180ms fade).
   useEffect(() => {
-    if (chatViewRef.current && chatListRef.current) {
-      const el = chatListRef.current;
-      el.scrollTop = el.scrollHeight;
-    }
+    const el = chatListRef.current;
+    if (!chatViewRef.current || !el) return;
+    const go = () => { el.scrollTop = el.scrollHeight; };
+    const raf1 = requestAnimationFrame(go);
+    const raf2 = requestAnimationFrame(() => requestAnimationFrame(go));
+    const to1 = window.setTimeout(go, 60);
+    const to2 = window.setTimeout(go, 240); // after bguru-main-fade (180ms) settles
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+      window.clearTimeout(to1);
+      window.clearTimeout(to2);
+    };
   }, [chatMessages, chatView]);
+
+  // Re-pin to the bottom when an image (e.g. an avatar) inside the chat list
+  // loads later and grows the list — but only if the user is already at/near
+  // the bottom, so scrolling up to read history is preserved.
+  useEffect(() => {
+    const el = chatListRef.current;
+    if (!chatViewRef.current || !el) return;
+    const onImgLoad = () => {
+      const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (dist < 120) el.scrollTop = el.scrollHeight;
+    };
+    el.addEventListener("load", onImgLoad, true);
+    return () => el.removeEventListener("load", onImgLoad, true);
+  }, [chatView, chatMessages]);
 
   // Load initial chat history + unread badge on login (before opening).
   useEffect(() => {
