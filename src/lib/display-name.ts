@@ -6,6 +6,17 @@
  */
 import { pool } from "./db";
 
+/** If a resolved name is actually an email address, reduce it to its local part
+ *  (drop "@domain") so an address is never shown as a display name anywhere. */
+export function cleanDisplayName(name: string | null | undefined): string | null {
+  if (name == null) return null;
+  const s = name.trim();
+  if (!s) return null;
+  const at = s.indexOf("@");
+  if (at > 0) return s.slice(0, at).trim() || null;
+  return s;
+}
+
 /** Resolve current display names for a batch of emails (deduped).
  *  Every requested email gets an entry (null when unknown). */
 export async function resolveDisplayNames(
@@ -28,7 +39,7 @@ export async function resolveDisplayNames(
      LEFT JOIN user_profiles up ON up.email = emails.email`,
     [uniq]
   );
-  for (const r of res.rows) map.set(r.email, r.name);
+  for (const r of res.rows) map.set(r.email, cleanDisplayName(r.name));
   return map;
 }
 

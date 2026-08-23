@@ -1,3 +1,4 @@
+import { cleanDisplayName } from "@/lib/display-name";
 import { NextRequest, NextResponse } from "next/server";
 import { createPost } from "@/lib/posts";
 import { createNotification } from "@/lib/notifications";
@@ -140,7 +141,7 @@ export async function POST(req: NextRequest) {
       // Build a lookup: name (lowercase) → email
       const nameMap = new Map<string, string>();
       for (const m of members) {
-        const name = (m.name || m.email.split("@")[0] || "").trim();
+        const name = (cleanDisplayName(m.name) || m.email.split("@")[0] || "").trim();
         if (name) nameMap.set(name.toLowerCase(), m.email);
       }
       // Extract @mentions: @[Full Name] (bracket syntax for spaces) or @name

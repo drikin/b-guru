@@ -10,6 +10,7 @@
  * can be unit-tested without a DB, following the feed.ts pattern.
  */
 import { pool } from "./db";
+import { cleanDisplayName } from "./display-name";
 import { gravatarUrl } from "./posts";
 import { ensureUserId } from "./user";
 
@@ -114,7 +115,9 @@ export async function getProfile(email: string): Promise<Profile | null> {
     userId: await ensureUserId(email),
     email,
     displayNameSet: !!r?.display_name?.trim(),
-    name: r?.display_name?.trim() || a?.name || email.split("@")[0],
+    name:
+      cleanDisplayName(r?.display_name?.trim() || a?.name || email) ??
+      email.split("@")[0],
     avatar: gravatarUrl(email),
     bio: r?.bio?.trim() ?? "",
     headerImage: r?.header_image || null,

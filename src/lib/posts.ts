@@ -185,7 +185,11 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
 /** Shared SELECT fragment and row→FeedPost mapper used by listPosts / getPostThread. */
 const POST_SELECT = `
   SELECT p.id, p.author_email,
-    COALESCE((SELECT up.display_name FROM user_profiles up WHERE up.email = p.author_email), p.author_name) AS author_name,
+    CASE
+      WHEN COALESCE((SELECT up.display_name FROM user_profiles up WHERE up.email = p.author_email), p.author_name) LIKE '%@%'
+      THEN split_part(COALESCE((SELECT up.display_name FROM user_profiles up WHERE up.email = p.author_email), p.author_name), '@', 1)
+      ELSE COALESCE((SELECT up.display_name FROM user_profiles up WHERE up.email = p.author_email), p.author_name)
+    END AS author_name,
     p.parent_id, p.text, p.url_preview, p.created_at,
     GREATEST(p.created_at,
       COALESCE((SELECT MAX(r.created_at) FROM posts r WHERE r.parent_id = p.id AND r.is_whisper IS NOT TRUE), p.created_at)

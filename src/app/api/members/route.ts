@@ -1,3 +1,4 @@
+import { cleanDisplayName } from "@/lib/display-name";
 import { NextResponse } from "next/server";
 import { getSessionEmail } from "@/lib/session";
 import { listMembers } from "@/lib/ghost";
@@ -32,7 +33,7 @@ export async function GET() {
         .filter((m) => m.status === "paid" || m.status === "comped")
         .map((m) => ({
           email: m.email,
-          name: m.name || m.email.split("@")[0],
+          name: cleanDisplayName(m.name) || m.email.split("@")[0],
           avatar: m.avatar_image || null,
         })),
     ];

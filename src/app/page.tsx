@@ -1517,7 +1517,7 @@ function SidebarPostCard({
       }}
     >
       <Group gap="xs" align="center" wrap="nowrap" mb={4}>
-        <SafeAvatar src={post.authorAvatar} initial={post.authorName || post.authorEmail} size="xs" />
+        <SafeAvatar src={post.authorAvatar} initial={post.authorName || post.authorEmail.split("@")[0]} size="xs" />
         <Text size="xs" fw={600} c="inherit" truncate style={{ flex: 1 }}>
           {post.authorName || post.authorEmail.split("@")[0]}
         </Text>
@@ -3090,7 +3090,7 @@ function ComposerPaper({
           {displayName.charAt(0).toUpperCase()}
         </Avatar>
         <Text fw={600} size="sm" c="inherit" style={{ flex: 1 }}>
-          {auth.name || auth.email}
+          {auth.name || auth.email.split("@")[0]}
         </Text>
         <ActionIcon
           variant="subtle"
@@ -4638,7 +4638,7 @@ export default function Home() {
           // message really demands attention (remount via barkKey restart).
           if (isMentionedIn(msg.body, myNameRef.current)) {
             setBarkKey((k) => k + 1);
-            setBarkFrom(msg.authorName || msg.authorEmail);
+            setBarkFrom(msg.authorName || msg.authorEmail.split("@")[0]);
           }
         }
       } else if (d.action === "delete" && d.message?.id != null) {
@@ -6982,7 +6982,7 @@ export default function Home() {
             </Avatar>
             <div style={{ flex: 1, minWidth: 0, lineHeight: 1.2 }}>
               <Text size="sm" fw={600} c="inherit" truncate>
-                {auth.name || auth.email}
+                {auth.name || auth.email.split("@")[0]}
               </Text>
               <Text size="xs" c="dimmed" truncate>
                 {auth.name ? auth.email : ""}
@@ -7215,7 +7215,7 @@ export default function Home() {
                     <UnstyledButton
                       key={m.email}
                       title="オンラインでチャット"
-                      onClick={() => openChatMention(m.name || m.email)}
+                      onClick={() => openChatMention(m.name || m.email.split("@")[0])}
                       style={{
                         display: "block",
                         width: "100%",
@@ -7231,9 +7231,9 @@ export default function Home() {
                         wrap="nowrap"
                         style={{ minWidth: 0 }}
                       >
-                        <SafeAvatar src={m.avatar} initial={m.name || m.email} size="sm" />
+                        <SafeAvatar src={m.avatar} initial={m.name || m.email.split("@")[0]} size="sm" />
                         <Text size="sm" truncate style={{ minWidth: 0 }}>
-                          {m.name || m.email}
+                          {m.name || m.email.split("@")[0]}
                           {isSelf && (
                             <Text span c="green" fw={600}>
                               （あなた）
@@ -7449,8 +7449,8 @@ export default function Home() {
                               <div style={{ maxWidth: "82%", display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start" }}>
                                 {!mine && (
                                   <Group gap={5} align="center" wrap="nowrap" mb={2}>
-                                    <SafeAvatar src={m.avatar} initial={m.authorName || m.authorEmail} size="xs" />
-                                    <Text size="xs" c="dimmed">{m.authorName || m.authorEmail}</Text>
+                                    <SafeAvatar src={m.avatar} initial={m.authorName || m.authorEmail.split("@")[0]} size="xs" />
+                                    <Text size="xs" c="dimmed">{m.authorName || m.authorEmail.split("@")[0]}</Text>
                                   </Group>
                                 )}
                                 <div
