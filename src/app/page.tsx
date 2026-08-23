@@ -4306,6 +4306,51 @@ export default function Home() {
     return () => el.removeEventListener("load", onImgLoad, true);
   }, [chatView, chatMessages]);
 
+  // Remember the last timeline scroll position so we can restore it after the
+  // chat view closes. We track it continuously while OUTSIDE the chat view: the
+  // SegmentedControl's hidden radio gets focus-scrolled when the chat tab opens,
+  // so reading window.scrollY inside the freeze effect gives a wrong (already
+  // scrolled) value. A ref updated on scroll keeps the true pre-chat position.
+  const chatSavedScrollRef = useRef(0);
+  useEffect(() => {
+    if (chatView) return;
+    const track = () => { chatSavedScrollRef.current = window.scrollY; };
+    track();
+    window.addEventListener("scroll", track, { passive: true });
+    return () => window.removeEventListener("scroll", track);
+  }, [chatView]);
+
+  // Freeze window scroll while the chat view is actually rendered. The composer
+  // is pinned to the visual-viewport bottom by reading the container's top; if
+  // the page could scroll during keyboard open/close, that top moves and the
+  // height recomputation fights the browser's scroll-to-focus -> the input box
+  // bounces. Freezing the page (the message list scrolls internally) keeps the
+  // top constant so the height track is stable. We restore the prior timeline
+  // scroll on close so the feed position is not lost.
+  useEffect(() => {
+    if (!chatView || !chatViewportRef.current) return;
+    const de = document.documentElement;
+    const saved = chatSavedScrollRef.current;
+    de.style.overflow = "hidden";
+    const c = chatViewportRef.current;
+    let top = 0;
+    let el: HTMLElement | null = c;
+    while (el) {
+      top += el.offsetTop;
+      el = el.offsetParent as HTMLElement | null;
+    }
+    window.scrollTo(0, Math.max(0, top - 56));
+    return () => {
+      de.style.overflow = "";
+      const restore = () => {
+        try { window.scrollTo(0, saved); } catch { /* noop */ }
+      };
+      // run after the timeline re-renders and the chat view unmounts
+      requestAnimationFrame(() => requestAnimationFrame(restore));
+      window.setTimeout(restore, 400);
+    };
+  }, [chatView]);
+
   // Keep the chat composer pinned to the *visual* viewport bottom. iOS/Android
   // vh/dvh don't all track the on-screen keyboard, so opening/closing it could
   // leave whitespace below the input. We measure the container's current top and
