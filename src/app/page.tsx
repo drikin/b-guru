@@ -6371,7 +6371,7 @@ export default function Home() {
   swipeGateRef.current = showNavTabs && !previewImage;
   useEffect(() => {
     if (typeof window === "undefined") return;
-    // Horizontal swipe to switch タイムライン ⇄ ビーグルチャット.
+    // Horizontal swipe to switch タイムライン ⇄ チャット.
     // Touch path uses touch events (touchstart/touchend/touchcancel) — reliable on
     // iOS Safari, where the browser can fire pointercancel instead of pointerup and
     // swallow the gesture. Desktop uses the pointer (mouse/pen) path. It never fires
@@ -7338,7 +7338,7 @@ export default function Home() {
                       {
                         label: (
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                            ビーグルチャット
+                            チャット
                             {onlineMembers.length > 0 && (
                               <span style={{ opacity: 0.6, fontSize: 11, fontWeight: 500 }}>
                                 {onlineMembers.length}人在線
