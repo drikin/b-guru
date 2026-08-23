@@ -96,7 +96,7 @@ export async function getOnlineMembers(): Promise<PresenceMember[]> {
   const nameByEmail = await resolveDisplayNames(emails);
   return emails.map((em) => ({
     email: em,
-    name: nameByEmail.get(em) ?? em,
+    name: nameByEmail.get(em) ?? em.split("@")[0],
     avatar: gravatarUrl(em),
   }));
 }
