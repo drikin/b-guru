@@ -6290,9 +6290,84 @@ export default function Home() {
     const mainCards = () => {
       const main = document.querySelector<HTMLElement>('[data-cx="main"]');
       if (!main) return [];
+      // All posts in DOM order — INCLUDING replies hidden inside a CLOSED
+      // <Collapse>. We keep them in the traversal (rather than skipping them)
+      // so J/K can land on every single comment: reaching a folded one
+      // auto-expands its section (see ensureShow below).
       return Array.from(main.querySelectorAll<HTMLElement>("[data-kbd-id]"))
-        .filter(isVisibleCard)
         .map((el) => Number(el.dataset.kbdId));
+    };
+    // If `id` sits inside a folded comment section (closed Mantine <Collapse>:
+    // unstyled DIV with inline opacity:0 that still holds [data-kbd-id] cards),
+    // click its toggle to expand it. Returns true if it clicked a toggle —
+    // the caller should then wait for the collapse animation before scrolling.
+    const ensureShow = (id: number): boolean => {
+      const main = document.querySelector<HTMLElement>('[data-cx="main"]');
+      if (!main) return false;
+      const el = main.querySelector<HTMLElement>(`[data-kbd-id="${id}"]`);
+      if (!el || isVisibleCard(el)) return false; // already painted
+      let n: HTMLElement | null = el.parentElement;
+      let fold: HTMLElement | null = null;
+      while (n && n !== main) {
+        if (n.style && n.style.opacity === "0" && n.querySelector("[data-kbd-id]")) {
+          fold = n;
+          break;
+        }
+        n = n.parentElement;
+      }
+      if (!fold) return false;
+      const toggles = Array.from(main.querySelectorAll<HTMLElement>("*")).filter(
+        (t) => t.children.length === 0 && /件のコメントを表示/.test(t.textContent || "")
+      );
+      let toggle: HTMLElement | null = null;
+      for (const t of toggles) {
+        if (t.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING) toggle = t;
+      }
+      if (toggle) {
+        toggle.click();
+        return true;
+      }
+      return false;
+    };
+    // A Mantine <Collapse> animates open over ~400ms, so scrolling immediately
+    // after ensureShow would land the ring on a moving target. Poll the card's
+    // vertical position until two consecutive reads agree (animation settled),
+    // then place the ring. A hard fallback guarantees the ring always appears.
+    const focusAfterExpand = (id: number) => {
+      let lastY: number | null = null;
+      let stable = 0;
+      const iv = window.setInterval(() => {
+        const m = document.querySelector<HTMLElement>('[data-cx="main"]');
+        const c = m?.querySelector<HTMLElement>(`[data-kbd-id="${id}"]`);
+        if (!c || !isVisibleCard(c)) {
+          lastY = null;
+          stable = 0;
+          return;
+        }
+        const y = c.getBoundingClientRect().top;
+        if (lastY !== null && Math.abs(y - lastY) < 1) stable++;
+        else stable = 0;
+        lastY = y;
+        if (stable >= 2) {
+          window.clearInterval(iv);
+          setRing(id);
+        }
+      }, 50);
+      window.setTimeout(() => {
+        window.clearInterval(iv);
+        setRing(id);
+      }, 1200);
+    };
+    // Vertical space reserved at the top of the scrollport by STICKY/FIXED
+    // elements the focused card must clear when scrolled to block:"start".
+    // Header is fixed at 56px; on the home feed a sticky tab bar (data-cx
+    // "navtabs") also overlays just below it. Measure the tab's live bottom
+    // edge so this tracks whatever the tab height is — immune to later
+    // layout tweaks. Falls back to the header + gap when no tab is shown.
+    const focusOffsetTop = () => {
+      const tab = document.querySelector<HTMLElement>('[data-cx="navtabs"]');
+      if (tab) return Math.ceil(tab.getBoundingClientRect().bottom) + 4;
+      return 60; // fixed header + small gap
     };
     const setRing = (id: number | null) => {
       document.querySelectorAll<HTMLElement>(".kbd-focus").forEach((el) => {
@@ -6309,9 +6384,9 @@ export default function Home() {
         el.classList.add("kbd-focus");
         el.style.outline = "3px solid var(--mantine-color-green-6, #2f9e44)";
         el.style.outlineOffset = "2px";
-        // A fixed 56px header overlays the top of the scroll area; offset the
-        // focus target so the card lands just below it, not under it.
-        el.style.scrollMarginTop = "60px";
+        // Clear the fixed header AND the sticky tab bar so the focused card
+        // lands fully visible below both, never hidden underneath them.
+        el.style.scrollMarginTop = focusOffsetTop() + "px";
         requestAnimationFrame(() => el.scrollIntoView({ block: "start" }));
       }
     };
@@ -6337,7 +6412,10 @@ export default function Home() {
         }
       }
       setKbdCursorId(next);
-      setRing(next);
+      // J/K iterates EVERY comment: if the target sits in a folded section,
+      // auto-expand it and wait for the animation to settle before scrolling.
+      if (ensureShow(next)) focusAfterExpand(next);
+      else setRing(next);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -7356,6 +7434,7 @@ export default function Home() {
               {/* Tab switcher: タイムライン / チャット (home feed root only). */}
               {showNavTabs && (
                 <Box
+                  data-cx="navtabs"
                   style={{
                     position: "sticky",
                     top: "var(--app-shell-header-height, 56px)",
