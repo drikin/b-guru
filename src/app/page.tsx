@@ -1717,6 +1717,7 @@ const COLLAPSE_THRESHOLD = 4;
 const VISIBLE_TAIL = 3; // latest 3 comments always visible
 
 function CollapsibleReplies({
+  parentId,
   replies,
   auth,
   avatarSrc,
@@ -1733,6 +1734,7 @@ function CollapsibleReplies({
   onPreview,
   onOpenProfile,
 }: {
+  parentId: number;
   replies: FeedPost[];
   auth: { email: string };
   avatarSrc?: string | null;
@@ -1784,6 +1786,8 @@ function CollapsibleReplies({
     <>
       {/* Toggle button — sits right after parent, before collapsed section */}
       <UnstyledButton
+        data-kbd-toggle
+        data-fold={parentId}
         onClick={() => setExpanded((v) => !v)}
         style={{
           width: "100%",
@@ -1830,7 +1834,13 @@ function CollapsibleReplies({
         )}
       </UnstyledButton>
       {/* Collapsed older replies — expands between toggle and latest 4 */}
-      <Collapse expanded={expanded} transitionDuration={400} animateOpacity>
+      <Collapse
+        data-fold={parentId}
+        data-open={expanded}
+        expanded={expanded}
+        transitionDuration={400}
+        animateOpacity
+      >
         <Stack gap={6}>
           {hiddenReplies.map((rep) => (
             <ReplyBubble
@@ -2305,6 +2315,7 @@ function ProfileView({
                   onEditPoll={onEditPoll}
                 />
                 <CollapsibleReplies
+                  parentId={post.id}
                   replies={post.replies ?? []}
                   auth={auth}
                   avatarSrc={avatarSrc}
@@ -2819,6 +2830,7 @@ function TimelineFeed({
              * When 5+ replies, older middle ones are collapsed with a smooth
              * expand/collapse animation; the latest 3 stay visible at bottom. */}
             <CollapsibleReplies
+              parentId={post.id}
               replies={post.replies ?? []}
               auth={auth}
               avatarSrc={avatarSrc}
@@ -6297,32 +6309,22 @@ export default function Home() {
       return Array.from(main.querySelectorAll<HTMLElement>("[data-kbd-id]"))
         .map((el) => Number(el.dataset.kbdId));
     };
-    // If `id` sits inside a folded comment section (closed Mantine <Collapse>:
-    // unstyled DIV with inline opacity:0 that still holds [data-kbd-id] cards),
-    // click its toggle to expand it. Returns true if it clicked a toggle —
-    // the caller should then wait for the collapse animation before scrolling.
+    // If `id` sits inside a folded comment section, click that section's toggle
+    // to expand it. The fold/toggle are identified by React-rendered data-*
+    // attributes (data-fold / data-open / data-kbd-toggle on the <Collapse> and
+    // its "N件のコメントを表示" button) — no DOM sniffing on Mantine internals or
+    // copy text, so it survives layout/copy changes. Returns true if it clicked.
     const ensureShow = (id: number): boolean => {
       const main = document.querySelector<HTMLElement>('[data-cx="main"]');
       if (!main) return false;
       const el = main.querySelector<HTMLElement>(`[data-kbd-id="${id}"]`);
       if (!el || isVisibleCard(el)) return false; // already painted
-      let n: HTMLElement | null = el.parentElement;
-      let fold: HTMLElement | null = null;
-      while (n && n !== main) {
-        if (n.style && n.style.opacity === "0" && n.querySelector("[data-kbd-id]")) {
-          fold = n;
-          break;
-        }
-        n = n.parentElement;
-      }
+      const fold = el.closest<HTMLElement>("[data-fold]");
       if (!fold) return false;
-      const toggles = Array.from(main.querySelectorAll<HTMLElement>("*")).filter(
-        (t) => t.children.length === 0 && /件のコメントを表示/.test(t.textContent || "")
-      );
-      let toggle: HTMLElement | null = null;
-      for (const t of toggles) {
-        if (t.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING) toggle = t;
-      }
+      // data-open mirrors React state; only genuinely closed sections are opened.
+      if (fold.getAttribute("data-open") !== "false") return false;
+      const fid = fold.getAttribute("data-fold");
+      const toggle = main.querySelector<HTMLElement>(`[data-kbd-toggle][data-fold="${fid}"]`);
       if (toggle) {
         toggle.click();
         return true;
@@ -6364,10 +6366,23 @@ export default function Home() {
     // "navtabs") also overlays just below it. Measure the tab's live bottom
     // edge so this tracks whatever the tab height is — immune to later
     // layout tweaks. Falls back to the header + gap when no tab is shown.
+    // The +8 accounts for the focus ring: outline(3px) + outlineOffset(2px)
+    // protrude ~5px above the card's border box, so keeping the card 8px
+    // below the sticky stack keeps the whole ring visible (UX review 2026-08).
     const focusOffsetTop = () => {
+      // Height-based, NOT a scroll-position snapshot: header height (from the
+      // CSS var the sticky tab itself sticks under) + tab height + ring buffer.
+      // Independent of where the page is scrolled, and follows any header/tab
+      // height changes in future layout work (QA robustness review 2026-08).
+      const headerH =
+        parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue(
+            "--app-shell-header-height"
+          )
+        ) || 56;
       const tab = document.querySelector<HTMLElement>('[data-cx="navtabs"]');
-      if (tab) return Math.ceil(tab.getBoundingClientRect().bottom) + 4;
-      return 60; // fixed header + small gap
+      const stack = tab ? headerH + tab.offsetHeight : headerH;
+      return Math.ceil(stack) + 8;
     };
     const setRing = (id: number | null) => {
       document.querySelectorAll<HTMLElement>(".kbd-focus").forEach((el) => {
@@ -6451,28 +6466,24 @@ export default function Home() {
           setRing(null);
           window.scrollTo({ top: 0, behavior: "smooth" });
           break;
-        // E = expand any comment sections that are currently folded (collapsed).
-        // A folded Mantine <Collapse> is an unstyled DIV with inline
-        // opacity:0 (+ display:none) that still holds [data-kbd-id] cards.
+        // E = expand every folded comment section. Folded <Collapse>s carry
+        // data-fold + data-open="false"; their toggles carry a matching
+        // data-kbd-toggle + data-fold. React-driven — no DOM sniffing on
+        // Mantine internals or copy text.
         case "e": case "E": {
           const main = document.querySelector<HTMLElement>('[data-cx="main"]');
           if (!main) break;
-          const toggles = Array.from(main.querySelectorAll<HTMLElement>("*")).filter(
-            (el) => el.children.length === 0 && /件のコメントを表示/.test(el.textContent || "")
+          const closed = Array.from(
+            main.querySelectorAll<HTMLElement>('[data-fold][data-open="false"]')
           );
-          const folds = Array.from(main.querySelectorAll<HTMLElement>("div")).filter(
-            (el) => el.style.opacity === "0" && el.querySelector("[data-kbd-id]")
-          );
-          const seen = new Set<HTMLElement>();
-          for (const fold of folds) {
-            if (seen.has(fold)) continue;
-            seen.add(fold);
-            // Toggle = the last "件のコメントを表示" element that precedes this fold.
-            let toggle: HTMLElement | null = null;
-            for (const t of toggles) {
-              if (t.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING) toggle = t;
-            }
-            if (toggle) toggle.click();
+          const seen = new Set<string>();
+          for (const fold of closed) {
+            const fid = fold.getAttribute("data-fold");
+            if (fid == null || seen.has(fid)) continue;
+            seen.add(fid);
+            main
+              .querySelector<HTMLElement>(`[data-kbd-toggle][data-fold="${fid}"]`)
+              ?.click();
           }
           break;
         }
