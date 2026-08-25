@@ -1177,6 +1177,10 @@ function PostCard({
       ref={setUnreadRef as unknown as React.Ref<HTMLDivElement>}
       data-unread-id={post.id}
       data-kbd-id={post.id}
+      // Root posts (the "parent" cards) are also tagged so N/P can jump
+      // between them while skipping inline replies. Replies carry a parentId,
+      // so only roots match here.
+      {...(!post.parentId ? { "data-kbd-parent": "1" } : {})}
       style={{
         cursor: isThreadRoot ? "default" : "pointer",
         position: "relative",
@@ -6567,12 +6571,43 @@ export default function Home() {
       if (ensureShow(next)) focusAfterExpand(next);
       else setRing(next);
     };
+    // N/P jump between PARENT (root) cards only, skipping inline replies.
+    // "親" = the root post a group belongs to, so we traverse just the cards
+    // tagged data-kbd-parent (roots) in DOM order. Same clamp/no-wrap rule as
+    // J/K, and a fresh cursor (no selection) always starts at the first root.
+    const moveParent = (dir: 1 | -1) => {
+      const main = document.querySelector<HTMLElement>('[data-cx="main"]');
+      if (!main) return;
+      const parents = Array.from(
+        main.querySelectorAll<HTMLElement>("[data-kbd-id][data-kbd-parent]")
+      ).map((el) => Number(el.dataset.kbdId));
+      if (!parents.length) return;
+      let next: number;
+      if (kbdCursorId == null) {
+        next = parents[0];
+      } else {
+        const i = parents.indexOf(kbdCursorId);
+        if (i < 0) {
+          next = dir === 1 ? parents[0] : parents[parents.length - 1];
+        } else if (dir === 1) {
+          next = i + 1 < parents.length ? parents[i + 1] : parents[i];
+        } else {
+          next = i - 1 >= 0 ? parents[i - 1] : parents[i];
+        }
+      }
+      setKbdCursorId(next);
+      if (ensureShow(next)) focusAfterExpand(next);
+      else setRing(next);
+    };
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isEditable(e.target)) return;
       switch (e.key) {
         case "j": case "J": case "ArrowDown": e.preventDefault(); move(1); break;
         case "k": case "K": case "ArrowUp": e.preventDefault(); move(-1); break;
+        // N/P = jump to the next/previous PARENT (root) card, skipping replies.
+        case "n": case "N": e.preventDefault(); moveParent(1); break;
+        case "p": case "P": e.preventDefault(); moveParent(-1); break;
         case "Enter":
           if (kbdCursorId != null && kbdRef.current) kbdRef.current.openThread(kbdCursorId);
           break;
