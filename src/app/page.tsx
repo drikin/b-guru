@@ -105,6 +105,20 @@ function chatTimeStr(iso: string): string {
   return md(d) === md(new Date()) ? hm : `${md(d)} ${hm}`;
 }
 
+/** Slack-like emoji picker set for the chat composer (common, hand-picked). */
+const CHAT_EMOJIS = [
+  "😀","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","😉","😍","😘","😜","🤪","😝",
+  "😎","🤓","🥳","😏","😌","😴","🤤","😪","😷","🤒","🤕","🤢","🤮","🥴","😵","🤯",
+  "😤","😠","😡","🤬","😭","😢","😱","😨","😰","😥","😓","🫡","🤝","👍","👎","👌",
+  "✌️","🤞","🙏","👏","💪","🤙","👋","🤌","🖐️","✋","🤚","👈","👉","👆","👇","🏆",
+  "🔥","❤️","🧡","💛","💚","💙","💜","🖤","🤍","💔","💯","💥","✨","⭐","🌟","💫",
+  "🎉","🎊","🎁","🎂","🍰","🍺","🍻","🥂","☕","🍵","🍜","🍣","🍩","🍪","🍎","🍉",
+  "🚀","👏","🤔","🥇","🗽","🎬","📷","🎧","🎮","💻","📱","⌚","💾","☁️","🌧️","☀️",
+  "🌙","🌈","⚡","❄️","🚗","🚕","✈️","🏠","🌸","🐶","🐱","🦊","🐻","🐼","🐨","🐸",
+  "🐝","🦄","🐙","🍀","🌍","🏳️","⚽","🏀","🎯","🎲","🎳","🎹","🎸","🥁","🎨","🧸",
+  "🪙","💰","💎","⏰","📌","🔔","🔒","✅","❌","⚠️","❓","❗","💬","📢","🗯️","🧦",
+];
+
 /** Return the date parts (JST) of the NEXT 18:00 JST. If it's already past
  *  18:00 JST today, returns tomorrow's date. 18:00 JST = 09:00 UTC. */
 function nextJst18Date(): { y: number; mo: number; d: number } {
@@ -4177,6 +4191,8 @@ export default function Home() {
   // Target member for a mention-pre-filled chat open (clicking an online row).
   const [chatMention, setChatMention] = useState<string | null>(null);
   const [chatSending, setChatSending] = useState(false);
+  // Slack-like emoji picker for the chat composer.
+  const [chatEmojiOpen, setChatEmojiOpen] = useState(false);
   // Author self-edit (typo fix): the message id being edited + the draft text.
   const [chatEditingId, setChatEditingId] = useState<number | null>(null);
   const [chatEditText, setChatEditText] = useState("");
@@ -4343,6 +4359,23 @@ export default function Home() {
       /* ignore */
     }
   }, [chatEditText, chatEditingId, cancelEditChat]);
+
+  // Slack-like: insert an emoji into the chat composer at the caret (or append
+  // when the field isn't focused), then restore focus + caret for chained input.
+  const insertEmoji = useCallback((emoji: string) => {
+    const ta = chatInputRef.current;
+    const start = ta?.selectionStart ?? chatText.length;
+    const end = ta?.selectionEnd ?? chatText.length;
+    const next = chatText.slice(0, start) + emoji + chatText.slice(end);
+    setChatText(next);
+    const caret = start + emoji.length;
+    requestAnimationFrame(() => {
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(caret, caret);
+      }
+    });
+  }, [chatText]);
 
   // Auto-scroll the message list to the bottom when it grows while open.
   // A single immediate scrollTop can come out short: fonts/avatars/the mount
@@ -7729,6 +7762,52 @@ export default function Home() {
                       wrapperStyle={{ flex: 1 }}
                       ariaLabel="チャットメッセージ"
                     />
+                    <Popover
+                      opened={chatEmojiOpen}
+                      onChange={setChatEmojiOpen}
+                      position="top"
+                      withArrow
+                      offset={6}
+                    >
+                      <Popover.Target>
+                        <ActionIcon
+                          variant="subtle"
+                          color="gray"
+                          size="md"
+                          aria-label="絵文字"
+                          title="絵文字"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => setChatEmojiOpen((o) => !o)}
+                          style={{ flexShrink: 0, marginBottom: 4 }}
+                        >
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="10" />
+                            <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                            <line x1="9" y1="9" x2="9.01" y2="9" />
+                            <line x1="15" y1="9" x2="15.01" y2="9" />
+                          </svg>
+                        </ActionIcon>
+                      </Popover.Target>
+                      <Popover.Dropdown>
+                        <ScrollArea type="auto" h={200} offsetScrollbars scrollbarSize={6}>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 28px)", gap: 2, padding: 6 }}>
+                            {CHAT_EMOJIS.map((em, i) => (
+                              <UnstyledButton
+                                key={i}
+                                style={{ fontSize: 20, textAlign: "center", lineHeight: "28px", borderRadius: 6 }}
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => {
+                                  insertEmoji(em);
+                                  setChatEmojiOpen(false);
+                                }}
+                              >
+                                {em}
+                              </UnstyledButton>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      </Popover.Dropdown>
+                    </Popover>
                     <ActionIcon
                       variant="filled"
                       color="green"
