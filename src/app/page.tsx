@@ -4370,9 +4370,26 @@ export default function Home() {
     }
   }, [chatEditText, chatEditingId, cancelEditChat]);
 
-  // Slack-like: insert an emoji into the chat composer at the caret (or append
-  // when the field isn't focused), then restore focus + caret for chained input.
+  // Slack-like: insert an emoji at the caret of the ACTIVE field — the edit
+  // textarea when a message is being edited, otherwise the main composer — then
+  // restore focus + caret for chained input.
   const insertEmoji = useCallback((emoji: string) => {
+    // Editing a message? Insert into the inline edit field instead.
+    if (chatEditingId != null) {
+      const ta = chatEditInputRef.current;
+      const start = ta?.selectionStart ?? chatEditText.length;
+      const end = ta?.selectionEnd ?? chatEditText.length;
+      const next = chatEditText.slice(0, start) + emoji + chatEditText.slice(end);
+      setChatEditText(next);
+      const caret = start + emoji.length;
+      requestAnimationFrame(() => {
+        if (ta) {
+          ta.focus();
+          ta.setSelectionRange(caret, caret);
+        }
+      });
+      return;
+    }
     const ta = chatInputRef.current;
     const start = ta?.selectionStart ?? chatText.length;
     const end = ta?.selectionEnd ?? chatText.length;
@@ -4385,7 +4402,7 @@ export default function Home() {
         ta.setSelectionRange(caret, caret);
       }
     });
-  }, [chatText]);
+  }, [chatEditText, chatEditingId, chatText]);
 
   // Auto-scroll the message list to the bottom when it grows while open.
   // A single immediate scrollTop can come out short: fonts/avatars/the mount
@@ -7691,6 +7708,7 @@ export default function Home() {
                                       ref={chatEditInputRef}
                                       value={chatEditText}
                                       onChange={(e) => setChatEditText(e.currentTarget.value)}
+                                      maxLength={1000}
                                       autosize
                                       minRows={1}
                                       maxRows={4}
