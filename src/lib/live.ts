@@ -33,7 +33,7 @@ export type LiveEvent =
   | { type: "post"; postId: number; action: "create" | "update" | "delete"; authorEmail?: string }
   | { type: "pin"; postId: number; action: "toggle" }
   | { type: "presence"; emails: string[] }
-  | { type: "chat"; message: ChatLiveMessage; action: "create" | "delete" }
+  | { type: "chat"; message: ChatLiveMessage; action: "create" | "delete" | "edit" }
   | { type: "poll"; action: "vote" | "edit"; postId: number; poll: PostPoll };
 
 export function emitLive(event: LiveEvent): void {

@@ -18,6 +18,8 @@ export interface ChatMessage {
   body: string;
   createdAt: string; // ISO timestamp
   avatar: string | null;
+  edited: boolean; // author corrected a typo after posting
+  editedAt: string | null; // ISO timestamp of the edit
 }
 
 /** Max body length for a chat message. */
@@ -63,6 +65,8 @@ function mapRow(r: {
   author_email: string;
   author_name: string | null;
   body: string;
+  edited: boolean;
+  edited_at: Date | string | null;
   created_at: Date | string;
 }): ChatMessage {
   return {
@@ -72,6 +76,8 @@ function mapRow(r: {
     body: r.body,
     createdAt: new Date(r.created_at).toISOString(),
     avatar: gravatarUrl(r.author_email),
+    edited: r.edited,
+    editedAt: r.edited_at ? new Date(r.edited_at).toISOString() : null,
   };
 }
 
@@ -111,9 +117,30 @@ export async function createChatMessage(
   const res = await pool.query(
     `INSERT INTO chat_messages (author_email, author_name, body)
      VALUES ($1, $2, $3)
-     RETURNING id, author_email, author_name, body, created_at`,
+     RETURNING id, author_email, author_name, body, edited, edited_at, created_at`,
     [email, name, body]
   );
+  return mapRow(res.rows[0]);
+}
+
+/** Edit a chat message's body (author self-fix for typos). Only the original
+ *  author may edit, and only while the message is still within its TTL window.
+ *  Returns the updated message, or null when the message is not editable
+ *  (not found / not the author / already expired). */
+export async function editChatMessage(
+  id: number,
+  email: string,
+  body: string
+): Promise<ChatMessage | null> {
+  const res = await pool.query(
+    `UPDATE chat_messages
+     SET body = $1, edited = true, edited_at = now()
+     WHERE id = $2 AND author_email = $3
+       AND created_at >= now() - ($4::text)::interval
+     RETURNING id, author_email, author_name, body, edited, edited_at, created_at`,
+    [body, id, email, CHAT_TTL]
+  );
+  if (res.rowCount === 0) return null;
   return mapRow(res.rows[0]);
 }
 

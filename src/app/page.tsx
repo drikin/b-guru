@@ -85,6 +85,26 @@ function formatJSTPDT(iso: string): string {
   return `${jst} JST / ${pdt} PDT`;
 }
 
+/** Chat bubble timestamp (JST). Same local day → "HH:MM"; older → "M/D HH:MM".
+ *  Chat is 24h-ephemeral so "older" is at most yesterday. */
+function chatTimeStr(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const md = (x: Date) =>
+    x.toLocaleDateString("ja-JP", {
+      timeZone: "Asia/Tokyo",
+      month: "numeric",
+      day: "numeric",
+    });
+  const hm = d.toLocaleTimeString("en-GB", {
+    timeZone: "Asia/Tokyo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  return md(d) === md(new Date()) ? hm : `${md(d)} ${hm}`;
+}
+
 /** Return the date parts (JST) of the NEXT 18:00 JST. If it's already past
  *  18:00 JST today, returns tomorrow's date. 18:00 JST = 09:00 UTC. */
 function nextJst18Date(): { y: number; mo: number; d: number } {
@@ -4157,6 +4177,10 @@ export default function Home() {
   // Target member for a mention-pre-filled chat open (clicking an online row).
   const [chatMention, setChatMention] = useState<string | null>(null);
   const [chatSending, setChatSending] = useState(false);
+  // Author self-edit (typo fix): the message id being edited + the draft text.
+  const [chatEditingId, setChatEditingId] = useState<number | null>(null);
+  const [chatEditText, setChatEditText] = useState("");
+  const chatEditInputRef = useRef<HTMLTextAreaElement | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const chatViewportRef = useRef<HTMLDivElement | null>(null);
   const chatViewRef = useRef(false); // ref so the SSE handler stays stable
@@ -4282,6 +4306,43 @@ export default function Home() {
     }
     setChatSending(false);
   }, [chatText, chatSending]);
+
+  // Begin editing one of the current user's own messages (typo fix).
+  const startEditChat = useCallback((id: number, body: string) => {
+    setChatEditingId(id);
+    setChatEditText(body);
+    // Focus the edit box after it mounts.
+    requestAnimationFrame(() => chatEditInputRef.current?.focus());
+  }, []);
+
+  const cancelEditChat = useCallback(() => {
+    setChatEditingId(null);
+    setChatEditText("");
+  }, []);
+
+  // Save an edited message body (PATCH /api/chat/[id]); the SSE "edit" event
+  // also refreshes the text for every other open client in real time.
+  const saveChatEdit = useCallback(async () => {
+    const body = chatEditText.trim();
+    if (!body || chatEditingId == null) return;
+    try {
+      const r = await fetch(`/api/chat/${chatEditingId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body }),
+        cache: "no-store",
+      });
+      const d = await r.json();
+      if (d.ok && d.message) {
+        setChatMessages((prev) =>
+          prev.map((m) => (m.id === chatEditingId ? d.message : m))
+        );
+        cancelEditChat();
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [chatEditText, chatEditingId, cancelEditChat]);
 
   // Auto-scroll the message list to the bottom when it grows while open.
   // A single immediate scrollTop can come out short: fonts/avatars/the mount
@@ -4656,6 +4717,20 @@ export default function Home() {
       } else if (d.action === "delete" && d.message?.id != null) {
         const delId = d.message.id as number;
         setChatMessages((prev) => prev.filter((m) => m.id !== delId));
+      } else if (d.action === "edit" && d.message?.id != null) {
+        const em = d.message as ChatMessage;
+        setChatMessages((prev) =>
+          prev.map((m) =>
+            m.id === em.id
+              ? {
+                  ...m,
+                  body: em.body ?? m.body,
+                  edited: em.edited ?? m.edited,
+                  editedAt: em.editedAt ?? m.editedAt,
+                }
+              : m
+          )
+        );
       }
     };
     es.addEventListener("post", onChange);
@@ -7534,29 +7609,91 @@ export default function Home() {
                       ) : (
                         chatMessages.map((m) => {
                           const mine = !!auth && m.authorEmail === auth.email;
+                          const editing = chatEditingId === m.id;
+                          const name = m.authorName || m.authorEmail.split("@")[0];
+                          const bubbleStyle = {
+                            background: mine ? "var(--bg-surface)" : "var(--bg-subtle)",
+                            border: mine ? "1px solid var(--border-green)" : "1px solid transparent",
+                            borderRadius: mine ? "14px 14px 2px 14px" : "14px 14px 14px 2px",
+                            padding: "6px 10px",
+                            fontSize: 13,
+                            lineHeight: 1.45,
+                            whiteSpace: "pre-wrap" as const,
+                            wordBreak: "break-word",
+                          } as const;
                           return (
                             <div key={m.id} style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start" }}>
                               <div style={{ maxWidth: "82%", display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start" }}>
                                 {!mine && (
                                   <Group gap={5} align="center" wrap="nowrap" mb={2}>
-                                    <SafeAvatar src={m.avatar} initial={m.authorName || m.authorEmail.split("@")[0]} size="xs" />
-                                    <Text size="xs" c="dimmed">{m.authorName || m.authorEmail.split("@")[0]}</Text>
+                                    <SafeAvatar src={m.avatar} initial={name} size="xs" />
+                                    <Text size="xs" c="dimmed">{name}</Text>
+                                    <Text size="xs" c="dimmed" style={{ opacity: 0.7 }}>{chatTimeStr(m.createdAt)}</Text>
+                                    {m.edited && <Text size="xs" c="green.7">編集済み</Text>}
                                   </Group>
                                 )}
-                                <div
-                                  style={{
-                                    background: mine ? "var(--bg-surface)" : "var(--bg-subtle)",
-                                    border: mine ? "1px solid var(--border-green)" : "1px solid transparent",
-                                    borderRadius: mine ? "14px 14px 2px 14px" : "14px 14px 14px 2px",
-                                    padding: "6px 10px",
-                                    fontSize: 13,
-                                    lineHeight: 1.45,
-                                    whiteSpace: "pre-wrap",
-                                    wordBreak: "break-word",
-                                  }}
-                                >
-                                  {renderChatBody(m.body, mentionMembers, auth?.email || "")}
-                                </div>
+                                {editing ? (
+                                  <Box
+                                    style={{
+                                      background: "var(--bg-surface)",
+                                      border: "1px solid var(--border-green)",
+                                      borderRadius: 14,
+                                      padding: 6,
+                                      width: "100%",
+                                    }}
+                                  >
+                                    <Textarea
+                                      ref={chatEditInputRef}
+                                      value={chatEditText}
+                                      onChange={(e) => setChatEditText(e.currentTarget.value)}
+                                      autosize
+                                      minRows={1}
+                                      maxRows={4}
+                                      placeholder="編集内容（Enter 保存 / Esc キャンセル）"
+                                      onKeyDown={(e) => {
+                                        if ((e.nativeEvent as any).isComposing) return;
+                                        if (e.key === "Escape") cancelEditChat();
+                                        if (e.key === "Enter" && !e.shiftKey) {
+                                          e.preventDefault();
+                                          saveChatEdit();
+                                        }
+                                      }}
+                                    />
+                                    <Group justify="flex-end" gap={6} mt={6} wrap="nowrap">
+                                      <Button size="xs" variant="subtle" color="gray" onClick={cancelEditChat}>
+                                        キャンセル
+                                      </Button>
+                                      <Button size="xs" onClick={saveChatEdit} disabled={!chatEditText.trim()}>
+                                        保存
+                                      </Button>
+                                    </Group>
+                                  </Box>
+                                ) : (
+                                  <>
+                                    {mine && (
+                                      <Group gap={4} align="center" wrap="nowrap" mb={2}>
+                                        {m.edited && <Text size="xs" c="green.7">編集済み</Text>}
+                                        <Text size="xs" c="dimmed" style={{ opacity: 0.7 }}>{chatTimeStr(m.createdAt)}</Text>
+                                        <ActionIcon
+                                          size="xs"
+                                          variant="subtle"
+                                          color="gray"
+                                          aria-label="編集"
+                                          title="タイポを修正"
+                                          onClick={() => startEditChat(m.id, m.body)}
+                                        >
+                                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M12 20h9" />
+                                            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                                          </svg>
+                                        </ActionIcon>
+                                      </Group>
+                                    )}
+                                    <div style={bubbleStyle}>
+                                      {renderChatBody(m.body, mentionMembers, auth?.email || "")}
+                                    </div>
+                                  </>
+                                )}
                               </div>
                             </div>
                           );

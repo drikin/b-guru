@@ -191,9 +191,14 @@ export async function initSchema() {
       author_email TEXT NOT NULL,
       author_name TEXT,
       body TEXT NOT NULL DEFAULT '',
+      edited BOOLEAN NOT NULL DEFAULT false,
+      edited_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_chat_created ON chat_messages(id DESC);
+    -- Author self-edits (typo fixes). Idempotent for pre-existing databases.
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS edited BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
 
     -- Per-user read cursor for the chat unread badge.
     CREATE TABLE IF NOT EXISTS chat_read_state (
