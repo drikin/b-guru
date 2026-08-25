@@ -119,6 +119,16 @@ const CHAT_EMOJIS = [
   "🪙","💰","💎","⏰","📌","🔔","🔒","✅","❌","⚠️","❓","❗","💬","📢","🗯️","🧦",
 ];
 
+/** Slack-like: a chat body is "emoji only" when, ignoring whitespace, it
+ *  consists solely of emoji (incl. ZWJ/family sequences, skin tones, VS16).
+ *  Such messages are rendered at a large size like Slack. Length-capped so a
+ *  giant wall doesn't blow up the bubble. */
+function isEmojiOnly(text: string): boolean {
+  const t = text.replace(/\s/g, "");
+  if (!t || t.length > 32) return false;
+  return /^(?:\p{Extended_Pictographic}(?:\uFE0F|\u200D|[\u{1F3FB}-\u{1F3FF}])*)+$/u.test(t);
+}
+
 /** Return the date parts (JST) of the NEXT 18:00 JST. If it's already past
  *  18:00 JST today, returns tomorrow's date. 18:00 JST = 09:00 UTC. */
 function nextJst18Date(): { y: number; mo: number; d: number } {
@@ -7644,13 +7654,15 @@ export default function Home() {
                           const mine = !!auth && m.authorEmail === auth.email;
                           const editing = chatEditingId === m.id;
                           const name = m.authorName || m.authorEmail.split("@")[0];
+                          // Slack-like: emoji-only messages render big.
+                          const emojiOnly = !editing && isEmojiOnly(m.body);
                           const bubbleStyle = {
                             background: mine ? "var(--bg-surface)" : "var(--bg-subtle)",
                             border: mine ? "1px solid var(--border-green)" : "1px solid transparent",
                             borderRadius: mine ? "14px 14px 2px 14px" : "14px 14px 14px 2px",
-                            padding: "6px 10px",
-                            fontSize: 13,
-                            lineHeight: 1.45,
+                            padding: emojiOnly ? "2px 8px" : "6px 10px",
+                            fontSize: emojiOnly ? 38 : 13,
+                            lineHeight: emojiOnly ? 1.15 : 1.45,
                             whiteSpace: "pre-wrap" as const,
                             wordBreak: "break-word",
                           } as const;
