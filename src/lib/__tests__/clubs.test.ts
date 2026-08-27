@@ -66,6 +66,15 @@ describe("parseClubOutput", () => {
       expect(parseClubOutput(key)).toBe(key);
     }
   });
+
+  it("表示順の先頭3つは 雑談→機能改善→バグ報告（drikin指定）", () => {
+    const order = CLUBS.map((c) => c.key);
+    expect(order.slice(0, 3)).toEqual(["chat", "improve", "bug"]);
+    expect(CLUBS.length).toBeGreaterThanOrEqual(28);
+    // 機能改善(improve)は有効な分類キーとして扱われる
+    expect(parseClubOutput("improve")).toBe("improve");
+    expect(clubLabel("improve")).toBe("機能改善");
+  });
 });
 
 describe("buildClubFewShot（自己学習用 few-shot 例の整形）", () => {

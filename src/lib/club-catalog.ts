@@ -14,6 +14,10 @@ export interface ClubDef {
 
 /** 現行の部活動一覧（drikin 提供 2026-08）。key は英字小文字。 */
 export const CLUBS: ClubDef[] = [
+  // drikin指定の優先表示（先頭3つ）: 雑談 → 機能改善 → バグ報告
+  { key: "chat", name: "雑談", def: "一般的な雑談・日常・近況・仕事・健康など、どの部活にも属さない話題" },
+  { key: "improve", name: "機能改善", def: "新機能の追加・機能改善の提案・アイデア・要望の話（バグ報告とは別）" },
+  { key: "bug", name: "バグ報告", def: "不具合・バグ・エラー・動作不良・再接続等の問題の報告・相談・再現の話" },
   { key: "car", name: "車部", def: "車そのもの・運転・所有・購入・整備の話" },
   { key: "bicycle", name: "自転車部", def: "自転車・ロードバイク・サイクリングの話" },
   { key: "travel", name: "旅行部", def: "旅行・出張・観光・旅程の話" },
@@ -41,8 +45,6 @@ export const CLUBS: ClubDef[] = [
   { key: "stationery", name: "文房具部", def: "文房具・筆記具の話題" },
   { key: "parenting", name: "子育て部", def: "子育て・育児の話題" },
   { key: "expo", name: "万博部", def: "万博・博覧会の話題" },
-  { key: "bug", name: "バグ報告", def: "不具合・バグ・エラー・動作不良・再接続等の問題の報告・相談・再現の話" },
-  { key: "chat", name: "雑談", def: "一般的な雑談・日常・近況・仕事・健康など、どの部活にも属さない話題" },
 ];
 
 /** 自動分類で「どの部活にも当てはまらなかった」ことを示す送信値（疑似ラベル）。
