@@ -1297,7 +1297,7 @@ function PostCard({
 
       {/* 部活動ラベル（ルート投稿のみ）。投稿者/admin はクリックで手動付け替え可。 */}
       {showClubRow && (
-        <div style={{ marginTop: 4 }}>
+        <div style={{ margin: "2px 0 10px" }}>
           {canChangeClub ? (
             <Menu position="bottom-start" withinPortal shadow="md" width={230}>
               <Menu.Target>
@@ -1307,39 +1307,51 @@ function PostCard({
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: 6,
-                    padding: "2px 10px",
+                    gap: 8,
+                    minHeight: 32,
+                    padding: "5px 12px",
                     borderRadius: 999,
-                    border: `1px solid ${clubName ? "#86efac" : "#d0d7de"}`,
-                    background: clubName ? "#ecfdf5" : "transparent",
-                    color: clubName ? "#16a34a" : "#6b7280",
-                    fontSize: 12,
+                    border: `1px solid ${clubName ? "#4ade80" : "#d0d7de"}`,
+                    background: clubName ? "#f0fdf4" : "transparent",
+                    color: clubName ? "#15803d" : "#6b7280",
+                    fontSize: 12.5,
                     fontWeight: 600,
                     cursor: "pointer",
                   }}
                 >
                   {clubName ? clubName : "＋部活"}
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="m6 9 6 6 6-6" />
                   </svg>
                 </UnstyledButton>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>部活動を選択</Menu.Label>
-                {CLUBS.map((c) => (
-                  <Menu.Item
-                    key={c.key}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSetClub?.(post, c.key);
-                    }}
-                    rightSection={
-                      post.club === c.key ? <Text c="green">✓</Text> : undefined
-                    }
-                  >
-                    {c.name}
-                  </Menu.Item>
-                ))}
+                {/* 27部活でドロップダウンが縦に長くなり、ビューポート外の
+                    項目が「スクロールしても選べない」状態になるのを防ぐため、
+                    部活リストを内部スクロールにする（ラベル・ラベルなしは固定）。 */}
+                <div
+                  style={{
+                    maxHeight: "min(55vh, 400px)",
+                    overflowY: "auto",
+                    overscrollBehavior: "contain",
+                  }}
+                >
+                  {CLUBS.map((c) => (
+                    <Menu.Item
+                      key={c.key}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSetClub?.(post, c.key);
+                      }}
+                      rightSection={
+                        post.club === c.key ? <Text c="green">✓</Text> : undefined
+                      }
+                    >
+                      {c.name}
+                    </Menu.Item>
+                  ))}
+                </div>
                 <Menu.Divider />
                 <Menu.Item color="red" onClick={() => onSetClub?.(post, null)}>
                   ラベルなし
@@ -1351,12 +1363,13 @@ function PostCard({
               style={{
                 display: "inline-flex",
                 alignItems: "center",
-                padding: "2px 10px",
+                minHeight: 28,
+                padding: "5px 12px",
                 borderRadius: 999,
-                border: "1px solid #86efac",
-                background: "#ecfdf5",
-                color: "#16a34a",
-                fontSize: 12,
+                border: "1px solid #4ade80",
+                background: "#f0fdf4",
+                color: "#15803d",
+                fontSize: 12.5,
                 fontWeight: 600,
               }}
             >

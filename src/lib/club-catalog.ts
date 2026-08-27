@@ -41,6 +41,7 @@ export const CLUBS: ClubDef[] = [
   { key: "stationery", name: "文房具部", def: "文房具・筆記具の話題" },
   { key: "parenting", name: "子育て部", def: "子育て・育児の話題" },
   { key: "expo", name: "万博部", def: "万博・博覧会の話題" },
+  { key: "bug", name: "バグ報告", def: "不具合・バグ・エラー・動作不良・再接続等の問題の報告・相談・再現の話" },
 ];
 
 export const CLUB_KEYS: ReadonlySet<string> = new Set(CLUBS.map((c) => c.key));
