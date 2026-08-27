@@ -34,6 +34,7 @@ import {
   useMantineColorScheme,
 } from "@mantine/core";
 import { mdToHtml } from "@/lib/md";
+import { CLUBS, clubLabel } from "@/lib/club-catalog";
 import type { Profile as ProfileData } from "@/lib/profile";
 import {
   FeedPost,
@@ -1120,6 +1121,7 @@ function PostCard({
   onOpenProfile,
   onVotePoll,
   onEditPoll,
+  onSetClub,
 }: {
   post: FeedPost;
   auth: { email: string };
@@ -1140,6 +1142,7 @@ function PostCard({
   onOpenProfile?: (email: string) => void;
   onVotePoll?: (post: FeedPost, optionId: number) => void;
   onEditPoll?: (post: FeedPost) => void;
+  onSetClub?: (post: FeedPost, club: string | null) => void;
 }) {
   const CLAMP_THRESHOLD = 500;
   const [expanded, setExpanded] = useState(false);
@@ -1167,6 +1170,16 @@ function PostCard({
     post.id > 0 &&
     auth.email !== post.authorEmail &&
     !readSnap.read.has(post.id);
+
+  // ---- 部活動ラベル（ルート投稿のみ表示） ----
+  const clubName = clubLabel(post.club);
+  // 手動付け替えは投稿者 or admin のみ。返信(post.parentId有り)は対象外。
+  const canChangeClub =
+    !post.parentId &&
+    onSetClub != null &&
+    (auth.email === post.authorEmail || ADMIN_EMAILS.has(auth.email));
+  // 通常メンバーには「部活あり」の投稿だけが対象外でラベル非表示（表示＝ラベルがある時だけ）。
+  const showClubRow = canChangeClub || !!clubName;
 
   return (
     <Card
@@ -1281,6 +1294,77 @@ function PostCard({
           </div>
         </UnstyledButton>
       </Group>
+
+      {/* 部活動ラベル（ルート投稿のみ）。投稿者/admin はクリックで手動付け替え可。 */}
+      {showClubRow && (
+        <div style={{ marginTop: 4 }}>
+          {canChangeClub ? (
+            <Menu position="bottom-start" withinPortal shadow="md" width={230}>
+              <Menu.Target>
+                <UnstyledButton
+                  onClick={(e) => e.stopPropagation()}
+                  aria-label="部活動ラベルを変更"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "2px 10px",
+                    borderRadius: 999,
+                    border: `1px solid ${clubName ? "#86efac" : "#d0d7de"}`,
+                    background: clubName ? "#ecfdf5" : "transparent",
+                    color: clubName ? "#16a34a" : "#6b7280",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  {clubName ? clubName : "＋部活"}
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                </UnstyledButton>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Label>部活動を選択</Menu.Label>
+                {CLUBS.map((c) => (
+                  <Menu.Item
+                    key={c.key}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSetClub?.(post, c.key);
+                    }}
+                    rightSection={
+                      post.club === c.key ? <Text c="green">✓</Text> : undefined
+                    }
+                  >
+                    {c.name}
+                  </Menu.Item>
+                ))}
+                <Menu.Divider />
+                <Menu.Item color="red" onClick={() => onSetClub?.(post, null)}>
+                  ラベルなし
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+          ) : (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                padding: "2px 10px",
+                borderRadius: 999,
+                border: "1px solid #86efac",
+                background: "#ecfdf5",
+                color: "#16a34a",
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
+              {clubName}
+            </span>
+          )}
+        </div>
+      )}
 
       {post.text && (
         <div style={{ position: "relative" }}>
@@ -2183,6 +2267,7 @@ function ProfileView({
   onOpenProfile,
   onVotePoll,
   onEditPoll,
+  onSetClub,
 }: {
   profile: ProfileData | null;
   posts: FeedPost[];
@@ -2208,6 +2293,7 @@ function ProfileView({
   onOpenProfile?: (email: string) => void;
   onVotePoll?: (post: FeedPost, optionId: number) => void;
   onEditPoll?: (post: FeedPost) => void;
+  onSetClub?: (post: FeedPost, club: string | null) => void;
 }) {
   return (
     <Stack gap="md">
@@ -2361,6 +2447,7 @@ function ProfileView({
                   onOpenProfile={onOpenProfile}
                   onVotePoll={onVotePoll}
                   onEditPoll={onEditPoll}
+                  onSetClub={onSetClub}
                 />
                 <CollapsibleReplies
                   parentId={post.id}
@@ -2748,6 +2835,7 @@ function TimelineFeed({
   onOpenProfile,
   onVotePoll,
   onEditPoll,
+  onSetClub,
   skipFirstDate,
 }: {
   groups: FeedGroup[];
@@ -2790,6 +2878,7 @@ function TimelineFeed({
   onOpenProfile?: (email: string) => void;
   onVotePoll?: (post: FeedPost, optionId: number) => void;
   onEditPoll?: (post: FeedPost) => void;
+  onSetClub?: (post: FeedPost, club: string | null) => void;
   skipFirstDate?: boolean;
 }) {
   // When the parent renders the topmost date separator itself (above the
@@ -2872,6 +2961,7 @@ function TimelineFeed({
               onOpenProfile={onOpenProfile}
               onVotePoll={onVotePoll}
               onEditPoll={onEditPoll}
+              onSetClub={onSetClub}
             />
             {/* Interleaved comments = replies to this card, rendered right after
              * it so the position (between which cards) is preserved.
@@ -4797,11 +4887,23 @@ export default function Home() {
         );
       }
     };
+    // 部活動ラベル: 自動分類/手動付け替えを該当カードへ即時反映。
+    const onClub = (e: MessageEvent) => {
+      let d: any;
+      try {
+        d = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      if (!d || d.type !== "club" || d.postId == null) return;
+      applyPostChange(d.postId, (p) => ({ ...p, club: d.club ?? null }));
+    };
     es.addEventListener("post", onChange);
     es.addEventListener("pin", onPinChange);
     es.addEventListener("presence", onPresenceChange);
     es.addEventListener("chat", onChat);
     es.addEventListener("poll", onPoll);
+    es.addEventListener("club", onClub);
     es.onopen = () => {
       loadPinned();
       loadHot();
@@ -6275,6 +6377,31 @@ export default function Home() {
             setPollWidget((prev) =>
               prev.map((w) => (w.postId === post.id ? { ...w, poll: d.poll } : w))
             );
+          }
+        })
+        .catch((e) => setActionError((e as Error).message));
+    },
+    [applyPostChange]
+  );
+
+  // ---- 部活動ラベル手動付け替え（投稿者 or admin） ----
+  const handleSetClub = useCallback(
+    (post: FeedPost, club: string | null) => {
+      fetch(`/api/posts/${post.id}/club`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ club }),
+      })
+        .then(async (r) => {
+          if (!r.ok) {
+            const d = await r.json().catch(() => ({}));
+            throw new Error(d.error || "部活動ラベルの変更に失敗しました");
+          }
+          return r.json();
+        })
+        .then((d) => {
+          if (d.ok) {
+            applyPostChange(post.id, (p) => ({ ...p, club: d.club ?? null, clubManual: true }));
           }
         })
         .catch((e) => setActionError((e as Error).message));
@@ -8010,6 +8137,7 @@ export default function Home() {
                   onOpenProfile={openProfile}
                   onVotePoll={handleVotePoll}
                   onEditPoll={handleEditPoll}
+                  onSetClub={handleSetClub}
                 />
               ) : feedLoading ? (
                 <Text c="dimmed">読み込み中…</Text>
@@ -8063,6 +8191,7 @@ export default function Home() {
                           onOpenProfile={openProfile}
                           onVotePoll={handleVotePoll}
                           onEditPoll={handleEditPoll}
+                          onSetClub={handleSetClub}
                         />
                       )}
 
@@ -8299,6 +8428,7 @@ export default function Home() {
                   onOpenProfile={openProfile}
                   onVotePoll={handleVotePoll}
                   onEditPoll={handleEditPoll}
+                  onSetClub={handleSetClub}
                 />
                 {/* Infinite scroll sentinel + load-more fallback */}
                 {feedHasMore && feedPosts.length > 0 ? (

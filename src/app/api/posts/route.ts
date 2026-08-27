@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
     | null;
   const before = req.nextUrl.searchParams.get("before") ?? undefined;
   const limit = Number(req.nextUrl.searchParams.get("limit")) || 100;
+  const club = req.nextUrl.searchParams.get("club") ?? undefined;
 
   try {
     if (hot) {
@@ -39,6 +40,7 @@ export async function GET(req: NextRequest) {
       pinnedOnly: pinned || undefined,
       filter: filter ?? undefined,
       search: search ?? undefined,
+      club: club ?? undefined,
       viewerEmail: email,
       before,
       limit,

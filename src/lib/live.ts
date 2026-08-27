@@ -18,6 +18,7 @@ type ChatLiveMessage = { id: number } & Partial<ChatMessage>;
  *   { type: "post"   , postId, action: "delete" }  — deleted post
  *   { type: "pin"    , postId, action: "toggle" }  — pinned/unpinned
  *   { type: "like"   , postId, action: "toggle" }  — optional like toggle
+ *   { type: "club"   , postId, club }              — 部活動ラベル付与/変更
  *
  * Clients only receive a lightweight "something changed" signal and re-fetch
  * the first page themselves — we never push full post payloads, which keeps
@@ -34,7 +35,8 @@ export type LiveEvent =
   | { type: "pin"; postId: number; action: "toggle" }
   | { type: "presence"; emails: string[] }
   | { type: "chat"; message: ChatLiveMessage; action: "create" | "delete" | "edit" }
-  | { type: "poll"; action: "vote" | "edit"; postId: number; poll: PostPoll };
+  | { type: "poll"; action: "vote" | "edit"; postId: number; poll: PostPoll }
+  | { type: "club"; postId: number; club: string | null };
 
 export function emitLive(event: LiveEvent): void {
   // fire-and-forget; guard against listener errors crashing the API route

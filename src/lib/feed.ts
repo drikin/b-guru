@@ -41,6 +41,8 @@ export interface FeedPost {
   createdAt: string;
   /** 投稿に付いたアンケート（投票）。返信には常に null。 */
   poll?: PostPoll | null;
+  /** 部活動ラベル（自動分類 or 手動付け替え）。キーは src/lib/clubs.ts の CLUB_KEYS。 */
+  club?: string | null;
 }
 
 export interface FeedGroup {

@@ -4,6 +4,8 @@ import { pool } from "./db";
 import { fetchUrlPreview, UrlPreview } from "./urlpreview";
 import { emitLive } from "./live";
 import { buildPostPoll, endsAtOf, type PostPoll } from "./poll";
+import { CLUB_KEYS } from "./clubs";
+import { isAdmin } from "./admin";
 
 export interface FeedPost {
   id: number;
@@ -33,6 +35,11 @@ export interface FeedPost {
   createdAt: string;
   /** 投稿に付いたアンケート（投票）。 */
   poll?: PostPoll | null;
+  /** 部活動ラベル（自動分類 or 手動付け替え）。キーは src/lib/clubs.ts の CLUB_KEYS、
+   *  NULL=該当なし。ルート投稿にのみ付く（返信は親に従属）。 */
+  club?: string | null;
+  /** この投稿の部活ラベルが手動（投稿者/admin）で付け替えられたか。 */
+  clubManual?: boolean;
 }
 
 export interface NewPostInput {
@@ -179,6 +186,8 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
     pinnedAt: null,
     replies: [],
     poll: pollOut,
+    club: null, // 自動分類は publish 直後の fire-and-forget で後追い付与
+    clubManual: false,
   };
 }
 
@@ -201,6 +210,8 @@ const POST_SELECT = `
       FROM post_images pi2 WHERE pi2.post_id = p.id
     ), '{}') AS images,
     p.video_url AS video_url,
+    p.club AS club,
+    p.club_manual AS club_manual,
     COUNT(DISTINCT l.user_email) AS like_count,
     BOOL_OR(l.user_email = $1) AS liked_by_me,
     (SELECT COUNT(*) FROM posts c WHERE c.parent_id = p.id) AS reply_count,
@@ -244,6 +255,8 @@ function mapRow(r: any): FeedPost {
     lastActivityAt: new Date(r.last_activity).toISOString(),
     pinnedAt: r.pinned_at ? new Date(r.pinned_at).toISOString() : null,
     poll: rebuildPoll(r.poll_json),
+    club: r.club ?? null,
+    clubManual: !!r.club_manual,
   };
 }
 
@@ -282,6 +295,8 @@ export async function listPosts(options?: {
   /** Restrict to a single author's root posts (profile timeline). Combined
    *  with cursor pagination via `before`. */
   author?: string;
+  /** Restrict to root posts carrying this 部活動 key (club timeline). */
+  club?: string;
 }): Promise<FeedPost[]> {
   const limit = options?.limit ?? 100;
   const viewerEmail = options?.viewerEmail ?? "";
@@ -320,6 +335,13 @@ export async function listPosts(options?: {
     const pat = `$${searchParams.length}`;
     searchSql = ` AND (p.text ILIKE ${pat} OR p.author_name ILIKE ${pat} OR EXISTS (SELECT 1 FROM posts r WHERE r.parent_id = p.id AND r.text ILIKE ${pat}))`;
   }
+  let clubSql = "";
+  const club = options?.club?.trim();
+  if (club && club.length > 0) {
+    searchParams.push(club);
+    const pat = `$${searchParams.length}`;
+    clubSql = ` AND p.club = ${pat}`;
+  }
 
   // last_activity = max(post.created_at, newest reply.created_at). Repeated from
   // POST_SELECT so we can filter (cursor) and sort by it.
@@ -349,7 +371,7 @@ export async function listPosts(options?: {
 
   const res = await pool.query(
     `${POST_SELECT}
-     WHERE ${where}${authorSql}${searchSql}${cursorSql}
+     WHERE ${where}${authorSql}${searchSql}${clubSql}${cursorSql}
      GROUP BY p.id
      ORDER BY ${orderBy}
      LIMIT $2`,
@@ -635,6 +657,30 @@ export async function updatePost(
   } finally {
     client.release();
   }
+}
+
+/** 投稿の部活動ラベルを手動で付け替える（投稿者 or admin のみ）。
+ *  club は CLUB_KEYS のどれか or null（ラベル外し）。付替時 club_manual=TRUE にし、
+ *  自動分類が後から上書きしないようにする。SSE で club イベントを配信。 */
+export async function setPostClub(
+  postId: number,
+  userEmail: string,
+  club: string | null
+): Promise<{ ok: boolean; error?: string }> {
+  if (club !== null && !CLUB_KEYS.has(club)) {
+    return { ok: false, error: "不正な部活動です" };
+  }
+  const authorEmail = await getPostAuthor(postId);
+  if (authorEmail === null) return { ok: false, error: "not_found" };
+  if (authorEmail !== userEmail && !isAdmin(userEmail)) {
+    return { ok: false, error: "自分の投稿のみ編集できます" };
+  }
+  await pool.query(
+    `UPDATE posts SET club = $1, club_manual = TRUE, classified_at = now() WHERE id = $2`,
+    [club, postId]
+  );
+  emitLive({ type: "club", postId, club });
+  return { ok: true };
 }
 
 /** Delete a user's own post. Episode auto-posts are not deletable by anyone. */

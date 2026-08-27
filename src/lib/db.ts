@@ -90,6 +90,28 @@ export async function initSchema() {
         ALTER TABLE posts ADD COLUMN video_url TEXT;
       END IF;
     END $$;
+    -- 部活動ラベル（auto-classified via さくらのAI Engine）。ルート投稿にのみ付く。
+    -- club = 部活キー（src/lib/clubs.ts の CLUB_KEYS）or NULL（該当なし）。
+    -- classified_at = 最後に分類/手動変更した時刻（未分類スイーパーが再処理しないための
+    --   「試行済み」マーカーも兼ねる）。
+    -- club_manual = 投稿者/admin が手動で付け替えた場合 TRUE。自動分類は TRUE の投稿を
+    --   上書きしない（将来スイーパーを足しても安全なため）。
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='club') THEN
+        ALTER TABLE posts ADD COLUMN club TEXT;
+      END IF;
+    END $$;
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='classified_at') THEN
+        ALTER TABLE posts ADD COLUMN classified_at TIMESTAMPTZ;
+      END IF;
+    END $$;
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='club_manual') THEN
+        ALTER TABLE posts ADD COLUMN club_manual BOOLEAN NOT NULL DEFAULT FALSE;
+      END IF;
+    END $$;
+    CREATE INDEX IF NOT EXISTS idx_posts_club ON posts(club) WHERE club IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS post_images (
       id SERIAL PRIMARY KEY,

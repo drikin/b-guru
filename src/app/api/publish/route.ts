@@ -8,6 +8,7 @@ import { pool } from "@/lib/db";
 import { emitLive } from "@/lib/live";
 import { sendWebPush } from "@/lib/push";
 import { validatePollInput } from "@/lib/poll";
+import { classifyPost } from "@/lib/clubs";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -177,6 +178,15 @@ export async function POST(req: NextRequest) {
     // Include the author's email so the author's own client can skip
     // a redundant silentRefreshFeed (it already did an optimistic update).
     emitLive({ type: "post", postId: post.id, action: "create", authorEmail: email });
+
+    // 部活動ラベル自動付与（ルート投稿のみ・非同期）。投稿の即時反映をブロックしない
+    // よう fire-and-forget で投げる。分類完了は SSE club イベントで各クライアントへ
+    // 反映される（classifyPost は内部でエラーを握りつぶし null を返すので throw しない）。
+    if (!parentId) {
+      classifyPost(post.id).catch((e) =>
+        console.error("classifyPost:", (e as any)?.message)
+      );
+    }
 
     // Web Push notification — sent for EVERY new post AND every new comment, but
     // NEVER for whispers (ささやき = quiet by design). Every push-enabled member
