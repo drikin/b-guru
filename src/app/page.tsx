@@ -4567,14 +4567,32 @@ export default function Home() {
       el = el.offsetParent as HTMLElement | null;
     }
     window.scrollTo(0, Math.max(0, top - 56));
+    let poll: number | null = null;
+    const startedAt = Date.now();
+    // Restore the pre-chat timeline scroll. The previous implementation fired
+    // at fixed timings (double-rAF + 400ms); when the timeline had not re-flowed
+    // yet (slow/Windows Chrome), window.scrollTo(saved) silently clamped against
+    // the still-short document height, stranding the user ("messages disappear,
+    // can't scroll back up"). Wait until the document is tall enough to actually
+    // hold the saved position (bounded), then restore once.
+    const applyRestore = () => {
+      const max = Math.max(0, de.scrollHeight - window.innerHeight);
+      if (
+        de.scrollHeight < saved + window.innerHeight / 2 &&
+        Date.now() - startedAt < 2000
+      ) {
+        poll = window.setTimeout(applyRestore, 60);
+        return;
+      }
+      try {
+        window.scrollTo(0, Math.min(saved, max));
+      } catch { /* noop */ }
+    };
     return () => {
       de.style.overflow = "";
-      const restore = () => {
-        try { window.scrollTo(0, saved); } catch { /* noop */ }
-      };
+      if (poll) window.clearTimeout(poll);
       // run after the timeline re-renders and the chat view unmounts
-      requestAnimationFrame(() => requestAnimationFrame(restore));
-      window.setTimeout(restore, 400);
+      requestAnimationFrame(() => requestAnimationFrame(applyRestore));
     };
   }, [chatView]);
 
@@ -5377,7 +5395,7 @@ export default function Home() {
     io.observe(el);
     return () => io.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeNav, feedLoading, feedHasMore, feedLoadingMore, feedPosts.length, threadPost]);
+  }, [activeNav, feedLoading, feedHasMore, feedLoadingMore, feedPosts.length, threadPost, chatView]);
 
   const requestOtp = async (e: React.FormEvent) => {
     e.preventDefault();
