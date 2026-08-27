@@ -42,13 +42,21 @@ export const CLUBS: ClubDef[] = [
   { key: "parenting", name: "子育て部", def: "子育て・育児の話題" },
   { key: "expo", name: "万博部", def: "万博・博覧会の話題" },
   { key: "bug", name: "バグ報告", def: "不具合・バグ・エラー・動作不良・再接続等の問題の報告・相談・再現の話" },
+  { key: "chat", name: "雑談", def: "一般的な雑談・日常・近況・仕事・健康など、どの部活にも属さない話題" },
 ];
+
+/** 自動分類で「どの部活にも当てはまらなかった」ことを示す送信値（疑似ラベル）。
+ *  部活そのものではないため CLUBS / CLUB_KEYS には含めない（AI に出力させない・手動選択にも出さない）。
+ *  表示上は clubLabel() で「未設定」になる。club が NULL とは区別される:
+ *   NULL = 未分類 or 手動でラベルなし、__unset__ = AI が分類できなかった。 */
+export const CLUB_UNSET = "__unset__";
 
 export const CLUB_KEYS: ReadonlySet<string> = new Set(CLUBS.map((c) => c.key));
 
-/** key → 日本語名（表示用）。未知キーは null。 */
+/** key → 日本語名（表示用）。未知キーは null。未設定(CLUB_UNSET)は「未設定」を返す。 */
 export function clubLabel(key: string | null | undefined): string | null {
   if (!key) return null;
+  if (key === CLUB_UNSET) return "未設定";
   const c = CLUBS.find((x) => x.key === key);
   return c ? c.name : null;
 }
@@ -66,4 +74,47 @@ export function parseClubOutput(raw: string | null | undefined): string | null {
   s = s.replace(/^[-*•·\s]+/, "").trim();
   s = s.toLowerCase();
   return CLUB_KEYS.has(s) ? s : null;
+}
+
+/** few-shot 学習用の学習例。text(素文)・club(正解キー)・manual(人力で設定された正解か) */
+export interface ClubExample {
+  text: string;
+  club: string;
+  manual: boolean;
+}
+
+/** 学習例を多様化&整形して分類プロンプトへ注入する文字列を組み立てる純関数（単体テスト対象）。
+ *  - 人力で設定された正解（manual）を最優先（内部で manual を先頭にソート）。
+ *  - 未設定(CLUB_UNSET)は学習例にしない（AI に未設定を出力させないため）。
+ *  - 部活ごとの出現数を perClub で制限して偏りを防ぎ、全体を maxTotal で抑えて token を有界に保つ。
+ *  - markdown を剥がし、連続空白をまとめ、snippetLen で切り詰める。
+ *  戻り値: 空なら ""（注入しない）。 */
+export function buildClubFewShot(
+  examples: ClubExample[],
+  opts: { maxTotal?: number; perClub?: number; snippetLen?: number } = {}
+): string {
+  const { maxTotal = 10, perClub = 2, snippetLen = 120 } = opts;
+  const norm = (t: string) =>
+    t
+      .replace(/```[\s\S]*?```/g, " ") // コードフェンス
+      .replace(/[#*>`~\-\[\]()_]/g, " ") // 軽い markdown 剥がし
+      .replace(/["\\]/g, "") // 引用符・バックスラッシュは「"..."」書式を壊すので除去
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, snippetLen);
+  const sorted = [...examples].sort((a, b) => Number(b.manual) - Number(a.manual));
+  const seen: Record<string, number> = {};
+  const out: string[] = [];
+  for (const ex of sorted) {
+    if (ex.club === CLUB_UNSET) continue; // 未設定は学習させない
+    const t = norm(ex.text);
+    if (!t) continue; // 空・記号のみはスキップ
+    seen[ex.club] = (seen[ex.club] ?? 0) + 1;
+    if (seen[ex.club] > perClub) continue; // 部活ごとの過多を抑える
+    out.push(
+      `例${out.length + 1}${ex.manual ? "（人力で設定された正解ラベル）" : ""}: "${t}"\nラベル: ${ex.club}`
+    );
+    if (out.length >= maxTotal) break;
+  }
+  return out.join("\n---\n");
 }

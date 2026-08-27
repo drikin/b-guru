@@ -34,7 +34,7 @@ import {
   useMantineColorScheme,
 } from "@mantine/core";
 import { mdToHtml } from "@/lib/md";
-import { CLUBS, clubLabel } from "@/lib/club-catalog";
+import { CLUBS, CLUB_UNSET, clubLabel } from "@/lib/club-catalog";
 import type { Profile as ProfileData } from "@/lib/profile";
 import {
   FeedPost,
@@ -1173,12 +1173,14 @@ function PostCard({
 
   // ---- 部活動ラベル（ルート投稿のみ表示） ----
   const clubName = clubLabel(post.club);
+  // 未設定(CLUB_UNSET)=AI が分類できなかった疑似ラベル。実クラブと区別してグレー表示に。
+  const isUnsetClub = post.club === CLUB_UNSET;
   // 手動付け替えは投稿者 or admin のみ。返信(post.parentId有り)は対象外。
   const canChangeClub =
     !post.parentId &&
     onSetClub != null &&
     (auth.email === post.authorEmail || ADMIN_EMAILS.has(auth.email));
-  // 通常メンバーには「部活あり」の投稿だけが対象外でラベル非表示（表示＝ラベルがある時だけ）。
+  // 通常メンバーには「部活あり or 未設定」の投稿だけが対象外でラベル非表示（表示＝ラベル/未設定がある時だけ）。
   const showClubRow = canChangeClub || !!clubName;
 
   return (
@@ -1311,9 +1313,9 @@ function PostCard({
                     minHeight: 32,
                     padding: "5px 12px",
                     borderRadius: 999,
-                    border: `1px solid ${clubName ? "#4ade80" : "#d0d7de"}`,
-                    background: clubName ? "#f0fdf4" : "transparent",
-                    color: clubName ? "#15803d" : "#6b7280",
+                    border: `1px solid ${clubName && !isUnsetClub ? "#4ade80" : "#d0d7de"}`,
+                    background: clubName && !isUnsetClub ? "#f0fdf4" : "transparent",
+                    color: clubName && !isUnsetClub ? "#15803d" : "#6b7280",
                     fontSize: 12.5,
                     fontWeight: 600,
                     cursor: "pointer",
@@ -1366,9 +1368,9 @@ function PostCard({
                 minHeight: 28,
                 padding: "5px 12px",
                 borderRadius: 999,
-                border: "1px solid #4ade80",
-                background: "#f0fdf4",
-                color: "#15803d",
+                border: `1px solid ${isUnsetClub ? "#d0d7de" : "#4ade80"}`,
+                background: isUnsetClub ? "transparent" : "#f0fdf4",
+                color: isUnsetClub ? "#6b7280" : "#15803d",
                 fontSize: 12.5,
                 fontWeight: 600,
               }}
