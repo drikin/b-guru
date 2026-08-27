@@ -8059,7 +8059,9 @@ export default function Home() {
                   timeline opens with 日付 → プラス (feed only). TimelineFeed skips
                   its own duplicate via skipFirstDate. */}
               {activeNav === "feed" && !threadPost && !searchActive && topDateKey && (
-                <Group align="center" mt="md" mb={4}>
+                /* mt=0: タブ直下をチャット表示時と同じ高さで開始する（タブ位置が
+                   チャットより下に見える報告の修正）。Stack の gap md(16px) のみが上に残る */
+                <Group align="center" mt={0} mb={4}>
                   <Divider style={{ flex: 1 }} />
                   <Badge
                     size="lg"
