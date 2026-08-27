@@ -63,7 +63,10 @@ export async function classifyPost(postId: number): Promise<string | null> {
         { role: "user", content: `投稿内容:\n${text || "(テキストなし)"}` },
       ],
       temperature: 0.1,
-      max_tokens: 40,
+      // gpt-oss-120b は先に reasoning（思考）を出力する。max_tokens が小さいと
+      // reasoning 中に token 上限へ達して content:null／空応答になる（実測）。
+      // 思考を完了させて最終キーまで出させるため多めに割り当てる。
+      max_tokens: 2000,
     });
     const club = parseClubOutput(res.content);
 
