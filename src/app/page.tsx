@@ -4694,13 +4694,11 @@ export default function Home() {
   const [clubFilter, setClubFilter] = useState<string | null>(null);
   const clubFilterRef = useRef<string | null>(null);
   clubFilterRef.current = clubFilter; // レンダー毎に mirror（loadFeed 等の素関数が参照）
-  const [clubCounts, setClubCounts] = useState<Record<string, number>>({});
-  const [clubTotal, setClubTotal] = useState(0);
-  const [clubUnset, setClubUnset] = useState(0);
-  // 新着（直近24時間）バッジ
-  const [clubNew, setClubNew] = useState<Record<string, number>>({});
-  const [clubNewTotal, setClubNewTotal] = useState(0);
-  const [clubNewUnset, setClubNewUnset] = useState(0);
+  // 未読バッジ（ユーザー既読カーソル基準・タイムライン表示で消える）
+  const [clubUnread, setClubUnread] = useState<Record<string, number>>({});
+  const [clubUnreadTotal, setClubUnreadTotal] = useState(0);
+  const [clubUnreadUnset, setClubUnreadUnset] = useState(0);
+  const clubReadUpToRef = useRef(0); // このクライアントが既読マーク済みの最新 id（単調増加で POST を抑制）
   const [clubQuery, setClubQuery] = useState("");
   // 展開中のカテゴリ名。リロード後も維持するため localStorage と同期。
   const [clubOpen, setClubOpen] = useState<string[]>(() => {
@@ -4727,15 +4725,33 @@ export default function Home() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!d) return;
-        setClubCounts(d.counts ?? {});
-        setClubTotal(d.total ?? 0);
-        setClubUnset(d.unset ?? 0);
-        setClubNew(d.new ?? {});
-        setClubNewTotal(d.newTotal ?? 0);
-        setClubNewUnset(d.newUnset ?? 0);
+        setClubUnread(d.unread ?? {});
+        setClubUnreadTotal(d.unreadTotal ?? 0);
+        setClubUnreadUnset(d.unreadUnset ?? 0);
+        clubReadUpToRef.current = d.lastReadId ?? 0;
       })
       .catch(() => {});
   }, []);
+
+  // 最新のフィードを表示したら既読カーソルを進め（タイムラインを見ると全部既読→バッジ消滅）、件数を再取得する。
+  const markFeedRead = useCallback(
+    (upToId: number) => {
+      if (!upToId || upToId <= clubReadUpToRef.current) return; // 既にこの id まで既読
+      clubReadUpToRef.current = upToId; // 単調増加で重複 POST を抑制（楽観的更新）
+      fetch("/api/clubs/read", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ upToId }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then(() => {
+          // 未読件数を更新（既読になった部活のバッジを消す）
+          loadClubCounts();
+        })
+        .catch(() => {});
+    },
+    [loadClubCounts]
+  );
 
   const loadFeed = (filter?: string, search?: string) => {
     setFeedLoading(true);
@@ -4750,6 +4766,8 @@ export default function Home() {
         const posts = d.posts ?? [];
         setFeedPosts(posts);
         if (posts.length > 0) {
+          // 最新ページ（最上部のフィード）を表示したら既読マーク（タイムラインを見ると全部既読→バッジ消滅）
+          markFeedRead(posts[0].id);
           feedCursorRef.current =
             posts[posts.length - 1].lastActivityAt ??
             posts[posts.length - 1].createdAt;
@@ -7261,7 +7279,7 @@ export default function Home() {
               }
               style={{ margin: "0 8px 6px" }}
             />
-            <ClubNavRow label="すべて" count={clubTotal} new={clubNewTotal} active={clubFilter === null} onClick={() => selectClub(null)} />
+            <ClubNavRow label="すべて" unread={clubUnreadTotal} active={clubFilter === null} onClick={() => selectClub(null)} />
             {CLUB_CATEGORIES.filter((cat) => {
               if (!clubQuery.trim()) return true;
               const q = clubQuery.trim().toLowerCase();
@@ -7271,8 +7289,7 @@ export default function Home() {
               const q = clubQuery.trim().toLowerCase();
               const catKeys = q ? cat.keys.filter((k) => (clubLabel(k) ?? "").toLowerCase().includes(q)) : cat.keys;
               if (catKeys.length === 0) return null;
-              const catCount = q ? 0 : cat.keys.reduce((s, k) => s + (clubCounts[k] ?? 0), 0);
-              const catNew = q ? 0 : cat.keys.reduce((s, k) => s + (clubNew[k] ?? 0), 0);
+              const catUnread = q ? 0 : cat.keys.reduce((s, k) => s + (clubUnread[k] ?? 0), 0);
               const someActive = clubFilter !== null && clubFilter !== CLUB_UNSET && cat.keys.includes(clubFilter);
               return (
                 <div key={cat.name}>
@@ -7291,25 +7308,21 @@ export default function Home() {
                       <path d="m9 18 6-6-6-6" />
                     </svg>
                     <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cat.name}</span>
-                    {!q && catNew > 0 ? (
-                      <Badge size="xs" radius="xl" variant="filled" color="green" style={{ minWidth: 20, textAlign: "center" }}>{catNew}</Badge>
-                    ) : (
-                      !q && catCount > 0 && (
-                        <Badge size="xs" radius="xl" variant="light" color="gray" style={{ minWidth: 20, textAlign: "center" }}>{catCount}</Badge>
-                      )
+                    {!q && catUnread > 0 && (
+                      <Badge size="xs" radius="xl" variant="filled" color="green" style={{ minWidth: 20, textAlign: "center" }}>{catUnread}</Badge>
                     )}
                   </UnstyledButton>
                   {open && (
                     <div style={{ paddingLeft: 6 }}>
                       {catKeys.map((k) => (
-                        <ClubNavRow key={k} label={clubLabel(k) ?? k} count={clubCounts[k] ?? 0} new={clubNew[k] ?? 0} active={clubFilter === k} onClick={() => selectClub(k)} />
+                        <ClubNavRow key={k} label={clubLabel(k) ?? k} unread={clubUnread[k] ?? 0} active={clubFilter === k} onClick={() => selectClub(k)} />
                       ))}
                     </div>
                   )}
                 </div>
               );
             })}
-            <ClubNavRow label="未設定" count={clubUnset} new={clubNewUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} />
+            <ClubNavRow label="未設定" unread={clubUnreadUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} />
 
             {/* Admin-managed external-link bookmarks */}
             {menuLinks.map((lk) => (
@@ -9866,25 +9879,22 @@ export default function Home() {
   );
 }
 
-/** 左サイドバー「部活」の1行（クラブ or すべて/未設定）。アクティブは緑・件数バッジ付き。
- *  new > 0 のときは緑の「新着」バッジ（直近24時間の新着件数）を表示し、
- *  それ以外はグレーの総件数バッジを表示する（行を詰め込まないため1つだけ）。 */
+/** 左サイドバー「部活」の1行（クラブ or すべて/未設定）。アクティブは緑。
+ *  未読数 > 0 のときだけ緑バッジを表示（drikin指定: 未読数だけで、既読になったら数字を出さない）。 */
 function ClubNavRow({
   label,
-  count,
+  unread,
   active,
   dashed,
-  new: fresh,
   onClick,
 }: {
   label: string;
-  count: number;
+  unread?: number;
   active: boolean;
   dashed?: boolean;
-  new?: number;
   onClick: () => void;
 }) {
-  const freshCount = fresh ?? 0;
+  const unreadCount = unread ?? 0;
   return (
     <UnstyledButton
       onClick={onClick}
@@ -9916,29 +9926,17 @@ function ClubNavRow({
       >
         {label}
       </span>
-      {freshCount > 0 ? (
+      {unreadCount > 0 && (
         <Badge
           size="xs"
           radius="xl"
           variant="filled"
           color="green"
-          title="直近24時間の新着"
+          title="未読数（タイムラインを見ると消えます）"
           style={{ minWidth: 24, textAlign: "center" }}
         >
-          {freshCount}
+          {unreadCount}
         </Badge>
-      ) : (
-        count > 0 && (
-          <Badge
-            size="xs"
-            radius="xl"
-            variant={active ? "filled" : "light"}
-            color={active ? "green" : "gray"}
-            style={{ minWidth: 24, textAlign: "center" }}
-          >
-            {count}
-          </Badge>
-        )
       )}
     </UnstyledButton>
   );

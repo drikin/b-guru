@@ -229,6 +229,14 @@ export async function initSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    -- Per-user read cursor for the feed/club unread badges (タイムラインを見ると進む).
+    -- 同じ「既読カーソル」の考え方で、最新ルート投稿 id までを既読とする。
+    CREATE TABLE IF NOT EXISTS forum_read_state (
+      email TEXT PRIMARY KEY,
+      last_read_id INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     -- Web Push subscriptions (Push API). One row per (email, endpoint).
     CREATE TABLE IF NOT EXISTS push_subscriptions (
       id SERIAL PRIMARY KEY,
