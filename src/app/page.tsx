@@ -4089,6 +4089,12 @@ export default function Home() {
       setFeedLoading(false);
       return;
     }
+    // 部活フィルタを URL ?club= から復元（リロードしても同じフィルターのタイムラインが開く）
+    const clubParam = new URLSearchParams(window.location.search).get("club");
+    if (clubParam) {
+      clubFilterRef.current = clubParam; // loadFeed() が同一 effect 内で読むので ref も即時設定
+      setClubFilter(clubParam);
+    }
     loadFeed();
     loadPinned();
     loadHot();
@@ -4779,6 +4785,7 @@ export default function Home() {
   };
 
   // 部活を選択/解除（左サイドバー「部活」）。選択でタイムラインを club フィルタで読み直す。
+  // ?club=<key> を URL へ同期し、リロード・共有でも同じフィルターのタイムラインが開く。
   const selectClub = useCallback((key: string | null) => {
     clubFilterRef.current = key;
     setClubFilter(key);
@@ -4792,8 +4799,23 @@ export default function Home() {
     setProfileEmail(null);
     setNavOpened(false);
     setActiveNav("feed");
+    // URL を ?club= と同期（他パラメータ/ハッシュは保持）
+    try {
+      const u = new URL(window.location.href);
+      if (key && key !== "") u.searchParams.set("club", key);
+      else u.searchParams.delete("club");
+      window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash);
+    } catch {
+      // ignore — URL sync is best-effort
+    }
     loadFeed(undefined, searchQueryRef.current.trim() || undefined);
   }, []);
+
+  // 現在の部活フィルタを ?club=... 形式で返す（closeThread/goHome で URL クエリを保持するため）
+  const clubQueryString = () => {
+    const c = clubFilterRef.current;
+    return c ? `?club=${encodeURIComponent(c)}` : "";
+  };
 
   // ---- Push (SSE) live refresh ----
   // The EventSource stays open for as long as the page lives; we read the
@@ -6196,7 +6218,7 @@ export default function Home() {
     setThreadReplyBoxOpen(false);
     if ((window.location.hash || "").startsWith("#/post/")) {
       try {
-        window.history.replaceState(null, "", window.location.pathname);
+        window.history.replaceState(null, "", window.location.pathname + clubQueryString());
       } catch {
         // ignore — hash normalization is best-effort
       }
@@ -6231,7 +6253,7 @@ export default function Home() {
       // Replace the hash so we don't leave the thread/profile in history (a
       // stale #/user/ would re-open the profile on reload after going home).
       try {
-        window.history.replaceState(null, "", window.location.pathname);
+        window.history.replaceState(null, "", window.location.pathname + clubQueryString());
       } catch {
         // ignore
       }
