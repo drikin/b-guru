@@ -199,9 +199,8 @@ interface DrinewsComment {
 
 const NAV_ITEMS: { key: string; label: string; icon: string }[] = [
   { key: "feed", label: "タイムライン", icon: "🏠" },
-  { key: "episodes", label: "エピソード", icon: "🎧" },
-  { key: "gallery", label: "ギャラリー", icon: "🖼️" },
-  { key: "news", label: "記事", icon: "📰" },
+  // エピソード / ギャラリー / 記事 のメニューは drikin 指定で削除（2026-08-27）。
+  // 各ビュー（?filter=images/links/episodes 等）自体は残る。
   { key: "drinews", label: "ドリニュース", icon: "📮" },
 ];
 
@@ -4698,8 +4697,30 @@ export default function Home() {
   const [clubCounts, setClubCounts] = useState<Record<string, number>>({});
   const [clubTotal, setClubTotal] = useState(0);
   const [clubUnset, setClubUnset] = useState(0);
+  // 新着（直近24時間）バッジ
+  const [clubNew, setClubNew] = useState<Record<string, number>>({});
+  const [clubNewTotal, setClubNewTotal] = useState(0);
+  const [clubNewUnset, setClubNewUnset] = useState(0);
   const [clubQuery, setClubQuery] = useState("");
-  const [clubOpen, setClubOpen] = useState<string[]>([]); // 展開中のカテゴリ名
+  // 展開中のカテゴリ名。リロード後も維持するため localStorage と同期。
+  const [clubOpen, setClubOpen] = useState<string[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = window.localStorage.getItem("bguru.clubOpen");
+      if (!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("bguru.clubOpen", JSON.stringify(clubOpen));
+    } catch {
+      // ignore（privacy mode 等）
+    }
+  }, [clubOpen]);
 
   const loadClubCounts = useCallback(() => {
     fetch("/api/clubs/counts", { cache: "no-store" })
@@ -4709,6 +4730,9 @@ export default function Home() {
         setClubCounts(d.counts ?? {});
         setClubTotal(d.total ?? 0);
         setClubUnset(d.unset ?? 0);
+        setClubNew(d.new ?? {});
+        setClubNewTotal(d.newTotal ?? 0);
+        setClubNewUnset(d.newUnset ?? 0);
       })
       .catch(() => {});
   }, []);
@@ -7237,7 +7261,7 @@ export default function Home() {
               }
               style={{ margin: "0 8px 6px" }}
             />
-            <ClubNavRow label="すべて" count={clubTotal} active={clubFilter === null} onClick={() => selectClub(null)} />
+            <ClubNavRow label="すべて" count={clubTotal} new={clubNewTotal} active={clubFilter === null} onClick={() => selectClub(null)} />
             {CLUB_CATEGORIES.filter((cat) => {
               if (!clubQuery.trim()) return true;
               const q = clubQuery.trim().toLowerCase();
@@ -7248,6 +7272,7 @@ export default function Home() {
               const catKeys = q ? cat.keys.filter((k) => (clubLabel(k) ?? "").toLowerCase().includes(q)) : cat.keys;
               if (catKeys.length === 0) return null;
               const catCount = q ? 0 : cat.keys.reduce((s, k) => s + (clubCounts[k] ?? 0), 0);
+              const catNew = q ? 0 : cat.keys.reduce((s, k) => s + (clubNew[k] ?? 0), 0);
               const someActive = clubFilter !== null && clubFilter !== CLUB_UNSET && cat.keys.includes(clubFilter);
               return (
                 <div key={cat.name}>
@@ -7266,21 +7291,25 @@ export default function Home() {
                       <path d="m9 18 6-6-6-6" />
                     </svg>
                     <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cat.name}</span>
-                    {!q && catCount > 0 && (
-                      <Badge size="xs" radius="xl" variant="light" color="gray" style={{ minWidth: 20, textAlign: "center" }}>{catCount}</Badge>
+                    {!q && catNew > 0 ? (
+                      <Badge size="xs" radius="xl" variant="filled" color="green" style={{ minWidth: 20, textAlign: "center" }}>{catNew}</Badge>
+                    ) : (
+                      !q && catCount > 0 && (
+                        <Badge size="xs" radius="xl" variant="light" color="gray" style={{ minWidth: 20, textAlign: "center" }}>{catCount}</Badge>
+                      )
                     )}
                   </UnstyledButton>
                   {open && (
                     <div style={{ paddingLeft: 6 }}>
                       {catKeys.map((k) => (
-                        <ClubNavRow key={k} label={clubLabel(k) ?? k} count={clubCounts[k] ?? 0} active={clubFilter === k} onClick={() => selectClub(k)} />
+                        <ClubNavRow key={k} label={clubLabel(k) ?? k} count={clubCounts[k] ?? 0} new={clubNew[k] ?? 0} active={clubFilter === k} onClick={() => selectClub(k)} />
                       ))}
                     </div>
                   )}
                 </div>
               );
             })}
-            <ClubNavRow label="未設定" count={clubUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} />
+            <ClubNavRow label="未設定" count={clubUnset} new={clubNewUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} />
 
             {/* Admin-managed external-link bookmarks */}
             {menuLinks.map((lk) => (
@@ -9837,20 +9866,25 @@ export default function Home() {
   );
 }
 
-/** 左サイドバー「部活」の1行（クラブ or すべて/未設定）。アクティブは緑・件数バッジ付き。 */
+/** 左サイドバー「部活」の1行（クラブ or すべて/未設定）。アクティブは緑・件数バッジ付き。
+ *  new > 0 のときは緑の「新着」バッジ（直近24時間の新着件数）を表示し、
+ *  それ以外はグレーの総件数バッジを表示する（行を詰め込まないため1つだけ）。 */
 function ClubNavRow({
   label,
   count,
   active,
   dashed,
+  new: fresh,
   onClick,
 }: {
   label: string;
   count: number;
   active: boolean;
   dashed?: boolean;
+  new?: number;
   onClick: () => void;
 }) {
+  const freshCount = fresh ?? 0;
   return (
     <UnstyledButton
       onClick={onClick}
@@ -9882,16 +9916,29 @@ function ClubNavRow({
       >
         {label}
       </span>
-      {count > 0 && (
+      {freshCount > 0 ? (
         <Badge
           size="xs"
           radius="xl"
-          variant={active ? "filled" : "light"}
-          color={active ? "green" : "gray"}
+          variant="filled"
+          color="green"
+          title="直近24時間の新着"
           style={{ minWidth: 24, textAlign: "center" }}
         >
-          {count}
+          {freshCount}
         </Badge>
+      ) : (
+        count > 0 && (
+          <Badge
+            size="xs"
+            radius="xl"
+            variant={active ? "filled" : "light"}
+            color={active ? "green" : "gray"}
+            style={{ minWidth: 24, textAlign: "center" }}
+          >
+            {count}
+          </Badge>
+        )
       )}
     </UnstyledButton>
   );

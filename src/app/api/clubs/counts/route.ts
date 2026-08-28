@@ -18,7 +18,7 @@ export async function GET() {
   }
 
   try {
-    const [clubRes, totalRes] = await Promise.all([
+    const [clubRes, totalRes, newRes, newTotalRes] = await Promise.all([
       pool.query(
         `SELECT p.club AS club, count(*)::int AS n
            FROM posts p
@@ -26,17 +26,34 @@ export async function GET() {
           GROUP BY p.club`
       ),
       pool.query(`SELECT count(*)::int AS total FROM posts WHERE parent_id IS NULL`),
+      pool.query(
+        `SELECT p.club AS club, count(*)::int AS n
+           FROM posts p
+          WHERE p.parent_id IS NULL AND p.club IS NOT NULL
+            AND p.created_at > now() - interval '24 hours'
+          GROUP BY p.club`
+      ),
+      pool.query(
+        `SELECT count(*)::int AS new_total FROM posts
+          WHERE parent_id IS NULL AND created_at > now() - interval '24 hours'`
+      ),
     ]);
 
     const counts: Record<string, number> = {};
     for (const row of clubRes.rows as { club: string; n: number }[]) {
       counts[row.club] = row.n;
     }
+    const fresh: Record<string, number> = {};
+    for (const row of newRes.rows as { club: string; n: number }[]) {
+      fresh[row.club] = row.n;
+    }
     const total = (totalRes.rows[0] as { total: number }).total;
     const unset = counts["__unset__"] ?? 0;
+    const newTotal = (newTotalRes.rows[0] as { new_total: number }).new_total;
+    const newUnset = fresh["__unset__"] ?? 0;
 
     return NextResponse.json(
-      { total, unset, counts, updatedAt: new Date().toISOString() },
+      { total, unset, counts, new: fresh, newTotal, newUnset, updatedAt: new Date().toISOString() },
       { headers: NO_CACHE }
     );
   } catch (e: any) {
