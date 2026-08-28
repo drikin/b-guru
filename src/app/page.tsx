@@ -37,7 +37,6 @@ import { mdToHtml } from "@/lib/md";
 import {
   CLUB_UNSET,
   clubLabel,
-  clubCategory,
   setLiveCatalog,
   activeClubDefs,
   currentCategories,
@@ -4746,10 +4745,19 @@ export default function Home() {
   const [clubUnreadTotal, setClubUnreadTotal] = useState(0);
   const [clubUnreadUnset, setClubUnreadUnset] = useState(0);
   const clubReadUpToRef = useRef(0); // このクライアントが既読マーク済みの最新 id（単調増加で POST を抑制）
-  const [clubQuery, setClubQuery] = useState("");
-  // 部長一覧（club → { club, email, name, avatar }）。右SBの部長カード表示・admin 編集用。
+  // 部長一覧（club → { club, email, name, avatar, headerImage, bio }）。右SBの部長カード表示・admin 編集用。
   const [clubLeaders, setClubLeaders] = useState<
-    Record<string, { club: string; email: string; name: string | null; avatar: string }>
+    Record<
+      string,
+      {
+        club: string;
+        email: string;
+        name: string | null;
+        avatar: string;
+        headerImage: string | null;
+        bio: string | null;
+      }
+    >
   >({});
   // 部活カタログ（DB管理・admin が部活を追加/編集/削除）。GET /api/clubs/catalog で取得。
   const [clubCatalogState, setClubCatalogState] = useState<{
@@ -4766,25 +4774,6 @@ export default function Home() {
   }>({ clubs: [], categories: [] });
   const [, setCatalogTick] = useState(0); // ライブカタログ反映後の再レンダー用
   const [clubManagerOpen, setClubManagerOpen] = useState(false); // admin「部活管理」モーダル
-  // 展開中のカテゴリ名。リロード後も維持するため localStorage と同期。
-  const [clubOpen, setClubOpen] = useState<string[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = window.localStorage.getItem("bguru.clubOpen");
-      if (!raw) return [];
-      const arr = JSON.parse(raw);
-      return Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : [];
-    } catch {
-      return [];
-    }
-  });
-  useEffect(() => {
-    try {
-      window.localStorage.setItem("bguru.clubOpen", JSON.stringify(clubOpen));
-    } catch {
-      // ignore（privacy mode 等）
-    }
-  }, [clubOpen]);
 
   const loadClubCounts = useCallback(() => {
     fetch("/api/clubs/counts", { cache: "no-store" })
@@ -4948,12 +4937,6 @@ export default function Home() {
   const selectClub = useCallback((key: string | null) => {
     clubFilterRef.current = key;
     setClubFilter(key);
-    if (!key) {
-      setClubOpen([]);
-    } else {
-      const cat = clubCategory(key);
-      setClubOpen((prev) => (cat && !prev.includes(cat) ? [...prev, cat] : prev));
-    }
     setThreadPost(null);
     setProfileEmail(null);
     setNavOpened(false);
@@ -7399,65 +7382,12 @@ export default function Home() {
                 </ActionIcon>
               )}
             </Group>
-            <TextInput
-              size="xs"
-              placeholder="部活を検索"
-              value={clubQuery}
-              onChange={(e) => setClubQuery(e.currentTarget.value)}
-              rightSection={
-                clubQuery ? (
-                  <ActionIcon variant="subtle" size="xs" color="gray" aria-label="部活検索をクリア" onClick={() => setClubQuery("")}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-                  </ActionIcon>
-                ) : (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: "var(--text-muted)" }}><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
-                )
-              }
-              style={{ margin: "0 8px 6px" }}
-            />
             <ClubNavRow label="すべて" unread={clubUnreadTotal} active={clubFilter === null} onClick={() => selectClub(null)} />
-            {currentCategories().filter((cat) => {
-              if (!clubQuery.trim()) return true;
-              const q = clubQuery.trim().toLowerCase();
-              return cat.keys.some((k) => (clubLabel(k) ?? "").toLowerCase().includes(q));
-            }).map((cat) => {
-              const open = clubOpen.includes(cat.name);
-              const q = clubQuery.trim().toLowerCase();
-              const catKeys = q ? cat.keys.filter((k) => (clubLabel(k) ?? "").toLowerCase().includes(q)) : cat.keys;
-              if (catKeys.length === 0) return null;
-              const catUnread = q ? 0 : cat.keys.reduce((s, k) => s + (clubUnread[k] ?? 0), 0);
-              const someActive = clubFilter !== null && clubFilter !== CLUB_UNSET && cat.keys.includes(clubFilter);
-              return (
-                <div key={cat.name}>
-                  <UnstyledButton
-                    onClick={() => setClubOpen((prev) => (open ? prev.filter((x) => x !== cat.name) : [...prev, cat.name]))}
-                    aria-expanded={open}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 6, width: "100%",
-                      padding: "7px 12px", borderRadius: 8, fontSize: 13.5,
-                      color: someActive ? "var(--text-green)" : "var(--text-primary)",
-                      fontWeight: 600,
-                      background: someActive ? "var(--bg-tinted)" : "transparent",
-                    }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform .12s", flexShrink: 0, color: "var(--text-muted)" }}>
-                      <path d="m9 18 6-6-6-6" />
-                    </svg>
-                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cat.name}</span>
-                    {!q && catUnread > 0 && (
-                      <Badge size="xs" radius="xl" variant="filled" color="green" style={{ minWidth: 20, textAlign: "center" }}>{catUnread}</Badge>
-                    )}
-                  </UnstyledButton>
-                  {open && (
-                    <div style={{ paddingLeft: 6 }}>
-                      {catKeys.map((k) => (
-                        <ClubNavRow key={k} label={clubLabel(k) ?? k} unread={clubUnread[k] ?? 0} active={clubFilter === k} onClick={() => selectClub(k)} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {currentCategories()
+              .flatMap((cat) => cat.keys)
+              .map((k) => (
+                <ClubNavRow key={k} label={clubLabel(k) ?? k} unread={clubUnread[k] ?? 0} active={clubFilter === k} onClick={() => selectClub(k)} />
+              ))}
             <ClubNavRow label="未設定" unread={clubUnreadUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} />
 
             {/* Admin-managed external-link bookmarks */}
@@ -7815,27 +7745,56 @@ export default function Home() {
                     <UnstyledButton
                       onClick={() => openProfile(leader.email)}
                       style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 10,
+                        display: "block",
                         width: "100%",
-                        borderRadius: 8,
-                        padding: 4,
+                        textAlign: "left",
+                        borderRadius: 10,
                         cursor: "pointer",
+                        padding: 0,
                       }}
                     >
-                      <SafeAvatar src={leader.avatar} initial={leader.name || ""} size="md" />
-                      <Box style={{ minWidth: 0, flex: 1 }}>
-                        <Text size="sm" fw={600} truncate>
-                          {leader.name || leader.email.split("@")[0]}
+                      {leader.headerImage ? (
+                        <Box
+                          style={{
+                            height: 64,
+                            borderRadius: 8,
+                            backgroundImage: `url(${leader.headerImage})`,
+                            backgroundSize: "cover",
+                            backgroundPosition: "center",
+                            marginBottom: 8,
+                          }}
+                        />
+                      ) : null}
+                      <Group align="center" gap={10} wrap="nowrap">
+                        <SafeAvatar src={leader.avatar} initial={leader.name || ""} size="md" />
+                        <Box style={{ minWidth: 0, flex: 1 }}>
+                          <Text size="sm" fw={600} truncate>
+                            {leader.name || leader.email.split("@")[0]}
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            {clubTitle} 部長
+                          </Text>
+                        </Box>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" color="var(--text-secondary)">
+                          <path d="m9 18 6-6-6-6" />
+                        </svg>
+                      </Group>
+                      {leader.bio ? (
+                        <Text
+                          size="xs"
+                          c="dimmed"
+                          mt={6}
+                          style={{
+                            display: "-webkit-box",
+                            WebkitLineClamp: 3,
+                            WebkitBoxOrient: "vertical",
+                            overflow: "hidden",
+                            lineHeight: 1.5,
+                          }}
+                        >
+                          {leader.bio.replace(/[#*>`~\[\]()_]/g, " ").replace(/\s+/g, " ").trim()}
                         </Text>
-                        <Text size="xs" c="dimmed">
-                          {clubTitle} 部長
-                        </Text>
-                      </Box>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" color="var(--text-secondary)">
-                        <path d="m9 18 6-6-6-6" />
-                      </svg>
+                      ) : null}
                     </UnstyledButton>
                   ) : (
                     <Text size="xs" c="dimmed">
@@ -10206,6 +10165,7 @@ function ClubManagerModal({
   const [editCat, setEditCat] = useState("");
   const [editDef, setEditDef] = useState("");
   const [busy, setBusy] = useState(false);
+  const [genBusy, setGenBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -10214,6 +10174,36 @@ function ClubManagerModal({
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d?.error || "エラー");
     return d;
+  };
+
+  // 名前（+キー/カテゴリ）から「AI判定定義」をさくらのAIで自動生成して欄に反映する
+  const generateDef = async (target: "add" | "edit") => {
+    const name = (target === "add" ? addName : editName).trim();
+    if (!name) {
+      setError("名前を入力してから「AIで生成」してください");
+      return;
+    }
+    setGenBusy(true);
+    setError("");
+    setNotice("AIが判定定義を考えています…");
+    try {
+      const d = await api("/api/clubs/catalog/generate-definition", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          key: (target === "add" ? addKey : editingKey ?? "").trim(),
+          name,
+          category: (target === "add" ? addCat : editCat).trim(),
+        }),
+      });
+      if (target === "add") setAddDef(d.definition);
+      else setEditDef(d.definition);
+      setNotice("AI判定定義を生成しました（確認して追加/保存してください）");
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setGenBusy(false);
+    }
   };
 
   const addClub = async () => {
@@ -10349,9 +10339,21 @@ function ClubManagerModal({
             autosize
             minRows={1}
           />
-          <Button size="xs" mt={8} onClick={addClub} loading={busy}>
-            追加
-          </Button>
+          <Group gap="xs" mt={8} wrap="wrap">
+            <Button size="xs" onClick={addClub} loading={busy}>
+              追加
+            </Button>
+            <Button
+              size="xs"
+              variant="light"
+              color="indigo"
+              onClick={() => generateDef("add")}
+              loading={genBusy}
+              disabled={!addName.trim()}
+            >
+              ✨ AIで生成（判定定義）
+            </Button>
+          </Group>
         </Paper>
 
         <Divider label="一覧" labelPosition="left" />
@@ -10365,9 +10367,12 @@ function ClubManagerModal({
                     <TextInput label="名前" size="xs" value={editName} onChange={(e) => setEditName(e.currentTarget.value)} />
                     <TextInput label="カテゴリ" size="xs" mt={4} value={editCat} onChange={(e) => setEditCat(e.currentTarget.value)} />
                     <Textarea label="AI判定定義" size="xs" mt={4} value={editDef} onChange={(e) => setEditDef(e.currentTarget.value)} autosize minRows={1} />
-                    <Group gap="xs" mt={6}>
+                    <Group gap="xs" mt={6} wrap="wrap">
                       <Button size="xs" onClick={saveEdit} loading={busy}>
                         保存
+                      </Button>
+                      <Button size="xs" variant="light" color="indigo" onClick={() => generateDef("edit")} loading={genBusy} disabled={!editName.trim()}>
+                        ✨ AIで生成（判定定義）
                       </Button>
                       <Button size="xs" variant="subtle" color="gray" onClick={() => setEditingKey(null)}>
                         キャンセル

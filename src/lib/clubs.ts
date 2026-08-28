@@ -33,6 +33,57 @@ import { listClubs } from "./club-store";
 export type { ClubDef } from "./club-catalog";
 export { CLUBS, CLUB_KEYS, clubLabel, parseClubOutput } from "./club-catalog";
 
+/** 新規部活の「AI判定定義」を さくらのAI Engine で自動生成する（admin の追加フォーム用）。
+ *  既存部活の判定定義（例: 「撮影・被写体・構図・写真作品そのものの話」）と同じ流儀で、
+ *  その部活に当てはまる話題のキーワードを1文で返す。name は必須。 */
+export async function generateClubDefinition(input: {
+  key: string;
+  name: string;
+  category: string;
+}): Promise<string> {
+  const name = input.name.trim();
+  if (!name) throw new Error("NAME_REQUIRED");
+  const key = input.key.trim() || "(未定)";
+  const category = input.category.trim() || "その他";
+
+  const sys = `あなたは B-guru（backspace.fm の有料会員コミュニティ）の部活動ラベル設計エージェントです。
+ある部活動をAI分類するための「判定定義」を1文だけ作ってください。判定定義は、その部活に当てはまる投稿の話題・キーワードを簡潔に列挙した日本語の1文（例: 「撮影・被写体・構図・写真作品そのものの話」）にしてください。
+
+既存部活の判定定義の例（この流儀に合わせる）:
+- 写真部: 撮影・被写体・構図・写真作品そのものの話
+- カメラ部: カメラ/レンズの機材・ボディ・スペックの話（写真部とは別）
+- 車部: 車そのもの・運転・所有・購入・整備の話
+- モータースポーツ部: レース・サーキット・モータースポーツ観戦の話（車部とは別）
+- 音楽部: 楽曲・アーティスト・演奏・音楽鑑賞の話
+- 音響部: オーディオ機器・試聴・セッティング・音質の話（音楽部とは別）
+- バグ報告: 不具合・バグ・エラー・動作不良・再接続等の問題の報告・相談・再現の話
+
+出力は判定定義の1文だけ（「◯◯・◯◯・◯◯の話」の形式）で返してください。箇条書き・説明・引用符は不要です。`;
+
+  const user = `新しく作る部活:
+- key: ${key}
+- 名前: ${name}
+- カテゴリ: ${category}`;
+
+  const res = await sakuraChat({
+    messages: [
+      { role: "system", content: sys },
+      { role: "user", content: user },
+    ],
+    // gpt-oss-120b は先に reasoning（思考）を出力するため、最終文まで出せるだけの余裕を持つ。
+    max_tokens: 500,
+    temperature: 0.3,
+  });
+
+  let def = res.content
+    .replace(/^[\s"'`*•·-]+|[\s"'`*]+$/g, "")
+    .split(/\r?\n/)[0]
+    .trim();
+  // 1文として妥当な最低限を保証（名前に依存しない場合でも空にしない）
+  if (!def) def = `${name}の話`;
+  return def;
+}
+
 /** 分類プロンプトを、DB の active 部活一覧から動的構築する（admin が追加/編集した部活も反映）。 */
 function buildClubSystemPrompt(clubs: ClubDef[]): string {
   return `あなたは B-guru（backspace.fm の有料会員コミュニティ）の部活動分類エージェントです。
