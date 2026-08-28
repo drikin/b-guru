@@ -237,6 +237,13 @@ export async function initSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    -- 部活の「部長」（各クラブの担当メンバー）。admin のみ管理画面(右SB部長カード)から編集。
+    CREATE TABLE IF NOT EXISTS club_leaders (
+      club TEXT PRIMARY KEY,
+      email TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     -- Web Push subscriptions (Push API). One row per (email, endpoint).
     CREATE TABLE IF NOT EXISTS push_subscriptions (
       id SERIAL PRIMARY KEY,

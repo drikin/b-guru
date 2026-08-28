@@ -4137,6 +4137,7 @@ export default function Home() {
     loadHot();
     loadTrends();
     loadClubCounts();
+    loadClubLeaders();
     loadNotifications();
     loadMenuLinks();
     // Deep-link from the drinews email CTA: /?drinews=<id>
@@ -4738,6 +4739,10 @@ export default function Home() {
   const [clubUnreadUnset, setClubUnreadUnset] = useState(0);
   const clubReadUpToRef = useRef(0); // このクライアントが既読マーク済みの最新 id（単調増加で POST を抑制）
   const [clubQuery, setClubQuery] = useState("");
+  // 部長一覧（club → { club, email, name, avatar }）。右SBの部長カード表示・admin 編集用。
+  const [clubLeaders, setClubLeaders] = useState<
+    Record<string, { club: string; email: string; name: string | null; avatar: string }>
+  >({});
   // 展開中のカテゴリ名。リロード後も維持するため localStorage と同期。
   const [clubOpen, setClubOpen] = useState<string[]>(() => {
     if (typeof window === "undefined") return [];
@@ -4790,6 +4795,36 @@ export default function Home() {
     },
     [loadClubCounts]
   );
+
+  // 部長一覧を取得（右SBの部長カード・admin 編集用）
+  const loadClubLeaders = useCallback(() => {
+    fetch("/api/clubs/leaders", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && d.leaders) setClubLeaders(d.leaders);
+      })
+      .catch(() => {});
+  }, []);
+
+  // admin が部長を設定/解除（email=null で解除）→ 部長一覧を即時反映
+  const setClubLeader = useCallback((club: string, email: string | null) => {
+    fetch("/api/clubs/leaders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ club, email }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        setClubLeaders((prev) => {
+          const next = { ...prev };
+          if (d.leader) next[club] = d.leader;
+          else delete next[club];
+          return next;
+        });
+      })
+      .catch(() => {});
+  }, []);
 
   const loadFeed = (filter?: string, search?: string) => {
     setFeedLoading(true);
@@ -5086,6 +5121,7 @@ export default function Home() {
       loadHot();
       loadTrends();
       loadClubCounts();
+      loadClubLeaders();
       loadOnline();
       loadPollWidget();
       loadChat(chatViewRef.current); // recover chat missed during a disconnect
@@ -7659,6 +7695,94 @@ export default function Home() {
               </Text>
             )}
           </Paper>
+
+          {/* 部長カード: 部活フィルタ中のみ右SB検索の下に表示（クリックで部長のプロフィールへ・admin は編集可） */}
+          {clubFilter &&
+            (() => {
+              const leader = clubLeaders[clubFilter];
+              const clubTitle = clubLabel(clubFilter) ?? clubFilter;
+              return (
+                <Paper p="sm" radius="md" withBorder shadow="xs">
+                  <Group justify="space-between" align="center" mb={4} wrap="nowrap">
+                    <Text fw={700} size="sm">部長</Text>
+                    {auth && ADMIN_EMAILS.has(auth.email) && (
+                      <Menu position="bottom-start" withinPortal shadow="md" width={240}>
+                        <Menu.Target>
+                          <UnstyledButton
+                            aria-label="部長を編集"
+                            title="部長を変更"
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              width: 26,
+                              height: 26,
+                              borderRadius: 6,
+                              color: "var(--text-secondary)",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                            </svg>
+                          </UnstyledButton>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          <Box style={{ maxHeight: "min(50vh, 360px)", overflowY: "auto", overscrollBehavior: "contain" }}>
+                            {mentionMembers.map((m) => (
+                              <Menu.Item key={m.email} onClick={() => setClubLeader(clubFilter, m.email)}>
+                                <Group gap={8} wrap="nowrap">
+                                  <SafeAvatar src={m.avatar} initial={m.name} size="xs" />
+                                  <Text size="sm" truncate style={{ flex: 1, minWidth: 0 }}>
+                                    {m.name || m.email}
+                                  </Text>
+                                </Group>
+                              </Menu.Item>
+                            ))}
+                          </Box>
+                          <Menu.Divider />
+                          <Menu.Item color="red" onClick={() => setClubLeader(clubFilter, null)}>
+                            部長を外す
+                          </Menu.Item>
+                        </Menu.Dropdown>
+                      </Menu>
+                    )}
+                  </Group>
+                  {leader ? (
+                    <UnstyledButton
+                      onClick={() => openProfile(leader.email)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        width: "100%",
+                        borderRadius: 8,
+                        padding: 4,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <SafeAvatar src={leader.avatar} initial={leader.name || ""} size="md" />
+                      <Box style={{ minWidth: 0, flex: 1 }}>
+                        <Text size="sm" fw={600} truncate>
+                          {leader.name || leader.email.split("@")[0]}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          {clubTitle} 部長
+                        </Text>
+                      </Box>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" color="var(--text-secondary)">
+                        <path d="m9 18 6-6-6-6" />
+                      </svg>
+                    </UnstyledButton>
+                  ) : (
+                    <Text size="xs" c="dimmed">
+                      {clubTitle}の部長はまだ設定されていません
+                    </Text>
+                  )}
+                </Paper>
+              );
+            })()}
 
           {/* 投票（アンケート）ウィジェット: 締切から+1日まで表示・リアルタイム更新 */}
           {pollWidget.length > 0 && (
