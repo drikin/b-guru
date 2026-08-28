@@ -1121,6 +1121,7 @@ function PostCard({
   onVotePoll,
   onEditPoll,
   onSetClub,
+  onOpenClub,
 }: {
   post: FeedPost;
   auth: { email: string };
@@ -1142,6 +1143,7 @@ function PostCard({
   onVotePoll?: (post: FeedPost, optionId: number) => void;
   onEditPoll?: (post: FeedPost) => void;
   onSetClub?: (post: FeedPost, club: string | null) => void;
+  onOpenClub?: (club: string) => void;
 }) {
   const CLAMP_THRESHOLD = 500;
   const [expanded, setExpanded] = useState(false);
@@ -1376,6 +1378,36 @@ function PostCard({
             >
               {clubName}
             </span>
+          )}
+          {/* 部活タイムラインへ飛ぶリンク（ラベル隣・行を詰め込まない小さい単色アイコン） */}
+          {onOpenClub && post.club && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenClub(post.club!);
+              }}
+              title={`「${clubName}」のタイムラインで見る`}
+              aria-label={`「${clubName}」のタイムラインで見る`}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 28,
+                height: 28,
+                borderRadius: 999,
+                border: "1px solid #d0d7de",
+                background: "transparent",
+                color: "#6b7280",
+                cursor: "pointer",
+                marginLeft: 8,
+                verticalAlign: "middle",
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />
+              </svg>
+            </button>
           )}
         </div>
       )}
@@ -2282,6 +2314,7 @@ function ProfileView({
   onVotePoll,
   onEditPoll,
   onSetClub,
+  onOpenClub,
 }: {
   profile: ProfileData | null;
   posts: FeedPost[];
@@ -2308,6 +2341,7 @@ function ProfileView({
   onVotePoll?: (post: FeedPost, optionId: number) => void;
   onEditPoll?: (post: FeedPost) => void;
   onSetClub?: (post: FeedPost, club: string | null) => void;
+  onOpenClub?: (club: string) => void;
 }) {
   return (
     <Stack gap="md">
@@ -2462,6 +2496,7 @@ function ProfileView({
                   onVotePoll={onVotePoll}
                   onEditPoll={onEditPoll}
                   onSetClub={onSetClub}
+                  onOpenClub={onOpenClub}
                 />
                 <CollapsibleReplies
                   parentId={post.id}
@@ -2850,6 +2885,7 @@ function TimelineFeed({
   onVotePoll,
   onEditPoll,
   onSetClub,
+  onOpenClub,
   skipFirstDate,
 }: {
   groups: FeedGroup[];
@@ -2893,6 +2929,7 @@ function TimelineFeed({
   onVotePoll?: (post: FeedPost, optionId: number) => void;
   onEditPoll?: (post: FeedPost) => void;
   onSetClub?: (post: FeedPost, club: string | null) => void;
+  onOpenClub?: (club: string) => void;
   skipFirstDate?: boolean;
 }) {
   // When the parent renders the topmost date separator itself (above the
@@ -2976,6 +3013,7 @@ function TimelineFeed({
               onVotePoll={onVotePoll}
               onEditPoll={onEditPoll}
               onSetClub={onSetClub}
+              onOpenClub={onOpenClub}
             />
             {/* Interleaved comments = replies to this card, rendered right after
              * it so the position (between which cards) is preserved.
@@ -8346,6 +8384,7 @@ export default function Home() {
                   onVotePoll={handleVotePoll}
                   onEditPoll={handleEditPoll}
                   onSetClub={handleSetClub}
+                  onOpenClub={selectClub}
                 />
               ) : feedLoading ? (
                 <Text c="dimmed">読み込み中…</Text>
@@ -8400,6 +8439,7 @@ export default function Home() {
                           onVotePoll={handleVotePoll}
                           onEditPoll={handleEditPoll}
                           onSetClub={handleSetClub}
+                          onOpenClub={selectClub}
                         />
                       )}
 
@@ -8637,6 +8677,7 @@ export default function Home() {
                   onVotePoll={handleVotePoll}
                   onEditPoll={handleEditPoll}
                   onSetClub={handleSetClub}
+                  onOpenClub={selectClub}
                 />
                 {/* Infinite scroll sentinel + load-more fallback */}
                 {feedHasMore && feedPosts.length > 0 ? (
