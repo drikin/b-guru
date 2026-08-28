@@ -244,6 +244,20 @@ export async function initSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    -- 部活カタログ（DB管理・admin が追加/編集/削除できる）。起動時 ensureClubsSeeded で seed。
+    -- active=false = 「削除」扱い（一覧/AI分類対象外、既存投稿のラベルは維持）。
+    -- manual=true = システム予約（雑談/機能改善/バグ報告）で削除不可。
+    CREATE TABLE IF NOT EXISTS clubs (
+      key TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      definition TEXT NOT NULL DEFAULT '',
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      manual BOOLEAN NOT NULL DEFAULT FALSE,
+      sort INTEGER NOT NULL DEFAULT 100,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     -- Web Push subscriptions (Push API). One row per (email, endpoint).
     CREATE TABLE IF NOT EXISTS push_subscriptions (
       id SERIAL PRIMARY KEY,

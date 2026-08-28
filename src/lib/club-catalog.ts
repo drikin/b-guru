@@ -10,6 +10,7 @@ export interface ClubDef {
   key: string;
   name: string; // 日本語名（表示用）
   def: string; // 分類時の簡易定義（曖昧クラス切り分けのため）
+  active?: boolean; // DB管理化後: false=削除(非表示化)済み。ラベル解決は active も対象。
 }
 
 /** 現行の部活動一覧（drikin 提供 2026-08）。key は英字小文字。 */
@@ -64,10 +65,10 @@ export const CLUB_CATEGORIES: ClubCategory[] = [
   { name: "ゲーム・観戦・集まり", keys: ["game", "mma", "baseball", "offsite"] },
 ];
 
-/** クラブキー → そのカテゴリ名（未定義/未設定は null）。 */
+/** クラブキー → そのカテゴリ名（未定義/未設定は null）。ライブカタログ反映。 */
 export function clubCategory(key: string | null | undefined): string | null {
   if (!key || key === CLUB_UNSET) return null;
-  const c = CLUB_CATEGORIES.find((g) => g.keys.includes(key));
+  const c = currentCategories().find((g) => g.keys.includes(key));
   return c ? c.name : null;
 }
 
@@ -79,17 +80,59 @@ export const CLUB_UNSET = "__unset__";
 
 export const CLUB_KEYS: ReadonlySet<string> = new Set(CLUBS.map((c) => c.key));
 
-/** key → 日本語名（表示用）。未知キーは null。未設定(CLUB_UNSET)は「未設定」を返す。 */
+/* ---- クライアント向けライブカタログストア ----
+ * DB 管理化（clubs テーブル）に伴い、クライアントは GET /api/clubs/catalog の取得結果を
+ * setLiveCatalog() でここに設定する。設定前（SOL/初回レンダー/サーバー側）は静的 seed に
+ * フォールバックするので既存動作を保つ。ラベル解決は active を含む全件・一覧/分類は active のみ。 */
+let liveClubs: ClubDef[] | null = null;
+let liveActiveKeys: Set<string> | null = null;
+let liveCategories: ClubCategory[] | null = null;
+
+/** GET /api/clubs/catalog の結果でライブカタログを上書きする（クライアント専用）。 */
+export function setLiveCatalog(
+  clubs: ClubDef[],
+  categories: ClubCategory[]
+): void {
+  liveClubs = clubs;
+  liveCategories = categories;
+  liveActiveKeys = new Set(
+    clubs.filter((c) => c.active !== false).map((c) => c.key)
+  );
+}
+
+/** ラベル解決用の全クラブ（削除済み=inactive も含む）。未設定時は seed。 */
+export function allClubs(): ClubDef[] {
+  return liveClubs ?? CLUBS;
+}
+
+/** 一覧/分類用の active クラブ定義。未設定時は seed 全部。 */
+export function activeClubDefs(): ClubDef[] {
+  const keys = liveActiveKeys ?? CLUB_KEYS;
+  return allClubs().filter((c) => keys.has(c.key));
+}
+
+/** 現在のカテゴリ分類（左SB用・active のみ）。未設定時は seed。 */
+export function currentCategories(): ClubCategory[] {
+  return liveCategories ?? CLUB_CATEGORIES;
+}
+
+/** key → 日本語名（表示用）。未知キーは null。未設定(CLUB_UNSET)は「未設定」を返す。
+ *  DB 管理化後は削除済みクラブのラベルも維持するため、active に限らず全クラブから解決する。 */
 export function clubLabel(key: string | null | undefined): string | null {
   if (!key) return null;
   if (key === CLUB_UNSET) return "未設定";
-  const c = CLUBS.find((x) => x.key === key);
+  const c = allClubs().find((x) => x.key === key);
   return c ? c.name : null;
 }
 
+
 /** モデル出力を部活キーに正規化・検証する純関数（単体テスト対象）。
- *  有効な key ならそれを返し、ハルシネーション/無効値は null を返す。 */
-export function parseClubOutput(raw: string | null | undefined): string | null {
+ *  有効な key ならそれを返し、ハルシネーション/無効値は null を返す。
+ *  keys 省略時は seed の CLUB_KEYS（DB管理化後は呼び出し側が active keys を渡す）。 */
+export function parseClubOutput(
+  raw: string | null | undefined,
+  keys: ReadonlySet<string> = CLUB_KEYS
+): string | null {
   if (!raw) return null;
   let s = raw.trim();
   // 前後の引用符・バッククォート・強調記号を除去
@@ -99,7 +142,7 @@ export function parseClubOutput(raw: string | null | undefined): string | null {
   // 箇条書き記号・空白除去
   s = s.replace(/^[-*•·\s]+/, "").trim();
   s = s.toLowerCase();
-  return CLUB_KEYS.has(s) ? s : null;
+  return keys.has(s) ? s : null;
 }
 
 /** few-shot 学習用の学習例。text(素文)・club(正解キー)・manual(人力で設定された正解か) */

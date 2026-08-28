@@ -34,7 +34,14 @@ import {
   useMantineColorScheme,
 } from "@mantine/core";
 import { mdToHtml } from "@/lib/md";
-import { CLUBS, CLUB_UNSET, CLUB_CATEGORIES, clubLabel, clubCategory } from "@/lib/club-catalog";
+import {
+  CLUB_UNSET,
+  clubLabel,
+  clubCategory,
+  setLiveCatalog,
+  activeClubDefs,
+  currentCategories,
+} from "@/lib/club-catalog";
 import type { Profile as ProfileData } from "@/lib/profile";
 import {
   FeedPost,
@@ -1340,7 +1347,7 @@ function PostCard({
                     overscrollBehavior: "contain",
                   }}
                 >
-                  {CLUBS.map((c) => (
+                  {activeClubDefs().map((c) => (
                     <Menu.Item
                       key={c.key}
                       onClick={(e) => {
@@ -4138,6 +4145,7 @@ export default function Home() {
     loadTrends();
     loadClubCounts();
     loadClubLeaders();
+    loadClubCatalog();
     loadNotifications();
     loadMenuLinks();
     // Deep-link from the drinews email CTA: /?drinews=<id>
@@ -4743,6 +4751,21 @@ export default function Home() {
   const [clubLeaders, setClubLeaders] = useState<
     Record<string, { club: string; email: string; name: string | null; avatar: string }>
   >({});
+  // 部活カタログ（DB管理・admin が部活を追加/編集/削除）。GET /api/clubs/catalog で取得。
+  const [clubCatalogState, setClubCatalogState] = useState<{
+    clubs: {
+      key: string;
+      name: string;
+      category: string;
+      definition: string;
+      active: boolean;
+      manual: boolean;
+      sort: number;
+    }[];
+    categories: { name: string; keys: string[] }[];
+  }>({ clubs: [], categories: [] });
+  const [, setCatalogTick] = useState(0); // ライブカタログ反映後の再レンダー用
+  const [clubManagerOpen, setClubManagerOpen] = useState(false); // admin「部活管理」モーダル
   // 展開中のカテゴリ名。リロード後も維持するため localStorage と同期。
   const [clubOpen, setClubOpen] = useState<string[]>(() => {
     if (typeof window === "undefined") return [];
@@ -4822,6 +4845,27 @@ export default function Home() {
           else delete next[club];
           return next;
         });
+      })
+      .catch(() => {});
+  }, []);
+
+  // 部活カタログを取得（左SB部活一覧・ラベル・admin 部活管理の source of truth）
+  const loadClubCatalog = useCallback(() => {
+    fetch("/api/clubs/catalog", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d || !Array.isArray(d.clubs)) return;
+        setClubCatalogState({ clubs: d.clubs, categories: d.categories ?? [] });
+        setLiveCatalog(
+          d.clubs.map((c: any) => ({
+            key: c.key,
+            name: c.name,
+            def: c.definition,
+            active: c.active,
+          })),
+          d.categories ?? []
+        );
+        setCatalogTick((t) => t + 1); // ライブカタログを再レンダーに反映
       })
       .catch(() => {});
   }, []);
@@ -5122,6 +5166,7 @@ export default function Home() {
       loadTrends();
       loadClubCounts();
       loadClubLeaders();
+      loadClubCatalog();
       loadOnline();
       loadPollWidget();
       loadChat(chatViewRef.current); // recover chat missed during a disconnect
@@ -7334,9 +7379,26 @@ export default function Home() {
 
             {/* 部活（左サイドバー・カテゴリアコーディオン + 検索） */}
             <Divider my="xs" />
-            <Text size="xs" fw={700} c="dimmed" style={{ padding: "4px 12px 6px" }}>
-              部活
-            </Text>
+            <Group justify="space-between" align="center" gap={4} style={{ padding: "4px 12px 6px" }}>
+              <Text size="xs" fw={700} c="dimmed">
+                部活
+              </Text>
+              {auth && ADMIN_EMAILS.has(auth.email) && (
+                <ActionIcon
+                  variant="subtle"
+                  size="sm"
+                  color="gray"
+                  aria-label="部活を管理"
+                  title="部活を管理（追加・編集・削除）"
+                  onClick={() => setClubManagerOpen(true)}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+                  </svg>
+                </ActionIcon>
+              )}
+            </Group>
             <TextInput
               size="xs"
               placeholder="部活を検索"
@@ -7354,7 +7416,7 @@ export default function Home() {
               style={{ margin: "0 8px 6px" }}
             />
             <ClubNavRow label="すべて" unread={clubUnreadTotal} active={clubFilter === null} onClick={() => selectClub(null)} />
-            {CLUB_CATEGORIES.filter((cat) => {
+            {currentCategories().filter((cat) => {
               if (!clubQuery.trim()) return true;
               const q = clubQuery.trim().toLowerCase();
               return cat.keys.some((k) => (clubLabel(k) ?? "").toLowerCase().includes(q));
@@ -10040,6 +10102,13 @@ export default function Home() {
           box-shadow: 0 2px 8px rgba(0,0,0,0.12);
         }
       `}</style>
+      {/* admin「部活管理」モーダル（左SBの歯車から。追加/編集/削除＝非表示化/復元） */}
+      <ClubManagerModal
+        opened={clubManagerOpen}
+        onClose={() => setClubManagerOpen(false)}
+        clubs={clubCatalogState.clubs}
+        onChanged={loadClubCatalog}
+      />
 </AppShell>
   );
 }
@@ -10104,5 +10173,278 @@ function ClubNavRow({
         </Badge>
       )}
     </UnstyledButton>
+  );
+}
+
+/* admin「部活管理」モーダル: 部活ラベルの追加/編集/削除（＝非表示化）/復元。
+ * DB(clubs)管理。削除は active=false（既存投稿のラベルは維持）・システム予約(manual)は削除不可。 */
+function ClubManagerModal({
+  opened,
+  onClose,
+  clubs,
+  onChanged,
+}: {
+  opened: boolean;
+  onClose: () => void;
+  clubs: {
+    key: string;
+    name: string;
+    category: string;
+    definition: string;
+    active: boolean;
+    manual: boolean;
+    sort: number;
+  }[];
+  onChanged: () => void;
+}) {
+  const [addKey, setAddKey] = useState("");
+  const [addName, setAddName] = useState("");
+  const [addCat, setAddCat] = useState("");
+  const [addDef, setAddDef] = useState("");
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editCat, setEditCat] = useState("");
+  const [editDef, setEditDef] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const api = async (url: string, init?: RequestInit) => {
+    const r = await fetch(url, { cache: "no-store", ...init });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d?.error || "エラー");
+    return d;
+  };
+
+  const addClub = async () => {
+    const key = addKey.trim();
+    const name = addName.trim();
+    if (!key || !name) {
+      setError("キーと名前は必須です");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await api("/api/clubs/catalog", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, name, category: addCat.trim(), definition: addDef.trim() }),
+      });
+      setAddKey("");
+      setAddName("");
+      setAddCat("");
+      setAddDef("");
+      setNotice("追加しました");
+      onChanged();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startEdit = (c: {
+    key: string;
+    name: string;
+    category: string;
+    definition: string;
+  }) => {
+    setEditingKey(c.key);
+    setEditName(c.name);
+    setEditCat(c.category);
+    setEditDef(c.definition);
+    setError("");
+  };
+
+  const saveEdit = async () => {
+    if (!editingKey) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await api(`/api/clubs/catalog/${encodeURIComponent(editingKey)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: editName.trim(), category: editCat.trim(), definition: editDef.trim() }),
+      });
+      setEditingKey(null);
+      setNotice("保存しました");
+      onChanged();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleActive = async (c: { key: string; active: boolean; manual: boolean }) => {
+    if (c.active && c.manual) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await api(`/api/clubs/catalog/${encodeURIComponent(c.key)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active: !c.active }),
+      });
+      setNotice(c.active ? "非表示にしました（既存ラベルは維持）" : "表示に戻しました");
+      onChanged();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sorted = [...clubs].sort((a, b) => a.sort - b.sort || a.key.localeCompare(b.key));
+
+  return (
+    <Modal opened={opened} onClose={onClose} title="部活管理" size="lg" centered withinPortal>
+      <Stack gap="xs">
+        {error && (
+          <Text size="sm" c="red">
+            {error}
+          </Text>
+        )}
+        {notice && (
+          <Text size="sm" c="green">
+            {notice}
+          </Text>
+        )}
+
+        <Paper p="xs" radius="md" withBorder>
+          <Text fw={700} size="sm" mb={6}>
+            部活を追加
+          </Text>
+          <Group gap="xs" grow wrap="wrap">
+            <TextInput
+              label="キー(小文字英数)"
+              value={addKey}
+              onChange={(e) => setAddKey(e.currentTarget.value)}
+              placeholder="例: space"
+            />
+            <TextInput
+              label="名前"
+              value={addName}
+              onChange={(e) => setAddName(e.currentTarget.value)}
+              placeholder="例: 宇宙部"
+            />
+          </Group>
+          <TextInput
+            label="カテゴリ"
+            mt={6}
+            value={addCat}
+            onChange={(e) => setAddCat(e.currentTarget.value)}
+            placeholder="例: テック（空なら「その他」）"
+          />
+          <Textarea
+            label="AI判定定義"
+            mt={6}
+            value={addDef}
+            onChange={(e) => setAddDef(e.currentTarget.value)}
+            placeholder="例: 宇宙・天体・惑星・宇宙開発の話"
+            autosize
+            minRows={1}
+          />
+          <Button size="xs" mt={8} onClick={addClub} loading={busy}>
+            追加
+          </Button>
+        </Paper>
+
+        <Divider label="一覧" labelPosition="left" />
+
+        <Box style={{ maxHeight: "min(50vh, 420px)", overflowY: "auto", overscrollBehavior: "contain" }}>
+          <Stack gap={6}>
+            {sorted.map((c) => {
+              if (editingKey === c.key) {
+                return (
+                  <Paper key={c.key} p="xs" radius="md" withBorder>
+                    <TextInput label="名前" size="xs" value={editName} onChange={(e) => setEditName(e.currentTarget.value)} />
+                    <TextInput label="カテゴリ" size="xs" mt={4} value={editCat} onChange={(e) => setEditCat(e.currentTarget.value)} />
+                    <Textarea label="AI判定定義" size="xs" mt={4} value={editDef} onChange={(e) => setEditDef(e.currentTarget.value)} autosize minRows={1} />
+                    <Group gap="xs" mt={6}>
+                      <Button size="xs" onClick={saveEdit} loading={busy}>
+                        保存
+                      </Button>
+                      <Button size="xs" variant="subtle" color="gray" onClick={() => setEditingKey(null)}>
+                        キャンセル
+                      </Button>
+                    </Group>
+                  </Paper>
+                );
+              }
+              return (
+                <Group
+                  key={c.key}
+                  gap="xs"
+                  align="center"
+                  wrap="wrap"
+                  style={{ borderBottom: "1px solid var(--border-default)", paddingBottom: 6 }}
+                >
+                  <Text
+                    size="sm"
+                    fw={600}
+                    style={{
+                      width: 150,
+                      textDecoration: c.active ? undefined : "line-through",
+                      color: c.active ? undefined : "var(--text-secondary)",
+                    }}
+                  >
+                    {c.name}
+                  </Text>
+                  <Badge size="xs" variant="light" color="gray">
+                    {c.key}
+                  </Badge>
+                  <Badge size="xs" variant="light" color="blue">
+                    {c.category}
+                  </Badge>
+                  {!c.active && (
+                    <Badge size="xs" color="gray">
+                      非表示
+                    </Badge>
+                  )}
+                  {c.manual && (
+                    <Badge size="xs" color="indigo">
+                      予約
+                    </Badge>
+                  )}
+                  <Group gap={4} style={{ marginLeft: "auto" }}>
+                    <ActionIcon size="sm" variant="subtle" color="blue" title="編集" aria-label="編集" onClick={() => startEdit(c)}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                      </svg>
+                    </ActionIcon>
+                    <ActionIcon
+                      size="sm"
+                      variant="subtle"
+                      color={c.active ? "red" : "green"}
+                      disabled={c.active && c.manual}
+                      title={c.active ? "非表示にする（削除）" : "表示に戻す"}
+                      aria-label={c.active ? "削除" : "復元"}
+                      onClick={() => toggleActive(c)}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        {c.active ? (
+                          <>
+                            <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                            <line x1="10" y1="11" x2="10" y2="17" />
+                            <line x1="14" y1="11" x2="14" y2="17" />
+                          </>
+                        ) : (
+                          <path d="M4 12v2a6 6 0 0 0 12 0v-2M12 4v6" />
+                        )}
+                      </svg>
+                    </ActionIcon>
+                  </Group>
+                </Group>
+              );
+            })}
+          </Stack>
+        </Box>
+      </Stack>
+    </Modal>
   );
 }

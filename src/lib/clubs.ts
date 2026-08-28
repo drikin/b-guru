@@ -28,24 +28,27 @@ import {
   type ClubDef,
   type ClubExample,
 } from "./club-catalog";
+import { listClubs } from "./club-store";
 
 export type { ClubDef } from "./club-catalog";
 export { CLUBS, CLUB_KEYS, clubLabel, parseClubOutput } from "./club-catalog";
 
-const CLUB_SYSTEM_PROMPT = `あなたは B-guru（backspace.fm の有料会員コミュニティ）の部活動分類エージェントです。
+/** 分類プロンプトを、DB の active 部活一覧から動的構築する（admin が追加/編集した部活も反映）。 */
+function buildClubSystemPrompt(clubs: ClubDef[]): string {
+  return `あなたは B-guru（backspace.fm の有料会員コミュニティ）の部活動分類エージェントです。
 ユーザーの投稿を読み、もっとも当てはまる部活動を 1 つだけ選んでください。当てはまる部活がなければ none と答えてください。
 
 部活一覧（key = 日本語名: 分類定義）:
-${CLUBS.map((c) => `${c.key} = ${c.name}: ${c.def}`).join("\n")}
+${clubs.map((c) => `${c.key} = ${c.name}: ${c.def}`).join("\n")}
 
 重要:
 - 出力は「key だけ」の1語で返してください。key は必ず上記一覧に存在する英字キーにする。
 - 必ず1つだけ。複数候補があってももっとも強い1つに絞る。
-- 写真部(photo/撮影)とカメラ部(camera/機材)、車部(car)とモータースポーツ部(motorsport)、音楽部(music)と音響部(audio)は定義に従って区別する。
-- 一般的な雑談・日常・近況・仕事・健康など、どの部活にも属さない話題は 雑談(chat) に誘導する。
+${clubs.filter((c) => ["photo, camera", "car, motorsport", "music, audio"].some((p) => p.split(", ").includes(c.key))).length ? "- 写真部(photo/撮影)とカメラ部(camera/機材)、車部(car)とモータースポーツ部(motorsport)、音楽部(music)と音響部(audio)は定義に従って区別する。\n" : ""}- 一般的な雑談・日常・近況・仕事・健康など、どの部活にも属さない話題は 雑談(chat) に誘導する。
 - どの部活にも当てはまらず、雑談(chat)にも含めにくい場合のみ none。
 - 本文に出てこない部活を決して選ばないこと。
 - 参考例（最近の正解ラベル）が与えられたら、その分類の流儀・語彙に合わせて分類すること。「人力で設定された正解ラベル」の例は最優先で参考にする。`;
+}
 
 /** 学習に使う直近のラベル付き投稿を取得する。自己推測の増幅(ドリフト)を防ぐため、
  *  人間が設定した正解ラベル(club_manual=TRUE)のみを学習根拠にする。未設定は除外。 */
@@ -83,16 +86,22 @@ export async function classifyPost(postId: number): Promise<string | null> {
     if (row.club_manual) return row.club ?? null; // 手動が正本 → スキップ
 
     const text: string = (row.text ?? "").slice(0, 2000);
+    // 分類対象は DB の active 部活（admin が追加/編集/削除した部活を反映）
+    const dbClubs = await listClubs({ activeOnly: true });
+    const activeKeys = new Set<string>(dbClubs.map((c) => c.key));
     // 自己学習: 直近の正解ラベル（特に人力設定）を few-shot 例として注入し、
     // コミュニティの実際の語彙・流儀に合わせて分類精度を上げる。例が無ければ従来どおり。
-    const examples = await recentLabeledExamples();
+    // 削除済み(非active)クラブの例は混ぜない（AI が非activeキーを出力しないよう active のみ）。
+    const examples = (await recentLabeledExamples()).filter((e) =>
+      activeKeys.has(e.club)
+    );
     const fewShot = buildClubFewShot(examples);
     const userMsg = fewShot
       ? `投稿内容:\n\n【最近の正解ラベルの例（人力設定の例を優先。同じ考え方・語彙で分類してください）】\n${fewShot}\n\n---\n\n${text || "(テキストなし)"}`
       : `投稿内容:\n${text || "(テキストなし)"}`;
     const res = await sakuraChat({
       messages: [
-        { role: "system", content: CLUB_SYSTEM_PROMPT },
+        { role: "system", content: buildClubSystemPrompt(dbClubs.map((c) => ({ key: c.key, name: c.name, def: c.definition }) as ClubDef)) },
         { role: "user", content: userMsg },
       ],
       temperature: 0.1,
@@ -101,7 +110,7 @@ export async function classifyPost(postId: number): Promise<string | null> {
       // 思考を完了させて最終キーまで出させるため多めに割り当てる。
       max_tokens: 2000,
     });
-    const club = parseClubOutput(res.content) ?? CLUB_UNSET;
+    const club = parseClubOutput(res.content, activeKeys) ?? CLUB_UNSET;
 
     // classified_at を更新。該当なし(未設定)も「試行済み」として __unset__ を記録し、
     // 一覧化できるようにする（club=NULL=未分類/手動ラベルなしとは区別）。

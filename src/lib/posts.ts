@@ -4,7 +4,7 @@ import { pool } from "./db";
 import { fetchUrlPreview, UrlPreview } from "./urlpreview";
 import { emitLive } from "./live";
 import { buildPostPoll, endsAtOf, type PostPoll } from "./poll";
-import { CLUB_KEYS } from "./clubs";
+import { isActiveClubKey } from "./club-store";
 import { isAdmin } from "./admin";
 
 export interface FeedPost {
@@ -660,14 +660,14 @@ export async function updatePost(
 }
 
 /** 投稿の部活動ラベルを手動で付け替える（投稿者 or admin のみ）。
- *  club は CLUB_KEYS のどれか or null（ラベル外し）。付替時 club_manual=TRUE にし、
+ *  club は active な部活キー or null（ラベル外し）。付替時 club_manual=TRUE にし、
  *  自動分類が後から上書きしないようにする。SSE で club イベントを配信。 */
 export async function setPostClub(
   postId: number,
   userEmail: string,
   club: string | null
 ): Promise<{ ok: boolean; error?: string }> {
-  if (club !== null && !CLUB_KEYS.has(club)) {
+  if (club !== null && !(await isActiveClubKey(club))) {
     return { ok: false, error: "不正な部活動です" };
   }
   const authorEmail = await getPostAuthor(postId);
