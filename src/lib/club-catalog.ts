@@ -47,6 +47,30 @@ export const CLUBS: ClubDef[] = [
   { key: "expo", name: "万博部", def: "万博・博覧会の話題" },
 ];
 
+/** 左サイドバー用の部活カテゴリ分類（drikin + エージェントチーム提案 2026-08-27）。
+ *  全クラブキーをちょうど1つのカテゴリに割り当てる（重複なし・欠落なし・合計 30）。
+ *  __unset__(未設定) は「クラブ」ではないためどのカテゴリにも入れない（別枠で扱う）。 */
+export interface ClubCategory {
+  name: string;
+  keys: string[];
+}
+
+export const CLUB_CATEGORIES: ClubCategory[] = [
+  { name: "運営・コミュニティ", keys: ["chat", "improve", "bug"] },
+  { name: "ガジェット・テック", keys: ["apple", "pc", "xr", "galaxyfold", "ai", "printer3d", "drone"] },
+  { name: "映像・音・クリエイティブ", keys: ["photo", "camera", "audio", "music", "lp", "content"] },
+  { name: "モビリティ・アウトドア", keys: ["car", "bicycle", "travel", "fishing", "motorsport"] },
+  { name: "趣味・ライフ", keys: ["gourmet", "muscle", "stationery", "parenting", "expo"] },
+  { name: "ゲーム・観戦・集まり", keys: ["game", "mma", "baseball", "offsite"] },
+];
+
+/** クラブキー → そのカテゴリ名（未定義/未設定は null）。 */
+export function clubCategory(key: string | null | undefined): string | null {
+  if (!key || key === CLUB_UNSET) return null;
+  const c = CLUB_CATEGORIES.find((g) => g.keys.includes(key));
+  return c ? c.name : null;
+}
+
 /** 自動分類で「どの部活にも当てはまらなかった」ことを示す送信値（疑似ラベル）。
  *  部活そのものではないため CLUBS / CLUB_KEYS には含めない（AI に出力させない・手動選択にも出さない）。
  *  表示上は clubLabel() で「未設定」になる。club が NULL とは区別される:

@@ -3,6 +3,8 @@ import {
   CLUBS,
   CLUB_KEYS,
   CLUB_UNSET,
+  CLUB_CATEGORIES,
+  clubCategory,
   clubLabel,
   parseClubOutput,
   buildClubFewShot,
@@ -156,5 +158,37 @@ describe("club-catalog: 雑談 / 未設定", () => {
     expect(CLUB_KEYS.has(CLUB_UNSET)).toBe(false);
     expect(clubLabel(CLUB_UNSET)).toBe("未設定"); // 表示は「未設定」
     expect(parseClubOutput(CLUB_UNSET)).toBeNull(); // parseClubOutput は絶対に通さない
+  });
+});
+
+describe("club-catalog: カテゴリ分類（左サイドバー用）", () => {
+  it("全クラブがちょうど1つのカテゴリに割り当てられる（重複なし・欠落なし）", () => {
+    const all: string[] = [];
+    for (const cat of CLUB_CATEGORIES) {
+      for (const k of cat.keys) all.push(k);
+    }
+    // 欠落なし・件数一致（全クラブ = CLUB_KEYS と同数・同集合）
+    expect(all.length).toBe(CLUBS.length);
+    expect(new Set(all).size).toBe(CLUBS.length); // 重複なし
+    for (const k of CLUB_KEYS) expect(all).toContain(k); // 漏れなし
+    for (const k of all) expect(CLUB_KEYS.has(k)).toBe(true); // 架空キーなし
+  });
+
+  it("カテゴリ内のキーはすべて実在し、各カテゴリ名は一意", () => {
+    expect(new Set(CLUB_CATEGORIES.map((c) => c.name)).size).toBe(CLUB_CATEGORIES.length);
+    for (const cat of CLUB_CATEGORIES) {
+      expect(cat.keys.length).toBeGreaterThan(0);
+      for (const k of cat.keys) expect(clubLabel(k)).not.toBeNull();
+    }
+  });
+
+  it("clubCategory は所属カテゴリ名を返し、未設定・未知キーは null", () => {
+    expect(clubCategory("car")).toBe("モビリティ・アウトドア");
+    expect(clubCategory("chat")).toBe("運営・コミュニティ");
+    expect(clubCategory("ai")).toBe("ガジェット・テック");
+    expect(clubCategory(CLUB_UNSET)).toBeNull(); // 未設定はカテゴリ外
+    expect(clubCategory("unknown_xyz")).toBeNull();
+    expect(clubCategory(null)).toBeNull();
+    expect(clubCategory(undefined)).toBeNull();
   });
 });

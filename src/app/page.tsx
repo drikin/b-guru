@@ -34,7 +34,7 @@ import {
   useMantineColorScheme,
 } from "@mantine/core";
 import { mdToHtml } from "@/lib/md";
-import { CLUBS, CLUB_UNSET, clubLabel } from "@/lib/club-catalog";
+import { CLUBS, CLUB_UNSET, CLUB_CATEGORIES, clubLabel, clubCategory } from "@/lib/club-catalog";
 import type { Profile as ProfileData } from "@/lib/profile";
 import {
   FeedPost,
@@ -4093,6 +4093,7 @@ export default function Home() {
     loadPinned();
     loadHot();
     loadTrends();
+    loadClubCounts();
     loadNotifications();
     loadMenuLinks();
     // Deep-link from the drinews email CTA: /?drinews=<id>
@@ -4684,12 +4685,35 @@ export default function Home() {
 
   const FEED_PAGE = 50;
 
+  // ---- 部活（左サイドバー「部活」）フィルタ ----
+  const [clubFilter, setClubFilter] = useState<string | null>(null);
+  const clubFilterRef = useRef<string | null>(null);
+  clubFilterRef.current = clubFilter; // レンダー毎に mirror（loadFeed 等の素関数が参照）
+  const [clubCounts, setClubCounts] = useState<Record<string, number>>({});
+  const [clubTotal, setClubTotal] = useState(0);
+  const [clubUnset, setClubUnset] = useState(0);
+  const [clubQuery, setClubQuery] = useState("");
+  const [clubOpen, setClubOpen] = useState<string[]>([]); // 展開中のカテゴリ名
+
+  const loadClubCounts = useCallback(() => {
+    fetch("/api/clubs/counts", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        setClubCounts(d.counts ?? {});
+        setClubTotal(d.total ?? 0);
+        setClubUnset(d.unset ?? 0);
+      })
+      .catch(() => {});
+  }, []);
+
   const loadFeed = (filter?: string, search?: string) => {
     setFeedLoading(true);
     setFeedHasMore(true);
     feedCursorRef.current = null;
     const s = search?.trim();
-    const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
+    const c = clubFilterRef.current;
+    const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}${c ? `&club=${encodeURIComponent(c)}` : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
     return fetch(`/api/posts${q}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
@@ -4731,9 +4755,10 @@ export default function Home() {
     setFeedLoadingMore(true);
     const filter = activeNav === "gallery" ? "images" : activeNav === "news" ? "links" : activeNav === "episodes" ? "episodes" : undefined;
     const s = searchQueryRef.current.trim();
+    const c = clubFilterRef.current;
     const q = `?limit=${FEED_PAGE}&before=${encodeURIComponent(feedCursorRef.current)}${
       filter ? `&filter=${filter}` : ""
-    }${s ? `&search=${encodeURIComponent(s)}` : ""}`;
+    }${c ? `&club=${encodeURIComponent(c)}` : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
     fetch(`/api/posts${q}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
@@ -4752,6 +4777,23 @@ export default function Home() {
       .catch(() => setFeedHasMore(false))
       .finally(() => setFeedLoadingMore(false));
   };
+
+  // 部活を選択/解除（左サイドバー「部活」）。選択でタイムラインを club フィルタで読み直す。
+  const selectClub = useCallback((key: string | null) => {
+    clubFilterRef.current = key;
+    setClubFilter(key);
+    if (!key) {
+      setClubOpen([]);
+    } else {
+      const cat = clubCategory(key);
+      setClubOpen((prev) => (cat && !prev.includes(cat) ? [...prev, cat] : prev));
+    }
+    setThreadPost(null);
+    setProfileEmail(null);
+    setNavOpened(false);
+    setActiveNav("feed");
+    loadFeed(undefined, searchQueryRef.current.trim() || undefined);
+  }, []);
 
   // ---- Push (SSE) live refresh ----
   // The EventSource stays open for as long as the page lives; we read the
@@ -4941,6 +4983,7 @@ export default function Home() {
       loadPinned();
       loadHot();
       loadTrends();
+      loadClubCounts();
       loadOnline();
       loadPollWidget();
       loadChat(chatViewRef.current); // recover chat missed during a disconnect
@@ -7150,6 +7193,72 @@ export default function Home() {
                 }}
               />
             ))}
+
+            {/* 部活（左サイドバー・カテゴリアコーディオン + 検索） */}
+            <Divider my="xs" />
+            <Text size="xs" fw={700} c="dimmed" style={{ padding: "4px 12px 6px" }}>
+              部活
+            </Text>
+            <TextInput
+              size="xs"
+              placeholder="部活を検索"
+              value={clubQuery}
+              onChange={(e) => setClubQuery(e.currentTarget.value)}
+              rightSection={
+                clubQuery ? (
+                  <ActionIcon variant="subtle" size="xs" color="gray" aria-label="部活検索をクリア" onClick={() => setClubQuery("")}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                  </ActionIcon>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: "var(--text-muted)" }}><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
+                )
+              }
+              style={{ margin: "0 8px 6px" }}
+            />
+            <ClubNavRow label="すべて" count={clubTotal} active={clubFilter === null} onClick={() => selectClub(null)} />
+            {CLUB_CATEGORIES.filter((cat) => {
+              if (!clubQuery.trim()) return true;
+              const q = clubQuery.trim().toLowerCase();
+              return cat.keys.some((k) => (clubLabel(k) ?? "").toLowerCase().includes(q));
+            }).map((cat) => {
+              const open = clubOpen.includes(cat.name);
+              const q = clubQuery.trim().toLowerCase();
+              const catKeys = q ? cat.keys.filter((k) => (clubLabel(k) ?? "").toLowerCase().includes(q)) : cat.keys;
+              if (catKeys.length === 0) return null;
+              const catCount = q ? 0 : cat.keys.reduce((s, k) => s + (clubCounts[k] ?? 0), 0);
+              const someActive = clubFilter !== null && clubFilter !== CLUB_UNSET && cat.keys.includes(clubFilter);
+              return (
+                <div key={cat.name}>
+                  <UnstyledButton
+                    onClick={() => setClubOpen((prev) => (open ? prev.filter((x) => x !== cat.name) : [...prev, cat.name]))}
+                    aria-expanded={open}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6, width: "100%",
+                      padding: "7px 12px", borderRadius: 8, fontSize: 13.5,
+                      color: someActive ? "var(--text-green)" : "var(--text-primary)",
+                      fontWeight: 600,
+                      background: someActive ? "var(--bg-tinted)" : "transparent",
+                    }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform .12s", flexShrink: 0, color: "var(--text-muted)" }}>
+                      <path d="m9 18 6-6-6-6" />
+                    </svg>
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cat.name}</span>
+                    {!q && catCount > 0 && (
+                      <Badge size="xs" radius="xl" variant="light" color="gray" style={{ minWidth: 20, textAlign: "center" }}>{catCount}</Badge>
+                    )}
+                  </UnstyledButton>
+                  {open && (
+                    <div style={{ paddingLeft: 6 }}>
+                      {catKeys.map((k) => (
+                        <ClubNavRow key={k} label={clubLabel(k) ?? k} count={clubCounts[k] ?? 0} active={clubFilter === k} onClick={() => selectClub(k)} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <ClubNavRow label="未設定" count={clubUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} />
 
             {/* Admin-managed external-link bookmarks */}
             {menuLinks.map((lk) => (
@@ -9703,5 +9812,65 @@ export default function Home() {
         }
       `}</style>
 </AppShell>
+  );
+}
+
+/** 左サイドバー「部活」の1行（クラブ or すべて/未設定）。アクティブは緑・件数バッジ付き。 */
+function ClubNavRow({
+  label,
+  count,
+  active,
+  dashed,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  dashed?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <UnstyledButton
+      onClick={onClick}
+      aria-pressed={active}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        width: "100%",
+        padding: "7px 12px",
+        borderRadius: 8,
+        fontSize: 13.5,
+        color: "var(--text-primary)",
+        background: active ? "var(--bg-tinted)" : "transparent",
+        fontWeight: active ? 600 : 500,
+        marginTop: 2,
+        marginBottom: 2,
+        ...(dashed ? { border: "1px dashed var(--border-default)", borderLeft: "3px solid var(--border-default)" } : {}),
+      }}
+    >
+      <span
+        style={{
+          flex: 1,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          color: active ? "var(--text-green)" : undefined,
+        }}
+      >
+        {label}
+      </span>
+      {count > 0 && (
+        <Badge
+          size="xs"
+          radius="xl"
+          variant={active ? "filled" : "light"}
+          color={active ? "green" : "gray"}
+          style={{ minWidth: 24, textAlign: "center" }}
+        >
+          {count}
+        </Badge>
+      )}
+    </UnstyledButton>
   );
 }
