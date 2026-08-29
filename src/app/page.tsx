@@ -4466,6 +4466,15 @@ export default function Home() {
     setChatMention(null);
   }, []);
 
+  // Switch the top view to タイムライン (used whenever a navigation action
+  // lands on the feed — e.g. clicking a 部活/ロゴ/タイムライン menu — so the
+  // user isn't left staring at チャット while a timeline action runs).
+  const showTimeline = useCallback(() => {
+    chatViewRef.current = false;
+    setChatView(false);
+    setChatMention(null);
+  }, []);
+
   // Send a chat message (callback memo ties to current input text).
   const sendChat = useCallback(async () => {
     const body = chatText.trim();
@@ -4935,6 +4944,7 @@ export default function Home() {
   // 部活を選択/解除（左サイドバー「部活」）。選択でタイムラインを club フィルタで読み直す。
   // ?club=<key> を URL へ同期し、リロード・共有でも同じフィルターのタイムラインが開く。
   const selectClub = useCallback((key: string | null) => {
+    showTimeline(); // 部活を選んだら チャット から タイムライン タブへ切替
     clubFilterRef.current = key;
     setClubFilter(key);
     setThreadPost(null);
@@ -6379,6 +6389,7 @@ export default function Home() {
     // viewing the feed the activeNav effect won't re-run (nav unchanged), so
     // reload here; when switching in from another tab the effect already
     // loads it, so we skip to avoid a double fetch.
+    showTimeline(); // ロゴ/タイムラインを押したら チャット から タイムライン タブへ切替
     const wasOnFeed = activeNavRef.current === "feed";
     setActiveNav("feed");
     setThreadPost(null);
