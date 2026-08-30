@@ -6,17 +6,20 @@ export const dynamic = "force-dynamic";
 
 const NO_CACHE = { "Cache-Control": "no-store, no-cache, must-revalidate" };
 
-/** 部活ごとのルート投稿件数＋ユーザーごとの未読数（左サイドバー「部活」バッジ用）。
- *  未読 = ルート投稿のうち id > ユーザーの既読カーソル(forum_read_state.last_read_id) のもの。
- *  チャット未読(chat_read_state)と同じ考え方: タイムラインを見るとカーソルが進み未読が消える。
- *  応答: { total, unset, counts, unread, unreadTotal, unreadUnset, lastReadId, maxId, updatedAt }
- *  - counts  : 部活ごとの総件数（バッジは未読のみ表示するが API には両方載せる）
- *  - unread  : 部活ごとの未読数（club 付きルート投稿のみ）
- *  - unreadTotal : 全ルート投稿の未読数（club NULL / __unset__ 含む）
- *  - unreadUnset  : __unset__ の未読数
- *  - lastReadId   : このユーザーの既読カーソル
- *  - maxId        : 最新ルート投稿 id（クライアントが既読マークの基準にする）
- *  ユーザー入力なし・全クエリ静的 → SQLインジェクションなし。 */
+/** 部活ごとの直近7日アクティビティ数（左サイドバー「部活」バッジ・並び順用）。
+ *
+ * 未読数（削除済み）に代わる「活動の活性度」指標:
+ *  - ルート投稿（親投稿）だけでなく、そのスレッドのコメントも含めてカウントする。
+ *  - コメント自体には club が付いていない（AI分類はルートのみ）ため、
+ *    コメントは「そのスレッドのルート投稿の club」に紐付けて集計する（自己JOIN）。
+ *  - 対象は直近7日（ローリング）。ルートの club が NULL / __unset__ のものは
+ *    「未設定」(activityUnset) 枠にまとめる（実部活と相補的になるよう）。
+ *
+ * 応答: { activity, activityTotal, activityUnset, updatedAt }
+ *  - activity       : 部活キー → 直近7日メッセージ数（実部活のみ・__unset__ を除く）
+ *  - activityTotal  : このビーグル全体の直近7日メッセージ総数（コメント含む・「すべて」用）
+ *  - activityUnset  : 部活未設定（NULL / __unset__）の直近7日メッセージ数（「未設定」用）
+ *  ユーザー入力なし・全クエリ静的（パラメタライズ不要）→ SQLインジェクションなし。 */
 export async function GET() {
   const email = await getSessionEmail();
   if (!email) {
@@ -24,52 +27,25 @@ export async function GET() {
   }
 
   try {
-    // ① ユーザーの既読カーソルを先に取得（未読クエリの基準に使う）
-    const readRes = await pool.query(
-      `SELECT COALESCE((SELECT last_read_id FROM forum_read_state WHERE email = $1), 0)::int AS last_read`,
-      [email]
+    const res = await pool.query(
+      `SELECT COALESCE(NULLIF(r.club, '__unset__'), '__unset__') AS club, count(*)::int AS n
+         FROM posts p
+         LEFT JOIN posts r ON r.id = COALESCE(p.parent_id, p.id)
+        WHERE p.created_at > now() - interval '7 days'
+        GROUP BY 1`
     );
-    const lastReadId = (readRes.rows[0] as { last_read: number }).last_read;
 
-    // ② 残りを並列実行
-    const [clubRes, totalRes, unreadClubRes, unreadTotalRes, maxRes] = await Promise.all([
-      pool.query(
-        `SELECT p.club AS club, count(*)::int AS n
-           FROM posts p
-          WHERE p.parent_id IS NULL AND p.club IS NOT NULL
-          GROUP BY p.club`
-      ),
-      pool.query(`SELECT count(*)::int AS total FROM posts WHERE parent_id IS NULL`),
-      // 部活ごとの未読（club 付きルート投稿のみ）
-      pool.query(
-        `SELECT p.club AS club, count(*)::int AS n
-           FROM posts p
-          WHERE p.parent_id IS NULL AND p.club IS NOT NULL AND p.id > $1
-          GROUP BY p.club`,
-        [lastReadId]
-      ),
-      // 全ルート投稿の未読
-      pool.query(`SELECT count(*)::int AS n FROM posts WHERE parent_id IS NULL AND id > $1`, [lastReadId]),
-      // 最新ルート投稿 id
-      pool.query(`SELECT COALESCE(max(id),0)::int AS max FROM posts WHERE parent_id IS NULL`),
-    ]);
-
-    const counts: Record<string, number> = {};
-    for (const row of clubRes.rows as { club: string; n: number }[]) {
-      counts[row.club] = row.n;
+    const activity: Record<string, number> = {};
+    for (const row of res.rows as { club: string; n: number }[]) {
+      activity[row.club] = row.n;
     }
-    const unread: Record<string, number> = {};
-    for (const row of unreadClubRes.rows as { club: string; n: number }[]) {
-      unread[row.club] = row.n;
-    }
-    const total = (totalRes.rows[0] as { total: number }).total;
-    const unset = counts["__unset__"] ?? 0;
-    const unreadTotal = (unreadTotalRes.rows[0] as { n: number }).n;
-    const unreadUnset = unread["__unset__"] ?? 0;
-    const maxId = (maxRes.rows[0] as { max: number }).max;
+    const activityUnset = activity["__unset__"] ?? 0;
+    delete activity["__unset__"]; // 未設定は activityUnset として別返却
+    const activityTotal =
+      (Object.values(activity) as number[]).reduce((s, n) => s + n, 0) + activityUnset;
 
     return NextResponse.json(
-      { total, unset, counts, unread, unreadTotal, unreadUnset, lastReadId, maxId, updatedAt: new Date().toISOString() },
+      { activity, activityTotal, activityUnset, updatedAt: new Date().toISOString() },
       { headers: NO_CACHE }
     );
   } catch (e: any) {

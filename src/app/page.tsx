@@ -4749,11 +4749,10 @@ export default function Home() {
   const [clubFilter, setClubFilter] = useState<string | null>(null);
   const clubFilterRef = useRef<string | null>(null);
   clubFilterRef.current = clubFilter; // レンダー毎に mirror（loadFeed 等の素関数が参照）
-  // 未読バッジ（ユーザー既読カーソル基準・タイムライン表示で消える）
-  const [clubUnread, setClubUnread] = useState<Record<string, number>>({});
-  const [clubUnreadTotal, setClubUnreadTotal] = useState(0);
-  const [clubUnreadUnset, setClubUnreadUnset] = useState(0);
-  const clubReadUpToRef = useRef(0); // このクライアントが既読マーク済みの最新 id（単調増加で POST を抑制）
+  // 部活アクティビティ（直近7日の投稿+コメント数）。左SBバッジと並び順の source of truth。
+  const [clubActivity, setClubActivity] = useState<Record<string, number>>({});
+  const [clubActivityTotal, setClubActivityTotal] = useState(0);
+  const [clubActivityUnset, setClubActivityUnset] = useState(0);
   // 部長一覧（club → { club, email, name, avatar, headerImage, bio }）。右SBの部長カード表示・admin 編集用。
   const [clubLeaders, setClubLeaders] = useState<
     Record<
@@ -4789,33 +4788,12 @@ export default function Home() {
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!d) return;
-        setClubUnread(d.unread ?? {});
-        setClubUnreadTotal(d.unreadTotal ?? 0);
-        setClubUnreadUnset(d.unreadUnset ?? 0);
-        clubReadUpToRef.current = d.lastReadId ?? 0;
+        setClubActivity(d.activity ?? {});
+        setClubActivityTotal(d.activityTotal ?? 0);
+        setClubActivityUnset(d.activityUnset ?? 0);
       })
       .catch(() => {});
   }, []);
-
-  // 最新のフィードを表示したら既読カーソルを進め（タイムラインを見ると全部既読→バッジ消滅）、件数を再取得する。
-  const markFeedRead = useCallback(
-    (upToId: number) => {
-      if (!upToId || upToId <= clubReadUpToRef.current) return; // 既にこの id まで既読
-      clubReadUpToRef.current = upToId; // 単調増加で重複 POST を抑制（楽観的更新）
-      fetch("/api/clubs/read", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ upToId }),
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .then(() => {
-          // 未読件数を更新（既読になった部活のバッジを消す）
-          loadClubCounts();
-        })
-        .catch(() => {});
-    },
-    [loadClubCounts]
-  );
 
   // 部長一覧を取得（右SBの部長カード・admin 編集用）
   const loadClubLeaders = useCallback(() => {
@@ -4881,8 +4859,6 @@ export default function Home() {
         const posts = d.posts ?? [];
         setFeedPosts(posts);
         if (posts.length > 0) {
-          // 最新ページ（最上部のフィード）を表示したら既読マーク（タイムラインを見ると全部既読→バッジ消滅）
-          markFeedRead(posts[0].id);
           feedCursorRef.current =
             posts[posts.length - 1].lastActivityAt ??
             posts[posts.length - 1].createdAt;
@@ -5056,6 +5032,7 @@ export default function Home() {
       if (auth && authorEmail && authorEmail === auth.email) {
         // Still refresh hot topics (other people's view of activity changed)
         loadHot();
+        loadClubCounts(); // 自分の投稿/コメントでも 7日アクティビティ数は増える
         return;
       }
       // Timeline auto-refresh is disabled per drikin, so an incoming new
@@ -5063,6 +5040,8 @@ export default function Home() {
       // as pending so the beagle NEW badge appears live for arrivals not yet
       // loaded (cleared by tapping the logo / reload).
       if (action === "create") bumpPendingNew();
+      // 新着 create（他人）でも 7日アクティビティ数は増える → サイドバーを即時更新
+      loadClubCounts();
       loadHot(); // new post/comment may change the hot-topics ranking
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) silentRefreshFeed();
     };
@@ -5146,6 +5125,7 @@ export default function Home() {
       }
       if (!d || d.type !== "club" || d.postId == null) return;
       applyPostChange(d.postId, (p) => ({ ...p, club: d.club ?? null }));
+      loadClubCounts(); // ラベル付与/付け替えで部活アクティビティ数が変わりうる → 再取得
     };
     es.addEventListener("post", onChange);
     es.addEventListener("pin", onPinChange);
@@ -5181,12 +5161,19 @@ export default function Home() {
 
   // Periodic self-heal for the online panel: refresh even if a presence SSE
   // event or onopen callback was missed (e.g. iOS Safari dropping the stream).
+  // 併せて部活アクティビティ（直近7日）も60秒ごとに再取得して、SSE流出時でも
+  // サイドバーの活性度・並び順を最新に保つ。
   useEffect(() => {
     if (!auth) return;
     loadOnline();
+    loadClubCounts();
     const t = window.setInterval(loadOnline, 60000);
-    return () => window.clearInterval(t);
-  }, [auth, loadOnline]);
+    const t2 = window.setInterval(loadClubCounts, 60000);
+    return () => {
+      window.clearInterval(t);
+      window.clearInterval(t2);
+    };
+  }, [auth, loadOnline, loadClubCounts]);
 
   // Presence heartbeat: POST /api/presence/ping every 30s so the server keeps
   // us "online" even when the SSE stream is briefly dropped (mobile tab
@@ -7393,13 +7380,16 @@ export default function Home() {
                 </ActionIcon>
               )}
             </Group>
-            <ClubNavRow label="すべて" unread={clubUnreadTotal} active={clubFilter === null} onClick={() => selectClub(null)} />
+            <ClubNavRow label="すべて" activity={clubActivityTotal} active={clubFilter === null} onClick={() => selectClub(null)} />
             {currentCategories()
               .flatMap((cat) => cat.keys)
+              // 活性度（直近7日アクティビティ）降順で並べる。同じならカタログ順を維持。
+              .slice()
+              .sort((a, b) => (clubActivity[b] ?? 0) - (clubActivity[a] ?? 0))
               .map((k) => (
-                <ClubNavRow key={k} label={clubLabel(k) ?? k} unread={clubUnread[k] ?? 0} active={clubFilter === k} onClick={() => selectClub(k)} />
+                <ClubNavRow key={k} label={clubLabel(k) ?? k} activity={clubActivity[k] ?? 0} active={clubFilter === k} onClick={() => selectClub(k)} />
               ))}
-            <ClubNavRow label="未設定" unread={clubUnreadUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} />
+            <ClubNavRow label="未設定" activity={clubActivityUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} />
 
             {/* Admin-managed external-link bookmarks */}
             {menuLinks.map((lk) => (
@@ -10084,21 +10074,21 @@ export default function Home() {
 }
 
 /** 左サイドバー「部活」の1行（クラブ or すべて/未設定）。アクティブは緑。
- *  未読数 > 0 のときだけ緑バッジを表示（drikin指定: 未読数だけで、既読になったら数字を出さない）。 */
+ *  アクティビティ数 > 0 のときだけニュートラル（グレー）バッジを表示。数字は直近7日の投稿+コメント数。 */
 function ClubNavRow({
   label,
-  unread,
+  activity,
   active,
   dashed,
   onClick,
 }: {
   label: string;
-  unread?: number;
+  activity?: number;
   active: boolean;
   dashed?: boolean;
   onClick: () => void;
 }) {
-  const unreadCount = unread ?? 0;
+  const activityCount = activity ?? 0;
   return (
     <UnstyledButton
       onClick={onClick}
@@ -10130,16 +10120,16 @@ function ClubNavRow({
       >
         {label}
       </span>
-      {unreadCount > 0 && (
+      {activityCount > 0 && (
         <Badge
           size="xs"
           radius="xl"
-          variant="filled"
-          color="green"
-          title="未読数（タイムラインを見ると消えます）"
+          variant="light"
+          color="gray"
+          title="直近7日の投稿・コメント数（アクティビティ）"
           style={{ minWidth: 24, textAlign: "center" }}
         >
-          {unreadCount}
+          {activityCount}
         </Badge>
       )}
     </UnstyledButton>
