@@ -4757,6 +4757,8 @@ export default function Home() {
   const [clubTrend, setClubTrend] = useState<Record<string, "up" | "flat" | "down">>({});
   const [clubTrendTotal, setClubTrendTotal] = useState<"up" | "flat" | "down">("flat");
   const [clubTrendUnset, setClubTrendUnset] = useState<"up" | "flat" | "down">("flat");
+  // 部長選択メニューのメンバー検索クエリ（admin が部長を選ぶとき用）
+  const [leaderQ, setLeaderQ] = useState("");
   // 部長一覧（club → { club, email, name, avatar, headerImage, bio }）。右SBの部長カード表示・admin 編集用。
   const [clubLeaders, setClubLeaders] = useState<
     Record<
@@ -7706,7 +7708,7 @@ export default function Home() {
                   <Group justify="space-between" align="center" mb={4} wrap="nowrap">
                     <Text fw={700} size="sm">部長</Text>
                     {auth && ADMIN_EMAILS.has(auth.email) && (
-                      <Menu position="bottom-start" withinPortal shadow="md" width={240}>
+                      <Menu position="bottom-start" withinPortal shadow="md" width={240} onClose={() => setLeaderQ("")}>
                         <Menu.Target>
                           <UnstyledButton
                             aria-label="部長を編集"
@@ -7729,17 +7731,52 @@ export default function Home() {
                           </UnstyledButton>
                         </Menu.Target>
                         <Menu.Dropdown>
+                          <Box p="xs" pb={0} style={{ minWidth: 0 }}>
+                            <TextInput
+                              size="xs"
+                              placeholder="部長・メンバーを検索"
+                              value={leaderQ}
+                              onChange={(e) => setLeaderQ(e.currentTarget.value)}
+                              autoFocus
+                              rightSection={
+                                leaderQ ? (
+                                  <ActionIcon variant="subtle" size="xs" color="gray" aria-label="メンバー検索をクリア" onClick={() => setLeaderQ("")}>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                                  </ActionIcon>
+                                ) : (
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: "var(--text-muted)" }}><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
+                                )
+                              }
+                            />
+                          </Box>
                           <Box style={{ maxHeight: "min(50vh, 360px)", overflowY: "auto", overscrollBehavior: "contain" }}>
-                            {mentionMembers.map((m) => (
-                              <Menu.Item key={m.email} onClick={() => setClubLeader(clubFilter, m.email)}>
-                                <Group gap={8} wrap="nowrap">
-                                  <SafeAvatar src={m.avatar} initial={m.name} size="xs" />
-                                  <Text size="sm" truncate style={{ flex: 1, minWidth: 0 }}>
-                                    {m.name || m.email}
+                            {(() => {
+                              const q = leaderQ.trim().toLowerCase();
+                              const list = q
+                                ? mentionMembers.filter(
+                                    (m) =>
+                                      (m.name || "").toLowerCase().includes(q) ||
+                                      m.email.toLowerCase().includes(q)
+                                  )
+                                : mentionMembers;
+                              if (list.length === 0) {
+                                return (
+                                  <Text size="sm" c="dimmed" px="xs" py="sm">
+                                    見つかりません
                                   </Text>
-                                </Group>
-                              </Menu.Item>
-                            ))}
+                                );
+                              }
+                              return list.map((m) => (
+                                <Menu.Item key={m.email} onClick={() => setClubLeader(clubFilter, m.email)}>
+                                  <Group gap={8} wrap="nowrap">
+                                    <SafeAvatar src={m.avatar} initial={m.name} size="xs" />
+                                    <Text size="sm" truncate style={{ flex: 1, minWidth: 0 }}>
+                                      {m.name || m.email}
+                                    </Text>
+                                  </Group>
+                                </Menu.Item>
+                              ));
+                            })()}
                           </Box>
                           <Menu.Divider />
                           <Menu.Item color="red" onClick={() => setClubLeader(clubFilter, null)}>
