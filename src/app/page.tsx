@@ -4642,7 +4642,22 @@ export default function Home() {
       top += el.offsetTop;
       el = el.offsetParent as HTMLElement | null;
     }
-    window.scrollTo(0, Math.max(0, top - 56));
+    // Position the chat viewport BELOW the header AND the sticky タイムライン/
+    // チャット tabs. The tabs sit at top:var(--app-shell-header-height) with
+    // z-index:60, so scrolling to exactly the header height would leave the
+    // first (oldest) message hidden behind them (iOS Safari report: 一番古い
+    // チャットが見切れる・タブが被る). Mirror focusOffsetTop's pattern: read the
+    // header height from the CSS var (follows large-device header growth) and
+    // add the measured tab height.
+    const headerH =
+      parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue(
+          "--app-shell-header-height"
+        )
+      ) || 56;
+    const tabsEl = document.querySelector<HTMLElement>('[data-cx="navtabs"]');
+    const tabsH = tabsEl ? tabsEl.offsetHeight : 0;
+    window.scrollTo(0, Math.max(0, top - headerH - tabsH));
     let poll: number | null = null;
     const startedAt = Date.now();
     // Restore the pre-chat timeline scroll. The previous implementation fired
@@ -6609,6 +6624,9 @@ export default function Home() {
     setFeedPosts((prev) => prev.map(apply));
     setThreadPost((prev) => (prev ? apply(prev) : prev));
     setThreadReplies((prev) => prev.map(apply));
+    // ユーザー画面（プロフィール）の投稿リストにも反映する。これを忘れると
+    // プロフィール表示中のタグ/部活変更・編集・削除がリロードまで反映されない。
+    setProfilePosts((prev) => prev.map(apply));
   };
 
   // ---- 投票（アンケート）ハンドラ ----
