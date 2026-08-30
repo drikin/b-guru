@@ -4753,6 +4753,10 @@ export default function Home() {
   const [clubActivity, setClubActivity] = useState<Record<string, number>>({});
   const [clubActivityTotal, setClubActivityTotal] = useState(0);
   const [clubActivityUnset, setClubActivityUnset] = useState(0);
+  // 部活トレンド（直近24h vs 前日24h の ↑/→/↓）。左SBの盛り上がり矢印用。
+  const [clubTrend, setClubTrend] = useState<Record<string, "up" | "flat" | "down">>({});
+  const [clubTrendTotal, setClubTrendTotal] = useState<"up" | "flat" | "down">("flat");
+  const [clubTrendUnset, setClubTrendUnset] = useState<"up" | "flat" | "down">("flat");
   // 部長一覧（club → { club, email, name, avatar, headerImage, bio }）。右SBの部長カード表示・admin 編集用。
   const [clubLeaders, setClubLeaders] = useState<
     Record<
@@ -4791,6 +4795,9 @@ export default function Home() {
         setClubActivity(d.activity ?? {});
         setClubActivityTotal(d.activityTotal ?? 0);
         setClubActivityUnset(d.activityUnset ?? 0);
+        setClubTrend(d.trend ?? {});
+        setClubTrendTotal(d.trendTotal ?? "flat");
+        setClubTrendUnset(d.trendUnset ?? "flat");
       })
       .catch(() => {});
   }, []);
@@ -7380,16 +7387,16 @@ export default function Home() {
                 </ActionIcon>
               )}
             </Group>
-            <ClubNavRow label="すべて" activity={clubActivityTotal} active={clubFilter === null} onClick={() => selectClub(null)} />
+            <ClubNavRow label="すべて" activity={clubActivityTotal} trend={clubTrendTotal} active={clubFilter === null} onClick={() => selectClub(null)} />
             {currentCategories()
               .flatMap((cat) => cat.keys)
               // 活性度（直近7日アクティビティ）降順で並べる。同じならカタログ順を維持。
               .slice()
               .sort((a, b) => (clubActivity[b] ?? 0) - (clubActivity[a] ?? 0))
               .map((k) => (
-                <ClubNavRow key={k} label={clubLabel(k) ?? k} activity={clubActivity[k] ?? 0} active={clubFilter === k} onClick={() => selectClub(k)} />
+                <ClubNavRow key={k} label={clubLabel(k) ?? k} activity={clubActivity[k] ?? 0} trend={clubTrend[k] ?? "flat"} active={clubFilter === k} onClick={() => selectClub(k)} />
               ))}
-            <ClubNavRow label="未設定" activity={clubActivityUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} />
+            <ClubNavRow label="未設定" activity={clubActivityUnset} trend={clubTrendUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} />
 
             {/* Admin-managed external-link bookmarks */}
             {menuLinks.map((lk) => (
@@ -10078,12 +10085,14 @@ export default function Home() {
 function ClubNavRow({
   label,
   activity,
+  trend,
   active,
   dashed,
   onClick,
 }: {
   label: string;
   activity?: number;
+  trend?: "up" | "flat" | "down";
   active: boolean;
   dashed?: boolean;
   onClick: () => void;
@@ -10120,6 +10129,20 @@ function ClubNavRow({
       >
         {label}
       </span>
+      {(trend === "up" || trend === "down") && (
+        <span
+          aria-hidden
+          title={trend === "up" ? "直近24hの投稿数が前日より増加" : "直近24hの投稿数が前日より減少"}
+          style={{
+            fontSize: 12,
+            lineHeight: 1,
+            color: trend === "up" ? "#2f9e44" : "#e03131",
+            flexShrink: 0,
+          }}
+        >
+          {trend === "up" ? "↑" : "↓"}
+        </span>
+      )}
       {activityCount > 0 && (
         <Badge
           size="xs"
