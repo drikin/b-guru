@@ -6333,12 +6333,18 @@ export default function Home() {
       }
       setProfileData(d.profile);
       setEditingProfile(false);
+      // Saving our OWN profile: refresh the session name so the bottom-left
+      // corner and composer (both rendered from auth?.name) reflect the change
+      // immediately, instead of showing the stale name until a reload.
+      if (profileEmailRef.current?.toLowerCase() === auth?.email?.toLowerCase() && d.profile?.name) {
+        setAuth((a) => (a ? { ...a, name: d.profile.name } : a));
+      }
     } catch {
       setActionError("保存に失敗しました");
     } finally {
       setProfileSaving(false);
     }
-  }, [profileSaving, profileForm, profileLinks]);
+  }, [profileSaving, profileForm, profileLinks, auth]);
 
   // Find a post we've already loaded (root cards, their nested inline replies,
   // and pinned/hot sidebar posts) by id — used to seed thread views instantly.
