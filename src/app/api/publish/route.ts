@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createPost } from "@/lib/posts";
 import { createNotification } from "@/lib/notifications";
 import { findMemberByEmail, listMembers } from "@/lib/ghost";
+import { getProfile } from "@/lib/profile";
 import { getSessionEmail } from "@/lib/session";
 import { pool } from "@/lib/db";
 import { emitLive } from "@/lib/live";
@@ -81,11 +82,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "不正な動画URLです" }, { status: 400 });
   }
 
-  // Resolve member name
+  // Resolve the author's display name from B-guru's own profile (user_profiles)
+  // first, so a name change in the profile is reflected on the very next post
+  // (and on the optimistic swap) instead of showing the stale Ghost name until
+  // a reload. Falls back to the Ghost member name when there's no B-guru profile.
+  // Mirrors /api/auth/me so the stored author_name matches the session name.
   let authorName: string | null = null;
   try {
-    const member = await findMemberByEmail(email);
-    authorName = member?.name || null;
+    const profile = await getProfile(email);
+    if (profile) authorName = profile.name;
+  } catch {}
+  try {
+    if (!authorName) {
+      const member = await findMemberByEmail(email);
+      authorName = member?.name || null;
+    }
   } catch {}
 
   // ---- Duplicate prevention: same author + text + parentId within 30s ----
