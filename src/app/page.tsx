@@ -56,8 +56,6 @@ import {
 import type { ChatMessage } from "@/lib/chat";
 import type { PostPoll } from "@/lib/poll";
 
-type View = "login" | "otp";
-
 /** Decode a base64url VAPID public key into a Uint8Array for pushManager.subscribe. */
 function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   const padding = "=".repeat((4 - (base64.length % 4)) % 4);
@@ -3766,10 +3764,7 @@ export default function Home() {
   }>(null);
   const [checking, setChecking] = useState(true);
 
-  const [view, setView] = useState<View>("login");
   const [email, setEmail] = useState("");
-  const [code, setCode] = useState("");
-  const [sentTo, setSentTo] = useState("");
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -5642,7 +5637,7 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeNav, feedLoading, feedHasMore, feedLoadingMore, feedPosts.length, threadPost, chatView]);
 
-  const requestOtp = async (e: React.FormEvent) => {
+  const login = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setMsg(null);
@@ -5654,31 +5649,6 @@ export default function Home() {
       });
       const d = await r.json();
       if (!r.ok) setMsg({ type: "err", text: d.error || "エラー" });
-      else {
-        setSentTo(email);
-        setView("otp");
-        setCode("");
-        setMsg({ type: "ok", text: d.message || "送信しました" });
-      }
-    } catch {
-      setMsg({ type: "err", text: "通信エラー" });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const verifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setBusy(true);
-    setMsg(null);
-    try {
-      const r = await fetch("/api/auth/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: sentTo, code }),
-      });
-      const d = await r.json();
-      if (!r.ok) setMsg({ type: "err", text: d.error || "認証失敗" });
       else {
         setAuth({ email: d.email });
         setMsg(null);
@@ -7163,55 +7133,22 @@ export default function Home() {
         </div>
 
         <Paper radius="lg" p="lg" withBorder shadow="sm">
-          {view === "login" ? (
-            <form onSubmit={requestOtp} className="space-y-4">
-              <TextInput
-                label="登録メールアドレス"
-                type="email"
-                required
-                placeholder="you@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.currentTarget.value)}
-              />
-              <Button fullWidth type="submit" loading={busy} color="green">
-                認証コードを送信
-              </Button>
-              <Text size="xs" c="dimmed">
-                あなたが B-guru（backspace.fm 有料会員サービス）の会員として登録しているメールアドレスに、ログイン認証コードを送信します。
-              </Text>
-            </form>
-          ) : (
-            <form onSubmit={verifyOtp} className="space-y-4">
-              <Box>
-                <Button
-                  variant="subtle"
-                  size="xs"
-                  onClick={() => {
-                    setView("login");
-                    setMsg(null);
-                  }}
-                >
-                  ← メールを変更
-                </Button>
-              </Box>
-              <TextInput
-                label={`${sentTo} に送信した認証コード`}
-                required
-                placeholder="6桁のコード"
-                value={code}
-                onChange={(e) => setCode(e.currentTarget.value.replace(/\D/g, "").slice(0, 6))}
-              />
-              <Button
-                fullWidth
-                type="submit"
-                loading={busy}
-                disabled={code.length !== 6}
-                color="green"
-              >
-                ログイン
-              </Button>
-            </form>
-          )}
+          <form onSubmit={login} className="space-y-4">
+            <TextInput
+              label="登録メールアドレス"
+              type="email"
+              required
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.currentTarget.value)}
+            />
+            <Button fullWidth type="submit" loading={busy} color="green">
+              ログイン
+            </Button>
+            <Text size="xs" c="dimmed">
+              あなたが B-guru（backspace.fm 有料会員サービス）の会員として登録しているメールアドレスを入力すると、そのままログインできます。
+            </Text>
+          </form>
           {msg && (
             <Text size="sm" mt="md" c={msg.type === "ok" ? "green" : "red"}>
               {msg.text}
