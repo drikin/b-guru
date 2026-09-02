@@ -34,6 +34,7 @@ import {
   useMantineColorScheme,
 } from "@mantine/core";
 import { mdToHtml } from "@/lib/md";
+import { computeNextKbdId } from "@/lib/kbd-nav";
 import {
   CLUB_UNSET,
   clubLabel,
@@ -6917,24 +6918,9 @@ export default function Home() {
     const move = (dir: 1 | -1) => {
       const ids = mainCards();
       if (!ids.length) return;
-      let next: number;
-      if (kbdCursorId == null) {
-        // No cursor yet: start from the very top for EITHER direction.
-        // (Jumping to ids[last] on an initial K would land at the tail of the
-        // paginated feed, which is confusing — always begin at the head.)
-        next = ids[0];
-      } else {
-        const i = ids.indexOf(kbdCursorId);
-        if (i < 0) {
-          next = dir === 1 ? ids[0] : ids[ids.length - 1];
-        } else if (dir === 1) {
-          // Clamp at the tail (no wrap): lets pagination append fresh cards.
-          next = i + 1 < ids.length ? ids[i + 1] : ids[i];
-        } else {
-          // Clamp at the head (no wrap).
-          next = i - 1 >= 0 ? ids[i - 1] : ids[i];
-        }
-      }
+      // 次のID計算は純粋関数 computeNextKbdId に委譲（回帰テストで保護）。
+      const next = computeNextKbdId(ids, kbdCursorId, dir);
+      if (next == null) return;
       setKbdCursorId(next);
       // J/K iterates EVERY comment: if the target sits in a folded section,
       // auto-expand it and wait for the animation to settle before scrolling.
@@ -6952,19 +6938,9 @@ export default function Home() {
         main.querySelectorAll<HTMLElement>("[data-kbd-id][data-kbd-parent]")
       ).map((el) => Number(el.dataset.kbdId));
       if (!parents.length) return;
-      let next: number;
-      if (kbdCursorId == null) {
-        next = parents[0];
-      } else {
-        const i = parents.indexOf(kbdCursorId);
-        if (i < 0) {
-          next = dir === 1 ? parents[0] : parents[parents.length - 1];
-        } else if (dir === 1) {
-          next = i + 1 < parents.length ? parents[i + 1] : parents[i];
-        } else {
-          next = i - 1 >= 0 ? parents[i - 1] : parents[i];
-        }
-      }
+      // 次のID計算は純粋関数 computeNextKbdId に委譲（回帰テストで保護）。
+      const next = computeNextKbdId(parents, kbdCursorId, dir);
+      if (next == null) return;
       setKbdCursorId(next);
       if (ensureShow(next)) focusAfterExpand(next);
       else setRing(next);
