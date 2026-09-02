@@ -5044,12 +5044,23 @@ export default function Home() {
       // handler, causing duplicates / missing replies.
       let authorEmail: string | undefined;
       let action: string | undefined;
+      let urlPreview: any;
+      let postId: number | undefined;
       try {
         const d = JSON.parse(e.data);
         authorEmail = d?.authorEmail;
         action = d?.action;
+        urlPreview = d?.urlPreview;
+        postId = d?.postId;
       } catch {}
       if (auth && authorEmail && authorEmail === auth.email) {
+        // 自分の投稿の URL プレビュー更新（action==="update" で urlPreview 付き）は
+        // スキップせず反映する。投稿直後は urlPreview:null で、プレビューは非同期で
+        // DB 更新され SSE update で届く。ここでスキップするとリロードまで
+        // プレビューが表示されない（drikin 報告「投稿直後はリンクがプレビューされない」）。
+        if (action === "update" && urlPreview != null && postId != null) {
+          applyPostChange(postId, (p) => ({ ...p, urlPreview }));
+        }
         // Still refresh hot topics (other people's view of activity changed)
         loadHot();
         loadClubCounts(); // 自分の投稿/コメントでも 7日アクティビティ数は増える

@@ -156,13 +156,16 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
     const pid = postId;
     const author = input.authorEmail;
     fetchUrlPreview(rawUrl)
-      .then((pv) => pool.query(`UPDATE posts SET url_preview = $1 WHERE id = $2`, [JSON.stringify(pv), pid]))
-      .then(() => {
-        try {
-          emitLive({ type: "post", postId: pid, action: "update", authorEmail: author });
-        } catch {
-          /* ignore */
-        }
+      .then((pv) => {
+        return pool
+          .query(`UPDATE posts SET url_preview = $1 WHERE id = $2`, [JSON.stringify(pv), pid])
+          .then(() => {
+            try {
+              emitLive({ type: "post", postId: pid, action: "update", authorEmail: author, urlPreview: pv });
+            } catch {
+              /* ignore */
+            }
+          });
       })
       .catch((e) => console.error("preview update error:", (e as any)?.message));
   }
