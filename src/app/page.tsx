@@ -6231,7 +6231,8 @@ export default function Home() {
   const loadMoreProfile = useCallback(async () => {
     if (!profileEmailRef.current || !profileBefore || profileLoading) return;
     setProfileLoading(true);
-    const enc = encodeURIComponent(profileEmailRef.current);
+    const seg = profileData?.userId || profileEmailRef.current;
+    const enc = encodeURIComponent(seg);
     try {
       const res = await fetch(
         `/api/user/${enc}/posts?before=${encodeURIComponent(profileBefore)}&limit=30`,
@@ -6248,7 +6249,7 @@ export default function Home() {
     } finally {
       setProfileLoading(false);
     }
-  }, [profileBefore, profileLoading]);
+  }, [profileBefore, profileLoading, profileData]);
 
   // ---- Profile edit ----
   const openEditProfile = useCallback(() => {
@@ -6311,7 +6312,12 @@ export default function Home() {
     if (!profileEmailRef.current || profileSaving) return;
     setProfileSaving(true);
     try {
-      const res = await fetch(`/api/user/${encodeURIComponent(profileEmailRef.current)}`, {
+      // Use the opaque userId (never the email) as the path segment. The email
+      // is an internal key; exposing it in the URL is what the user_id switch
+      // was meant to stop, and a raw email in the path can 404 if the segment
+      // isn't resolved. profileData.userId is set once the profile loads.
+      const seg = profileData?.userId || profileEmailRef.current;
+      const res = await fetch(`/api/user/${encodeURIComponent(seg)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -6341,7 +6347,7 @@ export default function Home() {
     } finally {
       setProfileSaving(false);
     }
-  }, [profileSaving, profileForm, profileLinks, auth]);
+  }, [profileSaving, profileForm, profileLinks, auth, profileData]);
 
   // Find a post we've already loaded (root cards, their nested inline replies,
   // and pinned/hot sidebar posts) by id — used to seed thread views instantly.
