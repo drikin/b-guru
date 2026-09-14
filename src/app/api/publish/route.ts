@@ -90,6 +90,15 @@ export async function POST(req: NextRequest) {
   if (audioUrl && !/^\/api\/media\/[^/]+$/.test(audioUrl)) {
     return NextResponse.json({ error: "不正な音声URLです" }, { status: 400 });
   }
+  // At most ONE attachment kind per post (the composer enforces this in the UI;
+  // enforce it here too so a direct API caller can't create a post that renders
+  // both an <audio> and a <video> player).
+  if (videoUrl && audioUrl) {
+    return NextResponse.json(
+      { error: "動画と音声は同時に添付できません" },
+      { status: 400 }
+    );
+  }
 
   // Resolve the author's display name from B-guru's own profile (user_profiles)
   // first, so a name change in the profile is reflected on the very next post

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { deletePost, getPostThread, updatePost } from "@/lib/posts";
 import { getSessionEmail } from "@/lib/session";
 import { emitLive } from "@/lib/live";
+import { pool } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -89,7 +90,20 @@ export async function PATCH(
   }
 
   if (!text && (!images || images.length === 0) && !audioUrl) {
-    return NextResponse.json({ error: "テキストまたは画像が必要です" }, { status: 400, headers: NO_CACHE });
+    return NextResponse.json({ error: "テキスト・画像・音声のいずれかが必要です" }, { status: 400, headers: NO_CACHE });
+  }
+
+  // At most ONE attachment kind per post (mirrors the publish route). Only
+  // reject when this request explicitly sets an audio URL on a post that
+  // already carries a video (audioUrl === undefined means "leave as-is").
+  if (audioUrl) {
+    const cur = await pool.query(`SELECT video_url FROM posts WHERE id = $1`, [postId]);
+    if (cur.rows[0]?.video_url) {
+      return NextResponse.json(
+        { error: "動画と音声は同時に添付できません" },
+        { status: 400, headers: NO_CACHE }
+      );
+    }
   }
 
   const result = await updatePost(postId, email, { text, images, audioUrl });

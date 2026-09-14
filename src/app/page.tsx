@@ -428,6 +428,32 @@ function highlightSearchTerm(html: string, keyword: string): string {
 
 /** Textarea with @mention autocomplete. Shows a suggestion popover when the
  *  user types @ followed by characters. Selecting a member inserts @name. */
+// Audio attachment validation (client-side pre-check). Kept in ONE place so the
+// composer and the edit modal can't drift apart. The server's ALLOWED_AUDIO /
+// AUDIO_EXTS in src/app/api/upload/route.ts stays authoritative — this only
+// avoids a pointless round-trip for obviously-wrong files.
+const AUDIO_EXTS = [".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".opus", ".webm", ".flac"];
+const AUDIO_MIME = [
+  "audio/mpeg",
+  "audio/mp4",
+  "audio/x-m4a",
+  "audio/aac",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/wave",
+  "audio/ogg",
+  "audio/webm",
+  "audio/flac",
+  "audio/x-flac",
+];
+/** True when the file looks like an audio file we accept. Falls back to the
+ *  extension when the browser reports no/unknown MIME type (.m4a, .flac). */
+function isAudioFile(f: File): boolean {
+  if (AUDIO_MIME.includes(f.type)) return true;
+  const ext = (f.name.match(/\.[^.]+$/) || [""])[0].toLowerCase();
+  return AUDIO_EXTS.includes(ext);
+}
+
 // Copy-paste image support. Extracts image file(s) from a paste event and
 // returns them as a FileList (built via DataTransfer so it matches
 // uploadImages' signature). Returns null when there is no image in the
@@ -1493,9 +1519,6 @@ function PostCard({
         </Group>
       )}
 
-      {/* Video attachment (at most one per post). Clicking anywhere on the video
-       * area starts playback (not just the native play button); once playing the
-       * native controls appear so the viewer can pause/seek/scrub. */}
       {/* Audio attachment (at most one per post).
        * NOTE: unlike <video>, a controls-less <audio> is `display:none` in
        * Chrome and renders 0x0 no matter what height is set (measured), so the
@@ -1514,6 +1537,9 @@ function PostCard({
         </Box>
       )}
 
+      {/* Video attachment (at most one per post). Clicking anywhere on the video
+       * area starts playback (not just the native play button); once playing the
+       * native controls appear so the viewer can pause/seek/scrub. */}
       {post.videoUrl && (
         <Box mt="sm" style={{ position: "relative", width: "100%", maxWidth: 560 }}>
           <video
@@ -3731,11 +3757,12 @@ function ComposerPaper({
               color="green"
               loading={posting}
               disabled={
-                (!text.trim() && images.length === 0 && !video) || // 内容なし
+                (!text.trim() && images.length === 0 && !video && !audio) || // 内容なし
                 (pollDraft &&
                   (!text.trim() || pollDraft.options.filter((o) => o.trim()).length < 3)) || // 投票付きは本文(質問)+3択が必要
                 uploading ||
-                videoUploading
+                videoUploading ||
+                audioUploading
               }
             >
               吠える
@@ -5965,11 +5992,7 @@ export default function Home() {
       setErr("音声は15MBまでです");
       return;
     }
-    // Some browsers report an empty type for .m4a/.flac — accept those by
-    // extension rather than rejecting a legitimate file.
-    const ext = (f.name.match(/\.[^.]+$/) || [""])[0].toLowerCase();
-    const AUDIO_EXTS = [".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".opus", ".webm", ".flac"];
-    if (!f.type.startsWith("audio/") && !AUDIO_EXTS.includes(ext)) {
+    if (!isAudioFile(f)) {
       setErr("対応形式: MP3 / M4A / WAV / OGG / FLAC");
       return;
     }
@@ -6808,9 +6831,7 @@ export default function Home() {
       setActionError("音声は15MBまでです");
       return;
     }
-    const ext = (f.name.match(/\.[^.]+$/) || [""])[0].toLowerCase();
-    const AUDIO_EXTS = [".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".opus", ".webm", ".flac"];
-    if (!f.type.startsWith("audio/") && !AUDIO_EXTS.includes(ext)) {
+    if (!isAudioFile(f)) {
       setActionError("対応形式: MP3 / M4A / WAV / OGG / FLAC");
       return;
     }
