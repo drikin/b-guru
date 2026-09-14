@@ -18,7 +18,7 @@ const ALLOWED_VIDEO = new Set([
   "video/quicktime", // .mov
 ]);
 
-const MAX_AUDIO_BYTES = 10 * 1024 * 1024; // 10MB per audio
+const MAX_AUDIO_BYTES = 15 * 1024 * 1024; // 15MB per audio
 const ALLOWED_AUDIO = new Set([
   "audio/mpeg", // .mp3
   "audio/mp4", // .m4a
@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
     }
     if (audioFile.size > MAX_AUDIO_BYTES) {
       return NextResponse.json(
-        { error: "音声は10MBまでです" },
+        { error: "音声は15MBまでです" },
         { status: 400 }
       );
     }

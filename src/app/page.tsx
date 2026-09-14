@@ -5950,7 +5950,7 @@ export default function Home() {
     }
   };
 
-  // Upload a single audio file (at most 10MB) to /api/upload and set the
+  // Upload a single audio file (at most 15MB) to /api/upload and set the
   // attachment URL. Mirrors uploadVideo exactly (same clearPrev contract).
   const uploadAudio = async (
     files: FileList | null,
@@ -5961,8 +5961,8 @@ export default function Home() {
   ) => {
     if (!files || files.length === 0) return;
     const f = files[0];
-    if (f.size > 10 * 1024 * 1024) {
-      setErr("音声は10MBまでです");
+    if (f.size > 15 * 1024 * 1024) {
+      setErr("音声は15MBまでです");
       return;
     }
     // Some browsers report an empty type for .m4a/.flac — accept those by
@@ -6800,12 +6800,12 @@ export default function Home() {
       .catch(() => setActionError("アップロードに失敗しました"));
   };
 
-  // Upload a single audio file (at most 10MB) for the edit modal.
+  // Upload a single audio file (at most 15MB) for the edit modal.
   const onEditPickAudio = (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const f = files[0];
-    if (f.size > 10 * 1024 * 1024) {
-      setActionError("音声は10MBまでです");
+    if (f.size > 15 * 1024 * 1024) {
+      setActionError("音声は15MBまでです");
       return;
     }
     const ext = (f.name.match(/\.[^.]+$/) || [""])[0].toLowerCase();
