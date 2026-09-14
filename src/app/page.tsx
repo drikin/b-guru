@@ -1496,6 +1496,24 @@ function PostCard({
       {/* Video attachment (at most one per post). Clicking anywhere on the video
        * area starts playback (not just the native play button); once playing the
        * native controls appear so the viewer can pause/seek/scrub. */}
+      {/* Audio attachment (at most one per post).
+       * NOTE: unlike <video>, a controls-less <audio> is `display:none` in
+       * Chrome and renders 0x0 no matter what height is set (measured), so the
+       * video-style "click anywhere to play" overlay is impossible here — the
+       * overlay would collapse and its ▶ button would be unclickable. Audio
+       * therefore always shows the native controls. */}
+      {post.audioUrl && (
+        <Box mt="sm" style={{ width: "100%", maxWidth: 560 }}>
+          <audio
+            src={post.audioUrl}
+            controls
+            preload="metadata"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "100%", display: "block", borderRadius: 12 }}
+          />
+        </Box>
+      )}
+
       {post.videoUrl && (
         <Box mt="sm" style={{ position: "relative", width: "100%", maxWidth: 560 }}>
           <video
@@ -2577,6 +2595,7 @@ function InlineReplyBox({
   authorLabel,
   uploadImages,
   uploadVideo,
+  uploadAudio,
   onSubmit,
   onCancel,
   onPreview,
@@ -2597,12 +2616,20 @@ function InlineReplyBox({
     setErr: (v: string) => void,
     clearPrev?: () => void
   ) => Promise<void>;
+  uploadAudio: (
+    files: FileList | null,
+    setUrl: (v: string) => void,
+    setUp: (v: boolean) => void,
+    setErr: (v: string) => void,
+    clearPrev?: () => void
+  ) => Promise<void>;
   onSubmit: (
     id: number,
     text: string,
     images: string[],
     whisper: boolean,
-    videoUrl?: string | null
+    videoUrl?: string | null,
+    audioUrl?: string | null
   ) => Promise<void>;
   onCancel: () => void;
   onPreview: (src: string, group?: string[]) => void;
@@ -2615,8 +2642,12 @@ function InlineReplyBox({
   // At most one video attachment.
   const [video, setVideo] = useState<string | null>(null);
   const [videoUploading, setVideoUploading] = useState(false);
+  // At most one audio attachment.
+  const [audio, setAudio] = useState<string | null>(null);
+  const [audioUploading, setAudioUploading] = useState(false);
 
-  const canSend = (text.trim() !== "" || images.length > 0 || !!video) && posting === false;
+  const canSend =
+    (text.trim() !== "" || images.length > 0 || !!video || !!audio) && posting === false;
 
   const onPick = (files: FileList | null) =>
     uploadImages(files, images, setImages, setUploading, (s) => setError(s));
@@ -2633,16 +2664,20 @@ function InlineReplyBox({
   const onPickVideo = (files: FileList | null) =>
     uploadVideo(files, setVideo, setVideoUploading, (s) => setError(s));
   const removeVideo = () => setVideo(null);
+  const onPickAudio = (files: FileList | null) =>
+    uploadAudio(files, setAudio, setAudioUploading, (s) => setError(s));
+  const removeAudio = () => setAudio(null);
 
   const handleSubmit = async (whisper: boolean) => {
     if (!canSend) return;
     const t = text;
     const imgs = images;
     const v = video;
+    const a = audio;
     setPosting(whisper ? "whisper" : "comment");
     setError(null);
     try {
-      await onSubmit(postId, t, imgs, whisper, v);
+      await onSubmit(postId, t, imgs, whisper, v, a);
     } catch (err: any) {
       setError(err?.message || "コメントに失敗しました");
     } finally {
@@ -2712,6 +2747,27 @@ function InlineReplyBox({
           ))}
         </Group>
       )}
+      {/* Comment audio attachment (at most one; shown inline) */}
+      {audio && (
+        <Box mb={4} style={{ position: "relative", width: "100%", maxWidth: 320 }}>
+          <audio
+            src={audio}
+            controls
+            preload="metadata"
+            style={{ width: "100%", display: "block", borderRadius: 8 }}
+          />
+          <ActionIcon
+            size="sm"
+            variant="filled"
+            color="red"
+            radius="xl"
+            style={{ position: "absolute", top: -6, right: -6 }}
+            onClick={removeAudio}
+          >
+            ×
+          </ActionIcon>
+        </Box>
+      )}
       {/* Comment video attachment (at most one; shown inline) */}
       {video && (
         <Box mb={4} style={{ position: "relative", width: "100%", maxWidth: 320 }}>
@@ -2776,6 +2832,27 @@ function InlineReplyBox({
             disabled={!!video}
           >
             🎬 動画
+          </Button>
+        </label>
+        <label style={{ cursor: "pointer", display: "inline-block" }}>
+          <input
+            type="file"
+            accept="audio/*"
+            hidden
+            onChange={(e) => {
+              onPickAudio(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <Button
+            size="xs"
+            variant="light"
+            color="gray"
+            component="span"
+            loading={audioUploading}
+            disabled={!!audio}
+          >
+            🎵 音声
           </Button>
         </label>
       </Group>
@@ -2875,6 +2952,7 @@ function TimelineFeed({
   inlineReplyFor,
   uploadImages,
   uploadVideo,
+  uploadAudio,
   onToggleInlineReply,
   onInlineReplySubmit,
   onOpenThread,
@@ -2913,13 +2991,21 @@ function TimelineFeed({
     setErr: (v: string) => void,
     clearPrev?: () => void
   ) => Promise<void>;
+  uploadAudio: (
+    files: FileList | null,
+    setUrl: (v: string) => void,
+    setUp: (v: boolean) => void,
+    setErr: (v: string) => void,
+    clearPrev?: () => void
+  ) => Promise<void>;
   onToggleInlineReply: (id: number) => void;
   onInlineReplySubmit: (
     id: number,
     text: string,
     images: string[],
     whisper: boolean,
-    videoUrl?: string | null
+    videoUrl?: string | null,
+    audioUrl?: string | null
   ) => Promise<void>;
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
@@ -3051,6 +3137,7 @@ function TimelineFeed({
                 authorLabel={g.authorName || g.authorEmail.split("@")[0]}
                 uploadImages={uploadImages}
                 uploadVideo={uploadVideo}
+                uploadAudio={uploadAudio}
                 onSubmit={onInlineReplySubmit}
                 onCancel={() => onToggleInlineReply(post.id)}
                 onPreview={onPreview}
@@ -3134,6 +3221,7 @@ function ComposerPaper({
   mentionMembers,
   uploadImages,
   uploadVideo,
+  uploadAudio,
   onPublish,
   onClose,
   onPreviewImage,
@@ -3156,11 +3244,19 @@ function ComposerPaper({
     setErr: (v: string) => void,
     clearPrev?: () => void
   ) => Promise<void>;
+  uploadAudio: (
+    files: FileList | null,
+    setUrl: (v: string) => void,
+    setUp: (v: boolean) => void,
+    setErr: (v: string) => void,
+    clearPrev?: () => void
+  ) => Promise<void>;
   onPublish: (
     text: string,
     images: string[],
     videoUrl?: string | null,
-    poll?: { question: string; options: string[]; durationHours: number } | null
+    poll?: { question: string; options: string[]; durationHours: number } | null,
+    audioUrl?: string | null
   ) => Promise<void>;
   onClose: () => void;
   onPreviewImage: (src: string, group?: string[]) => void;
@@ -3172,6 +3268,8 @@ function ComposerPaper({
   const [error, setError] = useState<string | null>(null);
   const [video, setVideo] = useState<string | null>(null);
   const [videoUploading, setVideoUploading] = useState(false);
+  const [audio, setAudio] = useState<string | null>(null);
+  const [audioUploading, setAudioUploading] = useState(false);
   // アンケート（投票）ビルダー: pollDraft が非 null のときビルダーを表示
   const [pollDraft, setPollDraft] = useState<{
     options: string[];
@@ -3185,6 +3283,7 @@ function ComposerPaper({
   const charCount = text.trim().length; // matches the AI校正 enable condition (>500)
   const fileRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLInputElement>(null);
+  const audioRef = useRef<HTMLInputElement>(null);
   // Markdown auto-preview is DEBOUNCED: re-rendering the whole doc through
   // marked+sanitize on every keystroke heavy-handedly chokes on long text
   // (freezes / OS-kills the tab on mobile). Render only after ~250ms of idle,
@@ -3221,6 +3320,9 @@ function ComposerPaper({
   const onPickVideo = (files: FileList | null) =>
     uploadVideo(files, setVideo, setVideoUploading, (s) => setError(s));
   const removeVideo = () => setVideo(null);
+  const onPickAudio = (files: FileList | null) =>
+    uploadAudio(files, setAudio, setAudioUploading, (s) => setError(s));
+  const removeAudio = () => setAudio(null);
 
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -3236,7 +3338,7 @@ function ComposerPaper({
           }
         : null;
     if (
-      (!text.trim() && images.length === 0 && !video) || // 本文/画像/動画なし
+      (!text.trim() && images.length === 0 && !video && !audio) || // 本文/画像/動画/音声なし
       (pollDraft && !text.trim()) || // 投票付きで本文（質問）が空
       posting
     )
@@ -3244,14 +3346,16 @@ function ComposerPaper({
     const t = text;
     const imgs = images;
     const v = video;
+    const a = audio;
     setPosting(true);
     setError(null);
     setText("");
     setImages([]);
     setVideo(null);
+    setAudio(null);
     setPollDraft(null);
     try {
-      await onPublish(t, imgs, v, poll);
+      await onPublish(t, imgs, v, poll, a);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -3396,6 +3500,26 @@ function ComposerPaper({
             ))}
           </Group>
         )}
+        {audio && (
+          <Box mb="sm" style={{ position: "relative", width: "100%", maxWidth: 360 }}>
+            <audio
+              src={audio}
+              controls
+              preload="metadata"
+              style={{ width: "100%", display: "block", borderRadius: 8 }}
+            />
+            <ActionIcon
+              size="sm"
+              variant="filled"
+              color="red"
+              radius="xl"
+              style={{ position: "absolute", top: -6, right: -6 }}
+              onClick={removeAudio}
+            >
+              ×
+            </ActionIcon>
+          </Box>
+        )}
         {video && (
           <Box mb="sm" style={{ position: "relative", width: "100%", maxWidth: 360 }}>
             <video
@@ -3522,6 +3646,16 @@ function ComposerPaper({
             </Button>
             <Button
               size="xs"
+              variant="light"
+              color="gray"
+              loading={audioUploading}
+              disabled={!!audio}
+              onClick={() => audioRef.current?.click()}
+            >
+              🎵 音声
+            </Button>
+            <Button
+              size="xs"
               variant={pollDraft ? "light" : "subtle"}
               color={pollDraft ? "green" : "gray"}
               onClick={() => {
@@ -3553,6 +3687,16 @@ function ComposerPaper({
               hidden
               onChange={(e) => {
                 onPickVideo(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <input
+              ref={audioRef}
+              type="file"
+              accept="audio/*"
+              hidden
+              onChange={(e) => {
+                onPickAudio(e.target.files);
                 e.target.value = "";
               }}
             />
@@ -3947,6 +4091,9 @@ export default function Home() {
   const [editingPost, setEditingPost] = useState<FeedPost | null>(null);
   const [editText, setEditText] = useState("");
   const [editImages, setEditImages] = useState<string[]>([]);
+  // At most one audio attachment on the edit modal (mirrors the composer).
+  const [editAudio, setEditAudio] = useState<string | null>(null);
+  const [editAudioUploading, setEditAudioUploading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<FeedPost | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -4009,6 +4156,9 @@ export default function Home() {
   // At most one video attachment on the thread reply box.
   const [threadReplyVideo, setThreadReplyVideo] = useState<string | null>(null);
   const [threadVideoUploading, setThreadVideoUploading] = useState(false);
+  // At most one audio attachment on the thread reply box.
+  const [threadReplyAudio, setThreadReplyAudio] = useState<string | null>(null);
+  const [threadAudioUploading, setThreadAudioUploading] = useState(false);
 
   // ---- Mobile keyboard detection ----
   // When the virtual keyboard opens on mobile, visualViewport shrinks.
@@ -4033,6 +4183,7 @@ export default function Home() {
   }, []);
 
   const editFileRef = useRef<HTMLInputElement>(null);
+  const editAudioRef = useRef<HTMLInputElement>(null);
 
   // ---- Notifications state ----
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -5799,6 +5950,46 @@ export default function Home() {
     }
   };
 
+  // Upload a single audio file (at most 10MB) to /api/upload and set the
+  // attachment URL. Mirrors uploadVideo exactly (same clearPrev contract).
+  const uploadAudio = async (
+    files: FileList | null,
+    setUrl: (v: string) => void,
+    setUp: (v: boolean) => void,
+    setErr: (v: string) => void,
+    clearPrev?: () => void
+  ) => {
+    if (!files || files.length === 0) return;
+    const f = files[0];
+    if (f.size > 10 * 1024 * 1024) {
+      setErr("音声は10MBまでです");
+      return;
+    }
+    // Some browsers report an empty type for .m4a/.flac — accept those by
+    // extension rather than rejecting a legitimate file.
+    const ext = (f.name.match(/\.[^.]+$/) || [""])[0].toLowerCase();
+    const AUDIO_EXTS = [".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".opus", ".webm", ".flac"];
+    if (!f.type.startsWith("audio/") && !AUDIO_EXTS.includes(ext)) {
+      setErr("対応形式: MP3 / M4A / WAV / OGG / FLAC");
+      return;
+    }
+    setUp(true);
+    setErr("");
+    try {
+      const fd = new FormData();
+      fd.append("audio", f);
+      const r = await fetch("/api/upload", { method: "POST", body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "音声アップロード失敗");
+      clearPrev?.();
+      setUrl(d.audioUrl);
+    } catch (err: any) {
+      setErr(err.message);
+    } finally {
+      setUp(false);
+    }
+  };
+
   const onThreadReplyPick = (files: FileList | null) =>
     uploadImages(files, threadReplyImages, setThreadReplyImages, setThreadUploading, (s) =>
       setReplyError(s)
@@ -5808,6 +5999,11 @@ export default function Home() {
     uploadVideo(files, setThreadReplyVideo, setThreadVideoUploading, (s) => setReplyError(s));
 
   const removeThreadReplyVideo = () => setThreadReplyVideo(null);
+
+  const onThreadReplyPickAudio = (files: FileList | null) =>
+    uploadAudio(files, setThreadReplyAudio, setThreadAudioUploading, (s) => setReplyError(s));
+
+  const removeThreadReplyAudio = () => setThreadReplyAudio(null);
 
   const removeThreadReplyImage = (i: number) =>
     setThreadReplyImages((prev) => prev.filter((_, idx) => idx !== i));
@@ -5820,7 +6016,8 @@ export default function Home() {
       text: string,
       images: string[],
       videoUrl?: string | null,
-      poll?: { question: string; options: string[]; durationHours: number } | null
+      poll?: { question: string; options: string[]; durationHours: number } | null,
+      audioUrl?: string | null
     ) => {
       const tempId = Date.now();
       const tempPost: FeedPost = {
@@ -5833,6 +6030,7 @@ export default function Home() {
         text,
         images,
         videoUrl: videoUrl ?? null,
+        audioUrl: audioUrl ?? null,
         urlPreview: null,
         likeCount: 0,
         likedByMe: false,
@@ -5867,7 +6065,7 @@ export default function Home() {
         const r = await fetch("/api/publish", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, images, videoUrl, poll: poll ?? null }),
+          body: JSON.stringify({ text, images, videoUrl, audioUrl, poll: poll ?? null }),
           signal: ac.signal,
         });
         const d = await r.json();
@@ -5897,6 +6095,7 @@ export default function Home() {
     setReplyText("");
     setThreadReplyImages([]);
     setThreadReplyVideo(null);
+    setThreadReplyAudio(null);
     setReplyError(null);
     setThreadWhisper(false);
     openThread(postId);
@@ -5917,12 +6116,14 @@ export default function Home() {
   const submitThreadReply = async (whisper = false) => {
     if (!threadPost) return;
     const text = replyText.trim();
-    if (!text && threadReplyImages.length === 0 && !threadReplyVideo) return;
+    if (!text && threadReplyImages.length === 0 && !threadReplyVideo && !threadReplyAudio)
+      return;
     await createReply({
       parentId: threadPost.id,
       text,
       images: threadReplyImages,
       videoUrl: threadReplyVideo,
+      audioUrl: threadReplyAudio,
       whisper,
       mode: "thread",
     });
@@ -5944,14 +6145,16 @@ export default function Home() {
     text: string,
     images: string[],
     whisper: boolean,
-    videoUrl?: string | null
+    videoUrl?: string | null,
+    audioUrl?: string | null
   ) => {
-    if (!text.trim() && images.length === 0 && !videoUrl) return;
+    if (!text.trim() && images.length === 0 && !videoUrl && !audioUrl) return;
     await createReply({
       parentId: postId,
       text: text.trim(),
       images,
       videoUrl: videoUrl ?? null,
+      audioUrl: audioUrl ?? null,
       whisper,
       mode: "inline",
     });
@@ -5970,11 +6173,12 @@ export default function Home() {
     text: string;
     images: string[];
     videoUrl?: string | null;
+    audioUrl?: string | null;
     whisper: boolean;
     mode: "inline" | "thread";
   }): Promise<void> => {
-    const { parentId, text, images, videoUrl, whisper, mode } = opts;
-    if (!text && images.length === 0 && !videoUrl) return;
+    const { parentId, text, images, videoUrl, audioUrl, whisper, mode } = opts;
+    if (!text && images.length === 0 && !videoUrl && !audioUrl) return;
     if (mode === "thread") {
       if (replying) {
         console.warn("[submitBlocked] thread", { replying, parentId });
@@ -5984,6 +6188,8 @@ export default function Home() {
       setReplyError(null);
       setReplyText("");
       setThreadReplyImages([]);
+      setThreadReplyVideo(null);
+      setThreadReplyAudio(null);
       setThreadWhisper(false);
     } else {
       if (inlineReplying) {
@@ -6007,6 +6213,7 @@ export default function Home() {
       text,
       images,
       videoUrl: videoUrl ?? null,
+      audioUrl: audioUrl ?? null,
       urlPreview: null,
       likeCount: 0,
       likedByMe: false,
@@ -6036,7 +6243,7 @@ export default function Home() {
       const r = await fetch("/api/publish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, images, videoUrl, parentId, whisper }),
+        body: JSON.stringify({ text, images, videoUrl, audioUrl, parentId, whisper }),
         signal: ac.signal,
       });
       const d = await r.json();
@@ -6574,6 +6781,7 @@ export default function Home() {
     setEditingPost(post);
     setEditText(post.text);
     setEditImages([...post.images]);
+    setEditAudio(post.audioUrl ?? null);
     setActionError(null);
   };
 
@@ -6590,6 +6798,34 @@ export default function Home() {
         else setActionError(d.error || "アップロード失敗");
       })
       .catch(() => setActionError("アップロードに失敗しました"));
+  };
+
+  // Upload a single audio file (at most 10MB) for the edit modal.
+  const onEditPickAudio = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const f = files[0];
+    if (f.size > 10 * 1024 * 1024) {
+      setActionError("音声は10MBまでです");
+      return;
+    }
+    const ext = (f.name.match(/\.[^.]+$/) || [""])[0].toLowerCase();
+    const AUDIO_EXTS = [".mp3", ".m4a", ".aac", ".wav", ".ogg", ".oga", ".opus", ".webm", ".flac"];
+    if (!f.type.startsWith("audio/") && !AUDIO_EXTS.includes(ext)) {
+      setActionError("対応形式: MP3 / M4A / WAV / OGG / FLAC");
+      return;
+    }
+    setEditAudioUploading(true);
+    setActionError(null);
+    const fd = new FormData();
+    fd.append("audio", f);
+    fetch("/api/upload", { method: "POST", body: fd })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.audioUrl) setEditAudio(d.audioUrl);
+        else setActionError(d.error || "アップロード失敗");
+      })
+      .catch(() => setActionError("アップロードに失敗しました"))
+      .finally(() => setEditAudioUploading(false));
   };
 
   // Apply a mutation to a post wherever it currently appears — the feed
@@ -6722,10 +6958,11 @@ export default function Home() {
     const editId = editingPost.id;
     const newText = editText.trim();
     const newImages = editImages;
+    const newAudio = editAudio;
     fetch(`/api/posts/${editId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: newText, images: newImages }),
+      body: JSON.stringify({ text: newText, images: newImages, audioUrl: newAudio }),
     })
       .then(async (r) => {
         const d = await r.json();
@@ -6733,7 +6970,12 @@ export default function Home() {
         setEditingPost(null);
         // Update the post in-place everywhere it's rendered (feed + thread)
         // without a full reload.
-        applyPostChange(editId, (p) => ({ ...p, text: newText, images: newImages }));
+        applyPostChange(editId, (p) => ({
+          ...p,
+          text: newText,
+          images: newImages,
+          audioUrl: newAudio,
+        }));
       })
       .catch((err) => setActionError(err.message))
       .finally(() => setSavingEdit(false));
@@ -8442,6 +8684,7 @@ export default function Home() {
                     mentionMembers={mentionMembers}
                     uploadImages={uploadImages}
                     uploadVideo={uploadVideo}
+                    uploadAudio={uploadAudio}
                     onPublish={publishComposer}
                     onClose={() => setComposerOpen(false)}
                     onPreviewImage={openPreview}
@@ -8676,6 +8919,26 @@ export default function Home() {
                               ))}
                             </Group>
                           )}
+                          {threadReplyAudio && (
+                            <Box mb="xs" style={{ position: "relative", width: "100%", maxWidth: 320 }}>
+                              <audio
+                                src={threadReplyAudio}
+                                controls
+                                preload="metadata"
+                                style={{ width: "100%", display: "block", borderRadius: 8 }}
+                              />
+                              <ActionIcon
+                                size="sm"
+                                variant="filled"
+                                color="red"
+                                radius="xl"
+                                style={{ position: "absolute", top: -6, right: -6 }}
+                                onClick={removeThreadReplyAudio}
+                              >
+                                ×
+                              </ActionIcon>
+                            </Box>
+                          )}
                           {threadReplyVideo && (
                             <Box mb="xs" style={{ position: "relative", width: "100%", maxWidth: 320 }}>
                               <video
@@ -8741,6 +9004,27 @@ export default function Home() {
                                 🎬 動画
                               </Button>
                             </label>
+                            <label style={{ cursor: "pointer", display: "inline-block" }}>
+                              <input
+                                type="file"
+                                accept="audio/*"
+                                hidden
+                                onChange={(e) => {
+                                  onThreadReplyPickAudio(e.target.files);
+                                  e.target.value = "";
+                                }}
+                              />
+                              <Button
+                                size="xs"
+                                variant="light"
+                                color="gray"
+                                component="span"
+                                loading={threadAudioUploading}
+                                disabled={!!threadReplyAudio}
+                              >
+                                🎵 音声
+                              </Button>
+                            </label>
                           </Group>
                             {replyError && (
                               <Text size="sm" c="red" mb="xs">
@@ -8771,7 +9055,7 @@ export default function Home() {
                                   variant="light"
                                   type="button"
                                   loading={replying === 'whisper'}
-                                  disabled={(replyText.trim() === "" && threadReplyImages.length === 0 && !threadReplyVideo) || replying !== false}
+                                  disabled={(replyText.trim() === "" && threadReplyImages.length === 0 && !threadReplyVideo && !threadReplyAudio) || replying !== false}
                                   onClick={() => submitThreadReply(true)}
                                 >
                                   うなる
@@ -8780,7 +9064,7 @@ export default function Home() {
                                   size="xs"
                                   color="green"
                                   loading={replying === 'comment'}
-                                  disabled={(!replyText.trim() && threadReplyImages.length === 0 && !threadReplyVideo) || replying !== false}
+                                  disabled={(!replyText.trim() && threadReplyImages.length === 0 && !threadReplyVideo && !threadReplyAudio) || replying !== false}
                                   type="submit"
                                 >
                                   吠える
@@ -8806,6 +9090,7 @@ export default function Home() {
                   inlineReplyFor={inlineReplyFor}
                   uploadImages={uploadImages}
                   uploadVideo={uploadVideo}
+                  uploadAudio={uploadAudio}
                   onToggleInlineReply={toggleInlineReply}
                   onInlineReplySubmit={submitInlineReply}
                   onOpenThread={openThread}
@@ -9510,16 +9795,48 @@ export default function Home() {
                 ))}
               </Group>
             )}
+            {editAudio && (
+              <Box style={{ position: "relative", width: "100%", maxWidth: 360 }}>
+                <audio
+                  src={editAudio}
+                  controls
+                  preload="metadata"
+                  style={{ width: "100%", display: "block", borderRadius: 8 }}
+                />
+                <ActionIcon
+                  size="sm"
+                  variant="filled"
+                  color="red"
+                  radius="xl"
+                  style={{ position: "absolute", top: -6, right: -6 }}
+                  onClick={() => setEditAudio(null)}
+                >
+                  ×
+                </ActionIcon>
+              </Box>
+            )}
             <Group justify="space-between">
-              <Button
-                size="xs"
-                variant="light"
-                color="gray"
-                disabled={editImages.length >= 5}
-                onClick={() => editFileRef.current?.click()}
-              >
-                📷 {editImages.length}/5
-              </Button>
+              <Group gap="xs">
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="gray"
+                  disabled={editImages.length >= 5}
+                  onClick={() => editFileRef.current?.click()}
+                >
+                  📷 {editImages.length}/5
+                </Button>
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="gray"
+                  loading={editAudioUploading}
+                  disabled={!!editAudio}
+                  onClick={() => editAudioRef.current?.click()}
+                >
+                  🎵 音声
+                </Button>
+              </Group>
               <input
                 ref={editFileRef}
                 type="file"
@@ -9528,6 +9845,16 @@ export default function Home() {
                 hidden
                 onChange={(e) => {
                   onEditPickImages(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+              <input
+                ref={editAudioRef}
+                type="file"
+                accept="audio/*"
+                hidden
+                onChange={(e) => {
+                  onEditPickAudio(e.target.files);
                   e.target.value = "";
                 }}
               />

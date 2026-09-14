@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
   }
 
-  let body: { text?: string; images?: unknown; parentId?: unknown; whisper?: unknown; videoUrl?: unknown; poll?: unknown };
+  let body: { text?: string; images?: unknown; parentId?: unknown; whisper?: unknown; videoUrl?: unknown; audioUrl?: unknown; poll?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -43,6 +43,11 @@ export async function POST(req: NextRequest) {
   const videoUrl =
     typeof body.videoUrl === "string" && body.videoUrl.trim().length > 0
       ? body.videoUrl.trim()
+      : null;
+  // At most one audio: only accept a non-empty string; anything else → null.
+  const audioUrl =
+    typeof body.audioUrl === "string" && body.audioUrl.trim().length > 0
+      ? body.audioUrl.trim()
       : null;
 
   // アンケート（投票）: 任意。ルート投稿のみ（返信では無視され、ここで弾かない）。
@@ -66,8 +71,8 @@ export async function POST(req: NextRequest) {
     };
   }
 
-  if (!text && rawImages.length === 0 && !videoUrl && !poll) {
-    return NextResponse.json({ error: "テキスト・画像・動画・投票のいずれかが必要です" }, { status: 400 });
+  if (!text && rawImages.length === 0 && !videoUrl && !audioUrl && !poll) {
+    return NextResponse.json({ error: "テキスト・画像・動画・音声・投票のいずれかが必要です" }, { status: 400 });
   }
   if (rawImages.length > 5) {
     return NextResponse.json({ error: "画像は最大5枚までです" }, { status: 400 });
@@ -80,6 +85,10 @@ export async function POST(req: NextRequest) {
   // Validate video URL shape (must be a server media path)
   if (videoUrl && !/^\/api\/media\/[^/]+$/.test(videoUrl)) {
     return NextResponse.json({ error: "不正な動画URLです" }, { status: 400 });
+  }
+  // Validate audio URL shape (must be a server media path)
+  if (audioUrl && !/^\/api\/media\/[^/]+$/.test(audioUrl)) {
+    return NextResponse.json({ error: "不正な音声URLです" }, { status: 400 });
   }
 
   // Resolve the author's display name from B-guru's own profile (user_profiles)
@@ -114,6 +123,7 @@ export async function POST(req: NextRequest) {
       text,
       images,
       videoUrl,
+      audioUrl,
       parentId,
       isWhisper,
       poll,

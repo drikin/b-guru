@@ -29,6 +29,8 @@ export interface FeedPost {
   images: string[]; // relative or absolute URLs
   /** At most one video attachment (nullable URL), rendered as a <video> player. */
   videoUrl?: string | null;
+  /** At most one audio attachment (nullable URL), rendered as an <audio> player. */
+  audioUrl?: string | null;
   urlPreview: UrlPreview | null;
   likeCount: number;
   likedByMe: boolean;
@@ -49,6 +51,8 @@ export interface NewPostInput {
   images?: string[];
   /** At most one video URL for this post (single nullable column). */
   videoUrl?: string | null;
+  /** At most one audio URL for this post (single nullable column). */
+  audioUrl?: string | null;
   parentId?: number | null;
   /** Whisper reply: appended to the group but does NOT bump last_activity,
    *  so the timeline position stays unchanged. */
@@ -82,9 +86,9 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
   try {
     await client.query("BEGIN");
     const ins = await client.query(
-      `INSERT INTO posts (author_email, author_name, text, url_preview, parent_id, is_whisper, source_drinews_comment_id, video_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at`,
-      [input.authorEmail, input.authorName, input.text, null, input.parentId ?? null, !!input.isWhisper, input.sourceDrinewsCommentId ?? null, input.videoUrl ?? null]
+      `INSERT INTO posts (author_email, author_name, text, url_preview, parent_id, is_whisper, source_drinews_comment_id, video_url, audio_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at`,
+      [input.authorEmail, input.authorName, input.text, null, input.parentId ?? null, !!input.isWhisper, input.sourceDrinewsCommentId ?? null, input.videoUrl ?? null, input.audioUrl ?? null]
     );
     postId = ins.rows[0].id;
     createdAt = ins.rows[0].created_at;
@@ -181,6 +185,7 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
     text: input.text,
     images,
     videoUrl: input.videoUrl ?? null,
+    audioUrl: input.audioUrl ?? null,
     urlPreview: null, // link preview arrives via the async update above
     likeCount: 0,
     likedByMe: false,
@@ -213,6 +218,7 @@ const POST_SELECT = `
       FROM post_images pi2 WHERE pi2.post_id = p.id
     ), '{}') AS images,
     p.video_url AS video_url,
+    p.audio_url AS audio_url,
     p.club AS club,
     p.club_manual AS club_manual,
     COUNT(DISTINCT l.user_email) AS like_count,
@@ -251,6 +257,7 @@ function mapRow(r: any): FeedPost {
     text: r.text,
     images: r.images ?? [],
     videoUrl: r.video_url ?? null,
+    audioUrl: r.audio_url ?? null,
     urlPreview: r.url_preview,
     likeCount: Number(r.like_count) || 0,
     likedByMe: !!r.liked_by_me,
@@ -609,7 +616,12 @@ export async function togglePin(
 export async function updatePost(
   postId: number,
   userEmail: string,
-  input: { text?: string; images?: string[]; videoUrl?: string | null }
+  input: {
+    text?: string;
+    images?: string[];
+    videoUrl?: string | null;
+    audioUrl?: string | null;
+  }
 ): Promise<{ ok: boolean; error?: string }> {
   const authorEmail = await getPostAuthor(postId);
   if (authorEmail === null) return { ok: false, error: "not_found" };
@@ -649,6 +661,13 @@ export async function updatePost(
     if (input.videoUrl !== undefined) {
       await client.query(`UPDATE posts SET video_url = $1 WHERE id = $2`, [
         input.videoUrl || null,
+        postId,
+      ]);
+    }
+    // Update the audio attachment if explicitly provided (undefined = leave as-is)
+    if (input.audioUrl !== undefined) {
+      await client.query(`UPDATE posts SET audio_url = $1 WHERE id = $2`, [
+        input.audioUrl || null,
         postId,
       ]);
     }

@@ -35,6 +35,8 @@ export interface FeedPost {
   images: string[];
   /** At most one video attachment (nullable URL), rendered as a <video> player. */
   videoUrl?: string | null;
+  /** At most one audio attachment (nullable URL), rendered as an <audio> player. */
+  audioUrl?: string | null;
   urlPreview: UrlPreview | null;
   likeCount: number;
   likedByMe: boolean;

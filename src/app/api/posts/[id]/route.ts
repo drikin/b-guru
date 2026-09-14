@@ -53,7 +53,7 @@ export async function DELETE(
   return NextResponse.json({ ok: true }, { headers: NO_CACHE });
 }
 
-// PATCH /api/posts/[id] — edit own post (text + images)
+// PATCH /api/posts/[id] — edit own post (text + images + audio)
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -64,7 +64,7 @@ export async function PATCH(
   const postId = await getPostId(params);
   if (postId === null) return NextResponse.json({ error: "不正な投稿ID" }, { status: 400, headers: NO_CACHE });
 
-  let body: { text?: string; images?: string[] };
+  let body: { text?: string; images?: string[]; audioUrl?: string | null };
   try {
     body = await req.json();
   } catch {
@@ -73,12 +73,26 @@ export async function PATCH(
 
   const text = typeof body.text === "string" ? body.text.trim() : "";
   const images = Array.isArray(body.images) ? body.images.slice(0, 5) : undefined;
+  // Audio: undefined = leave as-is, null/"" = remove, string = set (server media path only).
+  let audioUrl: string | null | undefined = undefined;
+  if (body.audioUrl !== undefined) {
+    if (body.audioUrl === null || body.audioUrl === "") {
+      audioUrl = null;
+    } else if (
+      typeof body.audioUrl === "string" &&
+      /^\/api\/media\/[^/]+$/.test(body.audioUrl)
+    ) {
+      audioUrl = body.audioUrl;
+    } else {
+      return NextResponse.json({ error: "不正な音声URLです" }, { status: 400, headers: NO_CACHE });
+    }
+  }
 
-  if (!text && (!images || images.length === 0)) {
+  if (!text && (!images || images.length === 0) && !audioUrl) {
     return NextResponse.json({ error: "テキストまたは画像が必要です" }, { status: 400, headers: NO_CACHE });
   }
 
-  const result = await updatePost(postId, email, { text, images });
+  const result = await updatePost(postId, email, { text, images, audioUrl });
   if (!result.ok) {
     const status = result.error === "not_found" ? 404 : 403;
     return NextResponse.json({ error: result.error }, { status, headers: NO_CACHE });

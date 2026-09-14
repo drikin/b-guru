@@ -18,9 +18,38 @@ const ALLOWED_VIDEO = new Set([
   "video/quicktime", // .mov
 ]);
 
+const MAX_AUDIO_BYTES = 10 * 1024 * 1024; // 10MB per audio
+const ALLOWED_AUDIO = new Set([
+  "audio/mpeg", // .mp3
+  "audio/mp4", // .m4a
+  "audio/x-m4a",
+  "audio/aac",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/wave",
+  "audio/ogg",
+  "audio/webm",
+  "audio/flac",
+  "audio/x-flac",
+]);
+
+// Extensions accepted for audio uploads (used when the browser sends no MIME type).
+const AUDIO_EXTS = new Set([
+  ".mp3",
+  ".m4a",
+  ".aac",
+  ".wav",
+  ".ogg",
+  ".oga",
+  ".opus",
+  ".webm",
+  ".flac",
+]);
+
 // POST /api/upload — multipart form
 //   fields: images[] (up to 5)  → returns { urls }
 //   fields: video (single)      → returns { videoUrl }
+//   fields: audio (single)      → returns { audioUrl }
 export async function POST(req: NextRequest) {
   const email = await getSessionEmail();
   if (!email) {
@@ -38,6 +67,45 @@ export async function POST(req: NextRequest) {
     f && typeof f === "object" && "arrayBuffer" in f ? (f as File) : null;
 
   const videoFile = toFile(form.get("video"));
+  const audioFile = toFile(form.get("audio"));
+
+  // If an audio field is present, treat this as a single-audio upload.
+  if (audioFile) {
+    // Some browsers report an empty type for .m4a/.flac — fall back to the
+    // extension so a legitimate file isn't rejected on a missing MIME type.
+    const ext = path.extname(audioFile.name).toLowerCase();
+    const typeOk =
+      ALLOWED_AUDIO.has(audioFile.type) ||
+      (!audioFile.type && AUDIO_EXTS.has(ext));
+    if (!typeOk) {
+      return NextResponse.json(
+        { error: `非対応の音声形式です: ${audioFile.type || ext}` },
+        { status: 400 }
+      );
+    }
+    if (audioFile.size > MAX_AUDIO_BYTES) {
+      return NextResponse.json(
+        { error: "音声は10MBまでです" },
+        { status: 400 }
+      );
+    }
+
+    const uploadDir = path.join(process.cwd(), "public", "uploads");
+    await mkdir(uploadDir, { recursive: true });
+
+    // .webm is shared by the video and audio containers, so an audio upload is
+    // stored as .weba — that keeps the media route's ext→MIME mapping
+    // unambiguous (.webm = video, .weba = audio).
+    const safeExt = ext === ".webm" ? ".weba" : AUDIO_EXTS.has(ext) ? ext : ".mp3";
+    const filename = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${safeExt}`;
+    const buf = Buffer.from(await audioFile.arrayBuffer());
+    await writeFile(path.join(uploadDir, filename), buf);
+
+    return NextResponse.json(
+      { audioUrl: `/api/media/${filename}` },
+      { status: 201 }
+    );
+  }
 
   // If a video field is present, treat this as a single-video upload.
   if (videoFile) {

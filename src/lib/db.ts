@@ -90,6 +90,14 @@ export async function initSchema() {
         ALTER TABLE posts ADD COLUMN video_url TEXT;
       END IF;
     END $$;
+    -- Audio attachment: a post may carry at most ONE audio file (same single
+    -- nullable URL pattern as video_url). Images/video/audio are mutually
+    -- exclusive per post — enforced in the composer UI, not the schema.
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='audio_url') THEN
+        ALTER TABLE posts ADD COLUMN audio_url TEXT;
+      END IF;
+    END $$;
     -- 部活動ラベル（auto-classified via さくらのAI Engine）。ルート投稿にのみ付く。
     -- club = 部活キー（src/lib/clubs.ts の CLUB_KEYS）or NULL（該当なし）。
     -- classified_at = 最後に分類/手動変更した時刻（未分類スイーパーが再処理しないための
