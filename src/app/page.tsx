@@ -7211,15 +7211,24 @@ export default function Home() {
     // "親" = the root post a group belongs to, so we traverse just the cards
     // tagged data-kbd-parent (roots) in DOM order. Same clamp/no-wrap rule as
     // J/K, and a fresh cursor (no selection) always starts at the first root.
+    //
+    // ⚠️ 位置同期（2026-09-15）: J/K と N/P は同じカーソルを共有する。J/K で
+    // コメント上にいるときに N を押しても TOP に戻らないよう、**全カードの
+    // DOM 順リスト（allIds）を位置解決の基準として渡す**。フィードは
+    // last_activity DESC 順なので DOM 順 ≠ ID 順であり、ID の大小では
+    // 「カーソルがどの親の間にあるか」を正しく判定できない。
     const moveParent = (dir: 1 | -1) => {
       const main = document.querySelector<HTMLElement>('[data-cx="main"]');
       if (!main) return;
+      const allIds = Array.from(
+        main.querySelectorAll<HTMLElement>("[data-kbd-id]")
+      ).map((el) => Number(el.dataset.kbdId));
       const parents = Array.from(
         main.querySelectorAll<HTMLElement>("[data-kbd-id][data-kbd-parent]")
       ).map((el) => Number(el.dataset.kbdId));
       if (!parents.length) return;
       // 次のID計算は純粋関数 computeNextKbdId に委譲（回帰テストで保護）。
-      const next = computeNextKbdId(parents, kbdCursorId, dir);
+      const next = computeNextKbdId(parents, kbdCursorId, dir, allIds);
       if (next == null) return;
       setKbdCursorId(next);
       if (ensureShow(next)) focusAfterExpand(next);
