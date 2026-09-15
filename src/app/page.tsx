@@ -7075,10 +7075,11 @@ export default function Home() {
       return !!el.closest?.("input, textarea, select, [contenteditable=true]");
     };
     // Only cards in the center column (excludes sidebar/navbar pinned cards),
-    // and only ones that are actually painted. The painted check skips both
-    // display:none cards and replies sitting inside a CLOSED Mantine <Collapse>
-    // (height:0 + overflow:hidden) — otherwise the focus ring lands on a hidden
-    // card and visually "disappears".
+    // and only ones that are actually painted. Used by ensureShow/focusAfterExpand
+    // to decide whether a card needs its folded section expanded before the focus
+    // ring is applied — otherwise the ring lands on a hidden card (display:none,
+    // or a reply inside a CLOSED <Collapse>) and visually "disappears".
+    // NOTE: mainCards() deliberately does NOT use this — see its comment below.
     const isVisibleCard = (el: HTMLElement) => {
       if (el.offsetParent === null) return false; // display:none somewhere up the chain
       let n: HTMLElement | null = el;
@@ -7096,6 +7097,11 @@ export default function Home() {
       // <Collapse>. We keep them in the traversal (rather than skipping them)
       // so J/K can land on every single comment: reaching a folded one
       // auto-expands its section (see ensureShow below).
+      //
+      // ⚠️ この「折りたたまれた返信も含める」性質は N/P の位置同期の前提でもある。
+      // moveParent はこのリスト（allIds）を基準に「カーソルがどの親の間に
+      // あるか」を解決するため、ここで折りたたみ返信を除外すると位置解決が
+      // ずれる。isVisibleCard でフィルタしてはいけない。
       return Array.from(main.querySelectorAll<HTMLElement>("[data-kbd-id]"))
         .map((el) => Number(el.dataset.kbdId));
     };
@@ -7220,9 +7226,11 @@ export default function Home() {
     const moveParent = (dir: 1 | -1) => {
       const main = document.querySelector<HTMLElement>('[data-cx="main"]');
       if (!main) return;
-      const allIds = Array.from(
-        main.querySelectorAll<HTMLElement>("[data-kbd-id]")
-      ).map((el) => Number(el.dataset.kbdId));
+      // ⚠️ allIds は mainCards() を再利用する（セレクタを二重定義しない）。
+      // ここで独自に querySelectorAll すると、将来 mainCards() のスコープが
+      // 変わったときに N/P だけ古い意味のままになり、J/K と食い違う
+      // — まさに今回直したのと同じ種類のバグになる。
+      const allIds = mainCards();
       const parents = Array.from(
         main.querySelectorAll<HTMLElement>("[data-kbd-id][data-kbd-parent]")
       ).map((el) => Number(el.dataset.kbdId));
