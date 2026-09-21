@@ -7878,7 +7878,7 @@ export default function Home() {
               <line x1="9" y1="20" x2="15" y2="20" />
               <line x1="12" y1="4" x2="12" y2="20" />
             </svg>
-            <span style={{ color: "var(--text-primary)", fontSize: 14 }}>文字サイズ</span>
+            <span style={{ color: "var(--text-primary)", fontSize: 14, whiteSpace: "nowrap" }}>文字サイズ</span>
           </Group>
           <Group gap={4} wrap="nowrap">
             {FONT_SIZE_OPTIONS.map((opt) => {
@@ -7890,13 +7890,17 @@ export default function Home() {
                   aria-label={`文字サイズを${opt.label}にする`}
                   aria-pressed={active}
                   style={{
-                    minWidth: 30,
+                    minWidth: 34,
                     height: 26,
                     padding: "0 6px",
                     borderRadius: 6,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
+                    // 「特大」が2行に折り返すとボタンだけ背が高くなり
+                    // 横並びが不揃いになるため、折り返しを禁止する。
+                    whiteSpace: "nowrap",
+                    lineHeight: 1,
                     fontSize: 12,
                     fontWeight: active ? 700 : 500,
                     color: active ? "var(--text-on-green)" : "var(--text-secondary)",
