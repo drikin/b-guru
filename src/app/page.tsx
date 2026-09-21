@@ -780,6 +780,34 @@ function PollCountdown({ endsAt }: { endsAt: string }) {
 // =====================================================================
 const BGURU_READ_KEY = "bguru_read_posts_v2";
 const BGURU_UNREAD_ON_KEY = "bguru_auto_unread_v1";
+const BGURU_FONT_SIZE_KEY = "bguru_font_size_v1";
+
+/** 文字サイズ設定。iOS PWA で文字が小さく感じる問題への対策。 */
+type FontSize = "sm" | "md" | "lg" | "xl";
+const FONT_SIZE_OPTIONS: { value: FontSize; label: string }[] = [
+  { value: "sm", label: "小" },
+  { value: "md", label: "中" },
+  { value: "lg", label: "大" },
+  { value: "xl", label: "特大" },
+];
+const FONT_SIZE_VALUES: FontSize[] = ["sm", "md", "lg", "xl"];
+
+/** localStorage から読み出し（不正値は "md" にフォールバック）。 */
+function readStoredFontSize(): FontSize {
+  if (typeof window === "undefined") return "md";
+  try {
+    const raw = localStorage.getItem(BGURU_FONT_SIZE_KEY);
+    return FONT_SIZE_VALUES.includes(raw as FontSize) ? (raw as FontSize) : "md";
+  } catch {
+    return "md";
+  }
+}
+
+/** html の data-font-size を更新する（globals.css が font-size を切り替える）。 */
+function applyFontSize(size: FontSize) {
+  if (typeof document === "undefined") return;
+  document.documentElement.setAttribute("data-font-size", size);
+}
 const AUTO_READ_DWELL_MS = 1000;
 
 type ReadStore = { enabled: boolean; read: Set<number> };
@@ -3943,6 +3971,25 @@ export default function Home() {
   // ---- Dark mode toggle ----
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const isDark = colorScheme === "dark";
+  // ---- 文字サイズ（小・中・大・特大）----
+  // iOS の PWA（standalone）ではブラウザの文字サイズ設定が効かないため、
+  // アプリ内で選べるようにする。html の data-font-size を切り替えると
+  // globals.css の html[data-font-size] が font-size を変え、rem ベースの
+  // 全体が追従する。SSR 時は "md" で描画し、マウント後に保存値を適用する
+  // （localStorage は SSR で読めないため。ハイドレーション不一致を避ける）。
+  const [fontSize, setFontSize] = useState<FontSize>("md");
+  useEffect(() => {
+    const stored = readStoredFontSize();
+    setFontSize(stored);
+    applyFontSize(stored);
+  }, []);
+  const changeFontSize = (size: FontSize) => {
+    setFontSize(size);
+    applyFontSize(size);
+    try {
+      localStorage.setItem(BGURU_FONT_SIZE_KEY, size);
+    } catch {}
+  };
   // ---- Auto unread highlight on/off (persisted, default ON) ----
   const autoUnreadOn = useSyncExternalStore(subscribeRead, getReadSnapshot, () => readServerSnapshot).enabled;
 
@@ -7817,6 +7864,53 @@ export default function Home() {
           )}
           <span>{isDark ? "ライトモード" : "ダークモード"}</span>
         </UnstyledButton>
+        {/* 文字サイズ（小・中・大・特大）— ダークモードの直下、区切り線なし。
+            iOS の PWA で文字が小さく感じる問題への対策。 */}
+        <Group
+          wrap="nowrap"
+          align="center"
+          justify="space-between"
+          style={{ padding: "10px 12px", borderRadius: 8 }}
+        >
+          <Group gap="sm" wrap="nowrap" align="center">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-primary)" }}>
+              <polyline points="4 7 4 4 20 4 20 7" />
+              <line x1="9" y1="20" x2="15" y2="20" />
+              <line x1="12" y1="4" x2="12" y2="20" />
+            </svg>
+            <span style={{ color: "var(--text-primary)", fontSize: 14 }}>文字サイズ</span>
+          </Group>
+          <Group gap={4} wrap="nowrap">
+            {FONT_SIZE_OPTIONS.map((opt) => {
+              const active = fontSize === opt.value;
+              return (
+                <UnstyledButton
+                  key={opt.value}
+                  onClick={() => changeFontSize(opt.value)}
+                  aria-label={`文字サイズを${opt.label}にする`}
+                  aria-pressed={active}
+                  style={{
+                    minWidth: 30,
+                    height: 26,
+                    padding: "0 6px",
+                    borderRadius: 6,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 12,
+                    fontWeight: active ? 700 : 500,
+                    color: active ? "var(--text-on-green)" : "var(--text-secondary)",
+                    background: active ? "var(--text-green)" : "var(--bg-subtle)",
+                    border: `1px solid ${active ? "var(--text-green)" : "var(--border-default)"}`,
+                    transition: "background 120ms, color 120ms",
+                  }}
+                >
+                  {opt.label}
+                </UnstyledButton>
+              );
+            })}
+          </Group>
+        </Group>
         {/* Auto unread management on/off — directly below dark mode, no separator */}
         <Group
           wrap="nowrap"

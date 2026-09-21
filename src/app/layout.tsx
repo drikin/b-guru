@@ -33,6 +33,10 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  // ⚠️ viewport-fit=cover が無いと env(safe-area-inset-*) は常に 0 を返す。
+  // これが無いと iOS のノッチ/ホームインジケータ回避（globals.css の
+  // padding-bottom: env(safe-area-inset-bottom)）が実質無効になる。
+  viewportFit: "cover",
 };
 
 // Green key color — works in both light and dark via Mantine's primaryShade.

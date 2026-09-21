@@ -1,6 +1,32 @@
 @import "tailwindcss";
 @import "@mantine/core/styles.css";
 
+/* ===== 文字サイズ設定（小・中・大） =====
+ * iOS の PWA（standalone）ではブラウザの文字サイズ設定が効かず、実機で
+ * 文字が小さく感じられる問題がある。ユーザーが左サイドバーから
+ * 小・中・大を選べるようにし、html の font-size をスケールさせる。
+ *
+ * 方式: html に data-font-size 属性を付け、ここで font-size を切り替える。
+ * rem ベースの Mantine / Tailwind の値がまとめて追従するため、
+ * 個別コンポーネントに手を入れずに全体を拡縮できる。
+ * 既定（属性なし・"md"）は 16px = ブラウザ既定と同じ。
+ */
+html {
+  font-size: 16px;
+}
+html[data-font-size="sm"] {
+  font-size: 14px;
+}
+html[data-font-size="md"] {
+  font-size: 16px;
+}
+html[data-font-size="lg"] {
+  font-size: 18px;
+}
+html[data-font-size="xl"] {
+  font-size: 20px;
+}
+
 /* ===== CSS Variables: Light / Dark theme tokens ===== */
 :root,
 [data-mantine-color-scheme="light"] {
