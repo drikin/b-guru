@@ -7865,14 +7865,11 @@ export default function Home() {
           <span>{isDark ? "ライトモード" : "ダークモード"}</span>
         </UnstyledButton>
         {/* 文字サイズ（小・中・大・特大）— ダークモードの直下、区切り線なし。
-            iOS の PWA で文字が小さく感じる問題への対策。 */}
-        <Group
-          wrap="nowrap"
-          align="center"
-          justify="space-between"
-          style={{ padding: "10px 12px", borderRadius: 8 }}
-        >
-          <Group gap="sm" wrap="nowrap" align="center">
+            iOS の PWA で文字が小さく感じる問題への対策。
+            2行レイアウト: 1行目にラベル、2行目にボタンを横いっぱいに等幅で並べる。
+            1行にするとラベルとボタンが幅を奪い合って窮屈になるため。 */}
+        <Box style={{ padding: "10px 12px", borderRadius: 8 }}>
+          <Group gap="sm" wrap="nowrap" align="center" style={{ marginBottom: 8 }}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-primary)" }}>
               <polyline points="4 7 4 4 20 4 20 7" />
               <line x1="9" y1="20" x2="15" y2="20" />
@@ -7880,7 +7877,7 @@ export default function Home() {
             </svg>
             <span style={{ color: "var(--text-primary)", fontSize: 14, whiteSpace: "nowrap" }}>文字サイズ</span>
           </Group>
-          <Group gap={4} wrap="nowrap">
+          <Group gap={6} wrap="nowrap" grow>
             {FONT_SIZE_OPTIONS.map((opt) => {
               const active = fontSize === opt.value;
               return (
@@ -7890,9 +7887,7 @@ export default function Home() {
                   aria-label={`文字サイズを${opt.label}にする`}
                   aria-pressed={active}
                   style={{
-                    minWidth: 34,
-                    height: 26,
-                    padding: "0 6px",
+                    height: 30,
                     borderRadius: 6,
                     display: "flex",
                     alignItems: "center",
@@ -7914,7 +7909,7 @@ export default function Home() {
               );
             })}
           </Group>
-        </Group>
+        </Box>
         {/* Auto unread management on/off — directly below dark mode, no separator */}
         <Group
           wrap="nowrap"
