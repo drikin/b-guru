@@ -1712,7 +1712,10 @@ function PostCard({
             src={post.urlPreview.spotify.embedUrl}
             width="100%"
             height={post.urlPreview.spotify.height}
-            title={post.urlPreview.title || "Spotify"}
+            title="Spotify"
+            /* ⚠️ Spotify では title を保存しない方針（urlpreview.ts 参照）なので、
+               post.urlPreview.title を参照しても常に undefined になる。
+               死んだフォールバックを書かず、固定のアクセシブル名にする。 */
             loading="lazy"
             allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
             style={{

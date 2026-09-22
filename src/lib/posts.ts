@@ -65,7 +65,16 @@ export interface NewPostInput {
   poll?: { question: string; options: string[]; durationHours: number } | null;
 }
 
-function firstUrl(text: string): string | null {
+/**
+ * 投稿本文から最初の URL を取り出す。
+ *
+ * ⚠️ バックフィルスクリプト（scripts/backfill-url-preview.mjs）も同じ規則を
+ * 使う必要がある。以前は向こうにコピーがあり、正規表現が食い違って
+ * 「括弧付きリンクを取りこぼす」バグになった。**この関数が正本**。
+ * スクリプトは .mjs なので直接 import できないが、規則を変えるときは
+ * 必ず両方を揃えること（末尾の `)` を除外するのが要点）。
+ */
+export function firstUrl(text: string): string | null {
   const m = text.match(/https?:\/\/[^\s)"'<>]+/);
   return m ? m[0] : null;
 }

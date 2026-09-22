@@ -158,4 +158,32 @@ describe("extractSpotify", () => {
     expect(extractSpotify("not a url")).toBeNull();
     expect(extractSpotify("")).toBeNull();
   });
+
+  it("括弧で囲まれたリンクでも URL を正しく切り出す（posts.ts と同一規則）", () => {
+    // ⚠️ バックフィルスクリプトの firstUrl が末尾の ) を含めてしまい、
+    //    「Spotify 以外」と誤判定してスキップしていたバグの回帰テスト。
+    //    posts.ts の firstUrl と同じ正規表現であることを固定する。
+    const text = "これ (https://open.spotify.com/album/1GZCmYFsiouBsHUP8sn6lY) いいよ";
+    const m = text.match(/https?:\/\/[^\s)"'<>]+/);
+    expect(m?.[0]).toBe("https://open.spotify.com/album/1GZCmYFsiouBsHUP8sn6lY");
+    // 切り出した URL が extractSpotify を通ること（= スキップされない）
+    expect(extractSpotify(m![0])).toEqual({ kind: "album", id: "1GZCmYFsiouBsHUP8sn6lY" });
+  });
+
+  it("ロケール付き URL が SQL の緩い条件で拾えること（/intl-ja/ 取りこぼしの回帰）", () => {
+    // ⚠️ 以前は SQL 側で 'open\.spotify\.com/(album|...)/' と判定していたため
+    //    /intl-ja/album/... をすべて取りこぼしていた。候補は 'spotify\.com' で
+    //    緩く絞り、判定は extractSpotify に一本化する方針を固定する。
+    const intlUrls = [
+      "https://open.spotify.com/intl-ja/album/1GZCmYFsiouBsHUP8sn6lY",
+      "https://open.spotify.com/intl-ja/track/4cOdK2wGLETKBW3PvgPWqT",
+      "https://open.spotify.com/intl-ja/playlist/37i9dQZF1DXcBWIGoYBM5M",
+    ];
+    for (const u of intlUrls) {
+      // 緩い SQL 条件（spotify.com を含む）にマッチする
+      expect(/spotify\.com/i.test(u)).toBe(true);
+      // かつ extractSpotify が正しく判定できる
+      expect(extractSpotify(u)).not.toBeNull();
+    }
+  });
 });

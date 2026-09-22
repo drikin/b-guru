@@ -92,11 +92,33 @@ async function fetchSpotifyEmbed(
     );
     clearTimeout(timer);
     if (!r.ok) return null;
-    const d = (await r.json()) as { iframe_url?: string; height?: number };
-    if (!d.iframe_url) return null;
-    // utm_source=oembed は不要なので落とす
-    const embedUrl = d.iframe_url.replace(/[?&]utm_source=oembed/, "");
-    return { embedUrl, height: d.height || 352, kind };
+    const d = (await r.json()) as { iframe_url?: unknown; height?: unknown };
+    if (typeof d.iframe_url !== "string") return null;
+
+    // ⚠️ oEmbed のレスポンスは外部データ。iframe の src に直接流す前に
+    // ホストとスキームを検証する（信頼境界をここで明示する）。
+    // 公式 API を信頼するのではなく、検証してから使う。
+    let parsed: URL;
+    try {
+      parsed = new URL(d.iframe_url);
+    } catch {
+      return null;
+    }
+    if (parsed.protocol !== "https:") return null;
+    if (!/(^|\.)spotify\.com$/.test(parsed.hostname)) return null;
+
+    // utm_source=oembed は不要なので落とす。正規表現だと
+    // 「utm_source=oembedX」のような別パラメータの接頭辞に誤マッチして
+    // URL を壊すため、URL API で正確に削除する。
+    parsed.searchParams.delete("utm_source");
+    const embedUrl = parsed.toString();
+
+    // height も外部データ。数値化して妥当な範囲にクランプする
+    // （文字列・負値・巨大値がそのまま iframe の高さになるのを防ぐ）。
+    const h = Number(d.height);
+    const height = Number.isFinite(h) && h > 0 && h <= 1000 ? Math.round(h) : 352;
+
+    return { embedUrl, height, kind };
   } catch {
     return null;
   }
