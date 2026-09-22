@@ -1624,8 +1624,12 @@ function PostCard({
         </Box>
       )}
 
-      {/* URL preview */}
-      {post.urlPreview && (
+      {/* URL preview。
+          ⚠️ Spotify 埋め込みがあるときはカードを出さない。埋め込みプレイヤーが
+          ジャケット・曲名・アーティストを表示するため、カードの
+          「Spotify – Web Player」タイトルと「Spotify」サイト名は重複する
+          （drikin 指摘）。埋め込みが本体なので、そちらだけ見せる。 */}
+      {post.urlPreview && !post.urlPreview.spotify && (
         <Paper
           mt="sm"
           p="sm"

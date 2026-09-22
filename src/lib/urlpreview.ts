@@ -230,34 +230,12 @@ export async function fetchUrlPreview(rawUrl: string): Promise<UrlPreview> {
   if (sp) {
     const embed = await fetchSpotifyEmbed(sp.kind, sp.id);
     if (embed) {
-      // タイトル等は OGP から補完する（失敗しても埋め込みは出す）。
-      let title: string | undefined;
-      let description: string | undefined;
-      let image: string | undefined;
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 6000);
-        const r = await fetch(url, {
-          redirect: "follow",
-          signal: controller.signal,
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-            "Accept-Language": "ja,en;q=0.8",
-          },
-        });
-        clearTimeout(timer);
-        if (r.ok && (r.headers.get("content-type") || "").includes("text/html")) {
-          const html = decodeHtmlBytes(Buffer.from(await r.arrayBuffer()), r.headers.get("content-type"));
-          const m = parseMeta(url, html);
-          title = m.title;
-          description = m.description;
-          image = m.image;
-        }
-      } catch {
-        /* 埋め込みだけで十分 */
-      }
-      return { url, title, description, image, siteName: "Spotify", spotify: embed };
+      // ⚠️ OGP の title/siteName は意図的に保存しない。Spotify の og:title は
+      // 「Spotify – Web Player」という汎用文字列で情報価値が無く、UI で
+      // 埋め込みと重複表示になる（drikin 指摘）。description と image も
+      // 埋め込みプレイヤーが表示する内容と重複するため落とす。
+      // 埋め込みが本体なので、余計なメタ情報は持たない。
+      return { url, spotify: embed };
     }
     // oEmbed が失敗しても OGP フォールバックへ進む
   }
