@@ -7,6 +7,15 @@ export interface UrlPreview {
   siteName?: string;
   /** YouTube video id, when the link is a watch/shorts/youtu.be URL */
   videoId?: string;
+  /** Spotify 埋め込み情報（album/track/playlist/artist/episode のとき） */
+  spotify?: {
+    /** 埋め込み iframe の URL（https://open.spotify.com/embed/...） */
+    embedUrl: string;
+    /** 埋め込みの高さ（px）。track は 152、album/playlist 等は 352。 */
+    height: number;
+    /** コンテンツ種別 */
+    kind: string;
+  };
 }
 
 /**
@@ -34,6 +43,63 @@ export function extractYoutubeId(rawUrl: string): string | null {
     /* fallthrough */
   }
   return null;
+}
+
+/**
+ * Spotify のリンクから埋め込み情報を取り出す。
+ *
+ * 対応: album / track / playlist / artist / episode / show
+ *   https://open.spotify.com/album/ID
+ *   https://open.spotify.com/intl-ja/track/ID   ← ロケール付きも多い
+ *   https://open.spotify.com/playlist/ID?si=... ← クエリ付きも多い
+ *
+ * 埋め込みは Spotify 公式の oEmbed API を使う（iframe の URL と高さが返る）。
+ * 自前で iframe を組むより、公式が返す値をそのまま使う方が安全
+ * （高さは track=152 / album・playlist 等=352 と種別で変わる）。
+ */
+export function extractSpotify(rawUrl: string): { kind: string; id: string } | null {
+  try {
+    const u = new URL(rawUrl.trim());
+    if (!/(^|\.)spotify\.com$/.test(u.hostname)) return null;
+    // /intl-ja/album/ID のようなロケール接頭辞を除去
+    const parts = u.pathname.split("/").filter(Boolean);
+    const i = parts.findIndex((p) => p === "intl-ja" || /^intl-/.test(p));
+    const rest = i >= 0 ? parts.slice(i + 1) : parts;
+    const kind = rest[0];
+    const id = rest[1];
+    if (!kind || !id) return null;
+    if (!["album", "track", "playlist", "artist", "episode", "show"].includes(kind)) return null;
+    // ID は英数字のみ（不正なパスを弾く）
+    if (!/^[A-Za-z0-9]+$/.test(id)) return null;
+    return { kind, id };
+  } catch {
+    return null;
+  }
+}
+
+/** Spotify oEmbed を叩いて埋め込み URL と高さを得る。失敗したら null。 */
+async function fetchSpotifyEmbed(
+  kind: string,
+  id: string
+): Promise<{ embedUrl: string; height: number; kind: string } | null> {
+  const canonical = `https://open.spotify.com/${kind}/${id}`;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const r = await fetch(
+      `https://open.spotify.com/oembed?url=${encodeURIComponent(canonical)}`,
+      { signal: controller.signal }
+    );
+    clearTimeout(timer);
+    if (!r.ok) return null;
+    const d = (await r.json()) as { iframe_url?: string; height?: number };
+    if (!d.iframe_url) return null;
+    // utm_source=oembed は不要なので落とす
+    const embedUrl = d.iframe_url.replace(/[?&]utm_source=oembed/, "");
+    return { embedUrl, height: d.height || 352, kind };
+  } catch {
+    return null;
+  }
 }
 
 /* ── Charset handling ────────────────────────────────────────────────────
@@ -156,6 +222,44 @@ export async function fetchUrlPreview(rawUrl: string): Promise<UrlPreview> {
       /* fallback to thumbnail-only */
     }
     return { ...res, siteName: "YouTube" };
+  }
+
+  // Spotify: 公式 oEmbed から埋め込み URL と高さを得る。OGP より優先する
+  // （Spotify の og:image は 300x300 のジャケットで、埋め込みの方が情報量が多い）。
+  const sp = extractSpotify(url);
+  if (sp) {
+    const embed = await fetchSpotifyEmbed(sp.kind, sp.id);
+    if (embed) {
+      // タイトル等は OGP から補完する（失敗しても埋め込みは出す）。
+      let title: string | undefined;
+      let description: string | undefined;
+      let image: string | undefined;
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 6000);
+        const r = await fetch(url, {
+          redirect: "follow",
+          signal: controller.signal,
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+            "Accept-Language": "ja,en;q=0.8",
+          },
+        });
+        clearTimeout(timer);
+        if (r.ok && (r.headers.get("content-type") || "").includes("text/html")) {
+          const html = decodeHtmlBytes(Buffer.from(await r.arrayBuffer()), r.headers.get("content-type"));
+          const m = parseMeta(url, html);
+          title = m.title;
+          description = m.description;
+          image = m.image;
+        }
+      } catch {
+        /* 埋め込みだけで十分 */
+      }
+      return { url, title, description, image, siteName: "Spotify", spotify: embed };
+    }
+    // oEmbed が失敗しても OGP フォールバックへ進む
   }
 
   try {

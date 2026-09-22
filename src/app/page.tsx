@@ -1695,6 +1695,32 @@ function PostCard({
         </Paper>
       )}
 
+      {/* Spotify 埋め込みプレイヤー。
+          ⚠️ 上のリンクカード(<a>)の「外」に置く。iframe はインタラクティブな
+          要素なので、<a> の中に入れるとクリックが奪われて再生できない
+          （ネストした操作要素は不正で、ブラウザの挙動も不定になる）。
+          loading="lazy" で画面外の埋め込みは読み込まない（フィードが重く
+          なるのを防ぐ）。高さは Spotify oEmbed が返した値を使う
+          （track=152 / album・playlist 等=352）。 */}
+      {post.urlPreview?.spotify && (
+        <Box mt="sm">
+          <iframe
+            src={post.urlPreview.spotify.embedUrl}
+            width="100%"
+            height={post.urlPreview.spotify.height}
+            title={post.urlPreview.title || "Spotify"}
+            loading="lazy"
+            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+            style={{
+              border: 0,
+              borderRadius: 12,
+              display: "block",
+              maxWidth: 480,
+            }}
+          />
+        </Box>
+      )}
+
       {/* 投票（アンケート）: 投稿本文が質問。カード内では本文(質問)を繰り返さず回答のみ表示。 */}
       {post.poll && (
         <PollCard

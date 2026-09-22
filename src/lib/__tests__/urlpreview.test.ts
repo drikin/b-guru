@@ -3,6 +3,7 @@ import {
   charsetFromContentType,
   charsetFromHead,
   decodeHtmlBytes,
+  extractSpotify,
 } from "../urlpreview";
 
 /** 文字列を utf-8 のバイト列に変換。 */
@@ -95,5 +96,66 @@ describe("decodeHtmlBytes", () => {
     const out = decodeHtmlBytes(utf8Bytes(html), "text/html");
     expect(out).toContain("UTF-8のタイトル");
     expect(out).not.toContain("\uFFFD");
+  });
+});
+
+describe("extractSpotify", () => {
+  it("album / track / playlist / artist / episode / show を認識する", () => {
+    expect(extractSpotify("https://open.spotify.com/album/1GZCmYFsiouBsHUP8sn6lY")).toEqual({
+      kind: "album",
+      id: "1GZCmYFsiouBsHUP8sn6lY",
+    });
+    expect(extractSpotify("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT")).toEqual({
+      kind: "track",
+      id: "4cOdK2wGLETKBW3PvgPWqT",
+    });
+    expect(extractSpotify("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M")).toEqual({
+      kind: "playlist",
+      id: "37i9dQZF1DXcBWIGoYBM5M",
+    });
+    expect(extractSpotify("https://open.spotify.com/artist/0OdUWJ0sBjDrqHygGUXeCF")).toEqual({
+      kind: "artist",
+      id: "0OdUWJ0sBjDrqHygGUXeCF",
+    });
+    expect(extractSpotify("https://open.spotify.com/episode/512ojhOuo1ktJprKbVcKyQ")).toEqual({
+      kind: "episode",
+      id: "512ojhOuo1ktJprKbVcKyQ",
+    });
+    expect(extractSpotify("https://open.spotify.com/show/4rOoJ6Egrf8K2IrywzwOMk")).toEqual({
+      kind: "show",
+      id: "4rOoJ6Egrf8K2IrywzwOMk",
+    });
+  });
+
+  it("ロケール接頭辞（/intl-ja/）付きでも認識する", () => {
+    expect(extractSpotify("https://open.spotify.com/intl-ja/album/1GZCmYFsiouBsHUP8sn6lY")).toEqual({
+      kind: "album",
+      id: "1GZCmYFsiouBsHUP8sn6lY",
+    });
+  });
+
+  it("クエリ（?si=...）付きでも認識する", () => {
+    expect(
+      extractSpotify("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=abc123&pt=xyz")
+    ).toEqual({ kind: "playlist", id: "37i9dQZF1DXcBWIGoYBM5M" });
+  });
+
+  it("Spotify 以外のホストは null", () => {
+    expect(extractSpotify("https://example.com/album/abc")).toBeNull();
+    expect(extractSpotify("https://notspotify.com/album/abc")).toBeNull();
+    // サブドメイン偽装（evilspotify.com）も弾く
+    expect(extractSpotify("https://evilspotify.com/album/abc")).toBeNull();
+  });
+
+  it("未対応のパス・不正な ID は null", () => {
+    expect(extractSpotify("https://open.spotify.com/user/someone")).toBeNull();
+    expect(extractSpotify("https://open.spotify.com/album/")).toBeNull();
+    expect(extractSpotify("https://open.spotify.com/album/../../etc/passwd")).toBeNull();
+    expect(extractSpotify("https://open.spotify.com/album/has-dash")).toBeNull();
+  });
+
+  it("URL でない文字列は null", () => {
+    expect(extractSpotify("not a url")).toBeNull();
+    expect(extractSpotify("")).toBeNull();
   });
 });

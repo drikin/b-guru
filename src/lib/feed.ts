@@ -11,14 +11,11 @@
 
 import type { PostPoll } from "./poll";
 
-export interface UrlPreview {
-  url: string;
-  title?: string;
-  description?: string;
-  image?: string;
-  siteName?: string;
-  videoId?: string;
-}
+// ⚠️ UrlPreview は urlpreview.ts が正本。ここで再定義すると、フィールドを
+// 追加したときに片方だけ更新されて型が食い違う（実際に spotify 追加時に
+// 起きた）。import して re-export し、一本化する。
+import type { UrlPreview } from "./urlpreview";
+export type { UrlPreview };
 
 export interface FeedPost {
   id: number;
