@@ -5088,11 +5088,12 @@ export default function Home() {
       // pin, so late-loading content can't drag them back down while they read.
       //
       // Only a scroll the USER caused may cancel the pin. Content growing the
-      // list also fires a scroll event (the browser clamps scrollTop), and
-      // treating that as "the user scrolled away" cancelled the pin before the
-      // ResizeObserver could follow the growth — the list then sat ~400px short
-      // of the bottom. A user scroll moves scrollTop; growth does not.
-      const moved = Math.abs(el.scrollTop - chatLastScrollTopRef.current) > 4;
+      // list also fires a scroll event, and the browser clamps scrollTop while
+      // it does — measured on CI: growth moved scrollTop by 8px (448 -> 456)
+      // and a 4px threshold read that as a user scroll, releasing the pin
+      // before the ResizeObserver could follow. A wheel/keyboard scroll moves
+      // the list by far more than a clamp does, so require a real jump.
+      const moved = Math.abs(el.scrollTop - chatLastScrollTopRef.current) > 40;
       chatLastScrollTopRef.current = el.scrollTop;
       if (!atBottom && moved) chatPinningRef.current = false;
       // Test hook: record every invocation so a failing E2E check can see which

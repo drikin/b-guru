@@ -146,7 +146,7 @@ describe("a new message does not steal a reader's position", () => {
     const body = page.slice(start, start + 1400);
     // The release must be guarded by a real position change, not just !atBottom.
     expect(body).not.toMatch(/if \(!atBottom\) chatPinningRef\.current = false;/);
-    expect(body).toContain("const moved = Math.abs(el.scrollTop - chatLastScrollTopRef.current) > 4;");
+    expect(body).toContain("const moved = Math.abs(el.scrollTop - chatLastScrollTopRef.current) > 40;");
     expect(body).toContain("if (!atBottom && moved) chatPinningRef.current = false;");
   });
 
