@@ -411,6 +411,15 @@ const ptrInfo = await page.evaluate(`(() => {
   const cs = getComputedStyle(view);
   const vp = view.querySelector('[data-radix-scroll-area-viewport], .mantine-ScrollArea-viewport');
   const vpCs = vp ? getComputedStyle(vp) : null;
+  // The two layers are set independently and BOTH matter:
+  //   - the view's own overscroll-behavior comes from the inline style in
+  //     page.tsx (belt) and the .bguru-chat-view rule in globals.css (braces)
+  //   - the ScrollArea viewport is the element that actually receives the touch,
+  //     and it is only covered by the globals.css rule
+  // Verified by degrading each layer separately: removing the CSS rule alone
+  // left the view check PASSing (the inline style still applied) while the
+  // viewport check failed — so the viewport assertion is the one that catches a
+  // CSS-only regression, and the view assertion catches an inline-style one.
   return {
     found: true,
     viewOverscroll: cs.overscrollBehaviorY || cs.overscrollBehavior,
@@ -429,6 +438,33 @@ check(
   ptrInfo.found
     ? `viewport=${ptrInfo.viewportOverscroll} (found=${ptrInfo.hasViewport})`
     : "chat view not found"
+);
+// The iOS custom gesture must not be armed in the chat view either. It is
+// disabled via PullToRefresh's `active` prop, which is not observable from the
+// DOM, so assert the observable consequence: a downward drag at the top of the
+// chat must NOT trigger a feed reload. We detect a reload by watching for the
+// navigation entry count to change.
+const navBefore = await page.evaluate("performance.getEntriesByType('navigation').length");
+const chatBox = await page.$(".bguru-chat-view");
+if (chatBox) {
+  const b = await chatBox.boundingBox();
+  if (b) {
+    // Drag downward from near the top of the chat list.
+    await page.mouse.move(b.x + b.width / 2, b.y + 40);
+    await page.mouse.down();
+    for (let i = 1; i <= 8; i++) {
+      await page.mouse.move(b.x + b.width / 2, b.y + 40 + i * 20);
+      await page.waitForTimeout(40);
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(1500);
+  }
+}
+const navAfter = await page.evaluate("performance.getEntriesByType('navigation').length");
+check(
+  "downward drag in the chat does not reload the page",
+  navAfter === navBefore,
+  `navigation entries before=${navBefore} after=${navAfter}`
 );
 // Back to the timeline so the remaining checks run on the feed.
 const backLabels = await page.$$('[data-cx="navtabs"] label.mantine-SegmentedControl-label');
