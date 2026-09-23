@@ -8870,24 +8870,25 @@ export default function Home() {
                     position: "sticky",
                     // Pin the bar directly under the header (56px), with no gap.
                     //
-                    // The bar used to rest at 80px (pushed down by the 12px
-                    // padding above it) and snap to 56px on the first scroll — a
-                    // 24px jump that made every tab switch look jittery (drikin
-                    // 2026-09-23). Pinning it at 80px removed the jump but left a
-                    // 24px strip above the bar where scrolled content showed
-                    // through, which looks broken (drikin: 「スクロールした
-                    // コンテンツがタブの裏側に見えて変」).
+                    // The bar used to rest at 80px (pushed down by the 16px
+                    // `py-4` on the column wrapper) and snap to 56px on the first
+                    // scroll — a 24px jump that made every tab switch look jittery
+                    // (drikin 2026-09-23). Pinning it at 80px removed the jump but
+                    // left a 24px strip above the bar where scrolled content
+                    // showed through (drikin: 「スクロールしたコンテンツがタブの
+                    // 裏側に見えて変」).
                     //
-                    // 56px is the right anchor: the bar sits flush against the
-                    // header, so there is no gap for content to peek through, and
-                    // it is already at that position before any scroll — so it
-                    // still never moves.
+                    // 56px is the right anchor: flush against the header, so
+                    // there is no gap, and the bar is already there before any
+                    // scroll — so it never moves either. The negative margin
+                    // cancels the wrapper's top padding so the bar starts at 56px
+                    // instead of 80px; the padding is re-added below the bar so
+                    // the content keeps its breathing room.
                     top: "var(--app-shell-header-height, 56px)",
+                    marginTop: -16,
                     zIndex: 60,
                     background: "var(--bg-primary)",
-                    // No top padding: it would push the bar down and reopen the
-                    // gap. The breathing room comes from the content below.
-                    paddingTop: 0,
+                    paddingTop: 16,
                     paddingBottom: 4,
                     display: "flex",
                     justifyContent: "center",
