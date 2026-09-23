@@ -23,6 +23,14 @@ const SWEEP_MS = 30_000; // sweep interval
 interface PresenceEntry {
   connCount: number; // number of live SSE connections (multi-tab)
   lastSeenAt: number; // last heartbeat / connect time
+  /**
+   * Whether the member's tab is currently in the foreground, per the Page
+   * Visibility API. `false` means the tab is open but backgrounded (another
+   * tab, minimised, or the phone is on another app) — the member is still
+   * online, just not looking at the page. Defaults to true so a client that
+   * never reports visibility is treated as active rather than dimmed.
+   */
+  visible: boolean;
 }
 
 const online = new Map<string, PresenceEntry>();
@@ -47,7 +55,7 @@ export function markOnline(email: string): void {
     cur.connCount += 1;
     cur.lastSeenAt = Date.now();
   } else {
-    online.set(email, { connCount: 1, lastSeenAt: Date.now() });
+    online.set(email, { connCount: 1, lastSeenAt: Date.now(), visible: true });
     broadcast();
   }
 }
@@ -69,16 +77,34 @@ export function getOnlineEmails(): string[] {
   return currentList();
 }
 
-/** Heartbeat from the client — refresh this member's last seen time. */
-export function touch(email: string): void {
+/**
+ * Heartbeat from the client — refresh this member's last seen time and record
+ * whether their tab is in the foreground.
+ *
+ * `visible` is optional so an older client (or a caller that does not know)
+ * does not accidentally dim a member: omitting it leaves the previous value
+ * untouched.
+ */
+export function touch(email: string, visible?: boolean): void {
   const cur = online.get(email);
   if (cur) {
     cur.lastSeenAt = Date.now();
+    if (typeof visible === "boolean" && cur.visible !== visible) {
+      cur.visible = visible;
+      // Visibility is part of the presence payload, so a change must be pushed
+      // to every connected client — otherwise the sidebar only updates on the
+      // next unrelated presence event.
+      broadcast();
+    }
   } else {
     // A pinging client is by definition a live tab with the site open, even if
     // its SSE stream isn't currently connected. Re-register as online so the
     // presence panel isn't wrongly blank after the stream drops.
-    online.set(email, { connCount: 0, lastSeenAt: Date.now() });
+    online.set(email, {
+      connCount: 0,
+      lastSeenAt: Date.now(),
+      visible: visible !== false,
+    });
     broadcast();
   }
 }
@@ -87,6 +113,8 @@ export interface PresenceMember {
   email: string;
   name: string | null;
   avatar: string | null;
+  /** Tab is in the foreground. `false` = online but backgrounded (dimmed). */
+  visible: boolean;
 }
 
 /** Enrich the online email list with display name + Gravatar avatar. */
@@ -98,6 +126,7 @@ export async function getOnlineMembers(): Promise<PresenceMember[]> {
     email: em,
     name: nameByEmail.get(em) ?? em.split("@")[0],
     avatar: gravatarUrl(em),
+    visible: online.get(em)?.visible ?? true,
   }));
 }
 

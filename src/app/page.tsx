@@ -4612,7 +4612,7 @@ export default function Home() {
   }, [auth]);
 
   const [onlineMembers, setOnlineMembers] = useState<
-    { email: string; name: string | null; avatar?: string | null }[]
+    { email: string; name: string | null; avatar?: string | null; visible?: boolean }[]
   >([]);
   const loadOnline = useCallback(() => {
     if (!auth) {
@@ -5794,16 +5794,28 @@ export default function Home() {
   // suspension, network blips). Also ping + refresh when the tab becomes
   // visible again so returning restores presence immediately instead of waiting
   // for the SSE reconnect.
+  //
+  // The ping carries the Page Visibility API state so the right-sidebar
+  // オンライン panel can dim members whose tab is open but backgrounded
+  // (drikin 2026-09-23). We send it on EVERY ping, not just on change, because
+  // the server evicts stale entries and a re-registered member must not come
+  // back as "active" by default. The visibilitychange handler fires in both
+  // directions so backgrounding is reflected immediately rather than up to 30s
+  // later.
   useEffect(() => {
     if (!auth) return;
     const ping = () => {
-      fetch("/api/presence/ping", { method: "POST", cache: "no-store" }).catch(() => {});
+      fetch("/api/presence/ping", {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visible: document.visibilityState === "visible" }),
+      }).catch(() => {});
     };
     const onVis = () => {
-      if (document.visibilityState === "visible") {
-        ping();
-        loadOnline();
-      }
+      // Report the new state either way — going hidden must dim us right away.
+      ping();
+      if (document.visibilityState === "visible") loadOnline();
     };
     ping();
     const t = window.setInterval(ping, 30000);
@@ -8747,10 +8759,17 @@ export default function Home() {
               <Stack gap={4}>
                 {onlineMembers.map((m) => {
                   const isSelf = !!auth && m.email === auth.email;
+                  // `visible === false` means the tab is open but backgrounded
+                  // (another tab, minimised, phone on another app). The member
+                  // is still online, so we keep them in the list and dim the
+                  // row instead of hiding it — drikin 2026-09-23: 「離席中の
+                  // 場合は文字とかアイコンを半透明にする」. `undefined` (an older
+                  // server payload) is treated as active, never dimmed.
+                  const away = m.visible === false;
                   return (
                     <UnstyledButton
                       key={m.email}
-                      title="オンラインでチャット"
+                      title={away ? "タブは開いていますが離席中" : "オンラインでチャット"}
                       onClick={() => openChatMention(m.name || m.email.split("@")[0])}
                       style={{
                         display: "block",
@@ -8759,6 +8778,8 @@ export default function Home() {
                         borderRadius: 8,
                         padding: "3px 4px",
                         cursor: "pointer",
+                        opacity: away ? 0.45 : 1,
+                        transition: "opacity 0.2s ease",
                       }}
                     >
                       <Group

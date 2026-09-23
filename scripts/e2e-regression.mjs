@@ -473,6 +473,47 @@ if (backLabels.length >= 1) {
   await page.waitForTimeout(1500);
 }
 
+// 6g. Presence visibility (drikin 2026-09-23): the オンライン panel must dim
+// members whose tab is backgrounded. The flag travels client → server via the
+// heartbeat body, so assert the whole round trip: report hidden, read it back
+// from /api/presence, then report visible and read it back again.
+console.log("\n6g. Presence reports tab visibility");
+// Resolve the signed-in email from the app's own auth endpoint so the check
+// works with any session token (no hardcoded address).
+const selfEmail = await page.evaluate(
+  `fetch('/api/auth/me', { cache: 'no-store' }).then(r => r.json()).then(d => d.email || null)`
+);
+const visRoundTrip = await page.evaluate(`(async () => {
+  const email = ${JSON.stringify(selfEmail)};
+  const post = (visible) => fetch('/api/presence/ping', {
+    method: 'POST',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ visible }),
+  }).then(r => r.json());
+  const readSelf = async () => {
+    const d = await fetch('/api/presence', { cache: 'no-store' }).then(r => r.json());
+    const me = (d.members || []).find(m => m.email === email);
+    return me ? me.visible : null;
+  };
+  const out = {};
+  await post(false);
+  out.afterHidden = await readSelf();
+  await post(true);
+  out.afterVisible = await readSelf();
+  return out;
+})()`);
+check(
+  "backgrounded tab is reported as not visible",
+  visRoundTrip.afterHidden === false,
+  `visible=${visRoundTrip.afterHidden} (expected false)`
+);
+check(
+  "foreground tab is reported as visible",
+  visRoundTrip.afterVisible === true,
+  `visible=${visRoundTrip.afterVisible} (expected true)`
+);
+
 // ------------------------------------------------------------ image proxy
 console.log("\n7. Images and avatars go through our own origin");
 const imgStats = await page.evaluate(`(() => {
