@@ -80,8 +80,9 @@ describe("chat opens at the bottom", () => {
     expect(body).toContain("new ResizeObserver");
     expect(body).toContain("chatPinningRef.current = true;");
     expect(body).toContain("ro.disconnect()");
-    // Bounded, so a slow image cannot hold the list hostage.
-    expect(body).toContain("chatPinningRef.current = false;");
+    // No time limit: a fixed window expired before the last image on a slow
+    // runner and made the E2E guard flaky. The scroll listener releases it.
+    expect(body).not.toContain("stopPin");
   });
 
   it("cleans up every timer and frame it schedules", () => {
@@ -91,7 +92,6 @@ describe("chat opens at the bottom", () => {
       "cancelAnimationFrame(r2)",
       "window.clearTimeout(t1)",
       "window.clearTimeout(t2)",
-      "window.clearTimeout(stopPin)",
       "ro.disconnect()",
     ]) {
       expect(body).toContain(cleanup);

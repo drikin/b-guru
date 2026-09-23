@@ -4962,25 +4962,25 @@ export default function Home() {
     const r2 = requestAnimationFrame(() => requestAnimationFrame(toBottom));
     const t1 = window.setTimeout(toBottom, 60);
     const t2 = window.setTimeout(toBottom, 240); // after bguru-main-fade (180ms)
-    // Keep pinning while late-arriving content grows the list. The window is
-    // generous (10s) because avatars, images and fonts land well after the
-    // 240ms settle timer. The pin is released early the moment the user
-    // scrolls away (see the scroll listener), so a long window never fights
-    // someone reading history.
+    // Keep pinning while late-arriving content grows the list.
+    //
+    // There is deliberately NO time limit. A fixed window (3s, then 10s) was
+    // measured to expire before the last image arrived on a slow runner,
+    // leaving the list hundreds of px short of the bottom — and it made the
+    // E2E guard flaky between a fast laptop and a slow CI box. The pin is
+    // released by the ONE event that actually matters: the user scrolling away
+    // from the bottom (see the scroll listener). Until then, following the
+    // bottom is exactly what the user wants.
     const ro = new ResizeObserver(() => {
       if (!chatPinningRef.current) return;
       el.scrollTop = el.scrollHeight;
     });
     ro.observe(el.firstElementChild ?? el);
-    const stopPin = window.setTimeout(() => {
-      chatPinningRef.current = false;
-    }, 10000);
     return () => {
       cancelAnimationFrame(r1);
       cancelAnimationFrame(r2);
       window.clearTimeout(t1);
       window.clearTimeout(t2);
-      window.clearTimeout(stopPin);
       ro.disconnect();
     };
   }, [chatView]);
