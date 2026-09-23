@@ -115,8 +115,23 @@ describe("a new message does not steal a reader's position", () => {
   it("cancels the pin when the user scrolls away", () => {
     const start = page.indexOf("const onScroll = () => {");
     expect(start).toBeGreaterThan(-1);
-    const body = page.slice(start, start + 500);
-    expect(body).toContain("if (!atBottom) chatPinningRef.current = false;");
+    const body = page.slice(start, start + 1400);
+    // The pin is released only for a scroll the user actually caused.
+    expect(body).toContain("chatPinningRef.current = false;");
+    expect(body).toContain("chatLastScrollTopRef.current");
+  });
+
+  it("does not let content growth cancel the pin", () => {
+    // Growth fires a scroll event too (the browser clamps scrollTop). Treating
+    // that as "the user scrolled away" cancelled the pin before the
+    // ResizeObserver could follow, leaving the list ~400px short of the bottom
+    // — reproduced on CI while passing locally.
+    const start = page.indexOf("const onScroll = () => {");
+    const body = page.slice(start, start + 1400);
+    // The release must be guarded by a real position change, not just !atBottom.
+    expect(body).not.toMatch(/if \(!atBottom\) chatPinningRef\.current = false;/);
+    expect(body).toContain("const moved = Math.abs(el.scrollTop - chatLastScrollTopRef.current) > 4;");
+    expect(body).toContain("if (moved) chatPinningRef.current = false;");
   });
 });
 

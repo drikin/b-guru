@@ -4941,6 +4941,9 @@ export default function Home() {
   // 219px short of the bottom in testing). Cleared as soon as the user scrolls
   // away, so reading history is never interrupted.
   const chatPinningRef = useRef(false);
+  // Last observed scrollTop, used to tell a user scroll apart from a
+  // growth-induced one (see the scroll listener below).
+  const chatLastScrollTopRef = useRef(0);
   // The open-transition pin lives in its OWN effect, keyed only on `chatView`.
   //
   // It used to live inside the auto-scroll effect, whose deps include
@@ -5026,7 +5029,24 @@ export default function Home() {
       chatAtBottomRef.current = atBottom;
       // A real user scroll away from the bottom cancels the open-transition
       // pin, so late-loading content can't drag them back down while they read.
-      if (!atBottom) chatPinningRef.current = false;
+      //
+      // Only a scroll the USER caused may cancel the pin. Content growing the
+      // list also fires a scroll event (the browser clamps scrollTop), and
+      // treating that as "the user scrolled away" cancelled the pin before the
+      // ResizeObserver could follow the growth — the list then sat ~400px short
+      // of the bottom. `chatPinningRef` is only ever set by the open transition
+      // and cleared here, so a growth-induced scroll must leave it alone.
+      if (!atBottom && !chatPinningRef.current) return;
+      if (!atBottom && chatPinningRef.current) {
+        // Distinguish a user scroll from a growth-induced one: a user scroll
+        // moves scrollTop, growth leaves it where it was. Compare against the
+        // last position we observed.
+        const moved = Math.abs(el.scrollTop - chatLastScrollTopRef.current) > 4;
+        chatLastScrollTopRef.current = el.scrollTop;
+        if (moved) chatPinningRef.current = false;
+      } else {
+        chatLastScrollTopRef.current = el.scrollTop;
+      }
     };
     onScroll();
     el.addEventListener("scroll", onScroll, { passive: true });
