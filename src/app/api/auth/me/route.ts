@@ -2,8 +2,20 @@ import { NextResponse } from "next/server";
 import { getSessionEmail } from "@/lib/session";
 import { getProfile } from "@/lib/profile";
 import { findMemberByEmail } from "@/lib/ghost";
+import { gravatarUrl } from "@/lib/posts";
 
 export const dynamic = "force-dynamic";
+
+/** Ghost returns `avatar_image` as a full https://www.gravatar.com/avatar/<md5>
+ * URL. Passing that through made the client fetch it cross-origin (measured
+ * 900-2,500ms, and it leaks the member's email hash to Automattic). Rewrite it
+ * to our same-origin proxy. Non-gravatar values (custom uploads) pass through. */
+function toProxiedAvatar(avatar: string | null | undefined): string | null {
+  if (!avatar) return null;
+  const m = avatar.match(/gravatar\.com\/avatar\/([a-f0-9]{32})/i);
+  if (m) return `/api/avatar/${m[1].toLowerCase()}`;
+  return avatar;
+}
 
 export async function GET() {
   const email = await getSessionEmail();
@@ -26,7 +38,7 @@ export async function GET() {
     const member = await findMemberByEmail(email);
     if (member) {
       if (!name) name = member.name || null;
-      avatar = member.avatar_image || null;
+      avatar = toProxiedAvatar(member.avatar_image) || gravatarUrl(email);
     }
   } catch {}
 

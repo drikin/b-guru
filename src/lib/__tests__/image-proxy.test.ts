@@ -93,6 +93,29 @@ describe("/api/img route", () => {
   });
 });
 
+describe("no API route leaks a raw gravatar.com URL to the client", () => {
+  // Ghost's `avatar_image` is a full https://www.gravatar.com/avatar/<md5> URL.
+  // Passing it straight through made the client fetch avatars cross-origin
+  // (900-2,500ms each) and leaked every member's email hash to Automattic.
+  // Every route that surfaces an avatar must rewrite it to /api/avatar/<md5>.
+  const ROUTES = [
+    "src/app/api/members/route.ts",
+    "src/app/api/auth/me/route.ts",
+    "src/app/api/bsm/member-check/route.ts",
+  ];
+
+  for (const rel of ROUTES) {
+    it(`${rel} rewrites gravatar URLs to the same-origin proxy`, () => {
+      const src = read(rel);
+      // It may mention gravatar.com in a comment/regex, but it must never
+      // assign a raw avatar_image straight into the response.
+      expect(src).not.toMatch(/avatar:\s*m\.avatar_image\s*\|\|\s*null/);
+      expect(src).not.toMatch(/avatar\s*=\s*member\.avatar_image\s*\|\|\s*null/);
+      expect(src).toContain("/api/avatar/");
+    });
+  }
+});
+
 describe("page.tsx routes external images through the proxy", () => {
   const src = read("src/app/page.tsx");
 

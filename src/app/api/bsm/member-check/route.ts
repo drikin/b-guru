@@ -100,10 +100,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ isPaidMember: false }, { headers: NO_CACHE });
     }
     const name = member.name && member.name.trim() ? member.name.trim() : null;
-    const avatar =
-      member.avatar_image && member.avatar_image.trim()
-        ? member.avatar_image.trim()
-        : gravatarUrl(email);
+    // Ghost's avatar_image is a full gravatar.com URL; rewrite it to our
+    // same-origin proxy so the client does not fetch it cross-origin.
+    const rawAvatar =
+      member.avatar_image && member.avatar_image.trim() ? member.avatar_image.trim() : null;
+    const gm = rawAvatar?.match(/gravatar\.com\/avatar\/([a-f0-9]{32})/i);
+    const avatar = gm ? `/api/avatar/${gm[1].toLowerCase()}` : rawAvatar || gravatarUrl(email);
     return NextResponse.json({ isPaidMember: true, name, avatar }, { headers: NO_CACHE });
   } catch (e: any) {
     console.error("bsm/member-check:", e?.message);
