@@ -4974,17 +4974,38 @@ export default function Home() {
     // released by the ONE event that actually matters: the user scrolling away
     // from the bottom (see the scroll listener). Until then, following the
     // bottom is exactly what the user wants.
-    const ro = new ResizeObserver(() => {
-      if (!chatPinningRef.current) return;
-      el.scrollTop = el.scrollHeight;
-    });
-    ro.observe(el.firstElementChild ?? el);
+    //
+    // Observe the ScrollArea *content*, not the viewport: the viewport keeps a
+    // fixed height, so only the content growing tells us the list got taller.
+    // The content is mounted by Mantine a tick after the viewport, so on a slow
+    // machine `firstElementChild` is still null here — observing the viewport
+    // as a fallback then silently never fires (measured on CI: scrollTop stayed
+    // at 456 while a locally-attached observer fired fine). Re-check on the
+    // next frame and observe whatever is there by then.
+    let ro: ResizeObserver | null = null;
+    let observed: Element | null = null;
+    const attach = () => {
+      const target = el.firstElementChild;
+      if (!target || target === observed) return;
+      ro?.disconnect();
+      ro = new ResizeObserver(() => {
+        if (!chatPinningRef.current) return;
+        el.scrollTop = el.scrollHeight;
+      });
+      ro.observe(target);
+      observed = target;
+    };
+    attach();
+    const r3 = requestAnimationFrame(attach);
+    const t3 = window.setTimeout(attach, 120);
     return () => {
       cancelAnimationFrame(r1);
       cancelAnimationFrame(r2);
+      cancelAnimationFrame(r3);
       window.clearTimeout(t1);
       window.clearTimeout(t2);
-      ro.disconnect();
+      window.clearTimeout(t3);
+      ro?.disconnect();
     };
   }, [chatView]);
 

@@ -79,10 +79,24 @@ describe("chat opens at the bottom", () => {
     // left the list hundreds of px short of the bottom in testing.
     expect(body).toContain("new ResizeObserver");
     expect(body).toContain("chatPinningRef.current = true;");
-    expect(body).toContain("ro.disconnect()");
+    expect(body).toContain("ro?.disconnect()");
     // No time limit: a fixed window expired before the last image on a slow
     // runner and made the E2E guard flaky. The scroll listener releases it.
     expect(body).not.toContain("stopPin");
+  });
+
+  it("observes the ScrollArea content, not the viewport", () => {
+    // The viewport has a fixed height, so only the content growing means the
+    // list got taller. Mantine mounts the content a tick after the viewport, so
+    // on a slow machine firstElementChild is still null when the effect runs —
+    // observing the viewport as a fallback then never fires (measured on CI).
+    const body = openEffect();
+    expect(body).toContain("const target = el.firstElementChild;");
+    expect(body).toContain("ro.observe(target);");
+    // Must retry, and must not fall back to observing the viewport.
+    expect(body).toContain("requestAnimationFrame(attach)");
+    expect(body).toContain("window.setTimeout(attach, 120)");
+    expect(body).not.toContain("el.firstElementChild ?? el");
   });
 
   it("cleans up every timer and frame it schedules", () => {
@@ -90,9 +104,11 @@ describe("chat opens at the bottom", () => {
     for (const cleanup of [
       "cancelAnimationFrame(r1)",
       "cancelAnimationFrame(r2)",
+      "cancelAnimationFrame(r3)",
       "window.clearTimeout(t1)",
       "window.clearTimeout(t2)",
-      "ro.disconnect()",
+      "window.clearTimeout(t3)",
+      "ro?.disconnect()",
     ]) {
       expect(body).toContain(cleanup);
     }
