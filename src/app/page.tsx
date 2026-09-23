@@ -4916,14 +4916,18 @@ export default function Home() {
   // fully at the bottom. So we scroll immediately *and* again after layout
   // settles (double rAF + short delay + after the 180ms fade).
   //
-  // ⚠️ Two guards, both required (drikin report 2026-09-22: 「チャットに切り替えた
-  // 時に、なんか勝手にスクロールして過去ログがスクロールアウトしちゃいます」):
-  //  1. Never scroll on the tab-open transition itself. `chatView` flipping to
-  //     true used to run this effect unconditionally, so every switch back to
-  //     the chat tab yanked the list to the bottom even when the user had
-  //     scrolled up to read history.
-  //  2. Only follow when the user is already near the bottom. If they scrolled
-  //     up, a new message must not steal their position.
+  // ⚠️ Three guards (drikin reports 2026-09-22 and 2026-09-23):
+  //  1. Opening the tab must land at the BOTTOM. The chat list is unmounted
+  //     while the timeline is shown, so on re-open its scrollTop is 0 — the
+  //     user saw the oldest messages and had to scroll down manually
+  //     (「タイムラインが下にスクロールした状態でチャットに切り替えると
+  //     チャットログがスクロールして読めなくなる」). Reset to the bottom on
+  //     the open transition.
+  //  2. A new message must not steal the position of a user who scrolled up
+  //     to read history (「勝手にスクロールして過去ログがスクロールアウト
+  //     しちゃいます」). Only follow when already near the bottom.
+  //  3. The delayed callbacks re-check, because the user may scroll during the
+  //     60/240ms settle window.
   const chatWasOpenRef = useRef(false);
   // Whether the user was at (or near) the bottom *before* this render's content
   // grew. Captured during render so the effect can tell "was following" from
@@ -4936,8 +4940,27 @@ export default function Home() {
     const justOpened = chatView && !chatWasOpenRef.current;
     chatWasOpenRef.current = chatView;
     if (!chatViewRef.current || !el) return;
-    // (1) Opening the tab: leave the scroll position exactly where it is.
-    if (justOpened) return;
+
+    // (1) Opening the tab: jump to the bottom. The list was unmounted, so its
+    // scrollTop is 0 and the user would otherwise be looking at old history.
+    if (justOpened) {
+      chatAtBottomRef.current = true;
+      const toBottom = () => {
+        el.scrollTop = el.scrollHeight;
+      };
+      toBottom();
+      const r1 = requestAnimationFrame(toBottom);
+      const r2 = requestAnimationFrame(() => requestAnimationFrame(toBottom));
+      const t1 = window.setTimeout(toBottom, 60);
+      const t2 = window.setTimeout(toBottom, 240); // after bguru-main-fade (180ms)
+      return () => {
+        cancelAnimationFrame(r1);
+        cancelAnimationFrame(r2);
+        window.clearTimeout(t1);
+        window.clearTimeout(t2);
+      };
+    }
+
     // (2) Only follow the bottom if we were already there before the growth.
     if (!chatAtBottomRef.current) return;
     const go = () => {
