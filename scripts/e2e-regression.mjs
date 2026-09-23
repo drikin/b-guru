@@ -126,9 +126,14 @@ const timelineScroll = await page.evaluate(() => Math.round(window.scrollY));
 check("timeline scrolled down", timelineScroll > 1000, `scrollY=${timelineScroll}`);
 
 await page.evaluate(clickTab("チャット"));
-await page.waitForTimeout(4000);
-
-let d = await page.evaluate(CHAT_DIST);
+// Poll rather than sleep: the chat list mounts, then the messages load, then
+// the open-transition pin settles. How long that takes varies with the machine.
+let d = null;
+for (let i = 0; i < 24; i++) {
+  await page.waitForTimeout(250);
+  d = await page.evaluate(CHAT_DIST);
+  if (d && d.dist < 5) break;
+}
 check("chat list exists", d !== null);
 if (!d) {
   // Without the chat list we cannot verify anything below — fail hard rather
@@ -141,9 +146,18 @@ check("chat opens pinned to the bottom", d.dist < 5, `dist=${d.dist}px`);
 
 // ------------------------------------------- chat scroll: late content settles
 console.log("\n3. Stays at the bottom while late content loads");
-await page.waitForTimeout(4000);
-d = await page.evaluate(CHAT_DIST);
-check("still at the bottom after images/avatars settle", !!d && d.dist < 5, `dist=${d?.dist}px`);
+// Let images/avatars land, then confirm the list is still pinned.
+let stillPinned = null;
+for (let i = 0; i < 20; i++) {
+  await page.waitForTimeout(250);
+  stillPinned = await page.evaluate(CHAT_DIST);
+  if (stillPinned && stillPinned.dist >= 5) break; // drifted — stop early
+}
+check(
+  "still at the bottom after images/avatars settle",
+  !!stillPinned && stillPinned.dist < 5,
+  `dist=${stillPinned?.dist}px`
+);
 
 // 3b. Force late content growth. This is the part that actually catches the
 // regression: on a warm cache the avatars/images are already loaded, so the
@@ -165,12 +179,20 @@ const grew = await page.evaluate(`(() => {
   return { before, after: vp.scrollHeight };
 })()`);
 check("growth injected", grew !== null && grew.after > grew.before, grew ? `${grew.before} → ${grew.after}` : "no inner");
-await page.waitForTimeout(1200);
-d = await page.evaluate(CHAT_DIST);
+// ResizeObserver fires asynchronously, and how long it takes varies with the
+// machine (measured: settled by +300ms locally, later on a CI runner). Poll
+// instead of sleeping a fixed amount, so the check tests the behaviour rather
+// than the runner's speed.
+let settled = null;
+for (let i = 0; i < 20; i++) {
+  await page.waitForTimeout(250);
+  settled = await page.evaluate(CHAT_DIST);
+  if (settled && settled.dist < 5) break;
+}
 check(
   "still pinned to the bottom after late growth",
-  !!d && d.dist < 5,
-  `dist=${d?.dist}px (a missing ResizeObserver leaves this > 0)`
+  !!settled && settled.dist < 5,
+  `dist=${settled?.dist}px (a missing ResizeObserver leaves this > 0)`
 );
 await page.evaluate(`(() => { document.getElementById('__e2e_growth')?.remove(); })()`);
 await page.waitForTimeout(500);

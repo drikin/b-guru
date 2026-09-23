@@ -4971,11 +4971,7 @@ export default function Home() {
     // released by the ONE event that actually matters: the user scrolling away
     // from the bottom (see the scroll listener). Until then, following the
     // bottom is exactly what the user wants.
-    const ro = new ResizeObserver(() => {
-      if (!chatPinningRef.current) return;
-      el.scrollTop = el.scrollHeight;
-    });
-    ro.observe(el.firstElementChild ?? el);
+    const ro = { observe() {}, disconnect() {} };
     return () => {
       cancelAnimationFrame(r1);
       cancelAnimationFrame(r2);
