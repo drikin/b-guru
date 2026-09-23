@@ -55,21 +55,36 @@ describe("/api/avatar route", () => {
 describe("/api/img route", () => {
   const src = read("src/app/api/img/route.ts");
 
-  it("is not an open proxy: host allowlist + protocol check", () => {
-    expect(src).toContain("ALLOWED_HOSTS");
-    expect(src).toContain("hostAllowed");
+  it("is not an open proxy: blocks private address space (SSRF)", () => {
+    expect(src).toContain("isPrivateIp");
+    expect(src).toContain("hostIsSafe");
     expect(src).toContain('target.protocol !== "http:"');
+    // DNS is resolved by us so the real IP can be checked before connecting.
+    expect(src).toContain('from "dns/promises"');
   });
 
-  it("rejects loopback / private-looking hosts before allowlisting", () => {
+  it("blocks loopback, link-local, CGNAT and cloud-metadata ranges", () => {
+    expect(src).toContain("a === 127");
+    expect(src).toContain("a === 10");
+    expect(src).toContain("a === 169 && b === 254"); // 169.254.169.254 metadata
+    expect(src).toContain("a === 172 && b >= 16 && b <= 31");
+    expect(src).toContain("a === 192 && b === 168");
+    expect(src).toContain("a === 100 && b >= 64 && b <= 127");
+    expect(src).toContain('v === "::1"');
+    expect(src).toContain("fe80");
+  });
+
+  it("refuses unresolvable hosts and .local/.internal names", () => {
     expect(src).toContain('h === "localhost"');
     expect(src).toContain(".local");
+    expect(src).toContain(".internal");
   });
 
-  it("re-validates every redirect hop against the allowlist", () => {
+  it("re-validates every redirect hop against the same checks", () => {
     expect(src).toContain("MAX_REDIRECTS");
     expect(src).toContain('redirect: "manual"');
     expect(src).toContain("redirect host not allowed");
+    expect(src).toContain("invalid redirect protocol");
   });
 
   it("only serves image content-types and caps the size", () => {

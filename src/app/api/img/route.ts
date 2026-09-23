@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { mkdir, readFile, writeFile, stat } from "fs/promises";
 import path from "path";
+import { lookup } from "dns/promises";
+import net from "net";
 
 // GET /api/img?u=<encoded-url> — proxy + disk-cache external preview images.
 //
@@ -10,12 +12,14 @@ import path from "path";
 // costs a fresh DNS lookup + TLS handshake to a different host, measured at
 // 3,000-8,500ms, and they compete with our own API calls for the browser's
 // 6-connections-per-host budget. Proxying through our origin collapses all of
-// them onto one already-open connection and lets us cache on disk.
+// them onto one already-open HTTP/2 connection and lets us cache on disk.
 //
-// Security: this is NOT an open proxy. Only http/https URLs whose host is in
-// the allowlist below are fetched, redirects are followed manually and
-// re-validated against the same allowlist, and private/loopback address space
-// is rejected. Responses must be an image content-type.
+// Security model: DENY-list, not allow-list. The posts table references 156
+// distinct image hosts and grows with every link posted, so an allow-list would
+// silently break new posts. Instead we block the things that make an open proxy
+// dangerous — private/loopback/link-local address space (SSRF), non-http(s)
+// schemes, non-image responses, oversized bodies — and resolve DNS ourselves to
+// check the actual IP before connecting.
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -25,77 +29,50 @@ const CACHE_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 const MAX_CACHE_BYTES = 500 * 1024 * 1024; // 500MB hard cap (disk is at 82%)
 const MAX_BYTES = 8 * 1024 * 1024; // refuse images over 8MB
 const MAX_REDIRECTS = 3;
+const FETCH_TIMEOUT_MS = 12000;
 
-// Hosts that actually appear in url_preview.image across the posts table.
-// Suffix match, so "i.ytimg.com" also covers "foo.i.ytimg.com".
-const ALLOWED_HOSTS = [
-  "ytimg.com",
-  "ggpht.com",
-  "youtube.com",
-  "twimg.com",
-  "githubassets.com",
-  "githubusercontent.com",
-  "huggingface.co",
-  "st-note.com",
-  "note.com",
-  "backspace.fm",
-  "loom-app.com",
-  "theverge.com",
-  "techcrunch.com",
-  "cnet.com",
-  "itmedia.co.jp",
-  "impress.co.jp",
-  "watch.impress.co.jp",
-  "nikkei.com",
-  "gzn.jp",
-  "macotakara.jp",
-  "techno-edge.net",
-  "xenospectrum.com",
-  "joho-todai.com",
-  "spotifycdn.com",
-  "scdn.co",
-  "cloudfront.net",
-  "amazonaws.com",
-  "imgur.com",
-  "redd.it",
-  "reddit.com",
-  "medium.com",
-  "substack.com",
-  "substackcdn.com",
-  "qiita.com",
-  "zenn.dev",
-  "hatenablog.com",
-  "hatena.ne.jp",
-  "speakerdeck.com",
-  "slideshare.net",
-  "vimeo.com",
-  "vimeocdn.com",
-  "soundcloud.com",
-  "sndcdn.com",
-  "art19.com",
-  "simplecast.com",
-  "megaphone.fm",
-  "libsyn.com",
-  "podbean.com",
-  "anchor.fm",
-  "bunnycdn.com",
-  "wp.com",
-  "wordpress.com",
-  "gravatar.com",
-];
-
-function hostAllowed(host: string): boolean {
-  const h = host.toLowerCase();
-  // Reject anything that looks like an internal address before allowlisting.
-  if (
-    h === "localhost" ||
-    h.endsWith(".local") ||
-    /^\d+\.\d+\.\d+\.\d+$/.test(h) ||
-    h.includes(":") // IPv6 literal
-  ) {
+/** True when `ip` is in private, loopback, link-local or otherwise
+ * non-routable space. Blocks SSRF against the VPS itself and the LAN. */
+function isPrivateIp(ip: string): boolean {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split(".").map(Number);
+    if (a === 10) return true;
+    if (a === 127) return true;
+    if (a === 0) return true;
+    if (a === 169 && b === 254) return true; // link-local / cloud metadata
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+    if (a >= 224) return true; // multicast / reserved
     return false;
   }
-  return ALLOWED_HOSTS.some((a) => h === a || h.endsWith("." + a));
+  if (net.isIPv6(ip)) {
+    const v = ip.toLowerCase();
+    if (v === "::1" || v === "::") return true;
+    if (v.startsWith("fe80")) return true; // link-local
+    if (v.startsWith("fc") || v.startsWith("fd")) return true; // unique local
+    if (v.startsWith("::ffff:")) return isPrivateIp(v.slice(7)); // v4-mapped
+    return false;
+  }
+  return true; // unparseable → refuse
+}
+
+/** Resolve the host and refuse if ANY resolved address is private. */
+async function hostIsSafe(hostname: string): Promise<boolean> {
+  const h = hostname.toLowerCase();
+  if (h === "localhost" || h.endsWith(".local") || h.endsWith(".internal")) {
+    return false;
+  }
+  // A literal IP in the URL: check it directly, no DNS.
+  if (net.isIP(h)) return !isPrivateIp(h);
+
+  try {
+    const addrs = await lookup(h, { all: true });
+    if (!addrs.length) return false;
+    return addrs.every((a) => !isPrivateIp(a.address));
+  } catch {
+    return false; // unresolvable → refuse
+  }
 }
 
 async function dirSize(dir: string): Promise<number> {
@@ -132,7 +109,7 @@ export async function GET(req: NextRequest) {
   if (target.protocol !== "http:" && target.protocol !== "https:") {
     return NextResponse.json({ error: "invalid protocol" }, { status: 400 });
   }
-  if (!hostAllowed(target.hostname)) {
+  if (!(await hostIsSafe(target.hostname))) {
     return NextResponse.json({ error: "host not allowed" }, { status: 403 });
   }
 
@@ -174,7 +151,7 @@ export async function GET(req: NextRequest) {
             "Mozilla/5.0 (compatible; bsm-portal/1.0; +https://bsm.backspace.fm)",
           Accept: "image/avif,image/webp,image/*,*/*;q=0.8",
         },
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
     } catch {
       return new NextResponse(null, { status: 502 });
@@ -189,7 +166,10 @@ export async function GET(req: NextRequest) {
       } catch {
         return new NextResponse(null, { status: 502 });
       }
-      if (!hostAllowed(next.hostname)) {
+      if (next.protocol !== "http:" && next.protocol !== "https:") {
+        return NextResponse.json({ error: "invalid redirect protocol" }, { status: 403 });
+      }
+      if (!(await hostIsSafe(next.hostname))) {
         return NextResponse.json({ error: "redirect host not allowed" }, { status: 403 });
       }
       current = next;
