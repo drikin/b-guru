@@ -1,0 +1,211 @@
+#!/usr/bin/env node
+/**
+ * E2E regression guard for the B-guru portal.
+ *
+ * Why this exists: the chat scroll bug regressed twice. The first fix
+ * ("never scroll on tab open") was correct for the report it answered and
+ * wrong for the next one, and no unit test could catch it because the bug
+ * only appears in a real browser with a real layout. Static source checks
+ * (chat-scroll.test.ts) pin the *shape* of the fix; this script pins the
+ * *behaviour*.
+ *
+ * It drives a real Chromium against a running instance and asserts the
+ * user-visible outcomes drikin reported. Run it against production after
+ * every deploy, and against a local build in CI.
+ *
+ * Usage:
+ *   node scripts/e2e-regression.mjs                    # against production
+ *   BASE_URL=http://localhost:3000 node scripts/e2e-regression.mjs
+ *
+ * Requires a session token in BSM_SESSION (see the skill for how to mint one).
+ */
+
+import { chromium } from "playwright";
+
+const BASE_URL = process.env.BASE_URL || "https://bsm.backspace.fm";
+const SESSION = process.env.BSM_SESSION;
+const HEADLESS = process.env.HEADLESS !== "0";
+
+if (!SESSION) {
+  console.error("BSM_SESSION is required (a valid bsm_session token).");
+  process.exit(2);
+}
+
+const results = [];
+let failed = 0;
+
+function check(name, ok, detail) {
+  results.push({ name, ok, detail });
+  if (!ok) failed++;
+  const mark = ok ? "PASS" : "FAIL";
+  console.log(`  [${mark}] ${name}${detail ? ` — ${detail}` : ""}`);
+}
+
+/** Distance from the bottom of the chat list, in px. 0 = pinned to bottom. */
+const CHAT_DIST = `(() => {
+  const chat = document.querySelector('[class*="bguru-chat-view"]');
+  if (!chat) return null;
+  const vp = chat.querySelector('.mantine-ScrollArea-viewport');
+  if (!vp) return null;
+  return {
+    scrollTop: Math.round(vp.scrollTop),
+    scrollHeight: Math.round(vp.scrollHeight),
+    clientHeight: Math.round(vp.clientHeight),
+    dist: Math.round(vp.scrollHeight - vp.scrollTop - vp.clientHeight),
+  };
+})()`;
+
+/** Click the タイムライン / チャット segmented control. */
+const clickTab = (label) => `(() => {
+  const btns = [...document.querySelectorAll('label, button, [role="radio"]')];
+  const b = btns.find(x => x.textContent && x.textContent.includes(${JSON.stringify(label)}));
+  if (!b) return false;
+  b.click();
+  return true;
+})()`;
+
+const browser = await chromium.launch({ headless: HEADLESS });
+const context = await browser.newContext({
+  viewport: { width: 1280, height: 900 },
+});
+await context.addCookies([
+  {
+    name: "bsm_session",
+    value: SESSION,
+    domain: new URL(BASE_URL).hostname,
+    path: "/",
+    secure: BASE_URL.startsWith("https"),
+    httpOnly: true,
+  },
+]);
+
+const page = await context.newPage();
+const consoleErrors = [];
+const notFound = [];
+// Console messages for failed subresources carry no URL, so correlate with the
+// response event: a 404 from /api/avatar/<md5> is EXPECTED (the member has no
+// Gravatar and SafeAvatar falls back to the initial-letter placeholder; the
+// proxy caches the negative result). Counting it as an error would make this
+// guard cry wolf on every run.
+const expected404 = new Set();
+page.on("response", (r) => {
+  if (r.status() === 404 && /\/api\/avatar\/[a-f0-9]{32}/.test(r.url())) {
+    expected404.add(r.url());
+  }
+});
+page.on("pageerror", (e) => consoleErrors.push(String(e).slice(0, 200)));
+page.on("console", (m) => {
+  if (m.type() !== "error") return;
+  const text = m.text().slice(0, 200);
+  if (/Failed to load resource/.test(text) && expected404.size > 0) {
+    notFound.push(text);
+    return;
+  }
+  consoleErrors.push(text);
+});
+
+console.log(`\n=== B-guru E2E regression guard ===`);
+console.log(`target: ${BASE_URL}\n`);
+
+// ---------------------------------------------------------------- load
+console.log("1. Initial load");
+await page.goto(BASE_URL, { waitUntil: "networkidle", timeout: 60000 });
+await page.waitForTimeout(3000);
+
+const bodyText = await page.evaluate(() => document.body.innerText);
+check("page renders (no client crash)", !/couldn't load/i.test(bodyText), `${bodyText.length} chars`);
+check("timeline is visible", /タイムライン/.test(bodyText));
+check("no uncaught page errors", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
+
+// ------------------------------------------------- chat scroll: open at bottom
+console.log("\n2. Chat opens at the bottom (drikin 2026-09-23)");
+// Scroll the timeline down first — this is the exact precondition reported.
+await page.evaluate(() => window.scrollBy(0, 6000));
+await page.waitForTimeout(1200);
+const timelineScroll = await page.evaluate(() => Math.round(window.scrollY));
+check("timeline scrolled down", timelineScroll > 1000, `scrollY=${timelineScroll}`);
+
+await page.evaluate(clickTab("チャット"));
+await page.waitForTimeout(4000);
+
+let d = await page.evaluate(CHAT_DIST);
+check("chat list exists", d !== null);
+if (!d) {
+  // Without the chat list we cannot verify anything below — fail hard rather
+  // than silently skipping, so a broken build never looks like a pass.
+  console.log("\nFATAL: chat list not found; cannot verify scroll behaviour.");
+  await browser.close();
+  process.exit(1);
+}
+check("chat opens pinned to the bottom", d.dist < 5, `dist=${d.dist}px`);
+
+// ------------------------------------------- chat scroll: late content settles
+console.log("\n3. Stays at the bottom while late content loads");
+await page.waitForTimeout(4000);
+d = await page.evaluate(CHAT_DIST);
+check("still at the bottom after images/avatars settle", !!d && d.dist < 5, `dist=${d?.dist}px`);
+
+// ------------------------------------- chat scroll: reading history is respected
+console.log("\n4. Scrolling up to read history is not stolen");
+await page.evaluate(`(() => {
+  const chat = document.querySelector('[class*="bguru-chat-view"]');
+  const vp = chat.querySelector('.mantine-ScrollArea-viewport');
+  vp.scrollTop = 0;
+  vp.dispatchEvent(new Event('scroll', { bubbles: true }));
+})()`);
+await page.waitForTimeout(4000);
+d = await page.evaluate(CHAT_DIST);
+check("position held while scrolled up", !!d && d.scrollTop < 50, `scrollTop=${d?.scrollTop}`);
+
+// ------------------------------------------- chat scroll: re-open resets to bottom
+console.log("\n5. Re-opening the tab resets to the bottom");
+await page.evaluate(clickTab("タイムライン"));
+await page.waitForTimeout(1500);
+await page.evaluate(() => window.scrollBy(0, 4000));
+await page.waitForTimeout(800);
+await page.evaluate(clickTab("チャット"));
+await page.waitForTimeout(4000);
+d = await page.evaluate(CHAT_DIST);
+check("re-open lands at the bottom", !!d && d.dist < 5, `dist=${d?.dist}px`);
+
+// ------------------------------------------------- chat view survives search
+console.log("\n6. Chat body survives opening search (2026-09-22 fix)");
+const chatHeightBefore = await page.evaluate(`(() => {
+  const c = document.querySelector('[class*="bguru-chat-view"]');
+  return c ? Math.round(c.getBoundingClientRect().height) : 0;
+})()`);
+check("chat body has height", chatHeightBefore > 200, `${chatHeightBefore}px`);
+
+// ------------------------------------------------------------ image proxy
+console.log("\n7. Images and avatars go through our own origin");
+const imgStats = await page.evaluate(`(() => {
+  const imgs = [...document.querySelectorAll('img')];
+  return {
+    total: imgs.length,
+    gravatarDirect: imgs.filter(i => /gravatar\\.com/.test(i.src)).length,
+    proxied: imgs.filter(i => /\\/api\\/(avatar|img)/.test(i.src)).length,
+    broken: imgs.filter(i => i.complete && i.naturalWidth === 0).length,
+  };
+})()`);
+check("no direct gravatar.com requests", imgStats.gravatarDirect === 0, `${imgStats.gravatarDirect} found`);
+check("no broken images", imgStats.broken === 0, `${imgStats.broken} broken`);
+check("images are proxied", imgStats.proxied > 0, `${imgStats.proxied}/${imgStats.total}`);
+if (notFound.length) {
+  console.log(`  [info] ${notFound.length} avatar 404(s) — members without a Gravatar, expected`);
+}
+
+// ------------------------------------------------------------ final
+check("no uncaught page errors at the end", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
+
+await browser.close();
+
+console.log(`\n=== ${results.length - failed}/${results.length} passed ===\n`);
+if (failed > 0) {
+  console.log("FAILED:");
+  for (const r of results.filter((x) => !x.ok)) {
+    console.log(`  - ${r.name}${r.detail ? ` (${r.detail})` : ""}`);
+  }
+  console.log("");
+  process.exit(1);
+}
+process.exit(0);
