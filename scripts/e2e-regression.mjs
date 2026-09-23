@@ -197,16 +197,33 @@ if (!settled || settled.dist >= 5) {
   const diag = await page.evaluate(`(() => {
     const chat = document.querySelector('[class*="bguru-chat-view"]');
     const vp = chat.querySelector('.mantine-ScrollArea-viewport');
-    return {
-      scrollTop: Math.round(vp.scrollTop),
-      scrollHeight: Math.round(vp.scrollHeight),
-      clientHeight: Math.round(vp.clientHeight),
-      dist: Math.round(vp.scrollHeight - vp.scrollTop - vp.clientHeight),
-      growthPresent: !!document.getElementById('__e2e_growth'),
-      growthHeight: document.getElementById('__e2e_growth')?.offsetHeight ?? null,
-      innerIsVpChild: vp.contains(vp.firstElementChild),
-      ua: navigator.userAgent,
-    };
+    // Is a ResizeObserver even watching the content? Attach our own and see if
+    // IT fires — that separates "the app never observed" from "the browser
+    // never delivered a resize notification".
+    return new Promise((resolve) => {
+      const inner = vp.firstElementChild;
+      let mineFired = 0;
+      const ro = new ResizeObserver(() => { mineFired++; });
+      ro.observe(inner);
+      const d2 = document.createElement('div');
+      d2.style.height = '200px';
+      d2.style.flex = '0 0 auto';
+      inner.appendChild(d2);
+      setTimeout(() => {
+        ro.disconnect();
+        resolve({
+          scrollTop: Math.round(vp.scrollTop),
+          scrollHeight: Math.round(vp.scrollHeight),
+          clientHeight: Math.round(vp.clientHeight),
+          dist: Math.round(vp.scrollHeight - vp.scrollTop - vp.clientHeight),
+          growthPresent: !!document.getElementById('__e2e_growth'),
+          growthHeight: document.getElementById('__e2e_growth')?.offsetHeight ?? null,
+          innerIsVpChild: vp.contains(inner),
+          myObserverFired: mineFired,
+          ua: navigator.userAgent,
+        });
+      }, 1500);
+    });
   })()`);
   console.log("  [diag] " + JSON.stringify(diag));
 }
