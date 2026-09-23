@@ -19,12 +19,27 @@ import path from "path";
 //
 // The first fix ("never scroll on the open transition") caused the second bug.
 // These tests pin both behaviours so neither can regress alone.
+//
+// ⚠️ The open-transition pin MUST live in its own effect keyed only on
+// `chatView`. It was originally inside the auto-scroll effect, whose deps
+// include `chatMessages`; loading the messages re-ran that effect and its
+// cleanup disconnected the ResizeObserver, so late content was never followed
+// (measured: 3 creates, 1 disconnect, list 376px short of the bottom).
 
 const ROOT = path.resolve(__dirname, "../../..");
 const page = readFileSync(path.join(ROOT, "src/app/page.tsx"), "utf8");
 
-/** The auto-scroll effect body, from its declaration to the next effect. */
-function autoScrollEffect(): string {
+/** The dedicated open-transition effect (deps: [chatView]). */
+function openEffect(): string {
+  const start = page.indexOf("// The open-transition pin lives in its OWN effect");
+  expect(start).toBeGreaterThan(-1);
+  const end = page.indexOf("}, [chatView]);", start);
+  expect(end).toBeGreaterThan(start);
+  return page.slice(start, end);
+}
+
+/** The follow-on-new-message effect (deps: [chatMessages, chatView]). */
+function followEffect(): string {
   const start = page.indexOf("const chatWasOpenRef = useRef(false);");
   expect(start).toBeGreaterThan(-1);
   const end = page.indexOf("// Track whether the chat list is currently scrolled", start);
@@ -32,71 +47,71 @@ function autoScrollEffect(): string {
   return page.slice(start, end);
 }
 
-describe("chat auto-scroll on tab open", () => {
-  it("scrolls to the bottom when the chat tab opens", () => {
-    const body = autoScrollEffect();
-    // The justOpened branch must actively move the viewport, not bail out.
-    expect(body).toContain("if (justOpened) {");
-    expect(body).toContain("el.scrollTop = el.scrollHeight;");
-    // It must NOT be a bare early-return any more (that was the 2026-09-23 bug).
-    expect(body).not.toMatch(/if \(justOpened\) return;/);
+describe("chat opens at the bottom", () => {
+  it("has a dedicated effect keyed only on chatView", () => {
+    const body = openEffect();
+    // Keyed on chatView alone — NOT on chatMessages, or loading the messages
+    // tears the observer down before late content arrives.
+    expect(body).toContain("if (!chatView) return;");
+    expect(body).not.toContain("chatMessages");
   });
 
-  it("re-applies the bottom position after layout settles", () => {
-    const body = autoScrollEffect();
-    // The list grows after the 180ms mount fade, so a single scroll is not
-    // enough — the open branch needs the same rAF/timeout ladder as the follow.
-    const openBranch = body.slice(body.indexOf("if (justOpened) {"));
-    expect(openBranch).toContain("requestAnimationFrame");
-    expect(openBranch).toContain("window.setTimeout(toBottom, 60)");
-    expect(openBranch).toContain("window.setTimeout(toBottom, 240)");
+  it("scrolls to the bottom immediately and after layout settles", () => {
+    const body = openEffect();
+    expect(body).toContain("el.scrollTop = el.scrollHeight;");
+    expect(body).toContain("requestAnimationFrame(toBottom)");
+    expect(body).toContain("window.setTimeout(toBottom, 60)");
+    expect(body).toContain("window.setTimeout(toBottom, 240)");
   });
 
   it("marks the list as at-bottom so subsequent messages keep following", () => {
-    const body = autoScrollEffect();
-    const openBranch = body.slice(body.indexOf("if (justOpened) {"));
-    expect(openBranch).toContain("chatAtBottomRef.current = true;");
+    expect(openEffect()).toContain("chatAtBottomRef.current = true;");
   });
 
-  it("still refuses to steal the position of a user who scrolled up", () => {
-    const body = autoScrollEffect();
-    // The follow path (new message while already open) must stay gated.
-    expect(body).toContain("if (!chatAtBottomRef.current) return;");
-    // And the delayed callbacks must re-check before moving.
-    expect(body).toContain("if (d < 120) el.scrollTop = el.scrollHeight;");
-  });
-
-  it("keeps pinning to the bottom while late content grows the list", () => {
-    const body = autoScrollEffect();
-    const openBranch = body.slice(body.indexOf("if (justOpened) {"));
+  it("keeps pinning while late content grows the list", () => {
+    const body = openEffect();
     // Fixed 60/240ms timers are not enough: avatars/images/fonts load later and
-    // left the list 219px short of the bottom in testing.
-    expect(openBranch).toContain("new ResizeObserver");
-    expect(openBranch).toContain("chatPinningRef.current = true;");
-    expect(openBranch).toContain("ro.disconnect()");
+    // left the list hundreds of px short of the bottom in testing.
+    expect(body).toContain("new ResizeObserver");
+    expect(body).toContain("chatPinningRef.current = true;");
+    expect(body).toContain("ro.disconnect()");
     // Bounded, so a slow image cannot hold the list hostage.
-    expect(openBranch).toContain("chatPinningRef.current = false;");
-  });
-
-  it("cancels the pin when the user scrolls away", () => {
-    // The scroll listener must clear the pin, otherwise late-loading content
-    // would drag a user who scrolled up back to the bottom.
-    const start = page.indexOf("const onScroll = () => {");
-    expect(start).toBeGreaterThan(-1);
-    const body = page.slice(start, start + 500);
-    expect(body).toContain("if (!atBottom) chatPinningRef.current = false;");
+    expect(body).toContain("chatPinningRef.current = false;");
   });
 
   it("cleans up every timer and frame it schedules", () => {
-    const body = autoScrollEffect();
+    const body = openEffect();
     for (const cleanup of [
       "cancelAnimationFrame(r1)",
       "cancelAnimationFrame(r2)",
       "window.clearTimeout(t1)",
       "window.clearTimeout(t2)",
+      "window.clearTimeout(stopPin)",
+      "ro.disconnect()",
     ]) {
       expect(body).toContain(cleanup);
     }
+  });
+});
+
+describe("a new message does not steal a reader's position", () => {
+  it("gates the follow on being at the bottom", () => {
+    const body = followEffect();
+    expect(body).toContain("if (!chatAtBottomRef.current) return;");
+    // And the delayed callbacks re-check before moving.
+    expect(body).toContain("if (d < 120) el.scrollTop = el.scrollHeight;");
+  });
+
+  it("leaves the open transition to the dedicated effect", () => {
+    // The follow effect must not also try to handle the open case.
+    expect(followEffect()).toContain("if (justOpened) return;");
+  });
+
+  it("cancels the pin when the user scrolls away", () => {
+    const start = page.indexOf("const onScroll = () => {");
+    expect(start).toBeGreaterThan(-1);
+    const body = page.slice(start, start + 500);
+    expect(body).toContain("if (!atBottom) chatPinningRef.current = false;");
   });
 });
 

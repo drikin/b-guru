@@ -4941,48 +4941,58 @@ export default function Home() {
   // 219px short of the bottom in testing). Cleared as soon as the user scrolls
   // away, so reading history is never interrupted.
   const chatPinningRef = useRef(false);
+  // The open-transition pin lives in its OWN effect, keyed only on `chatView`.
+  //
+  // It used to live inside the auto-scroll effect, whose deps include
+  // `chatMessages`. Loading the messages re-ran that effect, `justOpened` was
+  // false by then, and the cleanup from the open branch disconnected the
+  // ResizeObserver — so late-arriving content was never followed (measured:
+  // 3 creates, 1 disconnect, list left 376px short of the bottom).
+  useEffect(() => {
+    if (!chatView) return;
+    const el = chatListRef.current;
+    if (!el) return;
+    chatAtBottomRef.current = true;
+    chatPinningRef.current = true;
+    const toBottom = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+    toBottom();
+    const r1 = requestAnimationFrame(toBottom);
+    const r2 = requestAnimationFrame(() => requestAnimationFrame(toBottom));
+    const t1 = window.setTimeout(toBottom, 60);
+    const t2 = window.setTimeout(toBottom, 240); // after bguru-main-fade (180ms)
+    // Keep pinning while late-arriving content grows the list. The window is
+    // generous (10s) because avatars, images and fonts land well after the
+    // 240ms settle timer. The pin is released early the moment the user
+    // scrolls away (see the scroll listener), so a long window never fights
+    // someone reading history.
+    const ro = new ResizeObserver(() => {
+      if (!chatPinningRef.current) return;
+      el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el.firstElementChild ?? el);
+    const stopPin = window.setTimeout(() => {
+      chatPinningRef.current = false;
+    }, 10000);
+    return () => {
+      cancelAnimationFrame(r1);
+      cancelAnimationFrame(r2);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.clearTimeout(stopPin);
+      ro.disconnect();
+    };
+  }, [chatView]);
+
   useEffect(() => {
     const el = chatListRef.current;
     const justOpened = chatView && !chatWasOpenRef.current;
     chatWasOpenRef.current = chatView;
     if (!chatViewRef.current || !el) return;
 
-    // (1) Opening the tab: jump to the bottom. The list was unmounted, so its
-    // scrollTop is 0 and the user would otherwise be looking at old history.
-    if (justOpened) {
-      chatAtBottomRef.current = true;
-      chatPinningRef.current = true;
-      const toBottom = () => {
-        el.scrollTop = el.scrollHeight;
-      };
-      toBottom();
-      const r1 = requestAnimationFrame(toBottom);
-      const r2 = requestAnimationFrame(() => requestAnimationFrame(toBottom));
-      const t1 = window.setTimeout(toBottom, 60);
-      const t2 = window.setTimeout(toBottom, 240); // after bguru-main-fade (180ms)
-      // Keep pinning while late-arriving content grows the list. The window is
-      // generous (10s) because avatars, images and fonts can land well after
-      // the 240ms settle timer — a 3s window was measured to expire before the
-      // last image arrived, leaving the list 384px short of the bottom. The pin
-      // is released early the moment the user scrolls away (see the scroll
-      // listener), so a long window never fights someone reading history.
-      const ro = new ResizeObserver(() => {
-        if (!chatPinningRef.current) return;
-        el.scrollTop = el.scrollHeight;
-      });
-      ro.observe(el.firstElementChild ?? el);
-      const stopPin = window.setTimeout(() => {
-        chatPinningRef.current = false;
-      }, 10000);
-      return () => {
-        cancelAnimationFrame(r1);
-        cancelAnimationFrame(r2);
-        window.clearTimeout(t1);
-        window.clearTimeout(t2);
-        window.clearTimeout(stopPin);
-        ro.disconnect();
-      };
-    }
+    // (1) Opening the tab is handled by the dedicated effect above.
+    if (justOpened) return;
 
     // (2) Only follow the bottom if we were already there before the growth.
     if (!chatAtBottomRef.current) return;
