@@ -31,6 +31,33 @@ const MAX_BYTES = 8 * 1024 * 1024; // refuse images over 8MB
 const MAX_REDIRECTS = 3;
 const FETCH_TIMEOUT_MS = 12000;
 
+// Upstream concurrency cap.
+//
+// The timeline fires ~40 /api/img requests at once. Without a cap, all 40 miss
+// the cache simultaneously and open 40 outbound TLS connections to third-party
+// hosts; measured TTFB was 2,000-3,200ms per image because the box was
+// thrashing on connection setup rather than transferring bytes. Queueing them
+// through a small pool keeps each individual image fast (the first ones return
+// in ~200ms) and the total wall time is lower than the unbounded case.
+const MAX_UPSTREAM_CONCURRENCY = 8;
+let activeUpstream = 0;
+const upstreamQueue: Array<() => void> = [];
+
+async function acquireUpstreamSlot(): Promise<void> {
+  if (activeUpstream < MAX_UPSTREAM_CONCURRENCY) {
+    activeUpstream++;
+    return;
+  }
+  await new Promise<void>((resolve) => upstreamQueue.push(resolve));
+  activeUpstream++;
+}
+
+function releaseUpstreamSlot(): void {
+  activeUpstream--;
+  const next = upstreamQueue.shift();
+  if (next) next();
+}
+
 /** True when `ip` is in private, loopback, link-local or otherwise
  * non-routable space. Blocks SSRF against the VPS itself and the LAN. */
 function isPrivateIp(ip: string): boolean {
@@ -141,103 +168,108 @@ export async function GET(req: NextRequest) {
   // ---- fetch upstream, following redirects manually so each hop is validated ----
   let current = target;
   let res: Response | null = null;
-  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    let r: Response;
-    try {
-      r = await fetch(current.toString(), {
-        redirect: "manual",
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (compatible; bsm-portal/1.0; +https://bsm.backspace.fm)",
-          Accept: "image/avif,image/webp,image/*,*/*;q=0.8",
-        },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      });
-    } catch {
-      return new NextResponse(null, { status: 502 });
-    }
-
-    if (r.status >= 300 && r.status < 400) {
-      const loc = r.headers.get("location");
-      if (!loc) return new NextResponse(null, { status: 502 });
-      let next: URL;
+  await acquireUpstreamSlot();
+  try {
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      let r: Response;
       try {
-        next = new URL(loc, current);
+        r = await fetch(current.toString(), {
+          redirect: "manual",
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (compatible; bsm-portal/1.0; +https://bsm.backspace.fm)",
+            Accept: "image/avif,image/webp,image/*,*/*;q=0.8",
+          },
+          signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        });
       } catch {
         return new NextResponse(null, { status: 502 });
       }
-      if (next.protocol !== "http:" && next.protocol !== "https:") {
-        return NextResponse.json({ error: "invalid redirect protocol" }, { status: 403 });
+
+      if (r.status >= 300 && r.status < 400) {
+        const loc = r.headers.get("location");
+        if (!loc) return new NextResponse(null, { status: 502 });
+        let next: URL;
+        try {
+          next = new URL(loc, current);
+        } catch {
+          return new NextResponse(null, { status: 502 });
+        }
+        if (next.protocol !== "http:" && next.protocol !== "https:") {
+          return NextResponse.json({ error: "invalid redirect protocol" }, { status: 403 });
+        }
+        if (!(await hostIsSafe(next.hostname))) {
+          return NextResponse.json({ error: "redirect host not allowed" }, { status: 403 });
+        }
+        current = next;
+        continue;
       }
-      if (!(await hostIsSafe(next.hostname))) {
-        return NextResponse.json({ error: "redirect host not allowed" }, { status: 403 });
-      }
-      current = next;
-      continue;
+      res = r;
+      break;
     }
-    res = r;
-    break;
-  }
 
-  if (!res || !res.ok) {
-    return new NextResponse(null, { status: 404 });
-  }
-
-  const ct = res.headers.get("content-type") || "";
-  if (!ct.startsWith("image/")) {
-    return NextResponse.json({ error: "not an image" }, { status: 415 });
-  }
-
-  const len = Number(res.headers.get("content-length") || 0);
-  if (len > MAX_BYTES) {
-    return NextResponse.json({ error: "too large" }, { status: 413 });
-  }
-
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.byteLength > MAX_BYTES) {
-    return NextResponse.json({ error: "too large" }, { status: 413 });
-  }
-
-  await mkdir(CACHE_DIR, { recursive: true });
-
-  // Evict the oldest half when over budget (best-effort, runs rarely).
-  try {
-    if ((await dirSize(CACHE_DIR)) > MAX_CACHE_BYTES) {
-      const { readdir, unlink } = await import("fs/promises");
-      const files = await readdir(CACHE_DIR);
-      const entries = await Promise.all(
-        files.map(async (f) => {
-          try {
-            return { f, mtime: (await stat(path.join(CACHE_DIR, f))).mtimeMs };
-          } catch {
-            return { f, mtime: 0 };
-          }
-        })
-      );
-      entries.sort((a, b) => a.mtime - b.mtime);
-      for (const e of entries.slice(0, Math.floor(entries.length / 2))) {
-        await unlink(path.join(CACHE_DIR, e.f)).catch(() => {});
-      }
+    if (!res || !res.ok) {
+      return new NextResponse(null, { status: 404 });
     }
-  } catch {
-    /* eviction is best-effort */
-  }
 
-  try {
-    await Promise.all([
-      writeFile(cachePath, buf),
-      writeFile(metaPath, JSON.stringify({ ct, ts: Date.now() })),
-    ]);
-  } catch {
-    /* cache write failure must not break the response */
-  }
+    const ct = res.headers.get("content-type") || "";
+    if (!ct.startsWith("image/")) {
+      return NextResponse.json({ error: "not an image" }, { status: 415 });
+    }
 
-  return new NextResponse(new Uint8Array(buf), {
-    status: 200,
-    headers: {
-      "Content-Type": ct,
-      "Cache-Control": "public, max-age=1209600, immutable",
-      "X-Img-Cache": "MISS",
-    },
-  });
+    const len = Number(res.headers.get("content-length") || 0);
+    if (len > MAX_BYTES) {
+      return NextResponse.json({ error: "too large" }, { status: 413 });
+    }
+
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.byteLength > MAX_BYTES) {
+      return NextResponse.json({ error: "too large" }, { status: 413 });
+    }
+
+    await mkdir(CACHE_DIR, { recursive: true });
+
+    // Evict the oldest half when over budget (best-effort, runs rarely).
+    try {
+      if ((await dirSize(CACHE_DIR)) > MAX_CACHE_BYTES) {
+        const { readdir, unlink } = await import("fs/promises");
+        const files = await readdir(CACHE_DIR);
+        const entries = await Promise.all(
+          files.map(async (f) => {
+            try {
+              return { f, mtime: (await stat(path.join(CACHE_DIR, f))).mtimeMs };
+            } catch {
+              return { f, mtime: 0 };
+            }
+          })
+        );
+        entries.sort((a, b) => a.mtime - b.mtime);
+        for (const e of entries.slice(0, Math.floor(entries.length / 2))) {
+          await unlink(path.join(CACHE_DIR, e.f)).catch(() => {});
+        }
+      }
+    } catch {
+      /* eviction is best-effort */
+    }
+
+    try {
+      await Promise.all([
+        writeFile(cachePath, buf),
+        writeFile(metaPath, JSON.stringify({ ct, ts: Date.now() })),
+      ]);
+    } catch {
+      /* cache write failure must not break the response */
+    }
+
+    return new NextResponse(new Uint8Array(buf), {
+      status: 200,
+      headers: {
+        "Content-Type": ct,
+        "Cache-Control": "public, max-age=1209600, immutable",
+        "X-Img-Cache": "MISS",
+      },
+    });
+  } finally {
+    releaseUpstreamSlot();
+  }
 }
