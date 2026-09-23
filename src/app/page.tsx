@@ -7585,6 +7585,18 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // groupFeed() does a map + filter + sort over the whole feed. It used to run
+  // twice per render (once for composerGroups and again for the TimelineFeed
+  // `groups` prop), so every keystroke in the chat composer re-sorted 50 posts
+  // twice. Compute it once and share the result.
+  //
+  // ⚠️ This MUST stay above the auth gates below. Hooks placed after an early
+  // `return` change the hook count between the logged-out and logged-in renders
+  // and crash with React error #310 ("Rendered more hooks than during the
+  // previous render"). Every new hook in this file belongs in the unconditional
+  // region above `if (checking)`.
+  const feedGroups = useMemo(() => groupFeed(feedPosts), [feedPosts]);
+
   // ---------- Auth gates ----------
   if (checking) {
     return (
@@ -7642,11 +7654,6 @@ export default function Home() {
   // First group's date key on the home feed — used to render the topmost date
   // separator ABOVE the "+" composer (order: 日付 → プラス), and to tell
   // TimelineFeed to skip its own duplicate of that first separator.
-  // groupFeed() does a map + filter + sort over the whole feed. It used to run
-  // twice per render (here and again for the TimelineFeed `groups` prop), so
-  // every keystroke in the chat composer re-sorted 50 posts twice. Compute it
-  // once and share the result.
-  const feedGroups = useMemo(() => groupFeed(feedPosts), [feedPosts]);
   const composerGroups = activeNav === "feed" ? feedGroups : [];
   const topDateKey = composerGroups.length > 0 ? composerGroups[0].dateKey : null;
 
