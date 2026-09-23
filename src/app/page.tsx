@@ -1672,6 +1672,13 @@ function PostCard({
                 src={proxiedImage(post.urlPreview.image)}
                 radius="md"
                 mb="xs"
+                // Off-screen previews must not be fetched. The timeline renders
+                // 40+ url-preview images; without lazy loading all 40 fire at
+                // once, and even through the /api/img proxy the server queues
+                // them (measured TTFB climbing 945ms → 2,269ms across the
+                // batch). Lazy cuts concurrent fetches to the 2-4 visible.
+                loading="lazy"
+                decoding="async"
                 style={{
                   width: "100%",
                   maxWidth: post.urlPreview.videoId ? 480 : "none",
@@ -1898,6 +1905,10 @@ function PinnedCard({
           src={previewImg}
           alt=""
           radius={6}
+          // Sidebar cards sit below the fold on most viewports; without lazy
+          // they add to the initial burst of image fetches.
+          loading="lazy"
+          decoding="async"
           style={{
             width: "100%",
             height: 140,
@@ -1989,6 +2000,10 @@ function HotTopicCard({
           src={previewImg}
           alt=""
           radius={6}
+          // Sidebar cards sit below the fold on most viewports; without lazy
+          // they add to the initial burst of image fetches.
+          loading="lazy"
+          decoding="async"
           style={{
             width: "100%",
             height: 140,
@@ -2842,6 +2857,8 @@ function InlineReplyBox({
                 height={56}
                 fit="contain"
                 radius="md"
+                loading="lazy"
+                decoding="async"
                 style={{ cursor: "pointer" }}
                 onClick={() => onPreview(src, images)}
               />
@@ -3595,6 +3612,8 @@ function ComposerPaper({
                   height={72}
                   fit="contain"
                   radius="md"
+                  loading="lazy"
+                  decoding="async"
                   style={{ cursor: "pointer" }}
                   onClick={() => onPreviewImage(src, images)}
                 />
@@ -9240,6 +9259,8 @@ export default function Home() {
                                     height={56}
                                     fit="contain"
                                     radius="md"
+                                    loading="lazy"
+                                    decoding="async"
                                     style={{ cursor: "pointer" }}
                                     onClick={() => openPreview(src, threadReplyImages)}
                                   />
@@ -10116,6 +10137,8 @@ export default function Home() {
                       height={60}
                       fit="contain"
                       radius="md"
+                      loading="lazy"
+                      decoding="async"
                       onClick={() => openPreview(src, editImages)}
                       style={{ cursor: "pointer" }}
                     />
