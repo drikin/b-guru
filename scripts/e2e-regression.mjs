@@ -197,11 +197,13 @@ if (!settled || settled.dist >= 5) {
   const diag = await page.evaluate(`(() => {
     const chat = document.querySelector('[class*="bguru-chat-view"]');
     const vp = chat.querySelector('.mantine-ScrollArea-viewport');
-    // Is a ResizeObserver even watching the content? Attach our own and see if
-    // IT fires — that separates "the app never observed" from "the browser
-    // never delivered a resize notification".
+    const inner = vp.firstElementChild;
+    // Count how many ResizeObservers the app created and whether any of them
+    // is still connected. Patch the constructor BEFORE the app runs is not
+    // possible here, so instead: does a fresh observer on the same target fire?
+    // (yes => the browser is fine, so the app's observer must be gone or
+    //  watching something else)
     return new Promise((resolve) => {
-      const inner = vp.firstElementChild;
       let mineFired = 0;
       const ro = new ResizeObserver(() => { mineFired++; });
       ro.observe(inner);
@@ -219,7 +221,11 @@ if (!settled || settled.dist >= 5) {
           growthPresent: !!document.getElementById('__e2e_growth'),
           growthHeight: document.getElementById('__e2e_growth')?.offsetHeight ?? null,
           innerIsVpChild: vp.contains(inner),
+          innerClass: inner?.className ?? null,
           myObserverFired: mineFired,
+          // Is the app's pin still armed? If the pin was released, the observer
+          // firing would do nothing — that is a different bug from "not firing".
+          pinArmed: window.__e2ePinProbe ? window.__e2ePinProbe() : "no-probe",
           ua: navigator.userAgent,
         });
       }, 1500);

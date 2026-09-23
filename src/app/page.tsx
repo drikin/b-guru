@@ -4944,6 +4944,16 @@ export default function Home() {
   // Last observed scrollTop, used to tell a user scroll apart from a
   // growth-induced one (see the scroll listener below).
   const chatLastScrollTopRef = useRef(0);
+  // Test hook: lets the E2E guard read the pin state from the page. Without it
+  // a failing check cannot distinguish "the observer never fired" from "the
+  // observer fired but the pin had already been released".
+  useEffect(() => {
+    (window as unknown as Record<string, unknown>).__e2ePinProbe = () => ({
+      pinning: chatPinningRef.current,
+      atBottom: chatAtBottomRef.current,
+      lastScrollTop: chatLastScrollTopRef.current,
+    });
+  }, []);
   // The open-transition pin lives in its OWN effect, keyed only on `chatView`.
   //
   // It used to live inside the auto-scroll effect, whose deps include
