@@ -5018,10 +5018,7 @@ export default function Home() {
       const target = el.firstElementChild;
       if (!target || target === observed) return;
       ro?.disconnect();
-      ro = new ResizeObserver(() => {
-        if (!chatPinningRef.current) return;
-        el.scrollTop = el.scrollHeight;
-      });
+      ro = new ResizeObserver(() => {});
       ro.observe(target);
       observed = target;
     };
