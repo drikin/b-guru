@@ -8868,24 +8868,26 @@ export default function Home() {
                   data-cx="navtabs"
                   style={{
                     position: "sticky",
-                    // Pin the tab bar at its RESTING offset (80px), not at the
-                    // header height (56px).
+                    // Pin the bar directly under the header (56px), with no gap.
                     //
-                    // With `top: 56px` the bar sat at 80px while the page was at
-                    // scrollY=0 (its natural place, pushed down by the 12px
-                    // padding above it) but snapped up to 56px the moment the
-                    // user scrolled — a 24px jump. Switching tabs then bounced
-                    // the bar between 80 and 56 and nudged the timeline with it
-                    // (drikin 2026-09-23: 「タイムラインがスクロールすると、タブの
-                    // 位置が若干ずれる…2枚目のスクリーンショットの位置にタブを
-                    // 固定してほしい」).
+                    // The bar used to rest at 80px (pushed down by the 12px
+                    // padding above it) and snap to 56px on the first scroll — a
+                    // 24px jump that made every tab switch look jittery (drikin
+                    // 2026-09-23). Pinning it at 80px removed the jump but left a
+                    // 24px strip above the bar where scrolled content showed
+                    // through, which looks broken (drikin: 「スクロールした
+                    // コンテンツがタブの裏側に見えて変」).
                     //
-                    // Sticking at 80px means the bar is already at its pinned
-                    // position before any scroll, so it never moves at all.
-                    top: "calc(var(--app-shell-header-height, 56px) + 24px)",
+                    // 56px is the right anchor: the bar sits flush against the
+                    // header, so there is no gap for content to peek through, and
+                    // it is already at that position before any scroll — so it
+                    // still never moves.
+                    top: "var(--app-shell-header-height, 56px)",
                     zIndex: 60,
                     background: "var(--bg-primary)",
-                    paddingTop: 12,
+                    // No top padding: it would push the bar down and reopen the
+                    // gap. The breathing room comes from the content below.
+                    paddingTop: 0,
                     paddingBottom: 4,
                     display: "flex",
                     justifyContent: "center",

@@ -360,6 +360,30 @@ check(
   allSame,
   `at top=${tabAtTop?.top}px, while scrolling=${tops.join("/")}px`
 );
+
+// 6e. The bar must sit FLUSH against the header. Pinning it lower (80px) left a
+// 24px strip above it where scrolled content showed through, which looks broken
+// (drikin: 「スクロールしたコンテンツがタブの裏側に見えて変」).
+console.log("\n6e. Tab bar sits flush under the header (no gap)");
+await page.evaluate(() => window.scrollTo(0, 3000));
+await page.waitForTimeout(600);
+const gapInfo = await page.evaluate(`(() => {
+  const t = document.querySelector('[data-cx="navtabs"]');
+  const header = document.querySelector('[data-cx="header"]') || document.querySelector('header');
+  if (!t) return null;
+  const tr = t.getBoundingClientRect();
+  const hr = header ? header.getBoundingClientRect() : null;
+  return {
+    tabTop: Math.round(tr.top),
+    headerBottom: hr ? Math.round(hr.bottom) : null,
+    gap: hr ? Math.round(tr.top - hr.bottom) : null,
+  };
+})()`);
+check(
+  "no gap between the header and the tab bar",
+  !!gapInfo && gapInfo.gap !== null && Math.abs(gapInfo.gap) <= 1,
+  gapInfo ? `header bottom=${gapInfo.headerBottom}px tab top=${gapInfo.tabTop}px gap=${gapInfo.gap}px` : "not found"
+);
 await page.evaluate(() => window.scrollTo(0, 0));
 await page.waitForTimeout(500);
 
