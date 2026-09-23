@@ -367,15 +367,18 @@ await page.waitForTimeout(500);
 console.log("\n7. Images and avatars go through our own origin");
 const imgStats = await page.evaluate(`(() => {
   const imgs = [...document.querySelectorAll('img')];
+  const broken = imgs.filter(i => i.complete && i.naturalWidth === 0);
   return {
     total: imgs.length,
     gravatarDirect: imgs.filter(i => /gravatar\\.com/.test(i.src)).length,
     proxied: imgs.filter(i => /\\/api\\/(avatar|img)/.test(i.src)).length,
-    broken: imgs.filter(i => i.complete && i.naturalWidth === 0).length,
+    broken: broken.length,
+    brokenSrcs: broken.slice(0, 12).map(i => (i.currentSrc || i.src || "").slice(0, 130)),
   };
 })()`);
 check("no direct gravatar.com requests", imgStats.gravatarDirect === 0, `${imgStats.gravatarDirect} found`);
 check("no broken images", imgStats.broken === 0, `${imgStats.broken} broken`);
+if (imgStats.broken > 0) console.log("  [diag] broken srcs: " + JSON.stringify(imgStats.brokenSrcs, null, 1));
 check("images are proxied", imgStats.proxied > 0, `${imgStats.proxied}/${imgStats.total}`);
 if (notFound.length) {
   console.log(`  [info] ${notFound.length} avatar 404(s) — members without a Gravatar, expected`);
