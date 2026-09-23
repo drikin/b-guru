@@ -33,3 +33,41 @@ jobs:
           GHOST_ADMIN_API_URL: "https://backspace.fm"
           GHOST_ADMIN_API_KEY: "dummy:key"
           DATABASE_URL: "postgres://dummy:dummy@localhost:5432/dummy"
+
+  # The unit tests above pin the *shape* of the fixes; this job pins the
+  # *behaviour* against the real production site. It exists because the chat
+  # scroll bug regressed twice: a change that passed unit tests and built
+  # cleanly still broke the real UI, and only a real browser caught it.
+  #
+  # It runs against production rather than a local server because the bugs it
+  # guards are layout-dependent and need real data (avatars, images, a long
+  # message list). A local build with an empty database would pass vacuously.
+  #
+  # Requires the E2E_SESSION repo secret: a valid bsm_session token. Rotate it
+  # by minting a new row in the sessions table and updating the secret.
+  e2e-regression:
+    name: E2E Regression Guard
+    runs-on: ubuntu-latest
+    # Only on main: a PR from a fork cannot read the secret, and running the
+    # guard against production on every PR would be noisy.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E regression guard
+        run: npm run e2e
+        env:
+          BSM_SESSION: ${{ secrets.E2E_SESSION }}
+          BASE_URL: "https://bsm.backspace.fm"

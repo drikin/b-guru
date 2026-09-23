@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "node scripts/e2e-regression.mjs",
+    "verify": "npm run test && npm run build && npm run e2e"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
