@@ -391,18 +391,44 @@ await page.waitForTimeout(500);
 console.log("\n7. Images and avatars go through our own origin");
 const imgStats = await page.evaluate(`(() => {
   const imgs = [...document.querySelectorAll('img')];
-  const broken = imgs.filter(i => i.complete && i.naturalWidth === 0);
+  // An <img> whose src 404s is NOT necessarily broken: SafeAvatar swaps in an
+  // initial-letter fallback on error, and members without a Gravatar are
+  // expected to 404 (the run logs them as info). Only count images that are
+  // still showing nothing — i.e. the element is visible but has no pixels and
+  // no fallback replaced it.
+  const isDead = (i) => {
+    if (!i.complete || i.naturalWidth !== 0) return false;
+    const r = i.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false; // hidden, not broken
+    // A fallback avatar renders as a sibling/overlay; if the element is still
+    // laid out with a real size and no pixels, it is genuinely broken.
+    return true;
+  };
+  const dead = imgs.filter(isDead);
   return {
     total: imgs.length,
     gravatarDirect: imgs.filter(i => /gravatar\\.com/.test(i.src)).length,
     proxied: imgs.filter(i => /\\/api\\/(avatar|img)/.test(i.src)).length,
-    broken: broken.length,
-    brokenSrcs: broken.slice(0, 12).map(i => (i.currentSrc || i.src || "").slice(0, 130)),
+    broken: dead.length,
+    brokenSrcs: dead.slice(0, 12).map(i => (i.currentSrc || i.src || "").slice(0, 130)),
+    // What replaced the image, if anything? SafeAvatar renders an initial-letter
+    // fallback on error, so a 404 avatar is expected and not "broken".
+    brokenContext: dead.slice(0, 3).map(i => {
+      const r = i.getBoundingClientRect();
+      return {
+        w: Math.round(r.width), h: Math.round(r.height),
+        display: getComputedStyle(i).display,
+        parent: i.parentElement ? i.parentElement.outerHTML.slice(0, 200) : null,
+      };
+    }),
   };
 })()`);
 check("no direct gravatar.com requests", imgStats.gravatarDirect === 0, `${imgStats.gravatarDirect} found`);
 check("no broken images", imgStats.broken === 0, `${imgStats.broken} broken`);
-if (imgStats.broken > 0) console.log("  [diag] broken srcs: " + JSON.stringify(imgStats.brokenSrcs, null, 1));
+if (imgStats.broken > 0) {
+  console.log("  [diag] broken srcs: " + JSON.stringify(imgStats.brokenSrcs, null, 1));
+  console.log("  [diag] broken context: " + JSON.stringify(imgStats.brokenContext, null, 1));
+}
 check("images are proxied", imgStats.proxied > 0, `${imgStats.proxied}/${imgStats.total}`);
 if (notFound.length) {
   console.log(`  [info] ${notFound.length} avatar 404(s) — members without a Gravatar, expected`);
