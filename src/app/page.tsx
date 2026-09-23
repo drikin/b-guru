@@ -8868,7 +8868,21 @@ export default function Home() {
                   data-cx="navtabs"
                   style={{
                     position: "sticky",
-                    top: "var(--app-shell-header-height, 56px)",
+                    // Pin the tab bar at its RESTING offset (80px), not at the
+                    // header height (56px).
+                    //
+                    // With `top: 56px` the bar sat at 80px while the page was at
+                    // scrollY=0 (its natural place, pushed down by the 12px
+                    // padding above it) but snapped up to 56px the moment the
+                    // user scrolled — a 24px jump. Switching tabs then bounced
+                    // the bar between 80 and 56 and nudged the timeline with it
+                    // (drikin 2026-09-23: 「タイムラインがスクロールすると、タブの
+                    // 位置が若干ずれる…2枚目のスクリーンショットの位置にタブを
+                    // 固定してほしい」).
+                    //
+                    // Sticking at 80px means the bar is already at its pinned
+                    // position before any scroll, so it never moves at all.
+                    top: "calc(var(--app-shell-header-height, 56px) + 24px)",
                     zIndex: 60,
                     background: "var(--bg-primary)",
                     paddingTop: 12,

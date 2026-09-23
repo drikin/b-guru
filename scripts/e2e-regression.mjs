@@ -337,6 +337,32 @@ if (tabFromScrolled) {
   );
 }
 
+// 6d. The bar must not move WHILE the timeline scrolls (drikin 2026-09-23:
+// 「タイムラインがスクロールすると、タブの位置が若干ずれる」). With the sticky
+// offset set to the header height the bar rested at 80px but snapped to 56px on
+// the first scroll — a 24px jump that made every tab switch look jittery.
+console.log("\n6d. Tab bar is pinned while the timeline scrolls");
+await page.evaluate(clickTab("タイムライン"));
+await page.waitForTimeout(2000);
+await page.evaluate(() => window.scrollTo(0, 0));
+await page.waitForTimeout(800);
+const tabAtTop = await tabPos();
+const tabWhileScrolling = [];
+for (const y of [50, 200, 800, 2500, 6000]) {
+  await page.evaluate((v) => window.scrollTo(0, v), y);
+  await page.waitForTimeout(350);
+  tabWhileScrolling.push(await tabPos());
+}
+const tops = tabWhileScrolling.map((t) => t?.top);
+const allSame = tops.every((t) => t === tabAtTop?.top);
+check(
+  "tab bar does not move while scrolling the timeline",
+  allSame,
+  `at top=${tabAtTop?.top}px, while scrolling=${tops.join("/")}px`
+);
+await page.evaluate(() => window.scrollTo(0, 0));
+await page.waitForTimeout(500);
+
 // ------------------------------------------------------------ image proxy
 console.log("\n7. Images and avatars go through our own origin");
 const imgStats = await page.evaluate(`(() => {
