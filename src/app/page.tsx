@@ -8880,7 +8880,20 @@ export default function Home() {
         }}
       >
         <PullToRefresh
-          active={!threadPost && isCenterView && !editingPost && !deleteTarget && !linkModal.open}
+          // Chat view is excluded: the chat list scrolls internally while the
+          // window is frozen at scrollY=0 (see the freeze effect above), so the
+          // gesture's `window.scrollY > 0` guard never trips and every attempt
+          // to scroll the chat was read as a pull — drikin 2026-09-23: "チャットに
+          // 切り替えたときにスクロールしようとすると引っ張りリロードになっちゃう".
+          // There is nothing to refresh in the chat view anyway.
+          active={
+            !threadPost &&
+            isCenterView &&
+            !chatView &&
+            !editingPost &&
+            !deleteTarget &&
+            !linkModal.open
+          }
           onRefresh={pullRefresh}
         />
         <div
@@ -8983,6 +8996,15 @@ export default function Home() {
                     display: "flex",
                     flexDirection: "column",
                     overflow: "hidden",
+                    // Kill the browser's native pull-to-refresh inside the chat.
+                    // The window is frozen at scrollY=0 here, so a downward drag
+                    // at the top of the message list is exactly the gesture
+                    // Android Chrome reads as "reload the page" — drikin
+                    // 2026-09-23. `contain` stops the overscroll from chaining to
+                    // the document, so the drag scrolls the list (or does
+                    // nothing) instead of reloading. The iOS custom gesture is
+                    // disabled separately via PullToRefresh's `active` prop.
+                    overscrollBehavior: "contain",
                   }}
                 >
                   {/* Message list */}

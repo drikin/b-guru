@@ -387,6 +387,53 @@ check(
 await page.evaluate(() => window.scrollTo(0, 0));
 await page.waitForTimeout(500);
 
+// 6f. Pull-to-refresh must be OFF in the chat view (drikin 2026-09-23:
+// 「チャットに切り替えたときにスクロールしようとすると引っ張りリロードになっちゃう」).
+// The window is frozen at scrollY=0 while the chat is open, so the gesture's
+// `window.scrollY > 0` guard never trips and every scroll attempt was read as a
+// pull. Two things must hold: the iOS custom gesture is not armed, and the
+// native overscroll is contained so Android Chrome does not reload either.
+console.log("\n6f. Pull-to-refresh is disabled in the chat view");
+await page.evaluate(() => window.scrollTo(0, 0));
+await page.waitForTimeout(300);
+// Open the chat tab.
+const chatTab = await page.$('[data-cx="navtabs"] button:nth-of-type(2), [data-cx="navtabs"] [role="radio"]:nth-of-type(2)');
+if (chatTab) {
+  await chatTab.click();
+  await page.waitForTimeout(1500);
+}
+const ptrInfo = await page.evaluate(`(() => {
+  const view = document.querySelector('.bguru-chat-view');
+  if (!view) return { found: false };
+  const cs = getComputedStyle(view);
+  const vp = view.querySelector('[data-radix-scroll-area-viewport], .mantine-ScrollArea-viewport');
+  const vpCs = vp ? getComputedStyle(vp) : null;
+  return {
+    found: true,
+    viewOverscroll: cs.overscrollBehaviorY || cs.overscrollBehavior,
+    viewportOverscroll: vpCs ? (vpCs.overscrollBehaviorY || vpCs.overscrollBehavior) : null,
+    hasViewport: !!vp,
+  };
+})()`);
+check(
+  "chat view contains overscroll (native pull-to-refresh off)",
+  ptrInfo.found && ptrInfo.viewOverscroll === "contain",
+  ptrInfo.found ? `overscroll-behavior=${ptrInfo.viewOverscroll}` : "chat view not found"
+);
+check(
+  "chat scroll viewport contains overscroll",
+  ptrInfo.found && ptrInfo.hasViewport && ptrInfo.viewportOverscroll === "contain",
+  ptrInfo.found
+    ? `viewport=${ptrInfo.viewportOverscroll} (found=${ptrInfo.hasViewport})`
+    : "chat view not found"
+);
+// Back to the timeline so the remaining checks run on the feed.
+const tlTab = await page.$('[data-cx="navtabs"] button:nth-of-type(1), [data-cx="navtabs"] [role="radio"]:nth-of-type(1)');
+if (tlTab) {
+  await tlTab.click();
+  await page.waitForTimeout(1200);
+}
+
 // ------------------------------------------------------------ image proxy
 console.log("\n7. Images and avatars go through our own origin");
 const imgStats = await page.evaluate(`(() => {
