@@ -5083,34 +5083,20 @@ export default function Home() {
     // Position the chat viewport BELOW the header AND the sticky タイムライン/
     // チャット tabs, WITHOUT moving the tabs themselves.
     //
-    // The tabs are `position: sticky; top: var(--app-shell-header-height)`. The
-    // previous code scrolled the window to `top - headerH - tabsH`, which moved
-    // the sticky tabs up with the page: measured tab top was 80px on the
-    // timeline but 56px in chat, so switching tabs visibly shifted the tab bar
-    // and nudged the timeline (drikin report 2026-09-23: 「タイムラインとチャット
-    // のタブの位置がずれてて、切り替えるときにメインのタイムラインが微妙に上下に
-    // スクロールする」).
+    // The tabs are `position: sticky; top: var(--app-shell-header-height)`. Any
+    // window scroll moves them: measured tab top was 80px at scrollY=0 (their
+    // natural resting place) but 56px once scrolled, so switching tabs visibly
+    // shifted the tab bar and nudged the timeline (drikin report 2026-09-23:
+    // 「タイムラインとチャットのタブの位置がずれてて、切り替えるときにメインの
+    // タイムラインが微妙に上下にスクロールする」).
     //
-    // Instead, scroll so the tabs land exactly at their sticky offset. That is
-    // the position they would occupy anyway, so the bar does not move, and the
-    // chat viewport (which sits below the tabs in normal flow) ends up right
-    // under them.
-    const headerH =
-      parseFloat(
-        getComputedStyle(document.documentElement).getPropertyValue(
-          "--app-shell-header-height"
-        )
-      ) || 56;
-    const tabsEl = document.querySelector<HTMLElement>('[data-cx="navtabs"]');
-    if (tabsEl) {
-      // Where the tabs currently sit in the document, independent of scroll.
-      const tabsDocTop = tabsEl.getBoundingClientRect().top + window.scrollY;
-      // Scroll so the tabs rest at their sticky offset (headerH). Clamped at 0
-      // so a short page does not scroll past the top.
-      window.scrollTo(0, Math.max(0, tabsDocTop - headerH));
-    } else {
-      window.scrollTo(0, Math.max(0, top - headerH));
-    }
+    // The fix is to NOT scroll at all. The chat viewport already sits below the
+    // tabs in normal flow, so at scrollY=0 it is exactly where it belongs and
+    // the tab bar stays put. Scrolling is only needed when the page is already
+    // scrolled (e.g. the user was deep in the timeline) — and even then we
+    // scroll to 0, which is the one position where the tabs are guaranteed to
+    // be at their natural offset.
+    window.scrollTo(0, 0);
     let poll: number | null = null;
     const startedAt = Date.now();
     // Restore the pre-chat timeline scroll. The previous implementation fired
