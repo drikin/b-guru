@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, memo, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   AppShell,
   NavLink,
@@ -4606,6 +4606,25 @@ export default function Home() {
     loadPollWidget();
   }, [loadPollWidget]);
 
+  // Stable handles to the panel loaders for the SSE effect. The loaders are
+  // useCallback([auth]) — their identity changes when auth resolves — so listing
+  // them in the SSE effect's deps tore down and recreated the EventSource on
+  // every auth change, and each reconnect re-fired onopen (9 panel reloads).
+  // Reading them through a ref keeps the EventSource alive for the whole page
+  // lifetime, exactly like the existing activeNavRef/threadPostRef pattern.
+  const loadersRef = useRef<{
+    loadPinned: () => void;
+    loadHot: () => void;
+    loadTrends: () => void;
+    loadClubCounts: () => void;
+    loadClubLeaders: () => void;
+    loadClubCatalog: () => void;
+    loadOnline: () => void;
+    loadPollWidget: () => void;
+    loadChat: (open?: boolean) => void;
+    silentRefreshFeed: () => void;
+  } | null>(null);
+
   // ---- Realtime chat (single global room) — bottom-right bubble widget ----
   // Opens a mini chat window where online members chat live over SSE. This
   // replaces the old "wave" (👋) feature: the bubble sits where the wave
@@ -5358,6 +5377,22 @@ export default function Home() {
     }, 150);
   }, []);
 
+  // Populate the stable loader handles. This must sit after every loader's
+  // definition (silentRefreshFeed is the last one) and before the SSE effect
+  // that reads them, otherwise the assignment hits the TDZ.
+  loadersRef.current = {
+    loadPinned,
+    loadHot,
+    loadTrends,
+    loadClubCounts,
+    loadClubLeaders,
+    loadClubCatalog,
+    loadOnline,
+    loadPollWidget,
+    loadChat,
+    silentRefreshFeed,
+  };
+
   // Open exactly ONE stream for the lifetime of the page (while logged in). The
   // handler ignores events while a thread is open or during an initial load;
   // the client filter is read from refs so an incoming event never tears us down.
@@ -5490,17 +5525,29 @@ export default function Home() {
     es.addEventListener("chat", onChat);
     es.addEventListener("poll", onPoll);
     es.addEventListener("club", onClub);
+    // onopen fires on the FIRST connection too, not just on reconnects. The auth
+    // effect already loads all of these panels on mount, so reloading them here
+    // made every page load fire the same ~9 APIs twice (measured: 16 unique
+    // paths / 31 calls, two identical waves at 1313ms and 2177ms). Only a
+    // genuine reconnect should re-sync; the first open is a no-op.
+    let firstOpen = true;
     es.onopen = () => {
-      loadPinned();
-      loadHot();
-      loadTrends();
-      loadClubCounts();
-      loadClubLeaders();
-      loadClubCatalog();
-      loadOnline();
-      loadPollWidget();
-      loadChat(chatViewRef.current); // recover chat missed during a disconnect
-      if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) silentRefreshFeed();
+      if (firstOpen) {
+        firstOpen = false;
+        return;
+      }
+      const L = loadersRef.current;
+      if (!L) return;
+      L.loadPinned();
+      L.loadHot();
+      L.loadTrends();
+      L.loadClubCounts();
+      L.loadClubLeaders();
+      L.loadClubCatalog();
+      L.loadOnline();
+      L.loadPollWidget();
+      L.loadChat(chatViewRef.current); // recover chat missed during a disconnect
+      if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) L.silentRefreshFeed();
     };
     es.onerror = () => {
       // EventSource auto-reconnects. When it does, onopen fires and we
@@ -5510,7 +5557,10 @@ export default function Home() {
     return () => {
       es.close();
     };
-  }, [silentRefreshFeed, loadPinned, loadHot, loadOnline, loadChat, loadPollWidget]);
+    // Intentionally empty: the EventSource must live for the whole page. Every
+    // loader is read through loadersRef, so no dependency can tear it down.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Posting never auto-scrolls or auto-highlights the timeline (disabled per
   // user request, 2026-08-17): a new reply is simply added to the feed in
@@ -7592,7 +7642,12 @@ export default function Home() {
   // First group's date key on the home feed — used to render the topmost date
   // separator ABOVE the "+" composer (order: 日付 → プラス), and to tell
   // TimelineFeed to skip its own duplicate of that first separator.
-  const composerGroups = activeNav === "feed" ? groupFeed(feedPosts) : [];
+  // groupFeed() does a map + filter + sort over the whole feed. It used to run
+  // twice per render (here and again for the TimelineFeed `groups` prop), so
+  // every keystroke in the chat composer re-sorted 50 posts twice. Compute it
+  // once and share the result.
+  const feedGroups = useMemo(() => groupFeed(feedPosts), [feedPosts]);
+  const composerGroups = activeNav === "feed" ? feedGroups : [];
   const topDateKey = composerGroups.length > 0 ? composerGroups[0].dateKey : null;
 
 
@@ -9324,7 +9379,7 @@ export default function Home() {
               ) : (
                 <>
                 <TimelineFeed
-                  groups={groupFeed(feedPosts)}
+                  groups={feedGroups}
                   skipFirstDate={
                     activeNav === "feed" && !threadPost && !searchActive && !!topDateKey
                   }

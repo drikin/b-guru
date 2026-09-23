@@ -1,15 +1,13 @@
 import type { Metadata, Viewport } from "next";
-import { Noto_Sans_JP } from "next/font/google";
 import { MantineProvider, createTheme } from "@mantine/core";
 import "@mantine/core/styles.css";
 import "./globals.css";
 
-// Japanese-optimized font (self-hosted subset via next/font)
-const notoSansJp = Noto_Sans_JP({
-  variable: "--font-noto-sans-jp",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
+// NOTE: next/font/google Noto_Sans_JP was removed deliberately. For Japanese it
+// emits 124 unicode-range subsets (496 @font-face rules, 5.3MB of woff2) and the
+// browser fetched 60+ of them on first load at 900-2,500ms each. The theme now
+// prefers the platform's Japanese system font (Hiragino Sans on macOS/iOS,
+// Yu Gothic UI on Windows), which renders with zero font requests.
 
 export const metadata: Metadata = {
   title: "B-guru | backspace.fm",
@@ -43,11 +41,17 @@ export const viewport: Viewport = {
 const theme = createTheme({
   primaryColor: "green",
   primaryShade: { light: 6, dark: 4 },
+  // System fonts first. Noto Sans JP is split into 124 unicode-range subsets
+  // (496 @font-face rules) for Japanese, and the browser fetched 60+ of them on
+  // first load at 900-2,500ms each — the single largest contributor to the
+  // initial load. macOS/iOS ship Hiragino Sans, Windows ships Yu Gothic UI, so
+  // Japanese text renders natively with zero font requests. Noto Sans JP stays
+  // as the last resort for platforms without a Japanese system font.
   fontFamily:
-    "var(--font-noto-sans-jp), -apple-system, BlinkMacSystemFont, 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif",
+    "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', Meiryo, 'Noto Sans JP', sans-serif",
   headings: {
     fontFamily:
-      "var(--font-noto-sans-jp), -apple-system, BlinkMacSystemFont, sans-serif",
+      "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', Meiryo, 'Noto Sans JP', sans-serif",
   },
   defaultRadius: "md",
   colors: {
@@ -72,7 +76,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="ja" className={`${notoSansJp.variable} h-full antialiased`} suppressHydrationWarning>
+    <html lang="ja" className="h-full antialiased" suppressHydrationWarning>
       <body className="min-h-full flex flex-col">
         <MantineProvider theme={theme} defaultColorScheme="auto">
           {children}
