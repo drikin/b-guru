@@ -5055,6 +5055,11 @@ export default function Home() {
   useEffect(() => {
     const el = chatListRef.current;
     if (!el) return;
+    // Seed the last-known position from the element itself. Starting at 0 made
+    // the very first scroll event look like a 456px jump and released the pin
+    // immediately (measured on CI: pinning went true -> false with scrollTop
+    // unchanged at 456).
+    chatLastScrollTopRef.current = el.scrollTop;
     const onScroll = () => {
       const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
       chatAtBottomRef.current = atBottom;
@@ -5065,19 +5070,10 @@ export default function Home() {
       // list also fires a scroll event (the browser clamps scrollTop), and
       // treating that as "the user scrolled away" cancelled the pin before the
       // ResizeObserver could follow the growth — the list then sat ~400px short
-      // of the bottom. `chatPinningRef` is only ever set by the open transition
-      // and cleared here, so a growth-induced scroll must leave it alone.
-      if (!atBottom && !chatPinningRef.current) return;
-      if (!atBottom && chatPinningRef.current) {
-        // Distinguish a user scroll from a growth-induced one: a user scroll
-        // moves scrollTop, growth leaves it where it was. Compare against the
-        // last position we observed.
-        const moved = Math.abs(el.scrollTop - chatLastScrollTopRef.current) > 4;
-        chatLastScrollTopRef.current = el.scrollTop;
-        if (moved) chatPinningRef.current = false;
-      } else {
-        chatLastScrollTopRef.current = el.scrollTop;
-      }
+      // of the bottom. A user scroll moves scrollTop; growth does not.
+      const moved = Math.abs(el.scrollTop - chatLastScrollTopRef.current) > 4;
+      chatLastScrollTopRef.current = el.scrollTop;
+      if (!atBottom && moved) chatPinningRef.current = false;
     };
     onScroll();
     el.addEventListener("scroll", onScroll, { passive: true });

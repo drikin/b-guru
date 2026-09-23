@@ -147,7 +147,16 @@ describe("a new message does not steal a reader's position", () => {
     // The release must be guarded by a real position change, not just !atBottom.
     expect(body).not.toMatch(/if \(!atBottom\) chatPinningRef\.current = false;/);
     expect(body).toContain("const moved = Math.abs(el.scrollTop - chatLastScrollTopRef.current) > 4;");
-    expect(body).toContain("if (moved) chatPinningRef.current = false;");
+    expect(body).toContain("if (!atBottom && moved) chatPinningRef.current = false;");
+  });
+
+  it("seeds the last scroll position before the first event", () => {
+    // Starting the ref at 0 made the first scroll event look like a jump from
+    // 0 to the real position and released the pin immediately (measured on CI:
+    // pinning true -> false with scrollTop unchanged at 456).
+    const start = page.indexOf("const onScroll = () => {");
+    const before = page.slice(Math.max(0, start - 400), start);
+    expect(before).toContain("chatLastScrollTopRef.current = el.scrollTop;");
   });
 });
 
