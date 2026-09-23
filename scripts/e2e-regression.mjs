@@ -149,6 +149,9 @@ check("chat opens pinned to the bottom", d.dist < 5, `dist=${d.dist}px`);
 // observer at all — it is about the open transition not holding.
 const pinAfterOpen = await page.evaluate(`(() => window.__e2ePinProbe ? window.__e2ePinProbe() : null)()`);
 console.log("  [diag] pin right after open: " + JSON.stringify(pinAfterOpen));
+// Start recording every scroll event from here on, so a later failure can name
+// the exact event that released the pin.
+await page.evaluate(`(() => { window.__e2eScrollLog = []; })()`);
 
 // ------------------------------------------- chat scroll: late content settles
 console.log("\n3. Stays at the bottom while late content loads");
@@ -238,6 +241,8 @@ if (!settled || settled.dist >= 5) {
     });
   })()`);
   console.log("  [diag] " + JSON.stringify(diag));
+  const scrollLog = await page.evaluate(`(() => window.__e2eScrollLog || [])()`);
+  console.log("  [diag] scroll events: " + JSON.stringify(scrollLog));
 }
 check(
   "still pinned to the bottom after late growth",

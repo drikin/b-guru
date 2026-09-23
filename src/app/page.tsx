@@ -5095,6 +5095,19 @@ export default function Home() {
       const moved = Math.abs(el.scrollTop - chatLastScrollTopRef.current) > 4;
       chatLastScrollTopRef.current = el.scrollTop;
       if (!atBottom && moved) chatPinningRef.current = false;
+      // Test hook: record every invocation so a failing E2E check can see which
+      // event released the pin instead of guessing.
+      const log = (window as unknown as Record<string, unknown>).__e2eScrollLog as
+        | unknown[]
+        | undefined;
+      log?.push({
+        st: Math.round(el.scrollTop),
+        sh: Math.round(el.scrollHeight),
+        ch: Math.round(el.clientHeight),
+        atBottom,
+        moved,
+        pin: chatPinningRef.current,
+      });
     };
     onScroll();
     el.addEventListener("scroll", onScroll, { passive: true });
