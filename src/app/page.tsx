@@ -5257,7 +5257,34 @@ export default function Home() {
   const [clientErr, setClientErr] = useState<{ msg: string; at: string } | null>(null);
   useEffect(() => {
     const onErr = (e: ErrorEvent) => {
-      const msg = e.message || String(e.error || "");
+      let msg = e.message || String(e.error || "");
+      // "Script error." is what the browser reports for an exception thrown by a
+      // script it considers cross-origin: the real message, filename and line
+      // number are all withheld for security. Our own chunks are same-origin but
+      // are served WITHOUT a crossorigin attribute, so an error inside them
+      // arrives here the same way — and so does anything thrown inside a
+      // cross-origin iframe (the Spotify embed is the only one we render).
+      // Recover what we can from e.error, then name the likely source so the
+      // badge is actionable instead of just "Script error. (?)".
+      if (msg === "Script error." || msg === "Script error") {
+        const err = e.error as Error | undefined;
+        if (err && err.stack) {
+          msg = `${err.name || "Error"}: ${err.message || ""} @ ${err.stack.split("\n")[1]?.trim() || "?"}`;
+        } else {
+          // No error object: the browser withheld everything. Report which
+          // cross-origin embeds are on screen so the source can be narrowed.
+          const embeds = Array.from(document.querySelectorAll("iframe"))
+            .map((f) => {
+              try {
+                return new URL(f.src).host;
+              } catch {
+                return "?";
+              }
+            })
+            .filter((h, i, a) => h && a.indexOf(h) === i);
+          msg = `Script error. (詳細はブラウザに隠されています${embeds.length ? " / 画面上の埋め込み: " + embeds.join(", ") : ""})`;
+        }
+      }
       // "ResizeObserver loop completed with undelivered notifications" is a
       // benign browser quirk, not an app error — filtering it keeps the badge
       // focused on real failures (it otherwise fires constantly and misleads).

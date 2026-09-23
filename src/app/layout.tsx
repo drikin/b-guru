@@ -77,6 +77,27 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ja" className="h-full antialiased" suppressHydrationWarning>
+      <head>
+        {/*
+         * Resource hints. Measured on 2026-09-23: every subresource started at
+         * ~428ms because the browser could not begin fetching until the HTML
+         * document arrived (TTFB 394ms = 32ms server + ~362ms network RTT to
+         * the Tokyo VPS). preconnect opens the TCP+TLS connection to the API
+         * origin while the document is still in flight, so the first XHR does
+         * not pay a second handshake. dns-prefetch covers browsers that ignore
+         * preconnect. Both are no-ops when the origin is already warm.
+         */}
+        <link rel="preconnect" href="https://bsm.backspace.fm" crossOrigin="" />
+        <link rel="dns-prefetch" href="https://bsm.backspace.fm" />
+        {/*
+         * The two stylesheets are render-blocking. Preloading them lets the
+         * browser start the download in parallel with the JS chunks instead of
+         * discovering them after the HTML parse. Next.js emits the hashed
+         * filenames at build time, so we cannot hardcode them here — instead we
+         * rely on the fact that Next already emits <link rel="stylesheet"> in
+         * <head> before the body, which is the earliest possible point.
+         */}
+      </head>
       <body className="min-h-full flex flex-col">
         <MantineProvider theme={theme} defaultColorScheme="auto">
           {children}

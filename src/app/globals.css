@@ -1,5 +1,11 @@
 @import "tailwindcss";
-@import "@mantine/core/styles.css";
+
+/* NOTE: @mantine/core/styles.css is imported in layout.tsx, NOT here.
+ * Importing it in both places emitted the entire Mantine stylesheet twice
+ * (two ~230KB chunks with the same 404 classes), so the browser downloaded and
+ * parsed it twice. Keep the import in layout.tsx only — it is the component
+ * that actually renders MantineProvider, and Next.js hoists it into the same
+ * stylesheet as this file. */
 
 /* ===== 文字サイズ設定（小・中・大） =====
  * iOS の PWA（standalone）ではブラウザの文字サイズ設定が効かず、実機で
