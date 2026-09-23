@@ -4963,7 +4963,11 @@ export default function Home() {
       // Keep pinning while late-arriving content grows the list. Stop after 3s
       // so a slow image can't hold the list hostage, and stop immediately if
       // the user scrolls away (handled by the scroll listener below).
-      const ro = { disconnect: () => {} }; // TEMP REGRESSION for guard verification
+      const ro = new ResizeObserver(() => {
+        if (!chatPinningRef.current) return;
+        el.scrollTop = el.scrollHeight;
+      });
+      ro.observe(el.firstElementChild ?? el);
       const stopPin = window.setTimeout(() => {
         chatPinningRef.current = false;
       }, 3000);
