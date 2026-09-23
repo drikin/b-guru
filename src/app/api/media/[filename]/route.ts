@@ -1,7 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { open, stat } from "fs/promises";
+import { createReadStream } from "fs";
+import { stat } from "fs/promises";
+import { Readable } from "stream";
 import path from "path";
 import { getSessionEmail } from "@/lib/session";
+
+// Stream a byte range of `filePath` as a web ReadableStream. Buffering the whole
+// file (Buffer.alloc + fh.read) held the HTTP connection until the entire
+// transfer was in memory, which is what let 20+ timeline images occupy the
+// browser's 6-connections-per-host budget for 5-14s each and starve the chat
+// fetch. Streaming releases the connection as bytes flow and keeps memory flat.
+function streamFile(filePath: string, start: number, end: number): ReadableStream {
+  const nodeStream = createReadStream(filePath, { start, end });
+  return Readable.toWeb(nodeStream) as ReadableStream;
+}
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -79,36 +91,22 @@ export async function GET(
         if (end >= size) end = size - 1;
 
         const length = end - start + 1;
-        const fh = await open(filePath, "r");
-        try {
-          const buf = Buffer.alloc(length);
-          await fh.read(buf, 0, length, start);
-          return new NextResponse(new Uint8Array(buf), {
-            status: 206,
-            headers: {
-              ...baseHeaders,
-              "Content-Range": `bytes ${start}-${end}/${size}`,
-              "Content-Length": String(length),
-            },
-          });
-        } finally {
-          await fh.close();
-        }
+        return new NextResponse(streamFile(filePath, start, end), {
+          status: 206,
+          headers: {
+            ...baseHeaders,
+            "Content-Range": `bytes ${start}-${end}/${size}`,
+            "Content-Length": String(length),
+          },
+        });
       }
     }
 
     // ---- Full response ----
-    const fh = await open(filePath, "r");
-    try {
-      const buf = Buffer.alloc(size);
-      await fh.read(buf, 0, size, 0);
-      return new NextResponse(new Uint8Array(buf), {
-        status: 200,
-        headers: { ...baseHeaders, "Content-Length": String(size) },
-      });
-    } finally {
-      await fh.close();
-    }
+    return new NextResponse(streamFile(filePath, 0, size - 1), {
+      status: 200,
+      headers: { ...baseHeaders, "Content-Length": String(size) },
+    });
   } catch {
     return NextResponse.json({ error: "メディアが見つかりません" }, { status: 404 });
   }

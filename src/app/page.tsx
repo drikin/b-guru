@@ -1534,6 +1534,13 @@ function PostCard({
               key={i}
               src={src}
               radius="md"
+              // Off-screen media must not be fetched: the timeline renders 20+
+              // images, and without lazy loading they saturate the browser's
+              // 6-connections-per-host limit for 5-14s each, starving the chat
+              // fetch that shares the same origin (measured: every image >3s,
+              // median 5,455ms). Lazy cuts concurrent media to the 2-4 visible.
+              loading="lazy"
+              decoding="async"
               style={{
                 cursor: "pointer",
                 width: "100%",
@@ -3995,6 +4002,12 @@ export default function Home() {
     name?: string | null;
     avatar?: string | null;
   }>(null);
+  // Mirror of `auth` for effects that must NOT re-run when the auth object
+  // identity changes (e.g. the SSE stream: `setAuth` is called with a fresh
+  // object literal on every profile save, which would otherwise tear down and
+  // recreate the EventSource and re-fire every panel reload).
+  const authRef = useRef<null | { email: string; name?: string | null; avatar?: string | null }>(null);
+  authRef.current = auth;
   const [checking, setChecking] = useState(true);
 
   const [email, setEmail] = useState("");
@@ -4600,6 +4613,14 @@ export default function Home() {
   const [chatView, setChatView] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatUnread, setChatUnread] = useState(0);
+  // True while the first chat fetch of a given open is in flight. Without this
+  // the view rendered "まだメッセージはありません" during the wait, so a slow
+  // fetch (media-saturated connection) looked like an empty/broken chat.
+  const [chatLoading, setChatLoading] = useState(false);
+  // Mirror of chatMessages so loadChat (useCallback with [] deps) can decide
+  // whether a spinner is warranted without being re-created on every message.
+  const chatMessagesRef = useRef<ChatMessage[]>([]);
+  chatMessagesRef.current = chatMessages;
   // Tab-favicon badge: mirror chatUnread into the module var and refresh the
   // favicon whenever it changes (unread chat / @mentions). New-post arrivals
   // (pendingNew) are covered by the separate subscription effect below.
@@ -4673,6 +4694,9 @@ export default function Home() {
   // so it can be listed in the SSE effect deps without recreating the
   // EventSource (see the SSE "Effect dependency" pitfall).
   const loadChat = useCallback(async (open?: boolean) => {
+    // Only show the spinner when we have nothing to display yet; a background
+    // refresh of an already-populated list must not flash a loading state.
+    setChatLoading((prev) => prev || chatMessagesRef.current.length === 0);
     try {
       const r = await fetch("/api/chat", { cache: "no-store" });
       if (!r.ok) return;
@@ -4686,6 +4710,8 @@ export default function Home() {
       }
     } catch {
       /* ignore */
+    } finally {
+      setChatLoading(false);
     }
   }, []);
 
@@ -5294,7 +5320,7 @@ export default function Home() {
   // handler ignores events while a thread is open or during an initial load;
   // the client filter is read from refs so an incoming event never tears us down.
   useEffect(() => {
-    if (!auth) return;
+    if (!authRef.current) return;
     const es = new EventSource("/api/posts/stream");
     const onChange = (e: MessageEvent) => {
       // Skip events triggered by our own posts — we already did an optimistic
@@ -5311,7 +5337,7 @@ export default function Home() {
         urlPreview = d?.urlPreview;
         postId = d?.postId;
       } catch {}
-      if (auth && authorEmail && authorEmail === auth.email) {
+      if (authRef.current && authorEmail && authorEmail === authRef.current.email) {
         // 自分の投稿の URL プレビュー更新（action==="update" で urlPreview 付き）は
         // スキップせず反映する。投稿直後は urlPreview:null で、プレビューは非同期で
         // DB 更新され SSE update で届く。ここでスキップするとリロードまで
@@ -5349,7 +5375,7 @@ export default function Home() {
       } catch {
         return;
       }
-      if (!d || d.type !== "poll" || !d.poll || !auth) return;
+      if (!d || d.type !== "poll" || !d.poll || !authRef.current) return;
       applyPostChange(d.postId, (p) => ({ ...p, poll: d.poll }));
       setPollWidget((prev) =>
         prev.map((w) => (w.postId === d.postId ? { ...w, poll: d.poll } : w))
@@ -5366,7 +5392,7 @@ export default function Home() {
       } catch {
         return;
       }
-      if (!d || d.type !== "chat" || !auth) return;
+      if (!d || d.type !== "chat" || !authRef.current) return;
       if (d.action === "create" && d.message?.id) {
         const msg = d.message as ChatMessage;
         setChatMessages((prev) =>
@@ -5375,7 +5401,7 @@ export default function Home() {
         if (chatViewRef.current) {
           setChatUnread(0);
           fetch("/api/chat/read", { method: "POST" }).catch(() => {});
-        } else if (msg.authorEmail !== auth.email) {
+        } else if (msg.authorEmail !== authRef.current.email) {
           setChatUnread((u) => u + 1);
           // This message @mentions the current user: on top of the unread
           // badge, make the beagle bark in the center of the screen so the
@@ -5442,7 +5468,7 @@ export default function Home() {
     return () => {
       es.close();
     };
-  }, [auth, silentRefreshFeed, loadPinned, loadHot, loadOnline, loadChat, loadPollWidget]);
+  }, [silentRefreshFeed, loadPinned, loadHot, loadOnline, loadChat, loadPollWidget]);
 
   // Posting never auto-scrolls or auto-highlights the timeline (disabled per
   // user request, 2026-08-17): a new reply is simply added to the feed in
@@ -7387,10 +7413,16 @@ export default function Home() {
     return () => window.removeEventListener("keydown", onKey);
   }, [kbdCursorId]);
 
-  // Chat-tab view: shown only on the home feed root (switch between timeline & chat).
+  // Tab bar (タイムライン / チャット) is only rendered on the home feed root.
   const showNavTabs =
     activeNav === "feed" && !threadPost && !searchActive && !profileEmail;
-  const showChatView = showNavTabs && chatView;
+  // The chat view itself is NOT gated on showNavTabs. Gating it there meant that
+  // opening a thread / search / profile while the chat tab was selected hid the
+  // chat body while the tab still read "チャット" — and because re-tapping an
+  // already-selected SegmentedControl does not fire onChange, the user could not
+  // recover without a reload. `chatView` alone decides what the main column shows;
+  // navigating away (thread/search/profile) renders its own view on top of it.
+  const showChatView = chatView;
 
   // Mobile swipe-to-switch-tabs: gate + gesture. Only on the home feed root
   // with the tab bar visible, and never while the image lightbox is open.
@@ -8618,7 +8650,14 @@ export default function Home() {
                     viewportRef={chatListRef}
                   >
                     <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
-                      {chatMessages.length === 0 ? (
+                      {chatMessages.length === 0 && chatLoading ? (
+                        <Stack align="center" gap="xs" py="lg">
+                          <Loader size="sm" />
+                          <Text size="sm" c="dimmed" ta="center">
+                            チャットを読み込んでいます…
+                          </Text>
+                        </Stack>
+                      ) : chatMessages.length === 0 ? (
                         <Text size="sm" c="dimmed" ta="center" py="lg">
                           まだメッセージはありません。さっそく話しかけてみましょう。
                         </Text>
