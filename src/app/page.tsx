@@ -4944,6 +4944,8 @@ export default function Home() {
   // Last observed scrollTop, used to tell a user scroll apart from a
   // growth-induced one (see the scroll listener below).
   const chatLastScrollTopRef = useRef(0);
+  // The element the scroll listener is actually bound to, for diagnostics.
+  const chatBoundElRef = useRef<HTMLElement | null>(null);
   // Test hook: lets the E2E guard read the pin state from the page. Without it
   // a failing check cannot distinguish "the observer never fired" from "the
   // observer fired but the pin had already been released".
@@ -4952,6 +4954,24 @@ export default function Home() {
       pinning: chatPinningRef.current,
       atBottom: chatAtBottomRef.current,
       lastScrollTop: chatLastScrollTopRef.current,
+      // Which element is the listener bound to, and is it the one on screen?
+      boundEl: chatBoundElRef.current
+        ? {
+            scrollTop: Math.round(chatBoundElRef.current.scrollTop),
+            scrollHeight: Math.round(chatBoundElRef.current.scrollHeight),
+            clientHeight: Math.round(chatBoundElRef.current.clientHeight),
+            inDocument: document.contains(chatBoundElRef.current),
+          }
+        : null,
+      liveEl: chatListRef.current
+        ? {
+            scrollTop: Math.round(chatListRef.current.scrollTop),
+            scrollHeight: Math.round(chatListRef.current.scrollHeight),
+            clientHeight: Math.round(chatListRef.current.clientHeight),
+            inDocument: document.contains(chatListRef.current),
+          }
+        : null,
+      sameEl: chatBoundElRef.current === chatListRef.current,
     });
   }, []);
   // The open-transition pin lives in its OWN effect, keyed only on `chatView`.
@@ -5055,6 +5075,7 @@ export default function Home() {
   useEffect(() => {
     const el = chatListRef.current;
     if (!el) return;
+    chatBoundElRef.current = el;
     // Seed the last-known position from the element itself. Starting at 0 made
     // the very first scroll event look like a 456px jump and released the pin
     // immediately (measured on CI: pinning went true -> false with scrollTop
