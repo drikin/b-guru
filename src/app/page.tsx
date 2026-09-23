@@ -4859,10 +4859,32 @@ export default function Home() {
   // fade animation settle a moment later and grow the list, leaving it not
   // fully at the bottom. So we scroll immediately *and* again after layout
   // settles (double rAF + short delay + after the 180ms fade).
+  //
+  // ⚠️ Two guards, both required (drikin report 2026-09-22: 「チャットに切り替えた
+  // 時に、なんか勝手にスクロールして過去ログがスクロールアウトしちゃいます」):
+  //  1. Never scroll on the tab-open transition itself. `chatView` flipping to
+  //     true used to run this effect unconditionally, so every switch back to
+  //     the chat tab yanked the list to the bottom even when the user had
+  //     scrolled up to read history.
+  //  2. Only follow when the user is already near the bottom. If they scrolled
+  //     up, a new message must not steal their position.
+  const chatWasOpenRef = useRef(false);
   useEffect(() => {
     const el = chatListRef.current;
+    const justOpened = chatView && !chatWasOpenRef.current;
+    chatWasOpenRef.current = chatView;
     if (!chatViewRef.current || !el) return;
-    const go = () => { el.scrollTop = el.scrollHeight; };
+    // (1) Opening the tab: leave the scroll position exactly where it is.
+    if (justOpened) return;
+    // (2) Only follow the bottom if we are already there.
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (dist >= 120) return;
+    const go = () => {
+      // Re-check inside the delayed callbacks: the user may have scrolled up
+      // during the 60/240ms settle window.
+      const d = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (d < 120) el.scrollTop = el.scrollHeight;
+    };
     const raf1 = requestAnimationFrame(go);
     const raf2 = requestAnimationFrame(() => requestAnimationFrame(go));
     const to1 = window.setTimeout(go, 60);
