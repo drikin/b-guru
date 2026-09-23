@@ -66,6 +66,27 @@ describe("chat auto-scroll on tab open", () => {
     expect(body).toContain("if (d < 120) el.scrollTop = el.scrollHeight;");
   });
 
+  it("keeps pinning to the bottom while late content grows the list", () => {
+    const body = autoScrollEffect();
+    const openBranch = body.slice(body.indexOf("if (justOpened) {"));
+    // Fixed 60/240ms timers are not enough: avatars/images/fonts load later and
+    // left the list 219px short of the bottom in testing.
+    expect(openBranch).toContain("new ResizeObserver");
+    expect(openBranch).toContain("chatPinningRef.current = true;");
+    expect(openBranch).toContain("ro.disconnect()");
+    // Bounded, so a slow image cannot hold the list hostage.
+    expect(openBranch).toContain("chatPinningRef.current = false;");
+  });
+
+  it("cancels the pin when the user scrolls away", () => {
+    // The scroll listener must clear the pin, otherwise late-loading content
+    // would drag a user who scrolled up back to the bottom.
+    const start = page.indexOf("const onScroll = () => {");
+    expect(start).toBeGreaterThan(-1);
+    const body = page.slice(start, start + 500);
+    expect(body).toContain("if (!atBottom) chatPinningRef.current = false;");
+  });
+
   it("cleans up every timer and frame it schedules", () => {
     const body = autoScrollEffect();
     for (const cleanup of [

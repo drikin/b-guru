@@ -4935,6 +4935,12 @@ export default function Home() {
   // time the effect runs (reading scrollHeight there would always look far from
   // the bottom and suppress the follow).
   const chatAtBottomRef = useRef(true);
+  // Set while the open-transition is still settling. A ResizeObserver keeps
+  // pinning the list to the bottom as content grows (avatars/images/fonts load
+  // after the fixed 60/240ms timers have already fired, which left the list
+  // 219px short of the bottom in testing). Cleared as soon as the user scrolls
+  // away, so reading history is never interrupted.
+  const chatPinningRef = useRef(false);
   useEffect(() => {
     const el = chatListRef.current;
     const justOpened = chatView && !chatWasOpenRef.current;
@@ -4945,6 +4951,7 @@ export default function Home() {
     // scrollTop is 0 and the user would otherwise be looking at old history.
     if (justOpened) {
       chatAtBottomRef.current = true;
+      chatPinningRef.current = true;
       const toBottom = () => {
         el.scrollTop = el.scrollHeight;
       };
@@ -4953,11 +4960,24 @@ export default function Home() {
       const r2 = requestAnimationFrame(() => requestAnimationFrame(toBottom));
       const t1 = window.setTimeout(toBottom, 60);
       const t2 = window.setTimeout(toBottom, 240); // after bguru-main-fade (180ms)
+      // Keep pinning while late-arriving content grows the list. Stop after 3s
+      // so a slow image can't hold the list hostage, and stop immediately if
+      // the user scrolls away (handled by the scroll listener below).
+      const ro = new ResizeObserver(() => {
+        if (!chatPinningRef.current) return;
+        el.scrollTop = el.scrollHeight;
+      });
+      ro.observe(el.firstElementChild ?? el);
+      const stopPin = window.setTimeout(() => {
+        chatPinningRef.current = false;
+      }, 3000);
       return () => {
         cancelAnimationFrame(r1);
         cancelAnimationFrame(r2);
         window.clearTimeout(t1);
         window.clearTimeout(t2);
+        window.clearTimeout(stopPin);
+        ro.disconnect();
       };
     }
 
@@ -4989,7 +5009,11 @@ export default function Home() {
     const el = chatListRef.current;
     if (!el) return;
     const onScroll = () => {
-      chatAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+      chatAtBottomRef.current = atBottom;
+      // A real user scroll away from the bottom cancels the open-transition
+      // pin, so late-loading content can't drag them back down while they read.
+      if (!atBottom) chatPinningRef.current = false;
     };
     onScroll();
     el.addEventListener("scroll", onScroll, { passive: true });
