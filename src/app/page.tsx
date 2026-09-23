@@ -5096,7 +5096,10 @@ export default function Home() {
     // scrolled (e.g. the user was deep in the timeline) — and even then we
     // scroll to 0, which is the one position where the tabs are guaranteed to
     // be at their natural offset.
-    window.scrollTo(0, 0);
+    const headerH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--app-shell-header-height")) || 56;
+    const tabsEl = document.querySelector<HTMLElement>('[data-cx="navtabs"]');
+    const tabsH = tabsEl ? tabsEl.offsetHeight : 0;
+    window.scrollTo(0, Math.max(0, top - headerH - tabsH));
     let poll: number | null = null;
     const startedAt = Date.now();
     // Restore the pre-chat timeline scroll. The previous implementation fired

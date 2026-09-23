@@ -206,6 +206,60 @@ const chatHeightBefore = await page.evaluate(`(() => {
 })()`);
 check("chat body has height", chatHeightBefore > 200, `${chatHeightBefore}px`);
 
+// ------------------------------------------------- tab bar does not move
+console.log("\n6b. Tab bar stays put when switching (drikin 2026-09-23)");
+// The tabs are position:sticky, so ANY window scroll shifts them (80px at
+// scrollY=0, 56px once scrolled). The bug was that opening the chat scrolled
+// the window, so the bar jumped on every switch. Compare like with like: start
+// from the top of the timeline, which is the state a user is in when they tap
+// the chat tab without having scrolled.
+const tabPos = async () =>
+  page.evaluate(`(() => {
+    const t = document.querySelector('[data-cx="navtabs"]');
+    return t ? { top: Math.round(t.getBoundingClientRect().top), scrollY: Math.round(window.scrollY) } : null;
+  })()`);
+
+await page.evaluate(clickTab("タイムライン"));
+await page.waitForTimeout(2000);
+await page.evaluate(() => window.scrollTo(0, 0));
+await page.waitForTimeout(800);
+const tabOnTimeline = await tabPos();
+await page.evaluate(clickTab("チャット"));
+await page.waitForTimeout(3000);
+const tabOnChat = await tabPos();
+
+check("tab bar found on both views", tabOnTimeline !== null && tabOnChat !== null);
+if (tabOnTimeline && tabOnChat) {
+  check(
+    "tab bar does not move between views",
+    tabOnTimeline.top === tabOnChat.top,
+    `timeline=${tabOnTimeline.top}px chat=${tabOnChat.top}px`
+  );
+  check(
+    "window is not scrolled in chat view",
+    tabOnChat.scrollY === 0,
+    `scrollY=${tabOnChat.scrollY}`
+  );
+}
+
+// 6c. The reported precondition: scrolled deep in the timeline, then switch.
+// The chat must still open with the tab bar at its resting position.
+console.log("\n6c. Switching from a scrolled timeline does not shift the bar");
+await page.evaluate(clickTab("タイムライン"));
+await page.waitForTimeout(2000);
+await page.evaluate(() => window.scrollTo(0, 6000));
+await page.waitForTimeout(1000);
+await page.evaluate(clickTab("チャット"));
+await page.waitForTimeout(3000);
+const tabFromScrolled = await tabPos();
+if (tabFromScrolled) {
+  check(
+    "tab bar is at its resting position after switching from a scrolled timeline",
+    tabFromScrolled.top === tabOnTimeline?.top,
+    `expected=${tabOnTimeline?.top}px got=${tabFromScrolled.top}px`
+  );
+}
+
 // ------------------------------------------------------------ image proxy
 console.log("\n7. Images and avatars go through our own origin");
 const imgStats = await page.evaluate(`(() => {
