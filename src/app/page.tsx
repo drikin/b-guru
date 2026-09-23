@@ -5979,15 +5979,28 @@ export default function Home() {
     []
   );
 
-  // Load filtered feed when switching views
+  // Load filtered feed when switching views.
+  //
+  // ⚠️ `auth` is deliberately NOT a dependency. The auth effect above already
+  // calls loadFeed() when auth resolves, so including auth here made every page
+  // load fetch /api/posts?limit=50 twice (measured: two calls 43ms apart). This
+  // effect only needs to react to an actual view change; the first load is the
+  // auth effect's job. authRef gates the pre-auth case.
+  const navLoadedRef = useRef(false);
   useEffect(() => {
-    if (!auth) return;
+    if (!authRef.current) return;
+    if (!navLoadedRef.current) {
+      // First run after auth resolves — the auth effect already loaded the feed.
+      navLoadedRef.current = true;
+      return;
+    }
     if (activeNav === "gallery") loadFeed("images");
     else if (activeNav === "news") loadFeed("links");
     else if (activeNav === "episodes") loadFeed("episodes");
     else if (activeNav === "drinews") loadDrinews();
     else if (activeNav === "feed") loadFeed();
-  }, [activeNav, auth]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeNav]);
 
   // Debounced search: when searchQuery changes, wait 300ms then reload feed
   // with the search parameter. Switching to feed view if needed.
