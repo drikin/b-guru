@@ -224,6 +224,24 @@ interface MenuLinkItem {
   href: string;
 }
 
+/** Route an external image URL through our own /api/img proxy.
+ *
+ * The timeline renders 100+ third-party images (YouTube thumbnails, Twitter
+ * cards, news og:image). Loading them straight from their origins costs a fresh
+ * DNS lookup + TLS handshake per host (measured 3,000-8,500ms each) and they
+ * compete with our API calls for the browser's 6-connections-per-host budget.
+ * The proxy collapses them onto one already-open connection and caches on disk.
+ *
+ * Same-origin paths (uploads, /icon-192.png) and data: URLs pass through
+ * untouched. If the proxy rejects a host it returns 403/404 and the <img>
+ * onError fallback handles it, so this is safe to apply unconditionally.
+ */
+function proxiedImage(src: string | null | undefined): string | undefined {
+  if (!src) return undefined;
+  if (!/^https?:\/\//i.test(src)) return src; // already same-origin or data:
+  return `/api/img?u=${encodeURIComponent(src)}`;
+}
+
 /** Avatar that falls back to the initial-letter placeholder when the image
  * fails to load (e.g. user has no Gravatar → 404). */
 function SafeAvatar({
@@ -1651,7 +1669,7 @@ function PostCard({
           {post.urlPreview.image && (
             <Box style={{ position: "relative" }}>
               <Image
-                src={post.urlPreview.image}
+                src={proxiedImage(post.urlPreview.image)}
                 radius="md"
                 mb="xs"
                 style={{
@@ -2479,7 +2497,7 @@ function ProfileView({
           style={{
             height: 140,
             background: profile?.headerImage
-              ? `url(${profile.headerImage}) center / cover`
+              ? `url(${proxiedImage(profile.headerImage)}) center / cover`
               : "linear-gradient(135deg, #e2f4e2, #cfe8cf)",
           }}
         />
@@ -9955,7 +9973,7 @@ export default function Home() {
           })()}
 
           <img
-            src={previewImage}
+            src={proxiedImage(previewImage)}
             alt="プレビュー"
             draggable={false}
             onDoubleClick={() => {

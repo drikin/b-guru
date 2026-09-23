@@ -503,8 +503,14 @@ export async function listHotTopics(
 /** System-poster email for auto-posted episodes (BSM podcast). */
 export const SYSTEM_EMAIL = "system@backspace.fm";
 
-/** Resolve a Gravatar URL from an email (matches Ghost's avatar_image).
- * d=404 → returns HTTP 404 if the user has no Gravatar, so the UI can
+/** Resolve an avatar URL from an email (matches Ghost's avatar_image).
+ *
+ * Returns a SAME-ORIGIN proxy path (/api/avatar/<md5>), not a gravatar.com URL.
+ * The timeline renders 30+ avatars per page; pointing each one at
+ * www.gravatar.com meant 30+ cross-origin DNS + TLS handshakes to a third party
+ * (measured 900-2,500ms each) and leaked every member's email hash to
+ * Automattic on every page view. The proxy reuses our existing connection and
+ * caches on disk. `d=404` upstream means "no avatar" is a 404, so the UI can
  * fall back to its initial-letter avatar instead of a blank image.
  * System posts (auto-posted episodes) use the B-guru icon instead. */
 export function gravatarUrl(email: string): string {
@@ -515,7 +521,7 @@ export function gravatarUrl(email: string): string {
     .createHash("md5")
     .update((email || "").trim().toLowerCase())
     .digest("hex");
-  return `https://www.gravatar.com/avatar/${md5}?s=250&r=g&d=404`;
+  return `/api/avatar/${md5}`;
 }
 
 /** Toggle a like for a post. Returns the new like state. */
