@@ -5081,12 +5081,20 @@ export default function Home() {
       el = el.offsetParent as HTMLElement | null;
     }
     // Position the chat viewport BELOW the header AND the sticky タイムライン/
-    // チャット tabs. The tabs sit at top:var(--app-shell-header-height) with
-    // z-index:60, so scrolling to exactly the header height would leave the
-    // first (oldest) message hidden behind them (iOS Safari report: 一番古い
-    // チャットが見切れる・タブが被る). Mirror focusOffsetTop's pattern: read the
-    // header height from the CSS var (follows large-device header growth) and
-    // add the measured tab height.
+    // チャット tabs, WITHOUT moving the tabs themselves.
+    //
+    // The tabs are `position: sticky; top: var(--app-shell-header-height)`. The
+    // previous code scrolled the window to `top - headerH - tabsH`, which moved
+    // the sticky tabs up with the page: measured tab top was 80px on the
+    // timeline but 56px in chat, so switching tabs visibly shifted the tab bar
+    // and nudged the timeline (drikin report 2026-09-23: 「タイムラインとチャット
+    // のタブの位置がずれてて、切り替えるときにメインのタイムラインが微妙に上下に
+    // スクロールする」).
+    //
+    // Instead, scroll so the tabs land exactly at their sticky offset. That is
+    // the position they would occupy anyway, so the bar does not move, and the
+    // chat viewport (which sits below the tabs in normal flow) ends up right
+    // under them.
     const headerH =
       parseFloat(
         getComputedStyle(document.documentElement).getPropertyValue(
@@ -5094,8 +5102,15 @@ export default function Home() {
         )
       ) || 56;
     const tabsEl = document.querySelector<HTMLElement>('[data-cx="navtabs"]');
-    const tabsH = tabsEl ? tabsEl.offsetHeight : 0;
-    window.scrollTo(0, Math.max(0, top - headerH - tabsH));
+    if (tabsEl) {
+      // Where the tabs currently sit in the document, independent of scroll.
+      const tabsDocTop = tabsEl.getBoundingClientRect().top + window.scrollY;
+      // Scroll so the tabs rest at their sticky offset (headerH). Clamped at 0
+      // so a short page does not scroll past the top.
+      window.scrollTo(0, Math.max(0, tabsDocTop - headerH));
+    } else {
+      window.scrollTo(0, Math.max(0, top - headerH));
+    }
     let poll: number | null = null;
     const startedAt = Date.now();
     // Restore the pre-chat timeline scroll. The previous implementation fired
