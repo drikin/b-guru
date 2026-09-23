@@ -396,11 +396,14 @@ await page.waitForTimeout(500);
 console.log("\n6f. Pull-to-refresh is disabled in the chat view");
 await page.evaluate(() => window.scrollTo(0, 0));
 await page.waitForTimeout(300);
-// Open the chat tab.
-const chatTab = await page.$('[data-cx="navtabs"] button:nth-of-type(2), [data-cx="navtabs"] [role="radio"]:nth-of-type(2)');
-if (chatTab) {
-  await chatTab.click();
-  await page.waitForTimeout(1500);
+// Open the chat tab. The switcher is a Mantine SegmentedControl: the clickable
+// elements are <label class="mantine-SegmentedControl-label">, and they are NOT
+// siblings of the same element type, so :nth-of-type() does not select them —
+// index into the NodeList instead.
+const tabLabels = await page.$$('[data-cx="navtabs"] label.mantine-SegmentedControl-label');
+if (tabLabels.length >= 2) {
+  await tabLabels[1].click();
+  await page.waitForTimeout(2500);
 }
 const ptrInfo = await page.evaluate(`(() => {
   const view = document.querySelector('.bguru-chat-view');
@@ -428,10 +431,10 @@ check(
     : "chat view not found"
 );
 // Back to the timeline so the remaining checks run on the feed.
-const tlTab = await page.$('[data-cx="navtabs"] button:nth-of-type(1), [data-cx="navtabs"] [role="radio"]:nth-of-type(1)');
-if (tlTab) {
-  await tlTab.click();
-  await page.waitForTimeout(1200);
+const backLabels = await page.$$('[data-cx="navtabs"] label.mantine-SegmentedControl-label');
+if (backLabels.length >= 1) {
+  await backLabels[0].click();
+  await page.waitForTimeout(1500);
 }
 
 // ------------------------------------------------------------ image proxy
