@@ -4869,6 +4869,12 @@ export default function Home() {
   //  2. Only follow when the user is already near the bottom. If they scrolled
   //     up, a new message must not steal their position.
   const chatWasOpenRef = useRef(false);
+  // Whether the user was at (or near) the bottom *before* this render's content
+  // grew. Captured during render so the effect can tell "was following" from
+  // "scrolled up to read history" even though the DOM has already grown by the
+  // time the effect runs (reading scrollHeight there would always look far from
+  // the bottom and suppress the follow).
+  const chatAtBottomRef = useRef(true);
   useEffect(() => {
     const el = chatListRef.current;
     const justOpened = chatView && !chatWasOpenRef.current;
@@ -4876,9 +4882,8 @@ export default function Home() {
     if (!chatViewRef.current || !el) return;
     // (1) Opening the tab: leave the scroll position exactly where it is.
     if (justOpened) return;
-    // (2) Only follow the bottom if we are already there.
-    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (dist >= 120) return;
+    // (2) Only follow the bottom if we were already there before the growth.
+    if (!chatAtBottomRef.current) return;
     const go = () => {
       // Re-check inside the delayed callbacks: the user may have scrolled up
       // during the 60/240ms settle window.
@@ -4896,6 +4901,21 @@ export default function Home() {
       window.clearTimeout(to2);
     };
   }, [chatMessages, chatView]);
+
+  // Track whether the chat list is currently scrolled to (near) the bottom.
+  // Updated on every scroll so the auto-follow effect above can decide whether
+  // a new message should move the viewport. A user who scrolled up to read
+  // history keeps their position; a user sitting at the bottom follows along.
+  useEffect(() => {
+    const el = chatListRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      chatAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    };
+    onScroll();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [chatView]);
 
   // Re-pin to the bottom when an image (e.g. an avatar) inside the chat list
   // loads later and grows the list — but only if the user is already at/near
