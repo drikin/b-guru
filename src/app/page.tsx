@@ -8885,10 +8885,13 @@ export default function Home() {
                     // instead of 80px; the padding is re-added below the bar so
                     // the content keeps its breathing room.
                     top: "var(--app-shell-header-height, 56px)",
-                    marginTop: -16,
+                    // Cancel the wrapper's top padding (24px at sm:py-6) so the
+                    // bar starts flush at 56px instead of 80px. Measured: -16
+                    // left it at 64px, so the full 24px is needed.
+                    marginTop: -24,
                     zIndex: 60,
                     background: "var(--bg-primary)",
-                    paddingTop: 16,
+                    paddingTop: 24,
                     paddingBottom: 4,
                     display: "flex",
                     justifyContent: "center",
