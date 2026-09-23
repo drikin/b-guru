@@ -51,9 +51,14 @@ describe("chat opens at the bottom", () => {
   it("has a dedicated effect keyed only on chatView", () => {
     const body = openEffect();
     // Keyed on chatView alone — NOT on chatMessages, or loading the messages
-    // tears the observer down before late content arrives.
-    expect(body).toContain("if (!chatView) return;");
-    expect(body).not.toContain("chatMessages");
+    // tears the observer down before late content arrives. Strip comments
+    // first: the explanatory comment legitimately mentions chatMessages.
+    const code = body
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    expect(code).toContain("if (!chatView) return;");
+    expect(code).not.toContain("chatMessages");
   });
 
   it("scrolls to the bottom immediately and after layout settles", () => {
