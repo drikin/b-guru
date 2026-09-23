@@ -145,6 +145,36 @@ await page.waitForTimeout(4000);
 d = await page.evaluate(CHAT_DIST);
 check("still at the bottom after images/avatars settle", !!d && d.dist < 5, `dist=${d?.dist}px`);
 
+// 3b. Force late content growth. This is the part that actually catches the
+// regression: on a warm cache the avatars/images are already loaded, so the
+// fixed 60/240ms timers alone are enough and a missing ResizeObserver would
+// pass unnoticed. Injecting a tall node AFTER those timers have fired proves
+// the list keeps pinning as content grows.
+console.log("\n3b. Keeps pinning when content grows after the settle timers");
+const grew = await page.evaluate(`(() => {
+  const chat = document.querySelector('[class*="bguru-chat-view"]');
+  const vp = chat.querySelector('.mantine-ScrollArea-viewport');
+  const inner = vp.firstElementChild;
+  if (!inner) return null;
+  const before = vp.scrollHeight;
+  const d = document.createElement('div');
+  d.id = '__e2e_growth';
+  d.style.height = '400px';
+  d.style.flex = '0 0 auto';
+  inner.appendChild(d);
+  return { before, after: vp.scrollHeight };
+})()`);
+check("growth injected", grew !== null && grew.after > grew.before, grew ? `${grew.before} → ${grew.after}` : "no inner");
+await page.waitForTimeout(1200);
+d = await page.evaluate(CHAT_DIST);
+check(
+  "still pinned to the bottom after late growth",
+  !!d && d.dist < 5,
+  `dist=${d?.dist}px (a missing ResizeObserver leaves this > 0)`
+);
+await page.evaluate(`(() => { document.getElementById('__e2e_growth')?.remove(); })()`);
+await page.waitForTimeout(500);
+
 // ------------------------------------- chat scroll: reading history is respected
 console.log("\n4. Scrolling up to read history is not stolen");
 await page.evaluate(`(() => {
