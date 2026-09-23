@@ -144,6 +144,12 @@ if (!d) {
 }
 check("chat opens pinned to the bottom", d.dist < 5, `dist=${d.dist}px`);
 
+// Record the pin state right after opening, before anything else runs. If the
+// pin is already released here, the failure downstream is not about the
+// observer at all — it is about the open transition not holding.
+const pinAfterOpen = await page.evaluate(`(() => window.__e2ePinProbe ? window.__e2ePinProbe() : null)()`);
+console.log("  [diag] pin right after open: " + JSON.stringify(pinAfterOpen));
+
 // ------------------------------------------- chat scroll: late content settles
 console.log("\n3. Stays at the bottom while late content loads");
 // Let images/avatars land, then confirm the list is still pinned.
