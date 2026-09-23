@@ -189,6 +189,27 @@ for (let i = 0; i < 20; i++) {
   settled = await page.evaluate(CHAT_DIST);
   if (settled && settled.dist < 5) break;
 }
+// Diagnostics: when this check fails, the numbers below say WHY. A dist that
+// equals the injected height means the observer never ran; a dist that shrinks
+// slowly means it ran but was too late; scrollTop moving means something
+// scrolled the list.
+if (!settled || settled.dist >= 5) {
+  const diag = await page.evaluate(`(() => {
+    const chat = document.querySelector('[class*="bguru-chat-view"]');
+    const vp = chat.querySelector('.mantine-ScrollArea-viewport');
+    return {
+      scrollTop: Math.round(vp.scrollTop),
+      scrollHeight: Math.round(vp.scrollHeight),
+      clientHeight: Math.round(vp.clientHeight),
+      dist: Math.round(vp.scrollHeight - vp.scrollTop - vp.clientHeight),
+      growthPresent: !!document.getElementById('__e2e_growth'),
+      growthHeight: document.getElementById('__e2e_growth')?.offsetHeight ?? null,
+      innerIsVpChild: vp.contains(vp.firstElementChild),
+      ua: navigator.userAgent,
+    };
+  })()`);
+  console.log("  [diag] " + JSON.stringify(diag));
+}
 check(
   "still pinned to the bottom after late growth",
   !!settled && settled.dist < 5,
