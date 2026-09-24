@@ -8776,13 +8776,15 @@ export default function Home() {
                   //
                   // Opacity alone was not readable enough (drikin: 「半透明と
                   // アクティブの人の見た目の差があんまりわからない」), so the
-                  // states now differ on THREE axes at once:
-                  //   active (true)  → bold name + green dot + full opacity
-                  //   unknown (null) → normal weight, no dot, opacity 0.75
-                  //   away (false)   → normal weight, no dot, opacity 0.4
-                  // The dot is the primary signal (it reads at a glance even for
-                  // someone who cannot judge opacity), weight is secondary, and
-                  // opacity is the tertiary cue.
+                  // states differ on two axes:
+                  //   active (true)  → green filled dot + full opacity
+                  //   unknown (null) → hollow grey dot + opacity 0.75
+                  //   away (false)   → hollow grey dot + opacity 0.4
+                  // The dot is the signal. Bold was tried as a second cue but
+                  // drikin dropped it once the dot landed (「アクティブは緑の
+                  // ドットがあるんで、太字でなくて通常文字で大丈夫そうです」) —
+                  // the dot alone reads clearly, and uniform weight keeps the
+                  // list calm.
                   const isActive = m.visible === true;
                   const isAway = m.visible === false;
                   const opacity = isActive ? 1 : isAway ? 0.4 : 0.75;
@@ -8833,7 +8835,6 @@ export default function Home() {
                         <Text
                           size="sm"
                           truncate
-                          fw={isActive ? 700 : 400}
                           style={{ minWidth: 0 }}
                         >
                           {m.name || m.email.split("@")[0]}
