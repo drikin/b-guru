@@ -593,6 +593,110 @@ await page.evaluate(`(() => {
 })()`);
 await page.waitForTimeout(2000);
 
+// 6j. Mobile club bar (drikin 2026-09-25: 「Discord の代替になるように、UX を含めて
+// 検討してほしい」). The bar exists so a club switch costs ONE tap on mobile instead
+// of two (open the full-screen menu → pick), and so the club list stays visible while
+// reading. Three things must hold, and each has already broken once:
+//   (a) the bar is present and horizontally scrollable on a phone viewport,
+//   (b) tapping a chip actually filters the feed (the URL and the request change),
+//   (c) it does NOT slide under the tab bar when the page scrolls — the first
+//       implementation used `+40px` for the sticky offset and the bar sank 24px
+//       behind the tabs (measured gap = -24). Assert the measured gap, not the CSS.
+console.log("\n6j. Mobile club bar (one-tap club switching)");
+{
+  const mobile = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 3,
+    isMobile: true,
+    hasTouch: true,
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+  });
+  await mobile.addCookies([
+    { name: "bsm_session", value: SESSION, domain: "bsm.backspace.fm", path: "/" },
+  ]);
+  const mp = await mobile.newPage();
+  await mp.goto(BASE_URL, { waitUntil: "networkidle" });
+  await mp.waitForTimeout(3000);
+
+  const bar = await mp.evaluate(`(() => {
+    const b = document.querySelector('[data-cx="clubbars"]');
+    if (!b) return null;
+    const chips = [...b.querySelectorAll('[data-club-chip]')];
+    return {
+      chips: chips.length,
+      scrollable: b.scrollWidth > b.clientWidth,
+      first: chips.slice(0, 3).map(c => c.textContent.trim()),
+    };
+  })()`);
+  check(
+    "mobile club bar is present with chips",
+    !!bar && bar.chips > 1,
+    bar ? `chips=${bar.chips} first=${bar.first.join("/")}` : "bar not found"
+  );
+  check(
+    "mobile club bar scrolls horizontally",
+    !!bar && bar.scrollable,
+    bar ? `scrollable=${bar.scrollable}` : "n/a"
+  );
+
+  // (c) sticky offset: the bar must sit flush under the tab bar at every scroll
+  // position. A negative gap means it slid behind the tabs.
+  const gaps = [];
+  for (const y of [0, 200, 800, 2000]) {
+    await mp.evaluate(`window.scrollTo(0, ${y})`);
+    await mp.waitForTimeout(400);
+    const g = await mp.evaluate(`(() => {
+      const b = document.querySelector('[data-cx="clubbars"]');
+      const t = document.querySelector('[data-cx="navtabs"]');
+      if (!b || !t) return null;
+      return Math.round(b.getBoundingClientRect().top - t.getBoundingClientRect().bottom);
+    })()`);
+    gaps.push(g);
+  }
+  check(
+    "mobile club bar never slides under the tab bar",
+    gaps.every((g) => g !== null && g >= 0),
+    `gaps=${gaps.join("/")} (negative = hidden behind the tabs)`
+  );
+
+  // (b) one tap filters the feed.
+  const reqs = [];
+  const onReq = (r) => {
+    if (r.url().includes("/api/posts")) reqs.push(r.url());
+  };
+  mp.on("request", onReq);
+  const tapped = await mp.evaluate(`(() => {
+    const b = document.querySelector('[data-cx="clubbars"]');
+    if (!b) return null;
+    const chip = [...b.querySelectorAll('[data-club-chip]')]
+      .find(c => c.getAttribute('data-club-chip') === 'idle');
+    if (!chip) return null;
+    const label = chip.textContent.trim();
+    chip.click();
+    return label;
+  })()`);
+  await mp.waitForTimeout(3000);
+  mp.off("request", onReq);
+  const filtered = await mp.evaluate(`(() => ({
+    url: location.href,
+    active: [...document.querySelectorAll('[data-club-chip]')]
+      .find(c => c.getAttribute('data-club-chip') === 'active')?.textContent?.trim() || null,
+    posts: document.querySelectorAll('[data-post-id]').length,
+  }))()`);
+  check(
+    "tapping a club chip filters the feed in one tap",
+    !!tapped && filtered.url.includes("club=") && reqs.some((u) => u.includes("club=")),
+    `tapped="${tapped}" url=${filtered.url} reqs=${reqs.length} posts=${filtered.posts}`
+  );
+  check(
+    "the tapped chip becomes the active chip",
+    !!filtered.active && filtered.active.startsWith((tapped || "").replace(/\d+$/, "").trim()),
+    `active="${filtered.active}" tapped="${tapped}"`
+  );
+  await mobile.close();
+}
+
 // ------------------------------------------------------------ image proxy
 console.log("\n7. Images and avatars go through our own origin");
 const imgStats = await page.evaluate(`(() => {

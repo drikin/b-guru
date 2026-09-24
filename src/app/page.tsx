@@ -5489,6 +5489,18 @@ export default function Home() {
       .finally(() => setFeedLoadingMore(false));
   };
 
+  // 部活の表示順（活性度=直近7日アクティビティ降順、同数ならカタログ順）。
+  // 左サイドバーとモバイルの部活バーの両方がこれを使う — 2箇所で別々に
+  // ソートすると、片方だけ直して順序が食い違う（drikin は重複実装を嫌う）。
+  const orderedClubKeys = useMemo(
+    () =>
+      currentCategories()
+        .flatMap((cat) => cat.keys)
+        .slice()
+        .sort((a, b) => (clubActivity[b] ?? 0) - (clubActivity[a] ?? 0)),
+    [clubCatalogState, clubActivity],
+  );
+
   // 部活を選択/解除（左サイドバー「部活」）。選択でタイムラインを club フィルタで読み直す。
   // ?club=<key> を URL へ同期し、リロード・共有でも同じフィルターのタイムラインが開く。
   const selectClub = useCallback((key: string | null) => {
@@ -8093,14 +8105,9 @@ export default function Home() {
               )}
             </Group>
             <ClubNavRow label="すべて" activity={clubActivityTotal} trend={clubTrendTotal} active={clubFilter === null} onClick={() => selectClub(null)} />
-            {currentCategories()
-              .flatMap((cat) => cat.keys)
-              // 活性度（直近7日アクティビティ）降順で並べる。同じならカタログ順を維持。
-              .slice()
-              .sort((a, b) => (clubActivity[b] ?? 0) - (clubActivity[a] ?? 0))
-              .map((k) => (
-                <ClubNavRow key={k} label={clubLabel(k) ?? k} activity={clubActivity[k] ?? 0} trend={clubTrend[k] ?? "flat"} active={clubFilter === k} onClick={() => selectClub(k)} />
-              ))}
+            {orderedClubKeys.map((k) => (
+              <ClubNavRow key={k} label={clubLabel(k) ?? k} activity={clubActivity[k] ?? 0} trend={clubTrend[k] ?? "flat"} active={clubFilter === k} onClick={() => selectClub(k)} />
+            ))}
             <ClubNavRow label="未設定" activity={clubActivityUnset} trend={clubTrendUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} />
 
             {/* Admin-managed external-link bookmarks */}
@@ -9063,6 +9070,52 @@ export default function Home() {
                       },
                     ]}
                   />
+                </Box>
+              )}
+
+              {/* モバイル部活バー: タイムライン上部に常設する横スクロールの部活チップ。
+                  drikin 2026-09-25「Discord の代替になるように、UX を含めて検討してほしい」
+                  → 実測でモバイルは部活の切替に 2 タップ（メニューを開く→選ぶ）必要で、
+                  しかもメニューが全画面を覆うため投稿を読みながら切り替えられなかった。
+                  Discord はチャンネルリストが常時見えていて 1 タップ。ここでは lg 未満
+                  （左サイドバーが出ない幅）でのみ表示し、1 タップで切り替えられるようにする。
+                  左サイドバーがある幅では同じものが既に見えているので出さない（情報の重複を避ける）。 */}
+              {showNavTabs && !chatView && (
+                <Box
+                  data-cx="clubbars"
+                  style={{
+                    // タブバーの直下に貼る。タブバーは top:56px から始まり高さ 64px
+                    // （実測: 56→120）なので、その下端 120px に合わせる。
+                    // 当初 `+40px` と書いて 24px 潜り込んだ（実測 gap=-24）— タブバーの
+                    // 高さは SegmentedControl の実寸で決まり、padding から逆算できない。
+                    position: "sticky",
+                    top: "calc(var(--app-shell-header-height, 56px) + 64px)",
+                    zIndex: 59,
+                    background: "var(--bg-primary)",
+                    marginTop: -4,
+                    paddingBottom: 6,
+                    // 横スクロールのみ。縦の引っ張りリロードに取られないようにする。
+                    overflowX: "auto",
+                    overflowY: "hidden",
+                    overscrollBehaviorX: "contain",
+                    WebkitOverflowScrolling: "touch",
+                    scrollbarWidth: "none",
+                    display: "flex",
+                    gap: 6,
+                    alignItems: "center",
+                  }}
+                >
+                  <ClubChip label="すべて" active={clubFilter === null} onClick={() => selectClub(null)} />
+                  {orderedClubKeys.map((k) => (
+                    <ClubChip
+                      key={k}
+                      label={clubLabel(k) ?? k}
+                      activity={clubActivity[k] ?? 0}
+                      active={clubFilter === k}
+                      onClick={() => selectClub(k)}
+                    />
+                  ))}
+                  <ClubChip label="未設定" active={clubFilter === CLUB_UNSET} onClick={() => selectClub(CLUB_UNSET)} />
                 </Box>
               )}
 
@@ -11124,6 +11177,59 @@ function ClubNavRow({
         >
           {activityCount}
         </Badge>
+      )}
+    </UnstyledButton>
+  );
+}
+
+/** モバイル部活バーの1チップ。横スクロールで並べる前提なので、幅は内容に任せて
+ *  折り返さない（`flexShrink: 0`）。選択中は緑の塗りで、左サイドバーの
+ *  `ClubNavRow` と同じ「緑 = 選択中」の語彙を保つ。 */
+function ClubChip({
+  label,
+  activity,
+  active,
+  onClick,
+}: {
+  label: string;
+  activity?: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const activityCount = activity ?? 0;
+  return (
+    <UnstyledButton
+      onClick={onClick}
+      aria-pressed={active}
+      data-club-chip={active ? "active" : "idle"}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        flexShrink: 0,
+        padding: "5px 11px",
+        borderRadius: 999,
+        fontSize: 13,
+        lineHeight: 1.2,
+        whiteSpace: "nowrap",
+        border: `1px solid ${active ? "transparent" : "var(--border-default)"}`,
+        background: active ? "var(--text-green)" : "transparent",
+        color: active ? "#fff" : "var(--text-primary)",
+        fontWeight: active ? 600 : 500,
+      }}
+    >
+      {label}
+      {activityCount > 0 && (
+        <span
+          aria-hidden
+          style={{
+            fontSize: 11,
+            opacity: active ? 0.85 : 0.55,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {activityCount}
+        </span>
       )}
     </UnstyledButton>
   );
