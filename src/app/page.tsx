@@ -7796,6 +7796,30 @@ export default function Home() {
       const el = t as HTMLElement | null;
       return !!el && !!el.closest && !!el.closest("input,textarea,[contenteditable='true']");
     };
+    // A horizontally scrollable strip (the mobile club bar) owns horizontal
+    // drags inside it. Without this the club bar's own scroll gesture was read
+    // as a tab swipe and switched to チャット instead of scrolling the chips
+    // (drikin 2026-09-25: 「チャット切り替えのスワイプと誤動作しやすい」).
+    // Walk up from the touch target: the gesture may start on a chip, whose
+    // scrollable ancestor is the bar itself.
+    const inHScrollable = (t: EventTarget | null) => {
+      let el = t as HTMLElement | null;
+      while (el && el !== document.body) {
+        if (el.scrollWidth > el.clientWidth + 4) {
+          const ox = getComputedStyle(el).overflowX;
+          if (ox === "auto" || ox === "scroll") return true;
+        }
+        el = el.parentElement;
+      }
+      return false;
+    };
+    // The gesture must also START in the tab strip's own band. The swipe is a
+    // shortcut for the tab bar, so restricting it to the top of the page keeps
+    // it from firing on a horizontal drag anywhere in the feed (image carousels,
+    // code blocks, long links). The band is generous — the tab bar plus the club
+    // bar below it — so the gesture still feels available.
+    const SWIPE_BAND_PX = 200;
+    const inSwipeBand = (y: number) => y <= SWIPE_BAND_PX;
     const act = (dx: number) => {
       if (dx < 0 && !chatViewRef.current) openChat();
       else if (dx > 0 && chatViewRef.current) closeChat();
@@ -7804,7 +7828,10 @@ export default function Home() {
     let tsx = 0, tsy = 0, tst = 0, tactive = false;
     const onTouchStart = (e: TouchEvent) => {
       const t = e.touches[0];
-      if (!t || isEditable(e.target)) { tactive = false; return; }
+      if (!t || isEditable(e.target) || inHScrollable(e.target) || !inSwipeBand(t.clientY)) {
+        tactive = false;
+        return;
+      }
       tsx = t.clientX; tsy = t.clientY; tst = Date.now(); tactive = true;
     };
     const onTouchEnd = (e: TouchEvent) => {
@@ -7822,7 +7849,10 @@ export default function Home() {
     let sx = 0, sy = 0, st = 0, active = false;
     const onPtrStart = (e: PointerEvent) => {
       if (e.pointerType === "touch") return; // touch is handled by the touch path
-      if (isEditable(e.target)) { active = false; return; }
+      if (isEditable(e.target) || inHScrollable(e.target) || !inSwipeBand(e.clientY)) {
+        active = false;
+        return;
+      }
       sx = e.clientX; sy = e.clientY; st = Date.now(); active = true;
     };
     const onPtrEnd = (e: PointerEvent) => {

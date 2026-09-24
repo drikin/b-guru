@@ -694,6 +694,60 @@ console.log("\n6j. Mobile club bar (one-tap club switching)");
     !!filtered.active && filtered.active.startsWith((tapped || "").replace(/\d+$/, "").trim()),
     `active="${filtered.active}" tapped="${tapped}"`
   );
+
+  // (d) The club bar's own horizontal scroll must NOT be read as a tab swipe.
+  // The swipe listener is on `window`, so before this guard a left drag on the
+  // club bar switched to チャット instead of scrolling the chips (drikin
+  // 2026-09-25: 「チャット切り替えのスワイプと誤動作しやすい」). Assert the
+  // observable outcome: the view does not change.
+  const swipe = async (x1, y1, x2, y2) => {
+    await mp.evaluate(
+      `(() => {
+        const el = document.elementFromPoint(${x1}, ${y1});
+        const mk = (type, x, y) => {
+          const t = new Touch({ identifier: 1, target: el, clientX: x, clientY: y });
+          return new TouchEvent(type, {
+            touches: type === "touchend" ? [] : [t],
+            changedTouches: [t], bubbles: true, cancelable: true,
+          });
+        };
+        el.dispatchEvent(mk("touchstart", ${x1}, ${y1}));
+        el.dispatchEvent(mk("touchend", ${x2}, ${y2}));
+      })()`
+    );
+    await mp.waitForTimeout(1200);
+  };
+  const isChat = () => mp.evaluate(`!!document.querySelector('.bguru-chat-view')`);
+  const barY = await mp.evaluate(`(() => {
+    const r = document.querySelector('[data-cx="clubbars"]').getBoundingClientRect();
+    return Math.round(r.y + r.height / 2);
+  })()`);
+
+  const chatBefore = await isChat();
+  await swipe(300, barY, 100, barY);
+  const chatAfterBar = await isChat();
+  check(
+    "swiping on the club bar does not switch tabs",
+    chatBefore === chatAfterBar,
+    `before=${chatBefore} after=${chatAfterBar} (barY=${barY})`
+  );
+
+  // The tab swipe itself must still work — the fix must not disable the feature.
+  await swipe(300, 90, 100, 90);
+  const chatAfterTab = await isChat();
+  check(
+    "swiping on the tab bar still switches to chat",
+    chatAfterTab === true,
+    `after=${chatAfterTab}`
+  );
+  await swipe(100, 90, 300, 90);
+  const chatBack = await isChat();
+  check(
+    "swiping back on the tab bar returns to the timeline",
+    chatBack === false,
+    `after=${chatBack}`
+  );
+
   await mobile.close();
 }
 
