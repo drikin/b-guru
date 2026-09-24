@@ -62,6 +62,8 @@ import {
 } from "@/lib/feed";
 import type { ChatMessage } from "@/lib/chat";
 import type { PostPoll } from "@/lib/poll";
+import type { DuplicateCandidate } from "@/lib/duplicates";
+import { DuplicateWarning } from "@/components/DuplicateWarning";
 
 /** Decode a base64url VAPID public key into a Uint8Array for pushManager.subscribe. */
 function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
@@ -3387,6 +3389,7 @@ function ComposerPaper({
   onPublish,
   onClose,
   onPreviewImage,
+  onReplyTo,
 }: {
   auth: { name?: string | null; email: string };
   avatarSrc?: string | null;
@@ -3422,6 +3425,8 @@ function ComposerPaper({
   ) => Promise<void>;
   onClose: () => void;
   onPreviewImage: (src: string, group?: string[]) => void;
+  /** 重複警告から「元の投稿に返信する」を選んだとき。投稿先を切り替える。 */
+  onReplyTo?: (postId: number, authorName: string) => void;
 }) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<string[]>([]);
@@ -3439,10 +3444,44 @@ function ComposerPaper({
   } | null>(null);
   const [proofreading, setProofreading] = useState(false);
   const AI_PROOFREAD_MIN = 500; // "AI校正" button enables >500 chars
+  // 重複投稿の警告（drikin 2026-09-25）。投稿をブロックはせず、同じ話題が
+  // 既にあれば「元の投稿に返信する」導線を出す。
+  const [duplicates, setDuplicates] = useState<DuplicateCandidate[]>([]);
+  const [dupDismissed, setDupDismissed] = useState(false);
+  const dupCheckedRef = useRef<string>("");
   const [previewHidden, setPreviewHidden] = useState(false);
   const isMarkdown = detectMarkdown(text); // auto-show rendered preview when markdown detected
   const showPreview = isMarkdown && !previewHidden && text.trim().length > 0;
   const charCount = text.trim().length; // matches the AI校正 enable condition (>500)
+
+  // 重複チェック（drikin 2026-09-25）。入力が落ち着いてから1回だけ問い合わせる。
+  // 打鍵ごとに投げると無駄が多いので、本文が変わってから 700ms 待つ。
+  // 同じ本文では再問い合わせしない（dupCheckedRef）。
+  useEffect(() => {
+    const body = text.trim();
+    // 短すぎる本文は判定材料にならない（「お疲れ様です」等で誤警告しない）。
+    if (body.length < 4 || dupDismissed) {
+      setDuplicates([]);
+      return;
+    }
+    if (dupCheckedRef.current === body) return;
+    const timer = setTimeout(async () => {
+      dupCheckedRef.current = body;
+      try {
+        const r = await fetch("/api/posts/duplicates", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: body }),
+        });
+        if (!r.ok) return;
+        const d = await r.json().catch(() => ({}));
+        setDuplicates(Array.isArray(d?.duplicates) ? d.duplicates : []);
+      } catch {
+        // 重複チェックの失敗で投稿を止めない。黙って諦める。
+      }
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [text, dupDismissed]);
   const fileRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLInputElement>(null);
@@ -3607,6 +3646,23 @@ function ComposerPaper({
             </Text>
           )}
         </Group>
+        {/* 重複投稿の警告（drikin 2026-09-25）。プレビューより上に出す —
+         *  投稿する直前に目に入る位置でないと意味がない。 */}
+        {!dupDismissed && duplicates.length > 0 && (
+          <DuplicateWarning
+            duplicates={duplicates}
+            onReplyTo={(postId, authorName) => {
+              // 投稿先をその投稿への返信に切り替える。本文はそのまま活かす。
+              onReplyTo?.(postId, authorName);
+              setDuplicates([]);
+              setDupDismissed(true);
+            }}
+            onDismiss={() => {
+              setDupDismissed(true);
+              setDuplicates([]);
+            }}
+          />
+        )}
         {showPreview && previewHtml && (
           <Box mb="sm" style={{ borderRadius: 8, background: "var(--bg-light, rgba(127,127,127,0.06))", padding: "0.6em 0.9em" }}>
             <Group justify="space-between" mb={4}>
@@ -9661,6 +9717,13 @@ export default function Home() {
                     onPublish={publishComposer}
                     onClose={() => setComposerOpen(false)}
                     onPreviewImage={openPreview}
+                    onReplyTo={(postId) => {
+                      // 重複警告から「元の投稿に返信する」を選んだ場合。
+                      // 既存の返信導線（openThreadReply）に乗せる — 返信の
+                      // 経路を2本にすると片方だけ直す事故が起きる。
+                      setComposerOpen(false);
+                      openThreadReply(postId);
+                    }}
                   />
                 ) : (
                   <Box style={{ display: "flex", justifyContent: "center", padding: "4px 0", lineHeight: 0 }}>

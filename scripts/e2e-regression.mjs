@@ -1039,6 +1039,140 @@ console.log("\n6l. Chat message actions");
   );
 }
 
+// 6m. Duplicate-post warning
+// (drikin 2026-09-25: 「この2つの投稿って本当に完全に被っちゃってるんですけど、
+// 似たような投稿があった時に警告したり、うまくそれを統合したりするような、
+// もうちょっと同じような情報をまとめ上げる仕組みを考えられませんかね？」)
+//
+// The real case: post 5511 (crusader) and 5513 (rikito1206) are the SAME YouTube
+// video posted 15 minutes apart, written as `youtube.com/watch?v=ID` and
+// `youtu.be/ID?si=...`. The guard reproduces that exact shape — a URL-form
+// difference must still be detected, because that is what actually happened.
+console.log("\n6m. Duplicate-post warning");
+{
+  // The API must find the real duplicate pair by video id.
+  const api = await page.evaluate(`(async () => {
+    const r = await fetch('/api/posts/duplicates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'https://youtu.be/GzI_qMqWq7s?si=xDdNDpCO_sZQ71IE' }),
+    });
+    if (!r.ok) return { status: r.status };
+    const d = await r.json();
+    return { status: r.status, dupes: d.duplicates ?? [] };
+  })()`);
+  check(
+    "the duplicate API finds the same video posted in a different URL form",
+    api.status === 200 && api.dupes.length > 0,
+    `status=${api.status} dupes=${api.dupes?.length}`
+  );
+  check(
+    "the duplicate is reported as exact (same video), not merely similar",
+    api.dupes?.length > 0 && api.dupes[0].exact === true && api.dupes[0].kind === "video",
+    api.dupes?.length ? `kind=${api.dupes[0].kind} exact=${api.dupes[0].exact}` : "n/a"
+  );
+  check(
+    "the duplicate names the earlier poster, not their email",
+    api.dupes?.length > 0 && !!api.dupes[0].authorName && !/@/.test(api.dupes[0].authorName),
+    api.dupes?.length ? `authorName="${api.dupes[0].authorName}"` : "n/a"
+  );
+
+  // A reply must NOT be flagged — replying is the correct way to join a topic.
+  const replyCase = await page.evaluate(`(async () => {
+    const r = await fetch('/api/posts/duplicates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'https://youtu.be/GzI_qMqWq7s', parentId: 5511 }),
+    });
+    const d = await r.json();
+    return d.duplicates ?? [];
+  })()`);
+  check(
+    "a reply is never flagged as a duplicate",
+    Array.isArray(replyCase) && replyCase.length === 0,
+    `dupes=${replyCase?.length}`
+  );
+
+  // Unrelated text must not warn — a false warning makes people hesitate to post.
+  const clean = await page.evaluate(`(async () => {
+    const r = await fetch('/api/posts/duplicates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: '今日はいい天気ですね。散歩してきます。' }),
+    });
+    const d = await r.json();
+    return d.duplicates ?? [];
+  })()`);
+  check(
+    "unrelated text produces no warning",
+    Array.isArray(clean) && clean.length === 0,
+    `dupes=${clean?.length}`
+  );
+
+  // The warning must actually render in the composer when a duplicate is typed.
+  await page.evaluate(`(() => {
+    const tab = [...document.querySelectorAll('.mantine-SegmentedControl-label')]
+      .find(l => l.textContent.includes('タイムライン'));
+    tab?.click();
+  })()`);
+  await page.waitForTimeout(1500);
+  await page.evaluate(`document.querySelector('[aria-label="新しい投稿を作成"]')?.click()`);
+  await page.waitForTimeout(1200);
+
+  const typed = await page.evaluate(`(() => {
+    const ta = document.querySelector('textarea');
+    if (!ta) return false;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    setter.call(ta, 'https://youtu.be/GzI_qMqWq7s?si=xDdNDpCO_sZQ71IE');
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  })()`);
+  await page.waitForTimeout(3000);
+
+  const warn = await page.evaluate(`(() => {
+    const w = document.querySelector('[data-cx="duplicate-warning"]');
+    if (!w) return null;
+    return {
+      text: w.textContent,
+      items: w.querySelectorAll('[data-cx="duplicate-item"]').length,
+      hasReplyAction: !!w.querySelector('[data-cx="duplicate-reply"]'),
+      hasDismiss: !!w.querySelector('[data-cx="duplicate-dismiss"]'),
+    };
+  })()`);
+  check(
+    "typing a duplicate shows the warning in the composer",
+    typed && !!warn && warn.items > 0,
+    warn ? `items=${warn.items}` : "warning did not appear"
+  );
+  check(
+    "the warning offers a one-tap 'reply to the original' action",
+    !!warn && warn.hasReplyAction,
+    warn ? `hasReplyAction=${warn.hasReplyAction}` : "n/a"
+  );
+  check(
+    "the warning can be dismissed",
+    !!warn && warn.hasDismiss,
+    warn ? `hasDismiss=${warn.hasDismiss}` : "n/a"
+  );
+
+  // Dismissing must hide it, and the post must still be submittable (we never
+  // block — drikin chose "warn + offer to reply", not "block").
+  await page.evaluate(`document.querySelector('[data-cx="duplicate-dismiss"]')?.click()`);
+  await page.waitForTimeout(800);
+  const afterDismiss = await page.evaluate(
+    `!!document.querySelector('[data-cx="duplicate-warning"]')`
+  );
+  check(
+    "dismissing the warning hides it",
+    afterDismiss === false,
+    `stillVisible=${afterDismiss}`
+  );
+
+  // Clean up: close the composer without posting.
+  await page.evaluate(`document.querySelector('[aria-label="閉じる"]')?.click()`);
+  await page.waitForTimeout(800);
+}
+
 // ------------------------------------------------------------ image proxy
 console.log("\n7. Images and avatars go through our own origin");
 const imgStats = await page.evaluate(`(() => {

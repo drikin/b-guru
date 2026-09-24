@@ -1,0 +1,52 @@
+import { NextRequest, NextResponse } from "next/server";
+import { findDuplicates } from "@/lib/duplicates";
+import { getSessionEmail } from "@/lib/session";
+
+export const dynamic = "force-dynamic";
+
+const NO_CACHE = { "Cache-Control": "no-store, no-cache, must-revalidate" };
+
+/**
+ * POST /api/posts/duplicates — 投稿前の重複チェック。
+ *
+ * drikin 2026-09-25: 「似たような投稿があった時に警告したり、うまくそれを統合
+ * したりするような、もうちょっと同じような情報をまとめ上げる仕組みを考えられ
+ * ませんかね？」
+ *
+ * 投稿をブロックはしない。投稿者が「元の投稿に返信する」か「そのまま投稿する」
+ * かを選べるようにするための情報を返すだけ。
+ *
+ * 本文は保存しない（読み取り専用の照会）。POST なのは本文が長くなりうるため
+ * クエリ文字列を避けるためで、状態は変えない。
+ */
+export async function POST(req: NextRequest) {
+  const email = await getSessionEmail();
+  if (!email) {
+    return NextResponse.json({ error: "ログインが必要です" }, { status: 401, headers: NO_CACHE });
+  }
+
+  let body: { text?: string; parentId?: number | null };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "不正なリクエストです" }, { status: 400, headers: NO_CACHE });
+  }
+
+  const text = typeof body.text === "string" ? body.text : "";
+  if (!text.trim()) {
+    return NextResponse.json({ duplicates: [] }, { headers: NO_CACHE });
+  }
+
+  try {
+    const duplicates = await findDuplicates({
+      text,
+      authorEmail: email,
+      parentId: body.parentId ?? null,
+    });
+    return NextResponse.json({ duplicates }, { headers: NO_CACHE });
+  } catch (e) {
+    // 重複チェックの失敗で投稿を止めてはいけない。空を返して投稿を続行させる。
+    console.error("[duplicates] lookup failed", e);
+    return NextResponse.json({ duplicates: [] }, { headers: NO_CACHE });
+  }
+}

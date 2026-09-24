@@ -1,0 +1,317 @@
+/* 重複投稿の検知。
+ *
+ * drikin 2026-09-25: 「この2つの投稿って本当に完全に被っちゃってるんですけど、
+ * 似たような投稿があった時に警告したり、うまくそれを統合したりするような、
+ * もうちょっと同じような情報をまとめ上げる仕組みを考えられませんかね？」
+ *
+ * 実測（2026-09-25 時点）: 親投稿 1,546件のうち YouTube リンク付きが 158件、
+ * そのうち url_preview.videoId が保存済みなのが 154件。動画ID重複が4組、
+ * 正規化URL重複が11組、短文の完全一致が6組あった。
+ *
+ * 設計の要点:
+ *   - 判定は「確実」と「あいまい」を明確に分ける。確実な重複（同じ動画・同じURL）
+ *     は強く警告し、あいまい類似は「もしかして」程度に留める。混ぜると
+ *     誤警告で投稿を躊躇させる。
+ *   - 既存の url_preview.videoId を使う。youtu.be/ でも watch?v= でも同じIDに
+ *     なるので、URL の書き方の違いを自前で吸収する必要がない。
+ *   - 投稿をブロックしない。あくまで気づきを提供し、判断は投稿者に委ねる。
+ */
+
+import { pool } from "./db";
+import { extractYoutubeId } from "./urlpreview";
+
+/** 重複の確からしさ。`exact` は同じ対象を指していることが確実なもの。 */
+export type DuplicateKind = "video" | "url" | "text" | "similar";
+
+export interface DuplicateCandidate {
+  postId: number;
+  authorName: string;
+  authorEmail: string;
+  text: string;
+  createdAt: string;
+  /** どの規則で見つかったか。UI の文言と強調度に使う。 */
+  kind: DuplicateKind;
+  /** 0..1。`exact` 系は 1、あいまい類似は実測スコア。 */
+  score: number;
+  /** 同じ動画/URL を指していることが確実か。UI の強調度を決める。 */
+  exact: boolean;
+}
+
+/** あいまい類似を出す閾値。これ未満は「似ている」と言い切れない。 */
+const SIMILAR_THRESHOLD = 0.55;
+/** 返す候補の上限。多すぎると警告が読まれなくなる。 */
+const MAX_CANDIDATES = 3;
+/** あいまい類似を探す対象期間（日）。古い投稿を掘り返しても意味がない。 */
+const SIMILAR_WINDOW_DAYS = 30;
+
+/**
+ * 本文から比較用の正規化テキストを作る。
+ *
+ * URL は除去する（URL の一致は videoId / 正規化URL の層で見るので、ここで
+ * 残すと同じURLを含むだけの別内容の投稿が類似扱いになる）。全角/半角と
+ * 大小文字の差は吸収する。
+ */
+export function normalizeText(text: string): string {
+  return text
+    .replace(/https?:\/\/\S+/g, " ")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s\u3000]+/g, " ")
+    .trim();
+}
+
+/**
+ * 2つの文字列の類似度（0..1）。Dice 係数（バイグラム）を使う。
+ *
+ * 日本語は分かち書きしないので単語ベースの類似度が使えない。バイグラムなら
+ * 言語に依存せず、「同じ動画についての短い感想」程度の近さを拾える。
+ */
+export function similarity(a: string, b: string): number {
+  const x = normalizeText(a);
+  const y = normalizeText(b);
+  if (!x || !y) return 0;
+  if (x === y) return 1;
+  // 短すぎる文字列はバイグラムが作れないので完全一致のみ。
+  if (x.length < 2 || y.length < 2) return 0;
+
+  const bigrams = (s: string) => {
+    const out = new Map<string, number>();
+    for (let i = 0; i < s.length - 1; i++) {
+      const g = s.slice(i, i + 2);
+      out.set(g, (out.get(g) ?? 0) + 1);
+    }
+    return out;
+  };
+
+  const bx = bigrams(x);
+  const by = bigrams(y);
+  let overlap = 0;
+  let totalX = 0;
+  let totalY = 0;
+  for (const n of bx.values()) totalX += n;
+  for (const n of by.values()) totalY += n;
+  for (const [g, n] of bx) {
+    const m = by.get(g);
+    if (m) overlap += Math.min(n, m);
+  }
+  return (2 * overlap) / (totalX + totalY);
+}
+
+/**
+ * URL を比較用に正規化する。
+ *
+ * トラッキングパラメータ（si / utm_* / fbclid 等）と末尾スラッシュ、ホストの
+ * www. を落とす。実測で `youtu.be/ID?si=...` と `youtube.com/watch?v=ID` が
+ * 別物として扱われていたのが重複の主因だった。
+ */
+export function normalizeUrl(raw: string): string {
+  try {
+    const u = new URL(raw.trim());
+    u.hash = "";
+    u.hostname = u.hostname.replace(/^www\./, "");
+    // トラッキング系は全部落とす。共有ボタンが付けてくるものが大半。
+    const drop = [
+      "si", "feature", "utm_source", "utm_medium", "utm_campaign",
+      "utm_term", "utm_content", "fbclid", "gclid", "igshid", "ref", "ref_src",
+    ];
+    for (const k of drop) u.searchParams.delete(k);
+    // 残ったパラメータは順序を安定させる（?b=2&a=1 と ?a=1&b=2 を同一視）。
+    u.searchParams.sort();
+    let s = u.toString();
+    // クエリが空になったら "?" を落とす。
+    s = s.replace(/\?$/, "");
+    // 末尾スラッシュはパスがある場合のみ落とす（"https://x.com/" は残す）。
+    if (u.pathname !== "/" && s.endsWith("/")) s = s.slice(0, -1);
+    return s;
+  } catch {
+    return raw.trim();
+  }
+}
+
+/**
+ * 投稿しようとしている内容に似た既存投稿を探す。
+ *
+ * `parentId` が渡された場合（返信）は何も返さない — 返信は元投稿にぶら下がる
+ * のが正しい形なので、重複ではない。
+ */
+export async function findDuplicates(input: {
+  text: string;
+  authorEmail: string;
+  parentId?: number | null;
+}): Promise<DuplicateCandidate[]> {
+  // 返信は対象外。返信は「同じ話題に加わる」正しい手段そのもの。
+  if (input.parentId != null) return [];
+
+  const text = (input.text ?? "").trim();
+  if (!text) return [];
+
+  const found = new Map<number, DuplicateCandidate>();
+
+  // ---- 1. 同じ YouTube 動画 ----------------------------------------------
+  // url_preview.videoId は youtu.be / watch?v= / shorts の差を吸収済み。
+  const videoId = extractYoutubeIdFromText(text);
+  if (videoId) {
+    const res = await pool.query(
+      `SELECT p.id, p.author_email, p.text, p.created_at,
+              COALESCE(up.display_name, p.author_name, p.author_email) AS author_name
+         FROM posts p
+         LEFT JOIN user_profiles up ON up.email = p.author_email
+        WHERE p.parent_id IS NULL
+          AND p.url_preview->>'videoId' = $1
+        ORDER BY p.created_at DESC
+        LIMIT $2`,
+      [videoId, MAX_CANDIDATES]
+    );
+    for (const r of res.rows) {
+      found.set(Number(r.id), {
+        postId: Number(r.id),
+        authorName: displayName(r.author_name, r.author_email),
+        authorEmail: r.author_email,
+        text: r.text,
+        createdAt: r.created_at,
+        kind: "video",
+        score: 1,
+        exact: true,
+      });
+    }
+  }
+
+  // ---- 2. 同じ URL（正規化後） -------------------------------------------
+  const rawUrl = firstUrl(text);
+  if (rawUrl) {
+    const norm = normalizeUrl(rawUrl);
+    // 保存済みの url_preview.url も同じ規則で正規化して比較する。SQL 側で
+    // 正規化できないので、直近の URL 付き投稿を取って JS で突き合わせる。
+    const res = await pool.query(
+      `SELECT p.id, p.author_email, p.text, p.created_at, p.url_preview->>'url' AS url,
+              COALESCE(up.display_name, p.author_name, p.author_email) AS author_name
+         FROM posts p
+         LEFT JOIN user_profiles up ON up.email = p.author_email
+        WHERE p.parent_id IS NULL
+          AND p.url_preview->>'url' IS NOT NULL
+          AND p.created_at > now() - interval '${SIMILAR_WINDOW_DAYS} days'
+        ORDER BY p.created_at DESC
+        LIMIT 500`,
+      []
+    );
+    for (const r of res.rows) {
+      if (!r.url) continue;
+      if (normalizeUrl(r.url) !== norm) continue;
+      const id = Number(r.id);
+      if (found.has(id)) continue;
+      found.set(id, {
+        postId: id,
+        authorName: displayName(r.author_name, r.author_email),
+        authorEmail: r.author_email,
+        text: r.text,
+        createdAt: r.created_at,
+        kind: "url",
+        score: 1,
+        exact: true,
+      });
+    }
+  }
+
+  // ---- 3. 本文の完全一致 -------------------------------------------------
+  const normText = normalizeText(text);
+  if (normText.length >= 4) {
+    const res = await pool.query(
+      `SELECT p.id, p.author_email, p.text, p.created_at,
+              COALESCE(up.display_name, p.author_name, p.author_email) AS author_name
+         FROM posts p
+         LEFT JOIN user_profiles up ON up.email = p.author_email
+        WHERE p.parent_id IS NULL
+          AND lower(btrim(regexp_replace(p.text, 'https?://\\S+', ' ', 'g'))) = lower(btrim($1))
+          AND p.created_at > now() - interval '${SIMILAR_WINDOW_DAYS} days'
+        ORDER BY p.created_at DESC
+        LIMIT $2`,
+      [normText, MAX_CANDIDATES]
+    );
+    for (const r of res.rows) {
+      const id = Number(r.id);
+      if (found.has(id)) continue;
+      found.set(id, {
+        postId: id,
+        authorName: displayName(r.author_name, r.author_email),
+        authorEmail: r.author_email,
+        text: r.text,
+        createdAt: r.created_at,
+        kind: "text",
+        score: 1,
+        exact: true,
+      });
+    }
+  }
+
+  // ---- 4. あいまい類似 ---------------------------------------------------
+  // 確実な重複が既に見つかっているなら、あいまい類似は出さない。警告が
+  // 増えるほど読まれなくなるため。
+  if (found.size === 0 && normText.length >= 6) {
+    const res = await pool.query(
+      `SELECT p.id, p.author_email, p.text, p.created_at,
+              COALESCE(up.display_name, p.author_name, p.author_email) AS author_name
+         FROM posts p
+         LEFT JOIN user_profiles up ON up.email = p.author_email
+        WHERE p.parent_id IS NULL
+          AND p.created_at > now() - interval '${SIMILAR_WINDOW_DAYS} days'
+        ORDER BY p.created_at DESC
+        LIMIT 300`,
+      []
+    );
+    const scored: DuplicateCandidate[] = [];
+    for (const r of res.rows) {
+      const s = similarity(text, r.text);
+      if (s < SIMILAR_THRESHOLD) continue;
+      scored.push({
+        postId: Number(r.id),
+        authorName: displayName(r.author_name, r.author_email),
+        authorEmail: r.author_email,
+        text: r.text,
+        createdAt: r.created_at,
+        kind: "similar",
+        score: s,
+        exact: false,
+      });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    for (const c of scored.slice(0, MAX_CANDIDATES)) found.set(c.postId, c);
+  }
+
+  return [...found.values()]
+    .sort((a, b) => {
+      // 確実なものを先に、次に新しいもの。
+      if (a.exact !== b.exact) return a.exact ? -1 : 1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    })
+    // 上限はここで掛ける。SQL の LIMIT は各パスを個別に制限するだけなので、
+    // 複数のパスがヒットすると合計で上限を超える（テストが実バグとして検出）。
+    .slice(0, MAX_CANDIDATES);
+}
+
+/** 本文中の最初の URL。`posts.ts` の `firstUrl` と同じ規則。 */
+export function firstUrl(text: string): string | null {
+  const m = text.match(/https?:\/\/[^\s<>"']+/);
+  return m ? m[0] : null;
+}
+
+/**
+ * 本文中の YouTube 動画IDを取り出す。
+ *
+ * `urlpreview.ts` の `extractYoutubeId` は URL 単体を受け取るが、ここでは
+ * 本文から URL を拾ってから渡す。同じ解析を2箇所に書かないための薄い橋渡し。
+ */
+export function extractYoutubeIdFromText(text: string): string | null {
+  const url = firstUrl(text);
+  if (!url) return null;
+  return extractYoutubeId(url);
+}
+
+/** 表示名のフォールバック。メール形式なら @ で切る（投稿者名と同じ規則）。 */
+function displayName(name: string | null, email: string): string {
+  const v = (name ?? "").trim() || email;
+  return v.includes("@") ? v.split("@")[0] : v;
+}
+
+// `extractYoutubeId` は `urlpreview.ts` から再輸出する。呼び出し側が2つの
+// モジュールを意識しなくて済むようにするため（同じ解析を2箇所に書かない）。
+export { extractYoutubeId };
