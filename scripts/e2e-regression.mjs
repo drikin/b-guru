@@ -836,10 +836,19 @@ console.log("\n6k. Reactions on posts");
 
   // One tap on the picker's ❤️ chip must write. Use a post that has no ❤️ yet
   // so the assertion is unambiguous, then undo it so the guard leaves no residue.
+  //
+  // Reload first so this block starts from a known state — the checks above
+  // toggle reactions, and a leftover ❤️ would make the picker click a no-op
+  // (it toggles) and the assertion below would read null.
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForTimeout(3500);
+
   const target = await page.evaluate(`(() => {
     const bars = [...document.querySelectorAll('[data-cx="reaction-bar"]')];
     for (const b of bars) {
-      if (!b.querySelector('[data-reaction="❤️"]')) {
+      const hasHeart = [...b.querySelectorAll('[data-reaction]')]
+        .some(c => c.getAttribute('data-reaction') === '❤️');
+      if (!hasHeart) {
         const card = b.closest('[data-post-id]');
         if (card) return Number(card.getAttribute('data-post-id'));
       }
@@ -870,7 +879,8 @@ console.log("\n6k. Reactions on posts");
     await page.waitForTimeout(2000);
     const after = await page.evaluate(`(() => {
       const card = document.querySelector('[data-post-id="${target}"]');
-      const chip = card?.querySelector('[data-reaction="❤️"]');
+      const chip = [...(card?.querySelectorAll('[data-reaction]') ?? [])]
+        .find(c => c.getAttribute('data-reaction') === '❤️');
       return chip ? { mine: chip.getAttribute('data-mine'), text: chip.textContent.trim() } : null;
     })()`);
     check(
@@ -884,7 +894,8 @@ console.log("\n6k. Reactions on posts");
     await page.waitForTimeout(3000);
     const persisted = await page.evaluate(`(() => {
       const card = document.querySelector('[data-post-id="${target}"]');
-      const chip = card?.querySelector('[data-reaction="❤️"]');
+      const chip = [...(card?.querySelectorAll('[data-reaction]') ?? [])]
+        .find(c => c.getAttribute('data-reaction') === '❤️');
       return chip ? chip.getAttribute('data-mine') : null;
     })()`);
     check(
@@ -893,10 +904,54 @@ console.log("\n6k. Reactions on posts");
       `mine after reload=${persisted}`
     );
 
+    // Hovering the chip must reveal WHO reacted (drikin 2026-09-25: 「リアクションの
+    // アイコンにマウスオーバーしたら、誰がリアクションしたかもわかるようにした方が
+    // 良くないですか？」). Done HERE, right after the reload, because this is the one
+    // moment a ❤️ chip is guaranteed to be on screen — the 215 migrated reactions
+    // live on old posts that are not in the current feed page, so there is no
+    // pre-existing chip to hover.
+    //
+    // Also asserts the tooltip shows a NAME, not an email: the query used to
+    // aggregate raw emails, which would leak them to every member.
+    const hoverBox = await page.evaluate(`(() => {
+      const card = document.querySelector('[data-post-id="${target}"]');
+      const chip = [...(card?.querySelectorAll('[data-reaction]') ?? [])]
+        .find(c => c.getAttribute('data-reaction') === '❤️');
+      if (!chip) return null;
+      const r = chip.getBoundingClientRect();
+      if (r.width === 0) return null;
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()`);
+    if (!hoverBox) {
+      check("hovering a reaction shows who reacted", false, "chip not on screen after reload");
+    } else {
+      await page.mouse.move(hoverBox.x, hoverBox.y);
+      await page.waitForTimeout(1200);
+      const who = await page.evaluate(`(() => {
+        const t = document.querySelector('[data-cx="reaction-who"]');
+        if (!t) return null;
+        const txt = t.textContent.trim();
+        return { txt, hasAt: /@/.test(txt), hasCount: /\\d+人/.test(txt) };
+      })()`);
+      check(
+        "hovering a reaction shows who reacted",
+        !!who && who.hasCount && who.txt.length > 2,
+        who ? `tooltip="${who.txt}"` : "tooltip did not open"
+      );
+      check(
+        "the reactor list shows names, not email addresses",
+        !!who && !who.hasAt,
+        who ? `hasAt=${who.hasAt} txt="${who.txt}"` : "n/a"
+      );
+      await page.mouse.move(0, 0);
+      await page.waitForTimeout(300);
+    }
+
     // Undo, so repeated guard runs do not accumulate reactions.
     await page.evaluate(`(() => {
       const card = document.querySelector('[data-post-id="${target}"]');
-      card?.querySelector('[data-reaction="❤️"]')?.click();
+      [...(card?.querySelectorAll('[data-reaction]') ?? [])]
+        .find(c => c.getAttribute('data-reaction') === '❤️')?.click();
     })()`);
     await page.waitForTimeout(1500);
   }
@@ -927,36 +982,6 @@ console.log("\n6k. Reactions on posts");
   await page.keyboard.press("Escape");
   await page.waitForTimeout(500);
 
-  // Hovering a chip must reveal WHO reacted (drikin 2026-09-25: 「リアクションの
-  // アイコンにマウスオーバーしたら、誰がリアクションしたかもわかるようにした方が
-  // 良くないですか？」). Assert the tooltip opens AND that it shows a name rather
-  // than an email address — the query used to aggregate raw emails, which would
-  // leak them to every member.
-  const chip = await page.$('[data-reaction="❤️"]');
-  if (!chip) {
-    check("hovering a reaction shows who reacted", false, "no ❤️ chip on the page");
-  } else {
-    await chip.hover();
-    await page.waitForTimeout(900);
-    const who = await page.evaluate(`(() => {
-      const t = document.querySelector('[data-cx="reaction-who"]');
-      if (!t) return null;
-      const txt = t.textContent.trim();
-      return { txt, hasAt: /@/.test(txt), hasCount: /\\d+人/.test(txt) };
-    })()`);
-    check(
-      "hovering a reaction shows who reacted",
-      !!who && who.hasCount && who.txt.length > 2,
-      who ? `tooltip="${who.txt}"` : "tooltip did not open"
-    );
-    check(
-      "the reactor list shows names, not email addresses",
-      !!who && !who.hasAt,
-      who ? `hasAt=${who.hasAt} txt="${who.txt}"` : "n/a"
-    );
-    await page.mouse.move(0, 0);
-    await page.waitForTimeout(300);
-  }
 }
 
 // 6l. Chat message actions sit to the RIGHT of the bubble
