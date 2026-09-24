@@ -9513,10 +9513,13 @@ export default function Home() {
                                      * the RIGHT of the bubble, vertically centred, and
                                      * only appear on hover (or when the message already
                                      * has reactions, which must stay visible). */}
-                                    <div style={bubbleStyle}>
-                                      {renderChatBody(m.body, mentionMembers, auth?.email || "")}
-                                    </div>
-                                    <Box mt={2}>{chatActions}</Box>
+                                    <Group gap={4} align="center" wrap="nowrap" justify={mine ? "flex-end" : "flex-start"}>
+                                      {mine && chatActions}
+                                      <div style={bubbleStyle}>
+                                        {renderChatBody(m.body, mentionMembers, auth?.email || "")}
+                                      </div>
+                                      {!mine && chatActions}
+                                    </Group>
                                   </>
                                 )}
                               </div>
