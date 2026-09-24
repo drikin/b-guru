@@ -285,16 +285,9 @@ export async function findDuplicates(input: {
   // ネタとかでも、よく重複していることがあったりする」。URL も動画IDも違うので
   // 文字列一致では拾えない。ここだけは AI に判断させる。
   //
-  // 確実な重複が既にあるなら走らせない（警告が増えるほど読まれなくなる）。
-  if (found.size === 0 && rawUrl) {
-    const ownPreview = await fetchOwnPreview(rawUrl);
-    if (ownPreview) {
-      const news = await findNewsDuplicates(text, ownPreview);
-      for (const c of news) {
-        if (!found.has(c.postId)) found.set(c.postId, c);
-      }
-    }
-  }
+  // ★ この層は遅い（外部サイト取得に実測 9.4秒 + LLM）。ここでは走らせず、
+  //   API の `phase=ai` から別途呼ぶ。速い層の警告を先に出すため。
+  //   `findNewsDuplicates()` を参照。
 
   return [...found.values()]
     .sort((a, b) => {
@@ -417,15 +410,21 @@ export async function judgeSameNews(
  * 候補を絞ってから AI に渡す（全件ペアは O(n²) でコストが跳ねる）。絞り込みは
  * 文字列の類似度で行い、判定そのものは AI に任せる — 絞り込みで漏らすと
  * 拾えなくなるので、閾値は低めにする。
+ *
+ * ★ この層は遅い（外部サイト取得 + LLM）。`findDuplicates` からは呼ばず、
+ *   API の `phase=ai` から別途呼ぶ。速い層の警告を先に出すため。
  */
-async function findNewsDuplicates(
-  text: string,
-  ownPreview: { title: string; description: string } | null
-): Promise<DuplicateCandidate[]> {
-  // 自分の投稿にタイトルが無いと比較材料が無い。本文だけでは見出しの
-  // 一致を判定できないので、この層はスキップする。
-  if (!ownPreview?.title) return [];
+export async function findNewsDuplicates(text: string): Promise<DuplicateCandidate[]> {
+  const rawUrl = firstUrl(text);
+  if (!rawUrl) return [];
+  const ownPreview = await fetchOwnPreview(rawUrl);
+  if (!ownPreview) return [];
+  return findNewsDuplicatesWithPreview(ownPreview);
+}
 
+async function findNewsDuplicatesWithPreview(
+  ownPreview: { title: string; description: string }
+): Promise<DuplicateCandidate[]> {
   const res = await pool.query(
     `SELECT p.id, p.author_email, p.text, p.created_at,
             p.url_preview->>'title' AS title,
@@ -492,18 +491,23 @@ async function findNewsDuplicates(
 /**
  * 投稿しようとしている URL のプレビューを取る（AI 判定の材料）。
  *
- * `fetchUrlPreview` は外部サイトを取りに行くので最大 ~8秒かかりうる。投稿前の
- * 待ち時間に直結するため、ここでは短いタイムアウトを掛ける。取れなければ
- * AI 判定をスキップする（重複チェックは投稿を止めるものではないので、
- * 諦めてよい）。
+ * `fetchUrlPreview` は外部サイトを取りに行くので時間がかかる。実測では NHK の
+ * 記事ページで **9.4秒**かかった。投稿前の待ち時間に直結するので、ここでは
+ * 短めのタイムアウトを掛ける。取れなければ AI 判定をスキップする
+ * （重複チェックは投稿を止めるものではないので、諦めてよい）。
+ *
+ * ★ 4秒では実サイトに間に合わなかった（実測 9.4秒）。8秒に伸ばしている。
+ *   これでも足りないサイトはあるが、投稿前の待ち時間として許容できる上限。
  */
+const PREVIEW_TIMEOUT_MS = 8000;
+
 async function fetchOwnPreview(
   rawUrl: string
 ): Promise<{ title: string; description: string } | null> {
   try {
     const p = await Promise.race([
       fetchUrlPreview(rawUrl),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), PREVIEW_TIMEOUT_MS)),
     ]);
     if (!p) return null;
     const title = (p.title ?? "").trim();

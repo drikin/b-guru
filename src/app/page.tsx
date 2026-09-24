@@ -3457,6 +3457,12 @@ function ComposerPaper({
   // 重複チェック（drikin 2026-09-25）。入力が落ち着いてから1回だけ問い合わせる。
   // 打鍵ごとに投げると無駄が多いので、本文が変わってから 700ms 待つ。
   // 同じ本文では再問い合わせしない（dupCheckedRef）。
+  //
+  // ★ 2段階で問い合わせる。速い層（動画ID/URL/本文一致/あいまい類似）は
+  //   DB 内で完結するので即座に返る。AI による「同じニュース」判定は外部
+  //   サイトの取得（実測 9.4秒）と LLM 呼び出しが入るため遅い。1本の
+  //   リクエストで両方やると警告が出るまで最大10秒待たされるので、速い層を
+  //   先に描画してから AI の結果を足す。
   useEffect(() => {
     const body = text.trim();
     // 短すぎる本文は判定材料にならない（「お疲れ様です」等で誤警告しない）。
@@ -3467,15 +3473,28 @@ function ComposerPaper({
     if (dupCheckedRef.current === body) return;
     const timer = setTimeout(async () => {
       dupCheckedRef.current = body;
-      try {
+      const ask = async (phase: "fast" | "ai") => {
         const r = await fetch("/api/posts/duplicates", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: body }),
+          body: JSON.stringify({ text: body, phase }),
         });
-        if (!r.ok) return;
+        if (!r.ok) return [];
         const d = await r.json().catch(() => ({}));
-        setDuplicates(Array.isArray(d?.duplicates) ? d.duplicates : []);
+        return Array.isArray(d?.duplicates) ? d.duplicates : [];
+      };
+      try {
+        // 速い層。ここで警告が出る。
+        const fast = await ask("fast");
+        // 本文が変わっていたら破棄する（古い結果で上書きしない）。
+        if (dupCheckedRef.current !== body) return;
+        setDuplicates(fast);
+        // 速い層で確実な重複が見つかっているなら AI 層は不要。
+        if (fast.length > 0) return;
+        // AI 層。遅いので後から足す。
+        const ai = await ask("ai");
+        if (dupCheckedRef.current !== body) return;
+        if (ai.length > 0) setDuplicates(ai);
       } catch {
         // 重複チェックの失敗で投稿を止めない。黙って諦める。
       }

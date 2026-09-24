@@ -1177,14 +1177,19 @@ console.log("\n6m. Duplicate-post warning");
   // ネタとかでも、よく重複していることがあったりする」。URL も動画IDも違うので
   // 文字列一致では拾えない。AI に判断させる層を検証する。
   //
-  // 実在のペアを使う: 5346 は台風26号の記事。別サイトの台風26号記事を投稿
-  // しようとすると same と判定されるはず。
+  // ★ この層は phase=ai で別途呼ぶ。速い層（phase=fast）と1本にまとめると
+  //   外部サイト取得（実測 9.4秒）の分だけ警告が遅れるため分離している。
+  //
+  // ★ 実在のペアを使う: 5460 は「Meta VR Glasses」の Business Insider 記事。
+  //   同じ製品を扱った別サイトの記事を投稿しようとすると same と判定される
+  //   はず。URL は実在する必要がある（プレビューが取れないと AI 層が走らない）。
   const newsCase = await page.evaluate(`(async () => {
     const r = await fetch('/api/posts/duplicates', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text: '台風26号「スリゲ」発生 沖縄は28日にかけて大しけのおそれ https://www3.nhk.or.jp/news/html/20260924/typhoon26.html',
+        phase: 'ai',
+        text: '重さ100gのマス向け端末「Meta VR Glasses」登場 https://www.businessinsider.jp/article/2609-meta-vr-glasses/',
       }),
     });
     if (!r.ok) return { status: r.status };
@@ -1213,7 +1218,8 @@ console.log("\n6m. Duplicate-post warning");
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text: 'Apple、Qwen3.5-9BベースのLLMモデル「LensVLM-9B」を公開 https://macotakara.jp/blog/apple/entry-99999.html',
+        phase: 'ai',
+        text: 'Apple、Qwen3.5-9BベースのLLMモデル「LensVLM-9B」を公開 https://www.macotakara.jp/iphone/entry-51903.html',
       }),
     });
     const d = await r.json();

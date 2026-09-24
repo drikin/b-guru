@@ -22,6 +22,7 @@ import {
   firstUrl,
   extractYoutubeIdFromText,
   findDuplicates,
+  findNewsDuplicates,
   judgeSameNews,
 } from "../duplicates";
 
@@ -384,16 +385,14 @@ describe("findDuplicates — AI news layer", () => {
   });
 
   it("does not call the AI when the post has no URL", async () => {
-    query.mockResolvedValueOnce({ rows: [] }); // text pass
-    query.mockResolvedValueOnce({ rows: [] }); // fuzzy pass
-    await findDuplicates({ text: "今日はいい天気ですね", authorEmail: "a@b.c" });
+    const out = await findNewsDuplicates("今日はいい天気ですね");
+    expect(out).toEqual([]);
     expect(sakuraChat).not.toHaveBeenCalled();
   });
 
   it("reports a same-news match from a different site as kind=news", async () => {
-    query.mockResolvedValueOnce({ rows: [] }); // URL pass
-    query.mockResolvedValueOnce({ rows: [] }); // text pass
-    query.mockResolvedValueOnce({ rows: [] }); // fuzzy pass
+    // findNewsDuplicates は「プレビュー取得 → 候補検索 → AI 判定」の順。
+    // 速い層（URL/本文/あいまい）は走らない。
     fetchUrlPreview.mockResolvedValueOnce({
       title: "台風26号「スリゲ」発生 沖縄は大しけのおそれ",
       description: "気象庁は24日、台風26号が発生したと発表しました。",
@@ -415,10 +414,10 @@ describe("findDuplicates — AI news layer", () => {
       content: '{"verdict":"same","confidence":0.98,"reason":"同一台風の発生と進路情報"}',
     });
 
-    const out = await findDuplicates({
-      text: "台風26号が発生 https://other-news.example/typhoon26",
-      authorEmail: "a@b.c",
-    });
+    // ★ AI 層は findDuplicates からは走らない（遅いので phase=ai で別途呼ぶ）。
+    const out = await findNewsDuplicates(
+      "台風26号が発生 https://other-news.example/typhoon26"
+    );
     expect(out).toHaveLength(1);
     expect(out[0].kind).toBe("news");
     expect(out[0].exact).toBe(false);
@@ -450,23 +449,16 @@ describe("findDuplicates — AI news layer", () => {
       content: '{"verdict":"related","confidence":0.95,"reason":"同じAppleでも製品が異なる"}',
     });
 
-    const out = await findDuplicates({
-      text: "AppleがLensVLM-9Bを公開 https://macotakara.jp/lensvlm",
-      authorEmail: "a@b.c",
-    });
+    const out = await findNewsDuplicates(
+      "AppleがLensVLM-9Bを公開 https://macotakara.jp/lensvlm"
+    );
     // related は「同じテーマだが別の話」。警告すると誤警告になる。
     expect(out).toHaveLength(0);
   });
 
   it("skips the AI layer when the URL preview has no title", async () => {
-    query.mockResolvedValueOnce({ rows: [] }); // URL pass
-    query.mockResolvedValueOnce({ rows: [] }); // text pass
-    query.mockResolvedValueOnce({ rows: [] }); // fuzzy pass
     fetchUrlPreview.mockResolvedValueOnce({ title: "", description: "" });
-    const out = await findDuplicates({
-      text: "https://example.com/x",
-      authorEmail: "a@b.c",
-    });
+    const out = await findNewsDuplicates("https://example.com/x");
     expect(out).toEqual([]);
     expect(sakuraChat).not.toHaveBeenCalled();
   });
