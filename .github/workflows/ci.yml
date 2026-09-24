@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # The E2E guard tests production, so it must run AFTER a deploy, not on push.
+  # deploy.sh triggers it with `gh workflow run ci.yml` once the new build is
+  # serving. See the e2e-regression job for why.
+  workflow_dispatch:
 
 jobs:
   test-and-build:
@@ -43,14 +47,23 @@ jobs:
   # guards are layout-dependent and need real data (avatars, images, a long
   # message list). A local build with an empty database would pass vacuously.
   #
+  # ⚠️ Because it tests PRODUCTION, it can only pass once the commit has been
+  # DEPLOYED. Running it on every push meant it graded the *previous* deploy
+  # against the *new* expectations, so any commit that changed the UI failed
+  # here until `scripts/deploy.sh` ran — one failure email per commit, which is
+  # what flooded drikin's inbox (2026-09-24). The job is therefore manual
+  # (`workflow_dispatch`) and is run by deploy.sh AFTER the code is live, where
+  # a failure is meaningful. `continue-on-error` is NOT used: a real regression
+  # must still be visible.
+  #
   # Requires the E2E_SESSION repo secret: a valid bsm_session token. Rotate it
   # by minting a new row in the sessions table and updating the secret.
   e2e-regression:
     name: E2E Regression Guard
     runs-on: ubuntu-latest
-    # Only on main: a PR from a fork cannot read the secret, and running the
-    # guard against production on every PR would be noisy.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Manual only — see the note above. deploy.sh triggers this via
+    # `gh workflow run` once the new build is serving.
+    if: github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 

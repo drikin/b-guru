@@ -83,5 +83,18 @@ if [ "$GUARD" -ne 0 ]; then
   exit 1
 fi
 
+# Trigger the CI E2E job now that the new build is actually serving. The job is
+# manual-only (see .github/workflows/ci.yml) because it tests PRODUCTION: running
+# it on push graded the previous deploy against the new expectations and mailed a
+# failure for every UI commit. Here, after the deploy, a failure is real.
+echo "=== CI E2E job (post-deploy) ==="
+if command -v gh >/dev/null 2>&1; then
+  gh workflow run ci.yml --ref main >/dev/null 2>&1 \
+    && echo "triggered — check: gh run list --workflow=ci.yml --limit 1" \
+    || echo "could not trigger (gh not authenticated?) — run manually: gh workflow run ci.yml"
+else
+  echo "gh not installed — run manually: gh workflow run ci.yml"
+fi
+
 echo ""
 echo "deploy + verify OK"
