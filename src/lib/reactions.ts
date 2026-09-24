@@ -147,13 +147,25 @@ export async function getReactions(
     `SELECT target_id, emoji,
             COUNT(*)::int AS count,
             BOOL_OR(user_email = $3) AS mine,
-            (ARRAY_AGG(user_email ORDER BY created_at))[1:${REACTOR_LIMIT}] AS reactors
-       FROM reactions
-      WHERE target_type = $1 AND target_id = ANY($2::int[])
-      GROUP BY target_id, emoji
+            (ARRAY_AGG(
+               -- Resolve to a display name, not an email: the tooltip shows
+               -- these to other members (drikin 2026-09-25). Same fallback as
+               -- post authors — user_profiles.display_name wins, then the
+               -- stored name, and an email-shaped value is cut at the '@'.
+               CASE
+                 WHEN COALESCE(up.display_name, r.user_email) LIKE '%@%'
+                 THEN split_part(COALESCE(up.display_name, r.user_email), '@', 1)
+                 ELSE COALESCE(up.display_name, r.user_email)
+               END
+               ORDER BY r.created_at
+             ))[1:${REACTOR_LIMIT}] AS reactors
+       FROM reactions r
+       LEFT JOIN user_profiles up ON up.email = r.user_email
+      WHERE r.target_type = $1 AND r.target_id = ANY($2::int[])
+      GROUP BY r.target_id, r.emoji
       -- Most-used first, then stable by emoji so the order does not jitter
       -- between renders when counts tie.
-      ORDER BY target_id, count DESC, emoji`,
+      ORDER BY r.target_id, count DESC, r.emoji`,
     [targetType, targetIds, userEmail ?? ""]
   );
 

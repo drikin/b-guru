@@ -783,37 +783,55 @@ console.log("\n6k. Reactions on posts");
   );
 
   // The trigger must sit in the card's top-right, left of 編集.
+  //
+  // Three traps here, all of which produced a false FAIL before:
+  //  1. Cards NEST — a parent post renders its inline replies as child
+  //     `[data-post-id]` elements, so `card.querySelector(...)` can return a
+  //     descendant's button.
+  //  2. The same post can be rendered MORE THAN ONCE on the page (timeline +
+  //     thread view), so querying `add` and `edit` independently can pair two
+  //     different instances ~1000px apart. Scope both to ONE Mantine Card.
+  //  3. 編集 is rendered on every card but hidden on posts you do not own, and a
+  //     hidden element reports a zero-size rect at (0,0). Only compare when it
+  //     is actually visible.
   const placement = await page.evaluate(`(() => {
-    const card = document.querySelector('[data-post-id]');
-    if (!card) return null;
+    // Pick a single Card that has BOTH a visible 編集 and a reaction trigger.
+    const cards = [...document.querySelectorAll('.mantine-Card-root')];
+    const card = cards.find(c =>
+      c.querySelector('[data-cx="reaction-add"]') &&
+      [...c.querySelectorAll('[aria-label="編集"]')].some(e => e.getBoundingClientRect().width > 0)
+    );
+    if (!card) return { add: false, reason: 'no card with both a trigger and a visible edit button' };
     const add = card.querySelector('[data-cx="reaction-add"]');
-    const edit = card.querySelector('[aria-label="編集"]');
-    if (!add) return { add: false };
+    const edit = [...card.querySelectorAll('[aria-label="編集"]')]
+      .find(e => e.getBoundingClientRect().width > 0);
     const ar = add.getBoundingClientRect();
+    const er = edit.getBoundingClientRect();
     const cr = card.getBoundingClientRect();
-    const out = {
+    return {
       add: true,
+      id: card.closest('[data-post-id]')?.getAttribute('data-post-id') ?? null,
       // Distance from the card's top/right edges — the group is absolutely
       // positioned at top:6 right:6, so this should be small.
       fromTop: Math.round(ar.top - cr.top),
       fromRight: Math.round(cr.right - ar.right),
-      leftOfEdit: null,
+      leftOfEdit: ar.right <= er.left + 1,
+      addRight: Math.round(ar.right),
+      editLeft: Math.round(er.left),
+      sameRow: Math.abs(ar.top - er.top) <= 4,
     };
-    if (edit) {
-      const er = edit.getBoundingClientRect();
-      out.leftOfEdit = ar.right <= er.left + 1;
-    }
-    return out;
   })()`);
   check(
     "the reaction trigger sits in the card's top-right corner",
     !!placement && placement.add && placement.fromTop <= 20 && placement.fromRight <= 120,
-    placement ? `fromTop=${placement.fromTop} fromRight=${placement.fromRight}` : "no trigger found"
+    placement ? `fromTop=${placement.fromTop} fromRight=${placement.fromRight}` : `no trigger (${placement?.reason})`
   );
   check(
     "the reaction trigger is to the left of the edit button",
-    !!placement && placement.leftOfEdit !== false,
-    placement ? `leftOfEdit=${placement.leftOfEdit}` : "n/a"
+    !!placement && placement.leftOfEdit === true,
+    placement
+      ? `leftOfEdit=${placement.leftOfEdit} addRight=${placement.addRight} editLeft=${placement.editLeft} sameRow=${placement.sameRow} (card ${placement.id})`
+      : `n/a (${placement?.reason})`
   );
 
   // One tap on the picker's ❤️ chip must write. Use a post that has no ❤️ yet
@@ -908,6 +926,92 @@ console.log("\n6k. Reactions on posts");
   );
   await page.keyboard.press("Escape");
   await page.waitForTimeout(500);
+
+  // Hovering a chip must reveal WHO reacted (drikin 2026-09-25: 「リアクションの
+  // アイコンにマウスオーバーしたら、誰がリアクションしたかもわかるようにした方が
+  // 良くないですか？」). Assert the tooltip opens AND that it shows a name rather
+  // than an email address — the query used to aggregate raw emails, which would
+  // leak them to every member.
+  const chip = await page.$('[data-reaction="❤️"]');
+  if (!chip) {
+    check("hovering a reaction shows who reacted", false, "no ❤️ chip on the page");
+  } else {
+    await chip.hover();
+    await page.waitForTimeout(900);
+    const who = await page.evaluate(`(() => {
+      const t = document.querySelector('[data-cx="reaction-who"]');
+      if (!t) return null;
+      const txt = t.textContent.trim();
+      return { txt, hasAt: /@/.test(txt), hasCount: /\\d+人/.test(txt) };
+    })()`);
+    check(
+      "hovering a reaction shows who reacted",
+      !!who && who.hasCount && who.txt.length > 2,
+      who ? `tooltip="${who.txt}"` : "tooltip did not open"
+    );
+    check(
+      "the reactor list shows names, not email addresses",
+      !!who && !who.hasAt,
+      who ? `hasAt=${who.hasAt} txt="${who.txt}"` : "n/a"
+    );
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(300);
+  }
+}
+
+// 6l. Chat message actions sit to the RIGHT of the bubble
+// (drikin 2026-09-25: 「チャットの場合はチャットバブルの右側にあった方がスペース的に
+// 効率良さそうです。編集も同じかな？」). Assert the geometry, not just presence —
+// the row existing under the bubble would still "pass" a presence-only check.
+console.log("\n6l. Chat message actions");
+{
+  await page.evaluate(`(() => {
+    const tab = [...document.querySelectorAll('.mantine-SegmentedControl-label')]
+      .find(l => l.textContent.includes('チャット'));
+    tab?.click();
+  })()`);
+  await page.waitForTimeout(3000);
+
+  const geo = await page.evaluate(`(() => {
+    const actions = [...document.querySelectorAll('[data-cx="chat-actions"]')];
+    if (actions.length === 0) return { count: 0 };
+    // Find one whose bubble is a sibling, and measure.
+    for (const a of actions) {
+      const row = a.parentElement;
+      const bubble = row?.querySelector('div[style*="border-radius"]');
+      if (!bubble) continue;
+      const ar = a.getBoundingClientRect();
+      const br = bubble.getBoundingClientRect();
+      if (ar.width === 0) continue;
+      return {
+        count: actions.length,
+        // The action column must be beside the bubble, not below it.
+        beside: ar.left >= br.right - 2 || ar.right <= br.left + 2,
+        verticalOverlap: Math.min(ar.bottom, br.bottom) - Math.max(ar.top, br.top),
+        bubbleH: Math.round(br.height),
+        actionsLeft: Math.round(ar.left),
+        bubbleRight: Math.round(br.right),
+        bubbleLeft: Math.round(br.left),
+        actionsRight: Math.round(ar.right),
+      };
+    }
+    return { count: actions.length, beside: null };
+  })()`);
+  check(
+    "chat messages render an action row",
+    geo.count > 0,
+    `count=${geo.count}`
+  );
+  check(
+    "chat actions sit beside the bubble, not below it",
+    geo.beside === true && geo.verticalOverlap > 0,
+    `beside=${geo.beside} overlap=${geo.verticalOverlap} bubbleH=${geo.bubbleH} actions=[${geo.actionsLeft},${geo.actionsRight}] bubble=[${geo.bubbleLeft},${geo.bubbleRight}]`
+  );
+  check(
+    "the chat action row carries a reaction trigger",
+    await page.evaluate(`!!document.querySelector('[data-cx="chat-actions"] [data-cx="reaction-add"]')`),
+    "reaction trigger inside chat-actions"
+  );
 }
 
 // ------------------------------------------------------------ image proxy

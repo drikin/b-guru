@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Box, Group, Popover, Text, UnstyledButton } from "@mantine/core";
+import { Box, Group, Popover, Text, Tooltip, UnstyledButton } from "@mantine/core";
 
 /**
  * Reactions on posts and chat messages.
@@ -128,6 +128,43 @@ export function ReactionGlyph({
 }
 
 /**
+ * Tooltip body for a reaction chip: the emoji, then who reacted.
+ *
+ * drikin 2026-09-25: 「リアクションのアイコンにマウスオーバーしたら、誰がリアクション
+ * したかもわかるようにした方が良くないですか？」。
+ *
+ * Names are shown as a comma-joined list rather than one per line: a popular
+ * reaction can have dozens of reactors, and a 30-line tooltip is worse than a
+ * wrapped sentence. The count is repeated in the header so the tooltip still
+ * answers "how many" when the list is truncated by the viewport.
+ */
+export function ReactionWhoList({
+  emoji,
+  reactors,
+  customEmojis,
+}: {
+  emoji: string;
+  reactors: string[];
+  customEmojis: CustomEmoji[];
+}) {
+  return (
+    <Box data-cx="reaction-who" style={{ maxWidth: 260 }}>
+      <Group gap={6} align="center" wrap="nowrap" mb={reactors.length ? 4 : 0}>
+        <ReactionGlyph emoji={emoji} customEmojis={customEmojis} size={14} />
+        <Text size="xs" fw={700}>
+          {reactors.length}人
+        </Text>
+      </Group>
+      {reactors.length > 0 && (
+        <Text size="xs" style={{ lineHeight: 1.5, wordBreak: "break-word" }}>
+          {reactors.join("、")}
+        </Text>
+      )}
+    </Box>
+  );
+}
+
+/**
  * The reaction row under a post or chat message.
  *
  * `reactions` is the aggregate for this target; `onToggle` performs the write
@@ -184,29 +221,41 @@ export function ReactionBar({
     // second line and collide with the author header.
     <Group gap={compact ? 4 : 6} wrap="nowrap" align="center" data-cx="reaction-bar">
       {reactions.map((r) => (
-        <UnstyledButton
+        // Hover shows WHO reacted (drikin 2026-09-25: 「リアクションのアイコンに
+        // マウスオーバーしたら、誰がリアクションしたかもわかるようにした方が良く
+        // ないですか？」). A Mantine Tooltip rather than the native `title` attribute:
+        // `title` takes ~1s to appear, cannot be styled, and renders as a plain
+        // OS tooltip that ignores the app's theme.
+        <Tooltip
           key={r.emoji}
-          onClick={() => onToggle(r.emoji)}
-          aria-pressed={r.mine}
-          data-reaction={r.emoji}
-          data-mine={r.mine ? "1" : "0"}
-          title={r.reactors.length ? r.reactors.join(", ") : undefined}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 4,
-            padding: compact ? "1px 6px" : "2px 8px",
-            borderRadius: 999,
-            fontSize: 12,
-            lineHeight: 1.4,
-            border: `1px solid ${r.mine ? "var(--text-green)" : "var(--border-default)"}`,
-            background: r.mine ? "var(--bg-tinted)" : "transparent",
-            color: "var(--text-primary)",
-          }}
+          withArrow
+          openDelay={120}
+          label={<ReactionWhoList emoji={r.emoji} reactors={r.reactors} customEmojis={customEmojis} />}
+          disabled={r.reactors.length === 0}
         >
-          <ReactionGlyph emoji={r.emoji} customEmojis={customEmojis} size={compact ? 14 : 15} />
-          <span style={{ fontVariantNumeric: "tabular-nums", opacity: 0.85 }}>{r.count}</span>
-        </UnstyledButton>
+          <UnstyledButton
+            onClick={() => onToggle(r.emoji)}
+            aria-pressed={r.mine}
+            aria-label={`${r.emoji} リアクション ${r.count}件`}
+            data-reaction={r.emoji}
+            data-mine={r.mine ? "1" : "0"}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              padding: compact ? "1px 6px" : "2px 8px",
+              borderRadius: 999,
+              fontSize: 12,
+              lineHeight: 1.4,
+              border: `1px solid ${r.mine ? "var(--text-green)" : "var(--border-default)"}`,
+              background: r.mine ? "var(--bg-tinted)" : "transparent",
+              color: "var(--text-primary)",
+            }}
+          >
+            <ReactionGlyph emoji={r.emoji} customEmojis={customEmojis} size={compact ? 14 : 15} />
+            <span style={{ fontVariantNumeric: "tabular-nums", opacity: 0.85 }}>{r.count}</span>
+          </UnstyledButton>
+        </Tooltip>
       ))}
 
       {/* Picker trigger. drikin 2026-09-25: 「ハートとプラスマークは機能が重複して

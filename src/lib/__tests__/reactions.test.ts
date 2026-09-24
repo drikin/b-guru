@@ -157,6 +157,31 @@ describe("getReactions", () => {
     expect(m.get(1)![0].mine).toBe(false);
   });
 
+  // The tooltip shows reactor names to other members (drikin 2026-09-25), so the
+  // query must resolve emails to display names. If someone reverts this to a
+  // plain ARRAY_AGG(user_email), every tooltip silently leaks email addresses —
+  // a privacy regression that no visual check would catch.
+  it("resolves reactors to display names, not emails", async () => {
+    query.mockResolvedValueOnce({ rows: [] });
+    await getReactions("post", [1], "a@b.c");
+    const sql = query.mock.calls[query.mock.calls.length - 1][0] as string;
+    expect(sql).toContain("user_profiles");
+    expect(sql).toContain("display_name");
+    expect(sql).toContain("split_part");
+    // The raw email must never be aggregated straight into the tooltip list.
+    expect(sql).not.toMatch(/ARRAY_AGG\(\s*user_email/);
+  });
+
+  it("passes the reactor list through to the summary", async () => {
+    query.mockResolvedValueOnce({
+      rows: [
+        { target_id: 1, emoji: "❤️", count: 2, mine: false, reactors: ["どりきん", "eiko"] },
+      ],
+    });
+    const m = await getReactions("post", [1], null);
+    expect(m.get(1)![0].reactors).toEqual(["どりきん", "eiko"]);
+  });
+
   it("batches every target into one query", async () => {
     query.mockResolvedValueOnce({ rows: [] });
     await getReactions("post", [1, 2, 3, 4, 5], "a@b.c");

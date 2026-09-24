@@ -9415,6 +9415,41 @@ export default function Home() {
                             whiteSpace: "pre-wrap" as const,
                             wordBreak: "break-word",
                           } as const;
+                          // Actions to the right of the bubble (drikin 2026-09-25).
+                          // Hidden until hover so the chat stays clean, but always
+                          // shown when the message already has reactions — those are
+                          // content, not chrome, and must not disappear.
+                          const hasReactions = (chatReactions[m.id]?.length ?? 0) > 0;
+                          const chatActions = (
+                            <Box
+                              data-cx="chat-actions"
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 2,
+                                opacity: hasReactions ? 1 : 0,
+                                transition: "opacity 0.12s ease",
+                              }}
+                              className="bguru-chat-actions"
+                            >
+                              {renderChatReactionBar(m.id)}
+                              {mine && (
+                                <ActionIcon
+                                  size="xs"
+                                  variant="subtle"
+                                  color="gray"
+                                  aria-label="編集"
+                                  title="タイポを修正"
+                                  onClick={() => startEditChat(m.id, m.body)}
+                                >
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M12 20h9" />
+                                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                                  </svg>
+                                </ActionIcon>
+                              )}
+                            </Box>
+                          );
                           return (
                             <div key={m.id} style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start" }}>
                               <div style={{ maxWidth: "82%", display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start" }}>
@@ -9469,32 +9504,22 @@ export default function Home() {
                                       <Group gap={4} align="center" wrap="nowrap" mb={2}>
                                         {m.edited && <Text size="xs" c="green.7">編集済み</Text>}
                                         <Text size="xs" c="dimmed" style={{ opacity: 0.7 }}>{chatTimeStr(m.createdAt)}</Text>
-                                        <ActionIcon
-                                          size="xs"
-                                          variant="subtle"
-                                          color="gray"
-                                          aria-label="編集"
-                                          title="タイポを修正"
-                                          onClick={() => startEditChat(m.id, m.body)}
-                                        >
-                                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="M12 20h9" />
-                                            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-                                          </svg>
-                                        </ActionIcon>
                                       </Group>
                                     )}
-                                    <div style={bubbleStyle}>
-                                      {renderChatBody(m.body, mentionMembers, auth?.email || "")}
-                                    </div>
-                                    {/* Reactions on chat messages (drikin
-                                     * 2026-09-25: 「投稿やコメントに対して」).
-                                     * Placed under the bubble, aligned to the
-                                     * same side as the bubble so the row reads
-                                     * as belonging to this message. */}
-                                    <Box mt={2}>
-                                      {renderChatReactionBar(m.id)}
-                                    </Box>
+                                    {/* Bubble + actions. drikin 2026-09-25:
+                                     * 「チャットの場合はチャットバブルの右側にあった
+                                     * 方がスペース的に効率良さそうです。編集も同じかな？」
+                                     * So the reaction trigger and 編集 sit in a column to
+                                     * the RIGHT of the bubble, vertically centred, and
+                                     * only appear on hover (or when the message already
+                                     * has reactions, which must stay visible). */}
+                                    <Group gap={4} align="center" wrap="nowrap" justify={mine ? "flex-end" : "flex-start"}>
+                                      {mine && chatActions}
+                                      <div style={bubbleStyle}>
+                                        {renderChatBody(m.body, mentionMembers, auth?.email || "")}
+                                      </div>
+                                      {!mine && chatActions}
+                                    </Group>
                                   </>
                                 )}
                               </div>

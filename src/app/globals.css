@@ -418,3 +418,24 @@ body {
 .bguru-chat-view .mantine-ScrollArea-viewport {
   overscroll-behavior: contain;
 }
+
+/* Chat message actions (reaction trigger + 編集) sit to the RIGHT of the bubble
+ * and stay hidden until the message is hovered, so the transcript reads as
+ * conversation rather than a wall of buttons. drikin 2026-09-25: 「チャットの場合は
+ * チャットバブルの右側にあった方がスペース的に効率良さそうです。編集も同じかな？」。
+ *
+ * Messages that already have reactions keep their row visible — the inline
+ * `opacity: 1` set in the component wins over this rule, because an inline
+ * style beats a stylesheet rule. Reactions are content, not chrome.
+ *
+ * Touch devices have no hover, so the row is always visible there; otherwise
+ * the feature would be unreachable on a phone. */
+@media (hover: hover) and (pointer: fine) {
+  .bguru-chat-actions {
+    opacity: 0;
+  }
+  .bguru-chat-actions:hover,
+  *:hover > .bguru-chat-actions {
+    opacity: 1 !important;
+  }
+}
