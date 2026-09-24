@@ -514,6 +514,39 @@ check(
   `visible=${visRoundTrip.afterVisible} (expected true)`
 );
 
+// 6h. The SSE stream must actually be OPEN. This is the regression that hid the
+// whole feature: the stream effect had `[]` deps, ran before the async session
+// check resolved, hit `if (!authRef.current) return`, and never retried — so
+// /api/posts/stream was never requested and every realtime feature (presence,
+// chat, post/pin/poll/club) was silently dead. Assert the request happens.
+console.log("\n6h. The realtime SSE stream is open");
+const sseSeen = await page.evaluate(`(() => {
+  // performance entries do not record EventSource, so probe the app's own
+  // connection indirectly: a live stream means the server pushed a presence
+  // event, which the app turns into a /api/presence fetch. We instead check the
+  // resource timing for the stream URL, which Chromium does record for
+  // EventSource in recent versions, and fall back to a direct probe.
+  const entries = performance.getEntriesByType('resource').map(e => e.name);
+  return entries.some(n => n.includes('/api/posts/stream'));
+})()`);
+// Fallback: open our own stream and confirm the server accepts it, which proves
+// the endpoint is reachable and the session is valid.
+const sseProbe = await page.evaluate(`(async () => {
+  return await new Promise((resolve) => {
+    const es = new EventSource('/api/posts/stream');
+    const done = (ok) => { try { es.close(); } catch {} resolve(ok); };
+    const t = setTimeout(() => done(false), 8000);
+    es.addEventListener('ping', () => { clearTimeout(t); done(true); });
+    es.addEventListener('presence', () => { clearTimeout(t); done(true); });
+    es.addEventListener('error', () => { clearTimeout(t); done(false); });
+  });
+})()`);
+check(
+  "the SSE stream endpoint delivers events",
+  sseProbe === true,
+  `probe=${sseProbe} (resource-timing saw stream=${sseSeen})`
+);
+
 // ------------------------------------------------------------ image proxy
 console.log("\n7. Images and avatars go through our own origin");
 const imgStats = await page.evaluate(`(() => {

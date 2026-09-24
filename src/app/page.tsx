@@ -5603,6 +5603,14 @@ export default function Home() {
   // Open exactly ONE stream for the lifetime of the page (while logged in). The
   // handler ignores events while a thread is open or during an initial load;
   // the client filter is read from refs so an incoming event never tears us down.
+  //
+  // ⚠️ The dependency is `auth`, NOT `[]`. With `[]` this effect ran once on
+  // mount, when `authRef.current` was still null (the session check is async),
+  // hit the early return, and NEVER ran again — so the SSE stream was never
+  // opened at all. Measured 2026-09-23: zero requests to /api/posts/stream on a
+  // fully-rendered page, which silently broke every realtime feature that
+  // depends on the stream (presence, chat, post/pin/poll/club updates). The
+  // guard stays so we do not open a stream while logged out.
   useEffect(() => {
     if (!authRef.current) return;
     const es = new EventSource("/api/posts/stream");
@@ -5764,10 +5772,12 @@ export default function Home() {
     return () => {
       es.close();
     };
-    // Intentionally empty: the EventSource must live for the whole page. Every
-    // loader is read through loadersRef, so no dependency can tear it down.
+    // Depends on `auth` so the stream is opened once the session resolves. With
+    // `[]` the effect ran before `authRef.current` was set, returned early, and
+    // never retried — the stream was never opened (see the note above). Every
+    // loader is still read through loadersRef, so nothing else can tear it down.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [auth]);
 
   // Posting never auto-scrolls or auto-highlights the timeline (disabled per
   // user request, 2026-08-17): a new reply is simply added to the feed in
