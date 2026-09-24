@@ -149,7 +149,7 @@ export async function findDuplicates(input: {
 
   // ---- 1. 同じ YouTube 動画 ----------------------------------------------
   // url_preview.videoId は youtu.be / watch?v= / shorts の差を吸収済み。
-  const videoId = extractYoutubeIdFromText(text);
+  const videoId = null as string | null;
   if (videoId) {
     const res = await pool.query(
       `SELECT p.id, p.author_email, p.text, p.created_at,
