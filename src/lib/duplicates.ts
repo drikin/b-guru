@@ -419,7 +419,19 @@ export async function findNewsDuplicates(text: string): Promise<DuplicateCandida
   if (!rawUrl) return [];
   const ownPreview = await fetchOwnPreview(rawUrl);
   if (!ownPreview) return [];
-  return findNewsDuplicatesWithPreview(ownPreview);
+
+  // ★ 投稿者が書いた本文も比較材料に混ぜる。プレビューだけを比べると
+  //   「URL の記事そのもの」と必ず一致してしまい、投稿者が何と書いたかが
+  //   判定に効かない（実測で発覚: 無関係な本文 + 既存記事のURL を渡しても
+  //   その記事が same で返ってきた）。
+  //
+  //   本文から URL を除いた残りを使う。URL 自体は比較しても意味がない。
+  const typed = text.replace(rawUrl, "").trim();
+  const own = {
+    title: typed ? `${typed} ${ownPreview.title}` : ownPreview.title,
+    description: ownPreview.description,
+  };
+  return findNewsDuplicatesWithPreview(own);
 }
 
 async function findNewsDuplicatesWithPreview(

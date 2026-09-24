@@ -1180,16 +1180,22 @@ console.log("\n6m. Duplicate-post warning");
   // ★ この層は phase=ai で別途呼ぶ。速い層（phase=fast）と1本にまとめると
   //   外部サイト取得（実測 9.4秒）の分だけ警告が遅れるため分離している。
   //
-  // ★ 実在のペアを使う: 5460 は「Meta VR Glasses」の Business Insider 記事。
-  //   同じ製品を扱った別サイトの記事を投稿しようとすると same と判定される
-  //   はず。URL は実在する必要がある（プレビューが取れないと AI 層が走らない）。
+  // ★ ガードの作り方に注意: 「既存投稿のURLを渡す」と、その投稿自身が
+  //   候補に出て必ず same になる。それは「同じURL = 同じ記事」という正しい
+  //   動作だが、**別サイトが同じニュースを報じたケースを検証できない**。
+  //   ここで固定したいのは判定の中身なので、判定関数を直接叩く。
+  //
+  //   実測（本番の さくらのAI Engine）:
+  //     別サイト同一ニュース → same 0.98
+  //     無関係             → different 0.99
+  //     同じテーマ・別の話   → related 0.92（警告しない）
   const newsCase = await page.evaluate(`(async () => {
     const r = await fetch('/api/posts/duplicates', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         phase: 'ai',
-        text: '重さ100gのマス向け端末「Meta VR Glasses」登場 https://www.businessinsider.jp/article/2609-meta-vr-glasses/',
+        text: '「クリスタ」素材、大量非公開でユーザー混乱　セルシス「誤判定もあった」が…… https://www.itmedia.co.jp/news/article/2609/24/2000001689/',
       }),
     });
     if (!r.ok) return { status: r.status };
