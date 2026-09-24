@@ -56,6 +56,10 @@ jobs:
   # a failure is meaningful. `continue-on-error` is NOT used: a real regression
   # must still be visible.
   #
+  # ⚠️ deploy.sh only triggers this when its OWN run of the same guard passed,
+  # and `--no-ci` suppresses it entirely for degrade-proof runs (where the build
+  # is broken on purpose and a failure email would be pure noise).
+  #
   # Requires the E2E_SESSION repo secret: a valid bsm_session token. Rotate it
   # by minting a new row in the sessions table and updating the secret.
   e2e-regression:
