@@ -758,22 +758,66 @@ console.log("\n6j. Mobile club bar (one-tap club switching)");
 // here would be silent (the row simply would not appear). Assert the row exists,
 // that one tap writes, and that the write survives a reload (i.e. it reached the
 // database, not just local state).
+//
+// The trigger lives in the card's TOP-RIGHT action group, to the left of 編集
+// (drikin 2026-09-25: 「ボタンの位置は、このカードの右上で…この編集ボタンの左側に
+// 並べるイメージの方がスペース的に効率が良い」), and the separate one-tap heart was
+// removed as redundant with the picker's ❤️ chip. Both are asserted below.
 console.log("\n6k. Reactions on posts");
 {
   const before = await page.evaluate(`(() => {
     const bars = document.querySelectorAll('[data-cx="reaction-bar"]');
-    const hearts = document.querySelectorAll('[data-cx="reaction-heart"]');
     const adds = document.querySelectorAll('[data-cx="reaction-add"]');
-    return { bars: bars.length, hearts: hearts.length, adds: adds.length };
+    const hearts = document.querySelectorAll('[data-cx="reaction-heart"]');
+    return { bars: bars.length, adds: adds.length, hearts: hearts.length };
   })()`);
   check(
     "every post card renders a reaction row",
-    before.bars > 0 && before.hearts === before.bars && before.adds === before.bars,
-    `bars=${before.bars} hearts=${before.hearts} adds=${before.adds}`
+    before.bars > 0 && before.adds === before.bars,
+    `bars=${before.bars} adds=${before.adds}`
+  );
+  check(
+    "the redundant one-tap heart button is gone",
+    before.hearts === 0,
+    `hearts=${before.hearts} (expected 0 — the picker's ❤️ chip replaces it)`
   );
 
-  // One tap on the heart must write. Use a post that has no ❤️ yet so the
-  // assertion is unambiguous, then undo it so the guard leaves no residue.
+  // The trigger must sit in the card's top-right, left of 編集.
+  const placement = await page.evaluate(`(() => {
+    const card = document.querySelector('[data-post-id]');
+    if (!card) return null;
+    const add = card.querySelector('[data-cx="reaction-add"]');
+    const edit = card.querySelector('[aria-label="編集"]');
+    if (!add) return { add: false };
+    const ar = add.getBoundingClientRect();
+    const cr = card.getBoundingClientRect();
+    const out = {
+      add: true,
+      // Distance from the card's top/right edges — the group is absolutely
+      // positioned at top:6 right:6, so this should be small.
+      fromTop: Math.round(ar.top - cr.top),
+      fromRight: Math.round(cr.right - ar.right),
+      leftOfEdit: null,
+    };
+    if (edit) {
+      const er = edit.getBoundingClientRect();
+      out.leftOfEdit = ar.right <= er.left + 1;
+    }
+    return out;
+  })()`);
+  check(
+    "the reaction trigger sits in the card's top-right corner",
+    !!placement && placement.add && placement.fromTop <= 20 && placement.fromRight <= 120,
+    placement ? `fromTop=${placement.fromTop} fromRight=${placement.fromRight}` : "no trigger found"
+  );
+  check(
+    "the reaction trigger is to the left of the edit button",
+    !!placement && placement.leftOfEdit !== false,
+    placement ? `leftOfEdit=${placement.leftOfEdit}` : "n/a"
+  );
+
+  // One tap on the picker's ❤️ chip must write. Use a post that has no ❤️ yet
+  // so the assertion is unambiguous, then undo it so the guard leaves no residue.
   const target = await page.evaluate(`(() => {
     const bars = [...document.querySelectorAll('[data-cx="reaction-bar"]')];
     for (const b of bars) {
@@ -786,13 +830,23 @@ console.log("\n6k. Reactions on posts");
   })()`);
 
   if (target === null) {
-    check("one tap on the heart adds a reaction", false, "no un-reacted post found");
+    check("one tap on the heart chip adds a reaction", false, "no un-reacted post found");
   } else {
+    // Open the picker and click the ❤️ chip in the "よく使う" row.
     const added = await page.evaluate(`(() => {
       const card = document.querySelector('[data-post-id="${target}"]');
-      const heart = card?.querySelector('[data-cx="reaction-heart"]');
-      if (!heart) return false;
-      heart.click();
+      const add = card?.querySelector('[data-cx="reaction-add"]');
+      if (!add) return false;
+      add.click();
+      return true;
+    })()`);
+    await page.waitForTimeout(1000);
+    const picked = await page.evaluate(`(() => {
+      const dd = document.querySelector('.mantine-Popover-dropdown');
+      const btn = [...(dd?.querySelectorAll('button') ?? [])]
+        .find(b => b.getAttribute('aria-label') === '❤️ でリアクション');
+      if (!btn) return false;
+      btn.click();
       return true;
     })()`);
     await page.waitForTimeout(2000);
@@ -802,9 +856,9 @@ console.log("\n6k. Reactions on posts");
       return chip ? { mine: chip.getAttribute('data-mine'), text: chip.textContent.trim() } : null;
     })()`);
     check(
-      "one tap on the heart adds a reaction",
-      added && !!after && after.mine === "1",
-      `clicked=${added} chip=${JSON.stringify(after)}`
+      "one tap on the heart chip adds a reaction",
+      added && picked && !!after && after.mine === "1",
+      `opened=${added} picked=${picked} chip=${JSON.stringify(after)}`
     );
 
     // The write must be persisted, not just optimistic local state.
@@ -843,7 +897,7 @@ console.log("\n6k. Reactions on posts");
     };
   })()`);
   check(
-    "the ＋ button opens a picker with more emoji",
+    "the trigger opens a picker with more emoji",
     !!picker && picker.quick && picker.all && picker.buttons > 20,
     picker ? `buttons=${picker.buttons} quick=${picker.quick} all=${picker.all}` : "picker did not open"
   );

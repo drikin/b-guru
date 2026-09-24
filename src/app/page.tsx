@@ -1299,59 +1299,67 @@ function PostCard({
         onOpenThreadReply(post.id);
       }}
     >
-      {/* Own post only: small monochrome edit/delete icons floating in the
-       * top-right corner of the card (absolutely positioned, no layout shift). */}
-
-      {auth.email === post.authorEmail && (
-        <Group
-          gap={2}
-          wrap="nowrap"
-          style={{ position: "absolute", top: 6, right: 6, zIndex: 2 }}
-        >
-          {/* Pin is only for the ROOT (parent) post, not replies. */}
-          {!post.parentId && (
+      {/* Card actions, top-right. drikin 2026-09-25: 「ボタンの位置は、このカードの
+       * 右上で、仮に編集機能があったとしても、この編集ボタンの左側に並べるイメージ
+       * の方がスペース的に効率が良いかもです」。
+       *
+       *  So the reaction trigger lives here, to the LEFT of 編集, and the group is
+       *  no longer gated on ownership — reactions belong on every card, while
+       *  pin/edit/delete stay owner-only. Absolutely positioned so the row costs
+       *  no vertical space and the card does not shift when it appears. */}
+      <Group
+        gap={2}
+        wrap="nowrap"
+        style={{ position: "absolute", top: 6, right: 6, zIndex: 2 }}
+      >
+        {reactionBar}
+        {auth.email === post.authorEmail && (
+          <>
+            {/* Pin is only for the ROOT (parent) post, not replies. */}
+            {!post.parentId && (
+              <ActionIcon
+                variant={post.pinnedAt ? "light" : "subtle"}
+                color={post.pinnedAt ? "green" : "gray"}
+                size="sm"
+                aria-label={post.pinnedAt ? "ピン解除" : "ピン"}
+                onClick={() => onPin(post.id)}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill={post.pinnedAt ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 17v5" />
+                  <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" />
+                </svg>
+              </ActionIcon>
+            )}
             <ActionIcon
-              variant={post.pinnedAt ? "light" : "subtle"}
-              color={post.pinnedAt ? "green" : "gray"}
+              variant="subtle"
+              color="gray"
               size="sm"
-              aria-label={post.pinnedAt ? "ピン解除" : "ピン"}
-              onClick={() => onPin(post.id)}
+              aria-label="編集"
+              onClick={() => onEdit(post)}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill={post.pinnedAt ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 17v5" />
-                <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z" />
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
               </svg>
             </ActionIcon>
-          )}
-          <ActionIcon
-            variant="subtle"
-            color="gray"
-            size="sm"
-            aria-label="編集"
-            onClick={() => onEdit(post)}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-            </svg>
-          </ActionIcon>
-          <ActionIcon
-            variant="subtle"
-            color="red"
-            size="sm"
-            aria-label="削除"
-            onClick={() => onDelete(post)}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M3 6h18" />
-              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-              <line x1="10" y1="11" x2="10" y2="17" />
-              <line x1="14" y1="11" x2="14" y2="17" />
-            </svg>
-          </ActionIcon>
-        </Group>
-      )}
+            <ActionIcon
+              variant="subtle"
+              color="red"
+              size="sm"
+              aria-label="削除"
+              onClick={() => onDelete(post)}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 6h18" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                <line x1="10" y1="11" x2="10" y2="17" />
+                <line x1="14" y1="11" x2="14" y2="17" />
+              </svg>
+            </ActionIcon>
+          </>
+        )}
+      </Group>
 
       <Group gap="sm" mb={6}>
         <UnstyledButton
@@ -1779,16 +1787,10 @@ function PostCard({
         />
       )}
 
-      {/* Bottom actions: 返信 + リアクション.
-       *
-       * Reactions were deliberately absent until 2026-09-25 (drikin: 「今まで
-       * 意図的に投稿やコメントに対してリアクションできないような設計にしてた
-       * んですけど、やっぱりちょっと寂しい感じがする」). The row is rendered
-       * whenever the card is interactive — `showReplyButton` is false for the
-       * author's own card in the thread view, but reactions belong on every
-       * card, so they are NOT gated on it. */}
-      <Group mt="sm" gap="xs" align="center" wrap="wrap">
-        {showReplyButton && onReply && (
+      {/* Bottom action: 返信 only. Reactions moved to the card's top-right
+       * (drikin 2026-09-25) — see the action group above. */}
+      {showReplyButton && onReply && (
+        <Group mt="sm" gap="xs">
           <Button
             size="xs"
             variant="subtle"
@@ -1798,9 +1800,8 @@ function PostCard({
           >
             返信{post.replyCount ? ` (${post.replyCount})` : ""}
           </Button>
-        )}
-        {reactionBar}
-      </Group>
+        </Group>
+      )}
     </Card>
   );
 }

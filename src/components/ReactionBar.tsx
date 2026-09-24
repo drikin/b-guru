@@ -59,6 +59,41 @@ export function isCustomRef(emoji: string): boolean {
   return emoji.startsWith(":") && emoji.endsWith(":") && emoji.length > 2;
 }
 
+/**
+ * The "add reaction" affordance: a monochrome smiley with a small plus, the
+ * same idea as Slack's. drikin 2026-09-25: 「プラスのアイコンはちょっとわかり
+ * にくいので、モノクロの絵文字っぽいやつ、Slack みたいなやつがいいかも」。
+ *
+ * Inline SVG with `currentColor` (not an emoji glyph) so it stays monochrome and
+ * inherits the button's colour, matching the other card icons.
+ */
+export function AddReactionIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      {/* face */}
+      <circle cx="10.5" cy="12" r="7.5" />
+      {/* eyes */}
+      <line x1="8" y1="10" x2="8" y2="10.01" />
+      <line x1="13" y1="10" x2="13" y2="10.01" />
+      {/* smile */}
+      <path d="M7.5 14.2a3.6 3.6 0 0 0 6 0" />
+      {/* plus, outside the face so it reads as "add" */}
+      <line x1="19" y1="4" x2="19" y2="9" />
+      <line x1="16.5" y1="6.5" x2="21.5" y2="6.5" />
+    </svg>
+  );
+}
+
 /** Render one reaction value: a custom emoji as an <img>, otherwise the glyph. */
 export function ReactionGlyph({
   emoji,
@@ -144,7 +179,10 @@ export function ReactionBar({
   };
 
   return (
-    <Group gap={compact ? 4 : 6} wrap="wrap" align="center" data-cx="reaction-bar">
+    // `wrap="nowrap"` because this row now lives in the card's top-right action
+    // group (drikin 2026-09-25) where wrapping would push the icons onto a
+    // second line and collide with the author header.
+    <Group gap={compact ? 4 : 6} wrap="nowrap" align="center" data-cx="reaction-bar">
       {reactions.map((r) => (
         <UnstyledButton
           key={r.emoji}
@@ -171,28 +209,15 @@ export function ReactionBar({
         </UnstyledButton>
       ))}
 
-      {/* One-tap heart: the primary action, always visible. */}
-      <UnstyledButton
-        onClick={() => onToggle("❤️")}
-        aria-label="ハートでリアクション"
-        data-cx="reaction-heart"
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: compact ? 24 : 26,
-          height: compact ? 24 : 26,
-          borderRadius: 999,
-          border: "1px solid var(--border-default)",
-          color: "var(--text-secondary)",
-        }}
-      >
-        <span style={{ fontSize: compact ? 13 : 14, lineHeight: 1 }}>❤️</span>
-      </UnstyledButton>
-
-      {/* "＋" opens the picker. drikin chose this over long-press/right-click
-       *  because it is discoverable — a hidden gesture would leave the feature
-       *  invisible to exactly the people who asked for it. */}
+      {/* Picker trigger. drikin 2026-09-25: 「ハートとプラスマークは機能が重複して
+       * いるので、ハートは削除していいです。あとプラスのアイコンはちょっとわかり
+       * にくいので、モノクロの絵文字っぽいやつ、Slack みたいなやつがいいかも」。
+       *
+       *  So: the separate one-tap heart is gone (the ❤️ chip in the picker's
+       *  "よく使う" row covers it in one tap), and the trigger is now a
+       *  monochrome smiley-with-plus — the same affordance Slack uses for
+       *  "add reaction". Drawn as inline SVG (currentColor) rather than an
+       *  emoji glyph so it stays monochrome and matches the other icons. */}
       <Popover
         opened={pickerOpen}
         onChange={setPickerOpen}
@@ -204,7 +229,7 @@ export function ReactionBar({
         <Popover.Target>
           <UnstyledButton
             onClick={() => setPickerOpen((o) => !o)}
-            aria-label="他の絵文字でリアクション"
+            aria-label="リアクションを追加"
             data-cx="reaction-add"
             style={{
               display: "inline-flex",
@@ -215,11 +240,10 @@ export function ReactionBar({
               borderRadius: 999,
               border: "1px solid var(--border-default)",
               color: "var(--text-secondary)",
-              fontSize: 15,
-              lineHeight: 1,
+              lineHeight: 0,
             }}
           >
-            ＋
+            <AddReactionIcon size={compact ? 15 : 16} />
           </UnstyledButton>
         </Popover.Target>
         <Popover.Dropdown p="xs">
