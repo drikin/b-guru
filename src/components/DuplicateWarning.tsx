@@ -100,7 +100,19 @@ export function DuplicateWarning({
                 ・似ている {Math.round(d.score * 100)}%
               </Text>
             )}
+            {d.kind === "news" && (
+              <Text size="xs" c="dimmed" style={{ opacity: 0.8 }}>
+                ・同じニュース
+              </Text>
+            )}
           </Group>
+          {/* AI が付けた理由（同じニュース判定のときだけ）。なぜ重複と
+           *  言われたのかが分からないと、警告が納得できない。 */}
+          {d.kind === "news" && d.reason && (
+            <Text size="xs" c="dimmed" style={{ opacity: 0.75, marginBottom: 2 }}>
+              {d.reason}
+            </Text>
+          )}
           <Text
             size="xs"
             c="dimmed"

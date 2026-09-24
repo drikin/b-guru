@@ -3,6 +3,18 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const query = vi.fn();
 vi.mock("../db", () => ({ pool: { query: (...a: unknown[]) => query(...a) } }));
 
+// さくらのAI Engine はモックする。ここで固定したいのは「AI の出力をどう解釈
+// するか」であって、モデルの賢さではない（それは実測で確認済み）。
+const sakuraChat = vi.fn();
+vi.mock("../sakura", () => ({ sakuraChat: (...a: unknown[]) => sakuraChat(...a) }));
+
+// URL プレビューの取得もモックする（外部サイトを取りに行かせない）。
+const fetchUrlPreview = vi.fn();
+vi.mock("../urlpreview", async (orig) => {
+  const actual = await (orig as () => Promise<Record<string, unknown>>)();
+  return { ...actual, fetchUrlPreview: (...a: unknown[]) => fetchUrlPreview(...a) };
+});
+
 import {
   normalizeText,
   normalizeUrl,
@@ -10,10 +22,13 @@ import {
   firstUrl,
   extractYoutubeIdFromText,
   findDuplicates,
+  judgeSameNews,
 } from "../duplicates";
 
 beforeEach(() => {
   query.mockReset();
+  sakuraChat.mockReset();
+  fetchUrlPreview.mockReset();
 });
 
 describe("normalizeUrl", () => {
@@ -280,5 +295,191 @@ describe("findDuplicates", () => {
       authorEmail: "a@b.c",
     });
     expect(out.length).toBeLessThanOrEqual(3);
+  });
+});
+
+describe("judgeSameNews", () => {
+  it("parses a same verdict", async () => {
+    sakuraChat.mockResolvedValueOnce({
+      content: '{"verdict":"same","confidence":0.98,"reason":"同一台風の発生と進路情報"}',
+    });
+    const v = await judgeSameNews(
+      { title: "台風26号発生", description: "気象庁発表" },
+      { title: "台風26号「スリゲ」発生", description: "沖縄は大しけ" }
+    );
+    expect(v.verdict).toBe("same");
+    expect(v.confidence).toBe(0.98);
+    expect(v.reason).toContain("台風");
+  });
+
+  it("parses a related verdict — same theme, different news", async () => {
+    sakuraChat.mockResolvedValueOnce({
+      content: '{"verdict":"related","confidence":0.95,"reason":"同じAppleでも製品が異なる"}',
+    });
+    const v = await judgeSameNews(
+      { title: "新型M6 Mac miniレビュー", description: "" },
+      { title: "iPhone 18 Proの店舗在庫", description: "" }
+    );
+    expect(v.verdict).toBe("related");
+  });
+
+  it("extracts JSON even when the model wraps it in prose", async () => {
+    sakuraChat.mockResolvedValueOnce({
+      content: '判定します。\n{"verdict":"different","confidence":0.9,"reason":"別分野"}\n以上です。',
+    });
+    const v = await judgeSameNews({ title: "a", description: "" }, { title: "b", description: "" });
+    expect(v.verdict).toBe("different");
+  });
+
+  it("falls back to different when the model returns garbage", async () => {
+    sakuraChat.mockResolvedValueOnce({ content: "よくわかりません" });
+    const v = await judgeSameNews({ title: "a", description: "" }, { title: "b", description: "" });
+    expect(v.verdict).toBe("different");
+    expect(v.confidence).toBe(0);
+  });
+
+  it("falls back to different when the verdict is not one of the three", async () => {
+    sakuraChat.mockResolvedValueOnce({ content: '{"verdict":"maybe","confidence":0.5}' });
+    const v = await judgeSameNews({ title: "a", description: "" }, { title: "b", description: "" });
+    expect(v.verdict).toBe("different");
+  });
+
+  it("never throws when the AI call fails — a duplicate check must not block posting", async () => {
+    sakuraChat.mockRejectedValueOnce(new Error("network down"));
+    const v = await judgeSameNews({ title: "a", description: "" }, { title: "b", description: "" });
+    expect(v.verdict).toBe("different");
+  });
+
+  it("asks for enough tokens that the JSON is not truncated", async () => {
+    sakuraChat.mockResolvedValueOnce({ content: '{"verdict":"same","confidence":1,"reason":"x"}' });
+    await judgeSameNews({ title: "a", description: "" }, { title: "b", description: "" });
+    // 200 だと JSON が途中で切れた（実測）。余裕を持たせていることを固定する。
+    expect(sakuraChat.mock.calls[0][0].max_tokens).toBeGreaterThanOrEqual(300);
+  });
+
+  it("uses temperature 0 so the same pair always gets the same verdict", async () => {
+    sakuraChat.mockResolvedValueOnce({ content: '{"verdict":"same","confidence":1,"reason":"x"}' });
+    await judgeSameNews({ title: "a", description: "" }, { title: "b", description: "" });
+    expect(sakuraChat.mock.calls[0][0].temperature).toBe(0);
+  });
+});
+
+describe("findDuplicates — AI news layer", () => {
+  it("does not call the AI when an exact match was already found", async () => {
+    query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 1,
+          author_email: "x@y.z",
+          author_name: "x",
+          text: "https://youtu.be/aaaaaaaaaaa",
+          created_at: "2026-09-25T00:00:00Z",
+        },
+      ],
+    });
+    query.mockResolvedValueOnce({ rows: [] }); // URL pass
+    await findDuplicates({ text: "https://youtu.be/aaaaaaaaaaa", authorEmail: "a@b.c" });
+    expect(sakuraChat).not.toHaveBeenCalled();
+    expect(fetchUrlPreview).not.toHaveBeenCalled();
+  });
+
+  it("does not call the AI when the post has no URL", async () => {
+    query.mockResolvedValueOnce({ rows: [] }); // text pass
+    query.mockResolvedValueOnce({ rows: [] }); // fuzzy pass
+    await findDuplicates({ text: "今日はいい天気ですね", authorEmail: "a@b.c" });
+    expect(sakuraChat).not.toHaveBeenCalled();
+  });
+
+  it("reports a same-news match from a different site as kind=news", async () => {
+    query.mockResolvedValueOnce({ rows: [] }); // URL pass
+    query.mockResolvedValueOnce({ rows: [] }); // text pass
+    query.mockResolvedValueOnce({ rows: [] }); // fuzzy pass
+    fetchUrlPreview.mockResolvedValueOnce({
+      title: "台風26号「スリゲ」発生 沖縄は大しけのおそれ",
+      description: "気象庁は24日、台風26号が発生したと発表しました。",
+    });
+    query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 5346,
+          author_email: "x@y.z",
+          author_name: "x",
+          text: "https://news.example/typhoon",
+          created_at: "2026-09-24T03:00:00Z",
+          title: "【台風情報】最大瞬間風速55m/s予想「台風26号(スリゲ)」発生",
+          description: "気象庁によりますと、台風26号はフィリピンの東を進んでいます。",
+        },
+      ],
+    });
+    sakuraChat.mockResolvedValueOnce({
+      content: '{"verdict":"same","confidence":0.98,"reason":"同一台風の発生と進路情報"}',
+    });
+
+    const out = await findDuplicates({
+      text: "台風26号が発生 https://other-news.example/typhoon26",
+      authorEmail: "a@b.c",
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].kind).toBe("news");
+    expect(out[0].exact).toBe(false);
+    expect(out[0].reason).toContain("台風");
+  });
+
+  it("does NOT report a related verdict — same theme is not the same news", async () => {
+    query.mockResolvedValueOnce({ rows: [] }); // URL pass
+    query.mockResolvedValueOnce({ rows: [] }); // text pass
+    query.mockResolvedValueOnce({ rows: [] }); // fuzzy pass
+    fetchUrlPreview.mockResolvedValueOnce({
+      title: "Apple、Qwen3.5-9BベースのLLMモデル「LensVLM-9B」を公開",
+      description: "AppleがHugging Faceにて公開。",
+    });
+    query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: 5323,
+          author_email: "x@y.z",
+          author_name: "x",
+          text: "https://gizmodo.jp/macmini",
+          created_at: "2026-09-24T01:51:00Z",
+          title: "まさかの「Appleが神コスパ」になっちゃった：新型M6 Mac miniレビュー",
+          description: "M6チップ搭載の新型Mac miniの実力をレビュー。",
+        },
+      ],
+    });
+    sakuraChat.mockResolvedValueOnce({
+      content: '{"verdict":"related","confidence":0.95,"reason":"同じAppleでも製品が異なる"}',
+    });
+
+    const out = await findDuplicates({
+      text: "AppleがLensVLM-9Bを公開 https://macotakara.jp/lensvlm",
+      authorEmail: "a@b.c",
+    });
+    // related は「同じテーマだが別の話」。警告すると誤警告になる。
+    expect(out).toHaveLength(0);
+  });
+
+  it("skips the AI layer when the URL preview has no title", async () => {
+    query.mockResolvedValueOnce({ rows: [] }); // URL pass
+    query.mockResolvedValueOnce({ rows: [] }); // text pass
+    query.mockResolvedValueOnce({ rows: [] }); // fuzzy pass
+    fetchUrlPreview.mockResolvedValueOnce({ title: "", description: "" });
+    const out = await findDuplicates({
+      text: "https://example.com/x",
+      authorEmail: "a@b.c",
+    });
+    expect(out).toEqual([]);
+    expect(sakuraChat).not.toHaveBeenCalled();
+  });
+
+  it("survives a URL preview failure without blocking", async () => {
+    query.mockResolvedValueOnce({ rows: [] }); // URL pass
+    query.mockResolvedValueOnce({ rows: [] }); // text pass
+    query.mockResolvedValueOnce({ rows: [] }); // fuzzy pass
+    fetchUrlPreview.mockRejectedValueOnce(new Error("timeout"));
+    const out = await findDuplicates({
+      text: "https://example.com/x",
+      authorEmail: "a@b.c",
+    });
+    expect(out).toEqual([]);
   });
 });

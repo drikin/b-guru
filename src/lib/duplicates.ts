@@ -18,10 +18,11 @@
  */
 
 import { pool } from "./db";
-import { extractYoutubeId } from "./urlpreview";
+import { extractYoutubeId, fetchUrlPreview } from "./urlpreview";
+import { sakuraChat } from "./sakura";
 
 /** 重複の確からしさ。`exact` は同じ対象を指していることが確実なもの。 */
-export type DuplicateKind = "video" | "url" | "text" | "similar";
+export type DuplicateKind = "video" | "url" | "text" | "similar" | "news";
 
 export interface DuplicateCandidate {
   postId: number;
@@ -35,6 +36,8 @@ export interface DuplicateCandidate {
   score: number;
   /** 同じ動画/URL を指していることが確実か。UI の強調度を決める。 */
   exact: boolean;
+  /** AI が付けた理由（`news` のときだけ）。UI に出す。 */
+  reason?: string;
 }
 
 /** あいまい類似を出す閾値。これ未満は「似ている」と言い切れない。 */
@@ -277,6 +280,22 @@ export async function findDuplicates(input: {
     for (const c of scored.slice(0, MAX_CANDIDATES)) found.set(c.postId, c);
   }
 
+  // ---- 5. AI による「同じニュース」判定 ----------------------------------
+  // drikin 2026-09-25: 「同じニュースで別のニュースサイトが報じているような
+  // ネタとかでも、よく重複していることがあったりする」。URL も動画IDも違うので
+  // 文字列一致では拾えない。ここだけは AI に判断させる。
+  //
+  // 確実な重複が既にあるなら走らせない（警告が増えるほど読まれなくなる）。
+  if (found.size === 0 && rawUrl) {
+    const ownPreview = await fetchOwnPreview(rawUrl);
+    if (ownPreview) {
+      const news = await findNewsDuplicates(text, ownPreview);
+      for (const c of news) {
+        if (!found.has(c.postId)) found.set(c.postId, c);
+      }
+    }
+  }
+
   return [...found.values()]
     .sort((a, b) => {
       // 確実なものを先に、次に新しいもの。
@@ -310,6 +329,189 @@ export function extractYoutubeIdFromText(text: string): string | null {
 function displayName(name: string | null, email: string): string {
   const v = (name ?? "").trim() || email;
   return v.includes("@") ? v.split("@")[0] : v;
+}
+
+// ===========================================================================
+// AI による「同じニュース」判定
+// ===========================================================================
+
+/**
+ * drikin 2026-09-25: 「今回の例はたまたま YouTube でしたけど、同じニュースで
+ * 別のニュースサイトが報じているようなネタとかでも、よく重複していることが
+ * あったりするので、そこら辺も検出できたりしますかね？必要であれば、ビーグルと
+ * 同様の AI を使ってもいいと思います。」
+ *
+ * URL も動画IDも違うので、文字列の一致では絶対に拾えない。見出しの単語が
+ * 一致するだけの誤検出（「Apple」で Mac mini レビューと iPhone 在庫の話が
+ * ペアになる）も実測で確認したので、AI に判断させる。
+ *
+ * 実測（2026-09-25、gpt-oss-120b）: 7ケース中6正解。重要なケースはすべて正解 —
+ * 別サイト同一ニュース（台風26号 / MiniMax H3）を same、紛らわしい「Apple だが
+ * 別の話」を related、無関係を different と正しく分類した。
+ */
+const NEWS_JUDGE_SYSTEM = `あなたはSNSの投稿が「同じニュース・同じ話題」かどうかを判定する審判です。
+2つの投稿を比較し、次のいずれかで答えてください。
+
+- same: 同じニュース・同じ出来事・同じ製品発表を扱っている（別のサイトが報じていても同じ）
+- related: 同じテーマだが別のニュース（例: どちらもApple関連だが、別の製品の話）
+- different: 無関係
+
+判定の指針:
+- 見出しの単語が一致するだけでは same にしない。「Apple」のように広い語は related の根拠にしかならない。
+- 具体的な製品名・人名・出来事が一致し、かつ同じ発表・同じ事件を指しているなら same。
+- 一方が他方の続報・まとめ記事なら same。
+- 迷ったら related にする（誤って same と言うより安全）。
+
+出力は必ず次のJSONのみ:
+{"verdict":"same"|"related"|"different","confidence":0.0-1.0,"reason":"日本語で40字以内"}`;
+
+/** AI 判定の結果。`same` のときだけ重複として扱う。 */
+export interface NewsVerdict {
+  verdict: "same" | "related" | "different";
+  confidence: number;
+  reason: string;
+}
+
+/**
+ * 2つの投稿が「同じニュース」かを AI に判定させる。
+ *
+ * 失敗しても例外を投げない（重複チェックで投稿を止めない方針）。判定不能なら
+ * `different` を返して黙って諦める。
+ */
+export async function judgeSameNews(
+  a: { title: string; description: string },
+  b: { title: string; description: string }
+): Promise<NewsVerdict> {
+  const fallback: NewsVerdict = { verdict: "different", confidence: 0, reason: "" };
+  try {
+    const user = `投稿A:\nタイトル: ${a.title}\n説明: ${a.description}\n\n投稿B:\nタイトル: ${b.title}\n説明: ${b.description}`;
+    const res = await sakuraChat({
+      messages: [
+        { role: "system", content: NEWS_JUDGE_SYSTEM },
+        { role: "user", content: user },
+      ],
+      temperature: 0,
+      // 200 だと JSON が途中で切れることがあった（実測）。余裕を持たせる。
+      max_tokens: 400,
+    });
+    const m = res.content.match(/\{[\s\S]*\}/);
+    if (!m) return fallback;
+    const j = JSON.parse(m[0]);
+    const verdict = j?.verdict;
+    if (verdict !== "same" && verdict !== "related" && verdict !== "different") {
+      return fallback;
+    }
+    return {
+      verdict,
+      confidence: typeof j.confidence === "number" ? j.confidence : 0,
+      reason: typeof j.reason === "string" ? j.reason : "",
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * 同じ日のニュース記事から「同じニュース」を AI で探す。
+ *
+ * 候補を絞ってから AI に渡す（全件ペアは O(n²) でコストが跳ねる）。絞り込みは
+ * 文字列の類似度で行い、判定そのものは AI に任せる — 絞り込みで漏らすと
+ * 拾えなくなるので、閾値は低めにする。
+ */
+async function findNewsDuplicates(
+  text: string,
+  ownPreview: { title: string; description: string } | null
+): Promise<DuplicateCandidate[]> {
+  // 自分の投稿にタイトルが無いと比較材料が無い。本文だけでは見出しの
+  // 一致を判定できないので、この層はスキップする。
+  if (!ownPreview?.title) return [];
+
+  const res = await pool.query(
+    `SELECT p.id, p.author_email, p.text, p.created_at,
+            p.url_preview->>'title' AS title,
+            p.url_preview->>'description' AS description,
+            COALESCE(up.display_name, p.author_name, p.author_email) AS author_name
+       FROM posts p
+       LEFT JOIN user_profiles up ON up.email = p.author_email
+      WHERE p.parent_id IS NULL
+        AND p.url_preview->>'title' IS NOT NULL
+        AND p.created_at > now() - interval '3 days'
+      ORDER BY p.created_at DESC
+      LIMIT 60`,
+    []
+  );
+
+  // 文字列の近さで候補を絞る。低めの閾値で「別サイトの言い換え見出し」も
+  // 残す（AI が最終判断するので、ここで厳しくすると拾えなくなる）。
+  const scored = res.rows
+    .map((r) => ({
+      row: r,
+      s: Math.max(
+        similarity(ownPreview.title, r.title ?? ""),
+        similarity(ownPreview.description, r.description ?? "")
+      ),
+    }))
+    .filter((x) => x.s >= 0.18)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, 5);
+
+  if (scored.length === 0) return [];
+
+  // AI 判定は並列に投げる。1件ずつ待つと投稿前の待ち時間が伸びる。
+  const verdicts = await Promise.all(
+    scored.map((x) =>
+      judgeSameNews(ownPreview, {
+        title: x.row.title ?? "",
+        description: x.row.description ?? "",
+      })
+    )
+  );
+
+  const out: DuplicateCandidate[] = [];
+  for (let i = 0; i < scored.length; i++) {
+    const v = verdicts[i];
+    // `same` だけを重複として扱う。`related` は「同じテーマだが別の話」なので
+    // 警告すると誤警告になる（実測で「Apple」の別製品ペアが related になった）。
+    if (v.verdict !== "same") continue;
+    const r = scored[i].row;
+    out.push({
+      postId: Number(r.id),
+      authorName: displayName(r.author_name, r.author_email),
+      authorEmail: r.author_email,
+      text: r.text,
+      createdAt: r.created_at,
+      kind: "news",
+      score: v.confidence,
+      exact: false,
+      reason: v.reason,
+    });
+  }
+  return out;
+}
+
+/**
+ * 投稿しようとしている URL のプレビューを取る（AI 判定の材料）。
+ *
+ * `fetchUrlPreview` は外部サイトを取りに行くので最大 ~8秒かかりうる。投稿前の
+ * 待ち時間に直結するため、ここでは短いタイムアウトを掛ける。取れなければ
+ * AI 判定をスキップする（重複チェックは投稿を止めるものではないので、
+ * 諦めてよい）。
+ */
+async function fetchOwnPreview(
+  rawUrl: string
+): Promise<{ title: string; description: string } | null> {
+  try {
+    const p = await Promise.race([
+      fetchUrlPreview(rawUrl),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+    ]);
+    if (!p) return null;
+    const title = (p.title ?? "").trim();
+    if (!title) return null;
+    return { title, description: (p.description ?? "").trim() };
+  } catch {
+    return null;
+  }
 }
 
 // `extractYoutubeId` は `urlpreview.ts` から再輸出する。呼び出し側が2つの

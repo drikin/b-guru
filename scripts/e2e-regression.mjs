@@ -1171,6 +1171,59 @@ console.log("\n6m. Duplicate-post warning");
   // Clean up: close the composer without posting.
   await page.evaluate(`document.querySelector('[aria-label="閉じる"]')?.click()`);
   await page.waitForTimeout(800);
+
+  // ---- AI による「同じニュース」判定 -------------------------------------
+  // drikin 2026-09-25: 「同じニュースで別のニュースサイトが報じているような
+  // ネタとかでも、よく重複していることがあったりする」。URL も動画IDも違うので
+  // 文字列一致では拾えない。AI に判断させる層を検証する。
+  //
+  // 実在のペアを使う: 5346 は台風26号の記事。別サイトの台風26号記事を投稿
+  // しようとすると same と判定されるはず。
+  const newsCase = await page.evaluate(`(async () => {
+    const r = await fetch('/api/posts/duplicates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: '台風26号「スリゲ」発生 沖縄は28日にかけて大しけのおそれ https://www3.nhk.or.jp/news/html/20260924/typhoon26.html',
+      }),
+    });
+    if (!r.ok) return { status: r.status };
+    const d = await r.json();
+    return { status: r.status, dupes: d.duplicates ?? [] };
+  })()`);
+  check(
+    "the AI layer finds the same news reported by a different site",
+    newsCase.status === 200 && newsCase.dupes.length > 0,
+    `status=${newsCase.status} dupes=${newsCase.dupes?.length}`
+  );
+  check(
+    "the same-news match is reported as kind=news with a reason",
+    newsCase.dupes?.length > 0 &&
+      newsCase.dupes[0].kind === "news" &&
+      !!newsCase.dupes[0].reason,
+    newsCase.dupes?.length
+      ? `kind=${newsCase.dupes[0].kind} reason="${newsCase.dupes[0].reason}"`
+      : "n/a"
+  );
+
+  // ★ 誤警告しないこと: 「Apple」つながりでも別のニュースは related 扱いで
+  // 警告しない。実測で Mac mini レビューと iPhone 在庫の話が related になった。
+  const relatedCase = await page.evaluate(`(async () => {
+    const r = await fetch('/api/posts/duplicates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: 'Apple、Qwen3.5-9BベースのLLMモデル「LensVLM-9B」を公開 https://macotakara.jp/blog/apple/entry-99999.html',
+      }),
+    });
+    const d = await r.json();
+    return d.duplicates ?? [];
+  })()`);
+  check(
+    "a same-theme-but-different-news post is NOT flagged",
+    Array.isArray(relatedCase) && relatedCase.length === 0,
+    `dupes=${relatedCase?.length}`
+  );
 }
 
 // ------------------------------------------------------------ image proxy
