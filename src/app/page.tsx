@@ -7826,23 +7826,61 @@ export default function Home() {
     };
     // ---- touch path (smartphones / tablets) ----
     let tsx = 0, tsy = 0, tst = 0, tactive = false;
+    // Why a swipe was ignored, for on-device diagnosis. The headless E2E guard
+    // synthesises Touch events, which does NOT reproduce real iOS Safari — the
+    // guard stayed green while drikin reported the swipe dead on his phone
+    // (2026-09-25). Record the decision inputs so the next real swipe can be
+    // read back from the console instead of guessed at.
+    const dbg = (why: string, extra?: Record<string, unknown>) => {
+      (window as unknown as { __swipeDbg?: unknown[] }).__swipeDbg = [
+        ...(((window as unknown as { __swipeDbg?: unknown[] }).__swipeDbg) ?? []).slice(-19),
+        { why, ...extra, at: Date.now() },
+      ];
+    };
     const onTouchStart = (e: TouchEvent) => {
       const t = e.touches[0];
-      if (!t || isEditable(e.target) || inHScrollable(e.target) || !inSwipeBand(t.clientY)) {
+      if (!t) {
+        dbg("no-touch");
+        tactive = false;
+        return;
+      }
+      if (isEditable(e.target)) {
+        dbg("editable");
+        tactive = false;
+        return;
+      }
+      if (inHScrollable(e.target)) {
+        dbg("h-scrollable", { y: Math.round(t.clientY) });
+        tactive = false;
+        return;
+      }
+      if (!inSwipeBand(t.clientY)) {
+        dbg("out-of-band", { y: Math.round(t.clientY), band: SWIPE_BAND_PX });
         tactive = false;
         return;
       }
       tsx = t.clientX; tsy = t.clientY; tst = Date.now(); tactive = true;
+      dbg("armed", { x: Math.round(tsx), y: Math.round(tsy) });
     };
     const onTouchEnd = (e: TouchEvent) => {
       if (!tactive) return;
       tactive = false;
-      if (!swipeGateRef.current) return;
+      if (!swipeGateRef.current) {
+        dbg("gate-closed");
+        return;
+      }
       const t = e.changedTouches[0];
       if (!t) return;
       const dx = t.clientX - tsx, dy = t.clientY - tsy;
-      if (Math.abs(dx) < 70 || Math.abs(dx) <= Math.abs(dy)) return;
-      if (Date.now() - tst > 800) return;
+      if (Math.abs(dx) < 70 || Math.abs(dx) <= Math.abs(dy)) {
+        dbg("too-small", { dx: Math.round(dx), dy: Math.round(dy) });
+        return;
+      }
+      if (Date.now() - tst > 800) {
+        dbg("too-slow", { ms: Date.now() - tst });
+        return;
+      }
+      dbg("fired", { dx: Math.round(dx) });
       act(dx);
     };
     // ---- pointer path (desktop mouse / pen) ----
