@@ -1240,6 +1240,36 @@ console.log("\n6m. Duplicate-post warning");
     Array.isArray(unrelatedCase) && unrelatedCase.length === 0,
     `dupes=${unrelatedCase?.length}`
   );
+
+  // ★ 投稿者の本文が判定に効いていること。
+  //   プレビューだけを比べると「URL の記事そのもの」と必ず一致してしまう。
+  //   実測で発覚したバグ: 無関係な本文 + 既存記事の URL を渡しても、その
+  //   記事が same で返っていた（本文が一切効いていなかった）。
+  //
+  //   同じ URL で本文だけ変えて、結果が変わることを見る。変わらなければ
+  //   本文が無視されている。
+  const typedMatters = await page.evaluate(`(async () => {
+    const url = 'https://gigazine.net/news/20260923-ambient-css/';
+    const ask = async (t) => {
+      const r = await fetch('/api/posts/duplicates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phase: 'ai', text: t }),
+      });
+      const d = await r.json();
+      return (d.duplicates ?? []).map((x) => x.postId);
+    };
+    // 本文なし（URL だけ）→ その記事自身が候補に出る
+    const bare = await ask(url);
+    // 無関係な本文を足す → 本文が効いていれば結果が変わる
+    const withText = await ask('ネコの新種、100年以上ぶりに発見 ' + url);
+    return { bare, withText };
+  })()`);
+  check(
+    "the poster's own text affects the AI verdict",
+    JSON.stringify(typedMatters.bare) !== JSON.stringify(typedMatters.withText),
+    `bare=[${typedMatters.bare}] withText=[${typedMatters.withText}]`
+  );
 }
 
 // ------------------------------------------------------------ image proxy
