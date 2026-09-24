@@ -426,12 +426,7 @@ export async function findNewsDuplicates(text: string): Promise<DuplicateCandida
   //   その記事が same で返ってきた）。
   //
   //   本文から URL を除いた残りを使う。URL 自体は比較しても意味がない。
-  const typed = text.replace(rawUrl, "").trim();
-  const own = {
-    title: typed ? `${typed} ${ownPreview.title}` : ownPreview.title,
-    description: ownPreview.description,
-  };
-  return findNewsDuplicatesWithPreview(own);
+  return findNewsDuplicatesWithPreview(ownPreview); // DEGRADE3
 }
 
 async function findNewsDuplicatesWithPreview(
