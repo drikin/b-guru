@@ -8772,19 +8772,25 @@ export default function Home() {
                   // Three states, because "we don't know" is not the same as
                   // "in front" (drikin 2026-09-23: 「僕以外全員アクティブとは
                   // 考えられない」 — the panel was claiming everyone was active
-                  // because a client that never reports was rendered as active):
-                  //   true  → confirmed foreground tab        → full opacity
-                  //   null  → not reported (older cached JS)  → slightly dimmed
-                  //   false → tab is open but backgrounded    → clearly dimmed
-                  // The member stays in the list in every case: they are online.
-                  const opacity =
-                    m.visible === false ? 0.45 : m.visible === true ? 1 : 0.7;
-                  const title =
-                    m.visible === false
-                      ? "タブは開いていますが離席中"
-                      : m.visible === true
-                      ? "オンラインでチャット"
-                      : "オンライン（タブの状態は未取得）";
+                  // because a client that never reports was rendered as active).
+                  //
+                  // Opacity alone was not readable enough (drikin: 「半透明と
+                  // アクティブの人の見た目の差があんまりわからない」), so the
+                  // states now differ on THREE axes at once:
+                  //   active (true)  → bold name + green dot + full opacity
+                  //   unknown (null) → normal weight, no dot, opacity 0.75
+                  //   away (false)   → normal weight, no dot, opacity 0.4
+                  // The dot is the primary signal (it reads at a glance even for
+                  // someone who cannot judge opacity), weight is secondary, and
+                  // opacity is the tertiary cue.
+                  const isActive = m.visible === true;
+                  const isAway = m.visible === false;
+                  const opacity = isActive ? 1 : isAway ? 0.4 : 0.75;
+                  const title = isAway
+                    ? "タブは開いていますが離席中"
+                    : isActive
+                    ? "オンラインでチャット"
+                    : "オンライン（タブの状態は未取得）";
                   return (
                     <UnstyledButton
                       key={m.email}
@@ -8808,7 +8814,28 @@ export default function Home() {
                         style={{ minWidth: 0 }}
                       >
                         <SafeAvatar src={m.avatar} initial={m.name || m.email.split("@")[0]} size="sm" />
-                        <Text size="sm" truncate style={{ minWidth: 0 }}>
+                        {/* Presence dot: filled green when the tab is confirmed
+                            in front, hollow grey otherwise. Fixed width so the
+                            names stay aligned across all three states. */}
+                        <Box
+                          aria-hidden="true"
+                          style={{
+                            flex: "0 0 auto",
+                            width: 8,
+                            height: 8,
+                            borderRadius: "50%",
+                            background: isActive ? "var(--text-green)" : "transparent",
+                            border: isActive
+                              ? "none"
+                              : "1.5px solid var(--mantine-color-gray-5)",
+                          }}
+                        />
+                        <Text
+                          size="sm"
+                          truncate
+                          fw={isActive ? 700 : 400}
+                          style={{ minWidth: 0 }}
+                        >
                           {m.name || m.email.split("@")[0]}
                           {isSelf && (
                             <Text span c="green" fw={600}>
