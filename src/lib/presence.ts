@@ -27,10 +27,18 @@ interface PresenceEntry {
    * Whether the member's tab is currently in the foreground, per the Page
    * Visibility API. `false` means the tab is open but backgrounded (another
    * tab, minimised, or the phone is on another app) — the member is still
-   * online, just not looking at the page. Defaults to true so a client that
-   * never reports visibility is treated as active rather than dimmed.
+   * online, just not looking at the page.
+   *
+   * `null` = NOT YET REPORTED. This matters: opening the SSE stream says
+   * nothing about whether the tab is in front, so `markOnline` must not assume
+   * "active". Doing so made every member who never sends the flag (an older
+   * cached client, or one whose heartbeat predates this feature) show as active
+   * forever — measured 2026-09-23: 20 of 21 members "active", which drikin
+   * correctly called out as implausible. A member with `null` is rendered as
+   * active (we cannot prove otherwise) but is NOT treated as a confirmed
+   * foreground tab.
    */
-  visible: boolean;
+  visible: boolean | null;
 }
 
 const online = new Map<string, PresenceEntry>();
@@ -55,7 +63,11 @@ export function markOnline(email: string): void {
     cur.connCount += 1;
     cur.lastSeenAt = Date.now();
   } else {
-    online.set(email, { connCount: 1, lastSeenAt: Date.now(), visible: true });
+    // `visible: null` — opening a stream says nothing about whether the tab is
+    // in front. The heartbeat reports the real value within 30s (and
+    // immediately on the first visibilitychange). Assuming `true` here made
+    // every member who never reports the flag look permanently active.
+    online.set(email, { connCount: 1, lastSeenAt: Date.now(), visible: null });
     broadcast();
   }
 }
@@ -103,7 +115,8 @@ export function touch(email: string, visible?: boolean): void {
     online.set(email, {
       connCount: 0,
       lastSeenAt: Date.now(),
-      visible: visible !== false,
+      // `null` when the client did not report — never assume "active".
+      visible: typeof visible === "boolean" ? visible : null,
     });
     broadcast();
   }
@@ -113,8 +126,11 @@ export interface PresenceMember {
   email: string;
   name: string | null;
   avatar: string | null;
-  /** Tab is in the foreground. `false` = online but backgrounded (dimmed). */
-  visible: boolean;
+  /**
+   * Tab is in the foreground. `false` = online but backgrounded (dimmed).
+   * `null` = the client has not reported yet; render as active.
+   */
+  visible: boolean | null;
 }
 
 /** Enrich the online email list with display name + Gravatar avatar. */
@@ -126,7 +142,10 @@ export async function getOnlineMembers(): Promise<PresenceMember[]> {
     email: em,
     name: nameByEmail.get(em) ?? em.split("@")[0],
     avatar: gravatarUrl(em),
-    visible: online.get(em)?.visible ?? true,
+    // `null` (never reported) is passed through as-is; the client renders it as
+    // active. Do NOT coerce it to `true` here — that would erase the distinction
+    // between "confirmed in front" and "unknown".
+    visible: online.get(em)?.visible ?? null,
   }));
 }
 

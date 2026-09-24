@@ -45,7 +45,20 @@ describe("presence visibility", () => {
     p.markOnline("a@example.com");
     const members = await p.getOnlineMembers();
     expect(members).toHaveLength(1);
-    expect(members[0].visible).toBe(true);
+    // `null` = not yet reported. The client renders it as active, but the server
+    // must NOT claim it is a confirmed foreground tab.
+    expect(members[0].visible).toBeNull();
+  });
+
+  it("does not assume active when the SSE stream opens", async () => {
+    // Regression: markOnline used to seed `visible: true`, so every member who
+    // never sends the flag (older cached client) showed as active forever —
+    // measured 20 of 21 members "active", which is implausible.
+    const p = await freshPresence();
+    p.markOnline("a@example.com");
+    p.markOnline("b@example.com");
+    const members = await p.getOnlineMembers();
+    expect(members.every((m) => m.visible === null)).toBe(true);
   });
 
   it("flips visible to false when the client reports a hidden tab", async () => {
@@ -85,21 +98,36 @@ describe("presence visibility", () => {
     expect(members[0].visible).toBe(false);
   });
 
-  it("defaults a re-registered member to active when visibility is omitted", async () => {
+  it("defaults a re-registered member to unreported when visibility is omitted", async () => {
     const p = await freshPresence();
     p.touch("b@example.com");
     const members = await p.getOnlineMembers();
-    expect(members[0].visible).toBe(true);
+    // Not `true` — we genuinely do not know. The client renders null as active.
+    expect(members[0].visible).toBeNull();
   });
 
   it("reports visibility per member, not globally", async () => {
     const p = await freshPresence();
     p.markOnline("active@example.com");
     p.markOnline("away@example.com");
+    p.touch("active@example.com", true);
     p.touch("away@example.com", false);
     const members = await p.getOnlineMembers();
     const byEmail = Object.fromEntries(members.map((m) => [m.email, m.visible]));
     expect(byEmail["active@example.com"]).toBe(true);
     expect(byEmail["away@example.com"]).toBe(false);
+  });
+
+  it("keeps unreported members distinct from confirmed-active ones", async () => {
+    const p = await freshPresence();
+    p.markOnline("unknown@example.com");
+    p.markOnline("confirmed@example.com");
+    p.touch("confirmed@example.com", true);
+    const members = await p.getOnlineMembers();
+    const byEmail = Object.fromEntries(members.map((m) => [m.email, m.visible]));
+    // Both render as active in the UI, but only one is a confirmed foreground
+    // tab. Collapsing them would hide the "older client never reports" case.
+    expect(byEmail["unknown@example.com"]).toBeNull();
+    expect(byEmail["confirmed@example.com"]).toBe(true);
   });
 });

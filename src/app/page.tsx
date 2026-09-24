@@ -4612,7 +4612,7 @@ export default function Home() {
   }, [auth]);
 
   const [onlineMembers, setOnlineMembers] = useState<
-    { email: string; name: string | null; avatar?: string | null; visible?: boolean }[]
+    { email: string; name: string | null; avatar?: string | null; visible?: boolean | null }[]
   >([]);
   const loadOnline = useCallback(() => {
     if (!auth) {
