@@ -6215,13 +6215,24 @@ export default function Home() {
   // load fetch /api/posts?limit=50 twice (measured: two calls 43ms apart). This
   // effect only needs to react to an actual view change; the first load is the
   // auth effect's job. authRef gates the pre-auth case.
+  //
+  // ⚠️ The first-run skip must NOT swallow a view that the auth effect does not
+  // preload. The auth effect only loads the FEED, so skipping the first run
+  // unconditionally meant that landing on (or switching to) ドリニュース before
+  // this effect had ever run left `loadDrinews()` uncalled — the panel rendered
+  // its empty state ("まだドリニュースがありません。") even though the API had 23
+  // articles (drikin 2026-09-24: 「ドリニュースが見えなくなっている」). Only the
+  // feed-backed views are preloaded, so only they may be skipped.
   const navLoadedRef = useRef(false);
   useEffect(() => {
     if (!authRef.current) return;
+    const preloadedByAuthEffect =
+      activeNav === "feed" || activeNav === "gallery" || activeNav === "news" || activeNav === "episodes";
     if (!navLoadedRef.current) {
-      // First run after auth resolves — the auth effect already loaded the feed.
       navLoadedRef.current = true;
-      return;
+      // The auth effect already loaded the feed for these views; anything else
+      // (drinews) has never been loaded and must be fetched now.
+      if (preloadedByAuthEffect) return;
     }
     if (activeNav === "gallery") loadFeed("images");
     else if (activeNav === "news") loadFeed("links");

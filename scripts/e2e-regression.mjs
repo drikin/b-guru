@@ -547,6 +547,52 @@ check(
   `probe=${sseProbe} (resource-timing saw stream=${sseSeen})`
 );
 
+// 6i. Every nav view must actually load its data (drikin 2026-09-24:
+// 「ドリニュースが見えなくなっている」). The nav effect skipped its first run
+// unconditionally to avoid double-loading the feed, which also swallowed
+// ドリニュース — a view the auth effect never preloads — so the panel showed its
+// empty state while the API had 23 articles. Assert the request happens for
+// every non-feed view, not just that the panel renders.
+console.log("\n6i. Every nav view loads its own data");
+const navViews = [
+  { label: "ドリニュース", api: "/api/drinews", emptyText: "まだドリニュースがありません" },
+];
+for (const v of navViews) {
+  const calls = [];
+  const onReq = (r) => {
+    if (r.url().includes(v.api)) calls.push(r.url());
+  };
+  page.on("request", onReq);
+  const clicked = await page.evaluate(`(() => {
+    const el = [...document.querySelectorAll('a, button')].find(e => e.textContent.includes(${JSON.stringify(v.label)}));
+    if (!el) return false;
+    el.click();
+    return true;
+  })()`);
+  await page.waitForTimeout(4000);
+  page.off("request", onReq);
+  const panelText = await page.evaluate(`(() => {
+    const c = document.querySelector('div[style*="max-width: 640px"], div[style*="maxWidth: 640"]');
+    return c ? c.innerText.slice(0, 200) : "";
+  })()`);
+  check(
+    `${v.label} requests ${v.api}`,
+    clicked && calls.length > 0,
+    `clicked=${clicked} calls=${calls.length}`
+  );
+  check(
+    `${v.label} does not show its empty state`,
+    !panelText.includes(v.emptyText),
+    panelText.includes(v.emptyText) ? `panel="${panelText.slice(0, 60)}"` : "ok"
+  );
+}
+// Back to the timeline for the remaining checks.
+await page.evaluate(`(() => {
+  const el = [...document.querySelectorAll('a, button')].find(e => e.textContent.includes('タイムライン'));
+  if (el) el.click();
+})()`);
+await page.waitForTimeout(2000);
+
 // ------------------------------------------------------------ image proxy
 console.log("\n7. Images and avatars go through our own origin");
 const imgStats = await page.evaluate(`(() => {
