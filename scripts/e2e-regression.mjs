@@ -1217,24 +1217,28 @@ console.log("\n6m. Duplicate-post warning");
       : "n/a"
   );
 
-  // ★ 誤警告しないこと: 「Apple」つながりでも別のニュースは related 扱いで
-  // 警告しない。実測で Mac mini レビューと iPhone 在庫の話が related になった。
-  const relatedCase = await page.evaluate(`(async () => {
+  // ★ 誤警告しないこと: 無関係なニュースは警告しない。
+  //   実測: 「ネコの新種」+ 無関係な記事URL → 0件。
+  //
+  //   ★ 注意: 「Apple つながりだが別の話」を検証しようとして既存投稿の URL を
+  //     渡すと、その URL の記事自身が候補に出て必ず一致する（正しい動作）。
+  //     別サイト重複の検証にはならないので、既存投稿に無い URL を使う。
+  const unrelatedCase = await page.evaluate(`(async () => {
     const r = await fetch('/api/posts/duplicates', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         phase: 'ai',
-        text: 'Apple、Qwen3.5-9BベースのLLMモデル「LensVLM-9B」を公開 https://www.macotakara.jp/iphone/entry-51903.html',
+        text: 'ネコの新種、100年以上ぶりに発見 https://gigazine.net/news/20260916-ai-contact-hotline/',
       }),
     });
     const d = await r.json();
     return d.duplicates ?? [];
   })()`);
   check(
-    "a same-theme-but-different-news post is NOT flagged",
-    Array.isArray(relatedCase) && relatedCase.length === 0,
-    `dupes=${relatedCase?.length}`
+    "an unrelated news post is NOT flagged",
+    Array.isArray(unrelatedCase) && unrelatedCase.length === 0,
+    `dupes=${unrelatedCase?.length}`
   );
 }
 
