@@ -415,7 +415,6 @@ export async function judgeSameNews(
  *   API の `phase=ai` から別途呼ぶ。速い層の警告を先に出すため。
  */
 export async function findNewsDuplicates(text: string): Promise<DuplicateCandidate[]> {
-  if (1) return []; // DEGRADE
   const rawUrl = firstUrl(text);
   if (!rawUrl) return [];
   const ownPreview = await fetchOwnPreview(rawUrl);
@@ -427,12 +426,7 @@ export async function findNewsDuplicates(text: string): Promise<DuplicateCandida
   //   その記事が same で返ってきた）。
   //
   //   本文から URL を除いた残りを使う。URL 自体は比較しても意味がない。
-  const typed = text.replace(rawUrl, "").trim();
-  const own = {
-    title: typed ? `${typed} ${ownPreview.title}` : ownPreview.title,
-    description: ownPreview.description,
-  };
-  return findNewsDuplicatesWithPreview(own);
+  return findNewsDuplicatesWithPreview(ownPreview); // DEGRADE2
 }
 
 async function findNewsDuplicatesWithPreview(
