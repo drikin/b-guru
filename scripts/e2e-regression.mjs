@@ -751,6 +751,111 @@ console.log("\n6j. Mobile club bar (one-tap club switching)");
   await mobile.close();
 }
 
+// 6k. Reactions (drikin 2026-09-25: 「今まで意図的に投稿やコメントに対して
+// リアクションできないような設計にしてたんですけど、やっぱりちょっと寂しい
+// 感じがするので、設計を見直してほしい」). The card used to render 返信 only, so
+// `onLike` was plumbed through every component but never drawn — a regression
+// here would be silent (the row simply would not appear). Assert the row exists,
+// that one tap writes, and that the write survives a reload (i.e. it reached the
+// database, not just local state).
+console.log("\n6k. Reactions on posts");
+{
+  const before = await page.evaluate(`(() => {
+    const bars = document.querySelectorAll('[data-cx="reaction-bar"]');
+    const hearts = document.querySelectorAll('[data-cx="reaction-heart"]');
+    const adds = document.querySelectorAll('[data-cx="reaction-add"]');
+    return { bars: bars.length, hearts: hearts.length, adds: adds.length };
+  })()`);
+  check(
+    "every post card renders a reaction row",
+    before.bars > 0 && before.hearts === before.bars && before.adds === before.bars,
+    `bars=${before.bars} hearts=${before.hearts} adds=${before.adds}`
+  );
+
+  // One tap on the heart must write. Use a post that has no ❤️ yet so the
+  // assertion is unambiguous, then undo it so the guard leaves no residue.
+  const target = await page.evaluate(`(() => {
+    const bars = [...document.querySelectorAll('[data-cx="reaction-bar"]')];
+    for (const b of bars) {
+      if (!b.querySelector('[data-reaction="❤️"]')) {
+        const card = b.closest('[data-post-id]');
+        if (card) return Number(card.getAttribute('data-post-id'));
+      }
+    }
+    return null;
+  })()`);
+
+  if (target === null) {
+    check("one tap on the heart adds a reaction", false, "no un-reacted post found");
+  } else {
+    const added = await page.evaluate(`(() => {
+      const card = document.querySelector('[data-post-id="${target}"]');
+      const heart = card?.querySelector('[data-cx="reaction-heart"]');
+      if (!heart) return false;
+      heart.click();
+      return true;
+    })()`);
+    await page.waitForTimeout(2000);
+    const after = await page.evaluate(`(() => {
+      const card = document.querySelector('[data-post-id="${target}"]');
+      const chip = card?.querySelector('[data-reaction="❤️"]');
+      return chip ? { mine: chip.getAttribute('data-mine'), text: chip.textContent.trim() } : null;
+    })()`);
+    check(
+      "one tap on the heart adds a reaction",
+      added && !!after && after.mine === "1",
+      `clicked=${added} chip=${JSON.stringify(after)}`
+    );
+
+    // The write must be persisted, not just optimistic local state.
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForTimeout(3000);
+    const persisted = await page.evaluate(`(() => {
+      const card = document.querySelector('[data-post-id="${target}"]');
+      const chip = card?.querySelector('[data-reaction="❤️"]');
+      return chip ? chip.getAttribute('data-mine') : null;
+    })()`);
+    check(
+      "the reaction survives a reload (it reached the database)",
+      persisted === "1",
+      `mine after reload=${persisted}`
+    );
+
+    // Undo, so repeated guard runs do not accumulate reactions.
+    await page.evaluate(`(() => {
+      const card = document.querySelector('[data-post-id="${target}"]');
+      card?.querySelector('[data-reaction="❤️"]')?.click();
+    })()`);
+    await page.waitForTimeout(1500);
+  }
+
+  // The picker must open and offer more than the heart.
+  await page.evaluate(`document.querySelector('[data-cx="reaction-add"]')?.click()`);
+  await page.waitForTimeout(1200);
+  const picker = await page.evaluate(`(() => {
+    const dd = document.querySelector('.mantine-Popover-dropdown');
+    if (!dd) return null;
+    return {
+      quick: dd.textContent.includes('よく使う'),
+      all: dd.textContent.includes('すべて'),
+      register: !!dd.querySelector('[data-cx="emoji-register"]'),
+      buttons: dd.querySelectorAll('button').length,
+    };
+  })()`);
+  check(
+    "the ＋ button opens a picker with more emoji",
+    !!picker && picker.quick && picker.all && picker.buttons > 20,
+    picker ? `buttons=${picker.buttons} quick=${picker.quick} all=${picker.all}` : "picker did not open"
+  );
+  check(
+    "the picker offers custom emoji registration",
+    !!picker && picker.register,
+    picker ? `register=${picker.register}` : "n/a"
+  );
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(500);
+}
+
 // ------------------------------------------------------------ image proxy
 console.log("\n7. Images and avatars go through our own origin");
 const imgStats = await page.evaluate(`(() => {

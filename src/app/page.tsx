@@ -36,6 +36,12 @@ import {
 import { mdToHtml } from "@/lib/md";
 import { computeNextKbdId } from "@/lib/kbd-nav";
 import {
+  ReactionBar,
+  useReactions,
+  useCustomEmojis,
+  type ReactionSummary,
+} from "@/components/ReactionBar";
+import {
   CLUB_UNSET,
   clubLabel,
   setLiveCatalog,
@@ -1199,6 +1205,7 @@ function PostCard({
   onEditPoll,
   onSetClub,
   onOpenClub,
+  reactionBar,
 }: {
   post: FeedPost;
   auth: { email: string };
@@ -1221,6 +1228,9 @@ function PostCard({
   onEditPoll?: (post: FeedPost) => void;
   onSetClub?: (post: FeedPost, club: string | null) => void;
   onOpenClub?: (club: string) => void;
+  /** Reaction row, injected by the parent so the card stays presentational and
+   *  the reaction state lives in one place (the feed), not per card. */
+  reactionBar?: React.ReactNode;
 }) {
   const CLAMP_THRESHOLD = 500;
   const [expanded, setExpanded] = useState(false);
@@ -1769,11 +1779,16 @@ function PostCard({
         />
       )}
 
-      {/* Bottom action: 返信 only. (Whisper is available via the "+" insert
-       * control between cards / inside the thread reply box — no separate
-       * button on the card itself.) */}
-      {showReplyButton && onReply && (
-        <Group mt="sm" gap="xs">
+      {/* Bottom actions: 返信 + リアクション.
+       *
+       * Reactions were deliberately absent until 2026-09-25 (drikin: 「今まで
+       * 意図的に投稿やコメントに対してリアクションできないような設計にしてた
+       * んですけど、やっぱりちょっと寂しい感じがする」). The row is rendered
+       * whenever the card is interactive — `showReplyButton` is false for the
+       * author's own card in the thread view, but reactions belong on every
+       * card, so they are NOT gated on it. */}
+      <Group mt="sm" gap="xs" align="center" wrap="wrap">
+        {showReplyButton && onReply && (
           <Button
             size="xs"
             variant="subtle"
@@ -1783,8 +1798,9 @@ function PostCard({
           >
             返信{post.replyCount ? ` (${post.replyCount})` : ""}
           </Button>
-        </Group>
-      )}
+        )}
+        {reactionBar}
+      </Group>
     </Card>
   );
 }
@@ -2061,6 +2077,7 @@ function CollapsibleReplies({
   onPin,
   onPreview,
   onOpenProfile,
+  renderReactionBar,
 }: {
   parentId: number;
   replies: FeedPost[];
@@ -2078,6 +2095,7 @@ function CollapsibleReplies({
   onPin: (id: number) => void;
   onPreview: (src: string, group?: string[]) => void;
   onOpenProfile?: (email: string) => void;
+  renderReactionBar?: (postId: number, compact?: boolean) => React.ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -2100,6 +2118,7 @@ function CollapsibleReplies({
             onDelete={onDelete}
             onPreview={onPreview}
             onOpenProfile={onOpenProfile}
+            renderReactionBar={renderReactionBar}
           />
         ))}
       </>
@@ -2185,6 +2204,7 @@ function CollapsibleReplies({
               onDelete={onDelete}
               onPreview={onPreview}
               onOpenProfile={onOpenProfile}
+              renderReactionBar={renderReactionBar}
             />
           ))}
         </Stack>
@@ -2205,6 +2225,7 @@ function CollapsibleReplies({
           onDelete={onDelete}
           onPreview={onPreview}
           onOpenProfile={onOpenProfile}
+          renderReactionBar={renderReactionBar}
         />
       ))}
     </>
@@ -2225,6 +2246,7 @@ function ReplyBubble({
   onDelete,
   onPreview,
   onOpenProfile,
+  renderReactionBar,
 }: {
   rep: FeedPost;
   auth: { email: string };
@@ -2238,6 +2260,7 @@ function ReplyBubble({
   onDelete: (post: FeedPost) => void;
   onPreview: (src: string, group?: string[]) => void;
   onOpenProfile?: (email: string) => void;
+  renderReactionBar?: (postId: number, compact?: boolean) => React.ReactNode;
 }) {
   return (
     <Box
@@ -2256,6 +2279,7 @@ function ReplyBubble({
         avatarSrc={avatarSrc}
         isThreadRoot={false}
         showReplyButton={false}
+        reactionBar={renderReactionBar?.(rep.id, true)}
         onOpenThread={onOpenThread}
         onOpenThreadReply={() => {}}
         onLike={onLike}
@@ -2439,6 +2463,7 @@ function BannerCropper({
 
 /** X-style profile timeline view: profile header card + the user's post cards. */
 function ProfileView({
+  renderReactionBar,
   profile,
   posts,
   loading,
@@ -2492,6 +2517,7 @@ function ProfileView({
   onEditPoll?: (post: FeedPost) => void;
   onSetClub?: (post: FeedPost, club: string | null) => void;
   onOpenClub?: (club: string) => void;
+  renderReactionBar?: (postId: number, compact?: boolean) => React.ReactNode;
 }) {
   return (
     <Stack gap="md">
@@ -2632,6 +2658,7 @@ function ProfileView({
                   searchQuery={searchQuery}
                   avatarSrc={avatarSrc}
                   isThreadRoot={false}
+                  reactionBar={renderReactionBar?.(post.id)}
                   showReplyButton={false}
                   onOpenThread={onOpenThread}
                   onOpenThreadReply={onOpenThreadReply}
@@ -2661,6 +2688,7 @@ function ProfileView({
                   onReply={onReply}
                   onWhisper={onWhisper}
                   onEdit={onEditPost}
+                  renderReactionBar={renderReactionBar}
                   onDelete={onDelete}
                   onPin={onPin}
                   onPreview={onPreview}
@@ -3079,6 +3107,7 @@ function TimelineFeed({
   mentionMembers,
   searchQuery,
   inlineReplyFor,
+  renderReactionBar,
   uploadImages,
   uploadVideo,
   uploadAudio,
@@ -3151,6 +3180,7 @@ function TimelineFeed({
   onSetClub?: (post: FeedPost, club: string | null) => void;
   onOpenClub?: (club: string) => void;
   skipFirstDate?: boolean;
+  renderReactionBar?: (postId: number, compact?: boolean) => React.ReactNode;
 }) {
   // When the parent renders the topmost date separator itself (above the
   // "+" composer), skip the first in-feed separator to avoid duplication.
@@ -3220,6 +3250,7 @@ function TimelineFeed({
               avatarSrc={avatarSrc}
               isThreadRoot={false}
               showReplyButton={false}
+              reactionBar={renderReactionBar?.(post.id)}
               onOpenThread={onOpenThread}
               onOpenThreadReply={onOpenThreadReply}
               onLike={onLike}
@@ -3254,6 +3285,7 @@ function TimelineFeed({
               onEdit={onEdit}
               onDelete={onDelete}
               onPin={onPin}
+              renderReactionBar={renderReactionBar}
               onPreview={onPreview}
               onOpenProfile={onOpenProfile}
             />
@@ -7157,6 +7189,144 @@ export default function Home() {
     toggleLikeRequest(postId);
   };
 
+  // ---- Reactions (posts) -------------------------------------------------
+  // The ids are derived from what is on screen so the batched fetch only asks
+  // for visible posts. `useReactions` re-fetches when the id set changes.
+  const feedPostIds = useMemo(
+    () => feedPosts.map((p) => p.id),
+    [feedPosts]
+  );
+  const { reactions: postReactions, setFor: setPostReactions } = useReactions(
+    "post",
+    feedPostIds
+  );
+  const { emojis: customEmojis, reload: reloadCustomEmojis } = useCustomEmojis();
+
+  // Toggle a reaction optimistically, then reconcile with the server's summary.
+  // The server returns the authoritative list for the target, so a failed
+  // request is corrected by the next fetch rather than left wrong.
+  const handleToggleReaction = useCallback(
+    (postId: number, emoji: string) => {
+      const current = postReactions[postId] ?? [];
+      const existing = current.find((r) => r.emoji === emoji);
+      const optimistic: ReactionSummary[] = existing
+        ? existing.count <= 1
+          ? current.filter((r) => r.emoji !== emoji)
+          : current.map((r) =>
+              r.emoji === emoji
+                ? { ...r, count: r.count - 1, mine: false, reactors: r.reactors.slice(1) }
+                : r
+            )
+        : [
+            ...current,
+            { emoji, count: 1, mine: true, reactors: [auth?.email ?? ""] },
+          ];
+      setPostReactions(postId, optimistic);
+
+      fetch("/api/reactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetType: "post", targetId: postId, emoji }),
+      })
+        .then(async (r) => {
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || "リアクションに失敗しました");
+          setPostReactions(postId, d.reactions ?? []);
+        })
+        .catch((err) => {
+          setActionError(err.message);
+          // Roll back to the pre-toggle state so the UI never lies.
+          setPostReactions(postId, current);
+        });
+    },
+    [postReactions, setPostReactions, auth?.email]
+  );
+
+  const handleRegisterEmoji = useCallback(
+    async (name: string, file: File) => {
+      const fd = new FormData();
+      fd.append("name", name);
+      fd.append("image", file);
+      const r = await fetch("/api/emojis", { method: "POST", body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "登録に失敗しました");
+      reloadCustomEmojis();
+    },
+    [reloadCustomEmojis]
+  );
+
+  // One row per post, built once here so every PostCard gets the same wiring.
+  const renderReactionBar = useCallback(
+    (postId: number, compact?: boolean) => (
+      <ReactionBar
+        reactions={postReactions[postId] ?? []}
+        customEmojis={customEmojis}
+        onToggle={(emoji) => handleToggleReaction(postId, emoji)}
+        onRegisterEmoji={auth ? handleRegisterEmoji : undefined}
+        compact={compact}
+      />
+    ),
+    [postReactions, customEmojis, handleToggleReaction, handleRegisterEmoji, auth]
+  );
+
+  // ---- Reactions (chat) --------------------------------------------------
+  // Same machinery as posts, different target type. Kept as a separate hook
+  // call because the id set comes from a different source (the chat list).
+  const chatMessageIds = useMemo(
+    () => chatMessages.map((m) => m.id),
+    [chatMessages]
+  );
+  const { reactions: chatReactions, setFor: setChatReactions } = useReactions(
+    "chat",
+    chatMessageIds
+  );
+
+  const handleToggleChatReaction = useCallback(
+    (messageId: number, emoji: string) => {
+      const current = chatReactions[messageId] ?? [];
+      const existing = current.find((r) => r.emoji === emoji);
+      const optimistic: ReactionSummary[] = existing
+        ? existing.count <= 1
+          ? current.filter((r) => r.emoji !== emoji)
+          : current.map((r) =>
+              r.emoji === emoji
+                ? { ...r, count: r.count - 1, mine: false, reactors: r.reactors.slice(1) }
+                : r
+            )
+        : [...current, { emoji, count: 1, mine: true, reactors: [auth?.email ?? ""] }];
+      setChatReactions(messageId, optimistic);
+
+      fetch("/api/reactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetType: "chat", targetId: messageId, emoji }),
+      })
+        .then(async (r) => {
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || "リアクションに失敗しました");
+          setChatReactions(messageId, d.reactions ?? []);
+        })
+        .catch((err) => {
+          setActionError(err.message);
+          setChatReactions(messageId, current);
+        });
+    },
+    [chatReactions, setChatReactions, auth?.email]
+  );
+
+  const renderChatReactionBar = useCallback(
+    (messageId: number) => (
+      <ReactionBar
+        reactions={chatReactions[messageId] ?? []}
+        customEmojis={customEmojis}
+        onToggle={(emoji) => handleToggleChatReaction(messageId, emoji)}
+        onRegisterEmoji={auth ? handleRegisterEmoji : undefined}
+        compact
+      />
+    ),
+    [chatReactions, customEmojis, handleToggleChatReaction, handleRegisterEmoji, auth]
+  );
+
   // Pin / unpin own post. The right-sidebar panel is the canonical home for
   // pins now, so refresh it (and the feed) when a pin changes.
   const handlePin = (postId: number) => {
@@ -9316,6 +9486,14 @@ export default function Home() {
                                     <div style={bubbleStyle}>
                                       {renderChatBody(m.body, mentionMembers, auth?.email || "")}
                                     </div>
+                                    {/* Reactions on chat messages (drikin
+                                     * 2026-09-25: 「投稿やコメントに対して」).
+                                     * Placed under the bubble, aligned to the
+                                     * same side as the bubble so the row reads
+                                     * as belonging to this message. */}
+                                    <Box mt={2}>
+                                      {renderChatReactionBar(m.id)}
+                                    </Box>
                                   </>
                                 )}
                               </div>
@@ -9515,6 +9693,7 @@ export default function Home() {
               {/* Profile timeline (avatar/name click) */}
               {profileEmail ? (
                 <ProfileView
+                  renderReactionBar={renderReactionBar}
                   profile={profileData}
                   posts={profilePosts}
                   loading={profileLoading}
@@ -9582,10 +9761,11 @@ export default function Home() {
                           avatarSrc={avatarSrc}
                           isThreadRoot
                           showReplyButton={false}
+                          reactionBar={renderReactionBar(threadPost.id)}
                           onOpenThread={openThread}
                           onOpenThreadReply={openThreadReply}
                           onLike={handleLike}
-                          onReply={openThreadReply}
+                                  onReply={openThreadReply}
                           onWhisper={submitWhisperThread}
                           onEdit={openEdit}
                           onDelete={setDeleteTarget}
@@ -9609,10 +9789,11 @@ export default function Home() {
                           mentionMembers={mentionMembers}
                           avatarSrc={avatarSrc}
                           showReplyButton={false}
+                          reactionBar={renderReactionBar(rep.id, true)}
                           onOpenThread={openThread}
                           onOpenThreadReply={openThread}
                           onLike={handleLike}
-                          onReply={openThread}
+                                  onReply={openThread}
                           onEdit={openEdit}
                           onDelete={setDeleteTarget}
                           onPin={handlePin}
@@ -9850,6 +10031,7 @@ export default function Home() {
               ) : (
                 <>
                 <TimelineFeed
+                  renderReactionBar={renderReactionBar}
                   groups={feedGroups}
                   skipFirstDate={
                     activeNav === "feed" && !threadPost && !searchActive && !!topDateKey
