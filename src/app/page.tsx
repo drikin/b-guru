@@ -8769,17 +8769,26 @@ export default function Home() {
               <Stack gap={4}>
                 {onlineMembers.map((m) => {
                   const isSelf = !!auth && m.email === auth.email;
-                  // `visible === false` means the tab is open but backgrounded
-                  // (another tab, minimised, phone on another app). The member
-                  // is still online, so we keep them in the list and dim the
-                  // row instead of hiding it — drikin 2026-09-23: 「離席中の
-                  // 場合は文字とかアイコンを半透明にする」. `undefined` (an older
-                  // server payload) is treated as active, never dimmed.
-                  const away = m.visible === false;
+                  // Three states, because "we don't know" is not the same as
+                  // "in front" (drikin 2026-09-23: 「僕以外全員アクティブとは
+                  // 考えられない」 — the panel was claiming everyone was active
+                  // because a client that never reports was rendered as active):
+                  //   true  → confirmed foreground tab        → full opacity
+                  //   null  → not reported (older cached JS)  → slightly dimmed
+                  //   false → tab is open but backgrounded    → clearly dimmed
+                  // The member stays in the list in every case: they are online.
+                  const opacity =
+                    m.visible === false ? 0.45 : m.visible === true ? 1 : 0.7;
+                  const title =
+                    m.visible === false
+                      ? "タブは開いていますが離席中"
+                      : m.visible === true
+                      ? "オンラインでチャット"
+                      : "オンライン（タブの状態は未取得）";
                   return (
                     <UnstyledButton
                       key={m.email}
-                      title={away ? "タブは開いていますが離席中" : "オンラインでチャット"}
+                      title={title}
                       onClick={() => openChatMention(m.name || m.email.split("@")[0])}
                       style={{
                         display: "block",
@@ -8788,7 +8797,7 @@ export default function Home() {
                         borderRadius: 8,
                         padding: "3px 4px",
                         cursor: "pointer",
-                        opacity: away ? 0.45 : 1,
+                        opacity,
                         transition: "opacity 0.2s ease",
                       }}
                     >
