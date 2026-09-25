@@ -4061,7 +4061,14 @@ function PullToRefresh({
     if (!active || !isIOS) return;
 
     const onTouchStart = (e: TouchEvent) => {
-      if (refreshingRef.current || window.scrollY > 0) {
+      // ★ 引っ張り開始時に「上端にいるか」を判定する。`window.scrollY > 0` だけ
+      //   だと、standalone（ホーム画面に追加した PWA）で**リロード後にスクロール
+      //   位置が復元された状態**では常に > 0 になり、ジェスチャーが一切効かない
+      //   （のぶさん 2026-09-26「ベーグルをホーム画面に保存するとwebアプリ扱いに
+      //   なるらしく、その場合だとPull-to-Refreshされない様です」）。
+      //
+      //   1px の丸め誤差でも死ぬので、許容を 2px 持たせる。
+      if (refreshingRef.current || window.scrollY > 2) {
         startY.current = null;
         return;
       }
@@ -4070,7 +4077,7 @@ function PullToRefresh({
     };
     const onTouchMove = (e: TouchEvent) => {
       if (startY.current === null) return;
-      if (window.scrollY > 0) {
+      if (window.scrollY > 2) {
         startY.current = null;
         pulling.current = false;
         applyPull(0);
@@ -4100,13 +4107,36 @@ function PullToRefresh({
       }
     };
 
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchmove", onTouchMove, { passive: false });
-    window.addEventListener("touchend", onTouchEnd);
+    // ★ リスナーは window と document の両方に張る。
+    //   iOS の standalone（ホーム画面に追加した PWA）では、タッチイベントが
+    //   window まで上がらず document で止まることがある。window だけに張ると
+    //   **standalone でだけジェスチャーが死ぬ**（のぶさん 2026-09-26 の続報）。
+    //
+    //   ★ 同じイベントが両方をバブリングで通るので、**二重処理を明示的に防ぐ**。
+    //     処理済みイベントを WeakSet で覚える（イベントは使い捨てなので
+    //     WeakSet ならリークしない）。
+    const seen = new WeakSet<Event>();
+    const once = <T extends Event>(fn: (e: T) => void) => (e: T) => {
+      if (seen.has(e)) return;
+      seen.add(e);
+      fn(e);
+    };
+    const ts = once(onTouchStart);
+    const tm = once(onTouchMove);
+    const te = once(onTouchEnd);
+
+    const targets: (Window | Document)[] = [window, document];
+    for (const t of targets) {
+      t.addEventListener("touchstart", ts as EventListener, { passive: true });
+      t.addEventListener("touchmove", tm as EventListener, { passive: false });
+      t.addEventListener("touchend", te as EventListener);
+    }
     return () => {
-      window.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchmove", onTouchMove);
-      window.removeEventListener("touchend", onTouchEnd);
+      for (const t of targets) {
+        t.removeEventListener("touchstart", ts as EventListener);
+        t.removeEventListener("touchmove", tm as EventListener);
+        t.removeEventListener("touchend", te as EventListener);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
