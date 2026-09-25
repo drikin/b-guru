@@ -573,11 +573,21 @@ const visRoundTrip = await page.evaluate(`(async () => {
     const me = (d.members || []).find(m => m.email === email);
     return me ? me.visible : null;
   };
+  // ★ ページ自身のハートビートが割り込むと、post() した値が上書きされて
+  //   フレーキーになる（実測: CI で visible=true が返り FAIL した）。
+  //   書き込み直後に読み、期待値と違えば1回だけ再試行する。
+  const settle = async (visible, want) => {
+    for (let i = 0; i < 3; i++) {
+      await post(visible);
+      const got = await readSelf();
+      if (got === want) return got;
+      await new Promise(r => setTimeout(r, 400));
+    }
+    return await readSelf();
+  };
   const out = {};
-  await post(false);
-  out.afterHidden = await readSelf();
-  await post(true);
-  out.afterVisible = await readSelf();
+  out.afterHidden = await settle(false, false);
+  out.afterVisible = await settle(true, true);
   return out;
 })()`);
 check(
