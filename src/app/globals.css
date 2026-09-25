@@ -417,9 +417,25 @@ body {
    *   rem ベースなので、文字を拡大すると**サイドバーは 220px なのに本文が
    *   330px 押される**（実測: 1024px 幅・文字150% で mainPadL=330px、
    *   列の右端が画面端に張り付いて rightGap=0 になった）。
-   *   幅とオフセットは必ず同じ値で揃える。 */
-  padding-inline-start: calc(var(--shell-m) + 220px) !important;
-  padding-inline-end: calc(var(--shell-m) + 0px) !important;
+   *   幅とオフセットは必ず同じ値で揃える。
+   *
+   * ★ ただし「サイドバーが出ているときだけ」押す。無条件に 220px を足すと、
+   *   モバイルでサイドバーが画面外（left:-220）に隠れているのに本文だけ
+   *   220px 押され、**列幅が 138px まで潰れる**（実測: 390px 幅）。
+   *   Mantine は collapsed 時に --app-shell-navbar-offset を 0 にするので、
+   *   その値が 0 でないときだけ px 固定値を適用する。
+   *
+   *   `@container` ではなく `:has()` を使うのは、navbar が DOM 上で main の
+   *   兄弟だから。`:has()` 非対応のブラウザでは下のフォールバック（Mantine の
+   *   変数をそのまま使う）に落ちる。 */
+  padding-inline-start: calc(var(--shell-m) + var(--app-shell-navbar-offset, 0rem)) !important;
+  padding-inline-end: calc(var(--shell-m) + var(--app-shell-aside-offset, 0rem)) !important;
+}
+/* サイドバーが出ている幅では px 固定値に揃える（rem の肥大を防ぐ）。 */
+@media (min-width: 48em) {
+  .appshell-center [data-cx="main"] {
+    padding-inline-start: calc(var(--shell-m) + 220px) !important;
+  }
 }
 @media (min-width: 75em) {
   .appshell-center [data-cx="main"] {
