@@ -640,26 +640,36 @@ console.log("\n6j. Mobile club bar (one-tap club switching)");
     bar ? `scrollable=${bar.scrollable}` : "n/a"
   );
 
-  // (e) The tab bar's own top/bottom padding must stay symmetric, and it must
-  // not crowd the club bar. drikin 2026-09-25: 「タイムラインのタブと部活動の
-  // フィルターが近いので、タブをもう少し上にあげて上下の余白を均等にする」.
+  // (e) The tab bar's spacing must be even, and it must not crowd the club bar.
+  // drikin 2026-09-25: 「タイムラインのタブと部活動のフィルターが近いので、タブを
+  // もう少し上にあげて上下の余白を均等にする」.
   // Measured before the fix: tab bar 56→120, SegmentedControl 80→116 — 24px
   // above vs 4px below, and only 4px down to the club bar.
   //
   // ★ Assert the MEASURED geometry, not the CSS. The tab bar's height comes
   //   from the SegmentedControl's intrinsic size (36px), so padding cannot be
   //   reasoned about from the stylesheet alone.
+  //
+  // ★ 「上下の余白」は2つある。両方を見る:
+  //     (1) タブバー自身の padding（内部）
+  //     (2) 見た目の間隔（ヘッダ罫線→タブ、タブ→部活チップ）
+  //   (2) は padding だけでは決まらない（下側は部活バーの marginTop も効く）。
+  //   内部だけ揃えて見た目が非対称、という状態を検出できるようにする。
   const spacing = await mp.evaluate(`(() => {
     const t = document.querySelector('[data-cx="navtabs"]');
     const c = document.querySelector('[data-cx="clubbars"]');
+    const h = document.querySelector('header');
     if (!t) return null;
     const seg = t.querySelector('[role="group"], .mantine-SegmentedControl-root');
     if (!seg) return null;
     const tb = t.getBoundingClientRect(), sb = seg.getBoundingClientRect();
+    const hb = h ? h.getBoundingClientRect().bottom : null;
     return {
       padTop: Math.round(sb.top - tb.top),
       padBottom: Math.round(tb.bottom - sb.bottom),
-      gapToClubs: c ? Math.round(c.getBoundingClientRect().top - tb.bottom) : null,
+      // 見た目の間隔
+      visualAbove: hb === null ? null : Math.round(sb.top - hb),
+      visualBelow: c ? Math.round(c.getBoundingClientRect().top - sb.bottom) : null,
     };
   })()`);
   check(
@@ -668,9 +678,19 @@ console.log("\n6j. Mobile club bar (one-tap club switching)");
     spacing ? `padTop=${spacing.padTop} padBottom=${spacing.padBottom}` : "n/a"
   );
   check(
+    "the visual gap above and below the tab switcher are even",
+    !!spacing &&
+      spacing.visualAbove !== null &&
+      spacing.visualBelow !== null &&
+      Math.abs(spacing.visualAbove - spacing.visualBelow) <= 3,
+    spacing
+      ? `above=${spacing.visualAbove} below=${spacing.visualBelow}`
+      : "n/a"
+  );
+  check(
     "the tab bar does not crowd the club bar",
-    !!spacing && spacing.gapToClubs !== null && spacing.gapToClubs >= 8,
-    spacing ? `gapToClubs=${spacing.gapToClubs}` : "n/a"
+    !!spacing && spacing.visualBelow !== null && spacing.visualBelow >= 8,
+    spacing ? `visualBelow=${spacing.visualBelow}` : "n/a"
   );
 
   // (c) sticky offset: the bar must sit flush under the tab bar at every scroll

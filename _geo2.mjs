@@ -1,0 +1,20 @@
+import { chromium } from "playwright";
+const BASE = "https://bsm.backspace.fm";
+const SESSION = process.env.BSM_SESSION;
+const b = await chromium.launch();
+const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 });
+await ctx.addCookies([{ name: "bsm_session", value: SESSION, domain: "bsm.backspace.fm", path: "/" }]);
+const p = await ctx.newPage();
+await p.goto(BASE, { waitUntil: "networkidle" });
+await p.waitForTimeout(3500);
+const geo = await p.evaluate(`(() => {
+  const r = (e) => { if (!e) return null; const b = e.getBoundingClientRect(); return {t: Math.round(b.top), b: Math.round(b.bottom), h: Math.round(b.height)}; };
+  const tabs = document.querySelector('[data-cx="navtabs"]');
+  const clubs = document.querySelector('[data-cx="clubbars"]');
+  const seg = tabs?.querySelector('[role="group"], .mantine-SegmentedControl-root');
+  const chip = clubs?.querySelector('[data-club-chip]');
+  return { header: r(document.querySelector('header')), tabs: r(tabs), seg: r(seg), clubs: r(clubs), chip: r(chip) };
+})()`);
+console.log(JSON.stringify(geo, null, 1));
+await p.screenshot({ path: "/tmp/tab_after.png", clip: { x: 0, y: 0, width: 390, height: 260 } });
+await b.close();

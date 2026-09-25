@@ -9335,16 +9335,25 @@ export default function Home() {
                     //   タブと部活動のフィルターが近いので、タブをもう少し上に
                     //   あげて上下の余白を均等にする」）。
                     //
-                    //   実測（390px 幅）: タブバー 56→120（高さ64）、
+                    //   実測（390px 幅、修正前）: タブバー 56→120（高さ64）、
                     //   SegmentedControl 80→116（高さ36）。上 24px / 下 4px で
                     //   上が20px 広く、下は部活バーまで 4px しかなかった。
                     //
-                    //   上下を 8px ずつにする。タブバーは 56→108（高さ52）になり、
-                    //   タブは 64→100。部活バーまで 16px 空く。
+                    //   ★ 「上下の余白」は2つの意味がある。両方を揃える:
+                    //     (1) タブバー自身の padding → 8px / 8px
+                    //     (2) 見た目の間隔（ヘッダ罫線→タブ、タブ→部活チップ）
+                    //         → どちらも 16px
+                    //
+                    //   (2) は padding だけでは決まらない。ヘッダの罫線は
+                    //   ヘッダの下端（56px）にあり、タブバーの上端も 56px なので、
+                    //   paddingTop がそのまま「罫線からの距離」になる。一方
+                    //   下側はタブバーの paddingBottom に加えて部活バーの
+                    //   marginTop も効く。実測で上 9px / 下 16px と非対称に
+                    //   なったので、paddingTop を 16px にして揃えた。
                     //
                     //   ★ タブバーの高さは SegmentedControl の実寸（36px）で決まる。
                     //     padding から逆算できないので、変えたら必ず実測すること。
-                    paddingTop: 8,
+                    paddingTop: 16,
                     paddingBottom: 8,
                     display: "flex",
                     justifyContent: "center",
@@ -9412,14 +9421,14 @@ export default function Home() {
                   data-cx="clubbars"
                   style={{
                     // タブバーの直下に貼る。タブバーは top:56px から始まり
-                    // 高さ 52px（実測: 56→108）なので、その下端 108px に合わせる。
+                    // 高さ 60px（実測: 56→116）なので、その下端 116px に合わせる。
                     //
                     // ★ タブバーの高さは SegmentedControl の実寸（36px）+ 上下
-                    //   padding 8px×2 で決まる。padding から逆算できないので、
+                    //   padding（16+8）で決まる。padding から逆算できないので、
                     //   タブバーの余白を変えたらここも必ず実測して直すこと。
                     //   当初 `+40px` と書いて 24px 潜り込んだ（実測 gap=-24）。
                     position: "sticky",
-                    top: "calc(var(--app-shell-header-height, 56px) + 52px)",
+                    top: "calc(var(--app-shell-header-height, 56px) + 60px)",
                     zIndex: 59,
                     background: "var(--bg-primary)",
                     marginTop: 0,
