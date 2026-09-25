@@ -4068,7 +4068,7 @@ function PullToRefresh({
       //   なるらしく、その場合だとPull-to-Refreshされない様です」）。
       //
       //   1px の丸め誤差でも死ぬので、許容を 2px 持たせる。
-      if (refreshingRef.current || window.scrollY > 2) {
+      if (refreshingRef.current || window.scrollY > 0) { // DEGRADE
         startY.current = null;
         return;
       }
@@ -4077,7 +4077,7 @@ function PullToRefresh({
     };
     const onTouchMove = (e: TouchEvent) => {
       if (startY.current === null) return;
-      if (window.scrollY > 2) {
+      if (window.scrollY > 0) { // DEGRADE
         startY.current = null;
         pulling.current = false;
         applyPull(0);
