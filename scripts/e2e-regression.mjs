@@ -549,8 +549,14 @@ console.log("\n6f-2. Pull-to-refresh works on iPad");
   );
 
   // ★ 二重発火しないこと。window と document の両方にリスナーを張っているので、
-  //   同じイベントが両方をバブリングで通る。WeakSet で防いでいるが、壊れると
-  //   **1回の引っ張りで2回リロード**する（無駄なリクエストが倍になる）。
+  //   同じイベントが両方をバブリングで通る（実測: win=1 doc=1）。
+  //   1回の引っ張りで2回リロードすると無駄なリクエストが倍になる。
+  //
+  //   ★ このチェックは「二重発火しない」ことの**結果**を見る。WeakSet を外しても
+  //     `startY.current === null` ガードが2回目を吸収するので、このチェックだけ
+  //     では WeakSet の有無を区別できない（実測: WeakSet を外したデグレ版でも
+  //     PASS した）。WeakSet は「状態ガードに頼らず明示的に守る」ための保険で、
+  //     ここで固定したいのは**外から見た挙動**（1回の引っ張り = 1回のリロード）。
   const doubleReqs = [];
   const onDouble = (r) => {
     if (r.url().includes("/api/posts")) doubleReqs.push(r.url());

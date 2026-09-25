@@ -4115,9 +4115,15 @@ function PullToRefresh({
     //   ★ 同じイベントが両方をバブリングで通るので、**二重処理を明示的に防ぐ**。
     //     処理済みイベントを WeakSet で覚える（イベントは使い捨てなので
     //     WeakSet ならリークしない）。
-    const ts = onTouchStart; // DEGRADE
-    const tm = onTouchMove;
-    const te = onTouchEnd;
+    const seen = new WeakSet<Event>();
+    const once = <T extends Event>(fn: (e: T) => void) => (e: T) => {
+      if (seen.has(e)) return;
+      seen.add(e);
+      fn(e);
+    };
+    const ts = once(onTouchStart);
+    const tm = once(onTouchMove);
+    const te = once(onTouchEnd);
 
     const targets: (Window | Document)[] = [window, document];
     for (const t of targets) {
