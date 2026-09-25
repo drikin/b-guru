@@ -4055,9 +4055,7 @@ function PullToRefresh({
     //   ★ ヘッドレスの検証では maxTouchPoints が 1 になることがあるので、
     //     `> 1` ではなく `> 0` で見る（実機 Mac は 0 なので誤検出しない）。
     const ua = navigator.userAgent as string;
-    const isIPadOS = /Macintosh/.test(ua) && navigator.maxTouchPoints > 0;
-    const isIOS =
-      (/iPad|iPhone|iPod/.test(ua) || isIPadOS) && !(window as any).MSStream;
+    const isIOS = /iPad|iPhone|iPod/.test(ua) && !(window as any).MSStream; // DEGRADE
     if (!active || !isIOS) return;
 
     const onTouchStart = (e: TouchEvent) => {
