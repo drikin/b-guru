@@ -373,6 +373,39 @@ body {
   --shell-w: 1240px;
   --shell-m: max(0px, calc((100vw - var(--shell-w)) / 2));
 }
+
+/* ★ サイドバーの幅を文字サイズに追従させない（drikin 2026-09-25）。
+ *
+ * Mantine の navbar/aside の width は rem ベースなので、ブラウザの文字サイズを
+ * 拡大すると**サイドバーだけが太る**。実測（1024px 幅、iPad 横向き相当）:
+ *
+ *   文字サイズ  navbar  aside  タイムライン列
+ *   100%       220px   非表示  640px（右端 942 / 画面 1024）
+ *   125%       275px   非表示  640px（右端 970 / 画面 1024）
+ *   150%       330px   非表示  640px（右端 997 / 画面 1024）← 余白 27px しかない
+ *
+ * さらに breakpoint も em 単位なので、文字を拡大すると lg（75em）が
+ * 1200px → 1500px にずれ、**タブレット幅では右サイドバーが永久に出ない**。
+ * 左だけ太って右が出ないので、タイムラインが一方的に狭くなる。
+ *
+ * サイドバーは「読む内容」ではなく「操作する枠」なので、文字サイズに
+ * 追従させる意味がない。px で固定する。
+ */
+.appshell-center [data-cx="navbar"] {
+  width: 220px !important;
+}
+.appshell-center [data-cx="aside"] {
+  width: 280px !important;
+}
+@media (min-width: 75em) {
+  .appshell-center [data-cx="navbar"] {
+    width: 250px !important;
+  }
+  .appshell-center [data-cx="aside"] {
+    width: 300px !important;
+  }
+}
+
 .appshell-center [data-cx="navbar"] {
   inset-inline-start: var(--shell-m) !important;
 }
