@@ -4068,7 +4068,7 @@ function PullToRefresh({
       //   なるらしく、その場合だとPull-to-Refreshされない様です」）。
       //
       //   1px の丸め誤差でも死ぬので、許容を 2px 持たせる。
-      if (refreshingRef.current || window.scrollY > 0) { // DEGRADE
+      if (refreshingRef.current || window.scrollY > 2) {
         startY.current = null;
         return;
       }
@@ -4077,7 +4077,7 @@ function PullToRefresh({
     };
     const onTouchMove = (e: TouchEvent) => {
       if (startY.current === null) return;
-      if (window.scrollY > 0) { // DEGRADE
+      if (window.scrollY > 2) {
         startY.current = null;
         pulling.current = false;
         applyPull(0);
@@ -4115,15 +4115,9 @@ function PullToRefresh({
     //   ★ 同じイベントが両方をバブリングで通るので、**二重処理を明示的に防ぐ**。
     //     処理済みイベントを WeakSet で覚える（イベントは使い捨てなので
     //     WeakSet ならリークしない）。
-    const seen = new WeakSet<Event>();
-    const once = <T extends Event>(fn: (e: T) => void) => (e: T) => {
-      if (seen.has(e)) return;
-      seen.add(e);
-      fn(e);
-    };
-    const ts = once(onTouchStart);
-    const tm = once(onTouchMove);
-    const te = once(onTouchEnd);
+    const ts = onTouchStart; // DEGRADE
+    const tm = onTouchMove;
+    const te = onTouchEnd;
 
     const targets: (Window | Document)[] = [window, document];
     for (const t of targets) {
