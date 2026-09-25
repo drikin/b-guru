@@ -672,11 +672,10 @@ console.log("\n6j. Mobile club bar (one-tap club switching)");
       visualBelow: c ? Math.round(c.getBoundingClientRect().top - sb.bottom) : null,
     };
   })()`);
-  check(
-    "the tab bar's top and bottom padding are even",
-    !!spacing && Math.abs(spacing.padTop - spacing.padBottom) <= 2,
-    spacing ? `padTop=${spacing.padTop} padBottom=${spacing.padBottom}` : "n/a"
-  );
+  // ★ 内部 padding は非対称でよい。見た目の間隔を揃えるには、下側に部活バーの
+  //   marginTop が乗る分だけ paddingTop を大きくする必要がある（実測: 内部
+  //   16/8 のとき見た目が 16/16 になる）。だから内部 padding の均等は
+  //   検証しない — 見た目の間隔（下の2チェック）が本当の要件。
   check(
     "the visual gap above and below the tab switcher are even",
     !!spacing &&
