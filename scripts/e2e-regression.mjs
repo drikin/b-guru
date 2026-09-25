@@ -547,6 +547,74 @@ console.log("\n6f-2. Pull-to-refresh works on iPad");
     pulled && feedReqs.length > 0,
     `feed requests after pull = ${feedReqs.length}`
   );
+
+  // ★ 二重発火しないこと。window と document の両方にリスナーを張っているので、
+  //   同じイベントが両方をバブリングで通る。WeakSet で防いでいるが、壊れると
+  //   **1回の引っ張りで2回リロード**する（無駄なリクエストが倍になる）。
+  const doubleReqs = [];
+  const onDouble = (r) => {
+    if (r.url().includes("/api/posts")) doubleReqs.push(r.url());
+  };
+  ip.on("request", onDouble);
+  await ip.evaluate(`window.scrollTo(0, 0)`);
+  await ip.waitForTimeout(300);
+  await ip.evaluate(`(async () => {
+    const fire = (type, y) => {
+      const t = new Touch({ identifier: 1, target: document.body, clientX: 200, clientY: y });
+      document.body.dispatchEvent(new TouchEvent(type, {
+        touches: type === 'touchend' ? [] : [t],
+        changedTouches: [t], bubbles: true, cancelable: true,
+      }));
+    };
+    fire('touchstart', 100);
+    for (let y = 120; y <= 400; y += 20) {
+      fire('touchmove', y);
+      await new Promise(r => setTimeout(r, 25));
+    }
+    fire('touchend', 400);
+    await new Promise(r => setTimeout(r, 3000));
+  })()`);
+  await ip.waitForTimeout(1500);
+  ip.off("request", onDouble);
+  check(
+    "one pull triggers exactly one feed reload",
+    doubleReqs.length === 1,
+    `feed requests = ${doubleReqs.length} (expected 1)`
+  );
+
+  // ★ 上端判定に許容があること。standalone ではリロード後にスクロール位置が
+  //   復元されるので、1px でも > 0 だとジェスチャーが死ぬ。
+  //   2px スクロールした状態でも引っ張りが効くことを見る。
+  const nearTopReqs = [];
+  const onNearTop = (r) => {
+    if (r.url().includes("/api/posts")) nearTopReqs.push(r.url());
+  };
+  ip.on("request", onNearTop);
+  await ip.evaluate(`window.scrollTo(0, 2)`);
+  await ip.waitForTimeout(300);
+  await ip.evaluate(`(async () => {
+    const fire = (type, y) => {
+      const t = new Touch({ identifier: 1, target: document.body, clientX: 200, clientY: y });
+      document.body.dispatchEvent(new TouchEvent(type, {
+        touches: type === 'touchend' ? [] : [t],
+        changedTouches: [t], bubbles: true, cancelable: true,
+      }));
+    };
+    fire('touchstart', 100);
+    for (let y = 120; y <= 400; y += 20) {
+      fire('touchmove', y);
+      await new Promise(r => setTimeout(r, 25));
+    }
+    fire('touchend', 400);
+    await new Promise(r => setTimeout(r, 3000));
+  })()`);
+  await ip.waitForTimeout(1500);
+  ip.off("request", onNearTop);
+  check(
+    "a pull still works when the page is a hair off the top",
+    nearTopReqs.length > 0,
+    `feed requests at scrollY=2: ${nearTopReqs.length}`
+  );
   await ipad.close();
 }
 
