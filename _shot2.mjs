@@ -1,0 +1,11 @@
+import { chromium } from "playwright";
+const b = await chromium.launch();
+const ctx = await b.newContext({ viewport: { width: 1024, height: 768 }, deviceScaleFactor: 2 });
+await ctx.addCookies([{ name: "bsm_session", value: process.env.BSM_SESSION, domain: "bsm.backspace.fm", path: "/" }]);
+const p = await ctx.newPage();
+await p.goto("https://bsm.backspace.fm", { waitUntil: "networkidle" });
+await p.waitForTimeout(3500);
+await p.evaluate(`document.documentElement.style.fontSize='150%'`);
+await p.waitForTimeout(900);
+await p.screenshot({ path: "/tmp/tablet_150.png" });
+await b.close();

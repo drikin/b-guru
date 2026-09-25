@@ -391,20 +391,7 @@ body {
  * サイドバーは「読む内容」ではなく「操作する枠」なので、文字サイズに
  * 追従させる意味がない。px で固定する。
  */
-.appshell-center [data-cx="navbar"] {
-  width: 220px !important;
-}
-.appshell-center [data-cx="aside"] {
-  width: 280px !important;
-}
-@media (min-width: 75em) {
-  .appshell-center [data-cx="navbar"] {
-    width: 250px !important;
-  }
-  .appshell-center [data-cx="aside"] {
-    width: 300px !important;
-  }
-}
+/* DEGRADE: px 固定を外す */
 
 .appshell-center [data-cx="navbar"] {
   inset-inline-start: var(--shell-m) !important;
