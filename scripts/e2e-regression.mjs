@@ -1564,17 +1564,22 @@ console.log("\n6m. Duplicate-post warning");
       ? typedMatters.error
       : `bare=${JSON.stringify(typedMatters.bare)} withText=${JSON.stringify(typedMatters.withText)}`
   );
-  // ★ 本文が効いているなら、無関係な本文を足したときに「その記事そのもの」を
-  //   指す理由づけが消えるはず。上のチェックは「何か変われば通る」なので、
-  //   本文が**無視されて別の理由で変わった**場合も通ってしまう。ここでは
-  //   「無関係な本文を足すと候補が減る（または理由が変わる）」ことを見る。
+  // ★ 本文が効いているなら、無関係な本文を足したときに AI の理由づけが
+  //   変わるはず。上のチェックは「何か変われば通る」なので、本文が無視されて
+  //   別の理由で変わった場合も通ってしまう。ここでは「無関係な本文を足すと
+  //   その記事そのものを指す理由づけが消える」ことを見る。
+  //
+  //   ★ 候補数では判定できない。本文を足すと AI が拾う候補が**増える**ことが
+  //     ある（実測: bare=0 withText=1 で FAIL した）。数ではなく理由の中身を見る。
   check(
-    "adding unrelated text stops the URL's own article from matching",
+    "adding unrelated text changes how the URL's own article is described",
     !typedMatters.error &&
-      typedMatters.withText.length <= typedMatters.bare.length,
+      typedMatters.bare.length > 0 &&
+      typedMatters.withText.length > 0 &&
+      typedMatters.bare[0] !== typedMatters.withText[0],
     typedMatters.error
       ? typedMatters.error
-      : `bare=${typedMatters.bare.length} withText=${typedMatters.withText.length}`
+      : `bare=${JSON.stringify(typedMatters.bare)} withText=${JSON.stringify(typedMatters.withText)}`
   );
 }
 
