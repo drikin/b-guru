@@ -755,6 +755,59 @@ console.log("\n6i-2. Tablet width keeps the timeline usable when text is enlarge
   await tablet.close();
 }
 
+// 6i-3. Portrait tablet: the column must not stick to the right edge
+// (drikin 2026-09-25: 「縦長のときかなりひどい」).
+//
+// At 820px the sidebar is present but the aside is not, so the column used to
+// consume every remaining pixel and `mx-auto` had no slack to centre with —
+// measured gapR=0, i.e. the cards touched the window edge while the left side
+// had a 220px sidebar. The fix reserves a gutter on both sides.
+console.log("\n6i-3. Portrait tablet keeps a gutter on the right");
+{
+  const portrait = await browser.newContext({
+    viewport: { width: 820, height: 1180 },
+    deviceScaleFactor: 2,
+  });
+  await portrait.addCookies([
+    { name: "bsm_session", value: SESSION, domain: "bsm.backspace.fm", path: "/" },
+  ]);
+  const pp = await portrait.newPage();
+  await pp.goto(BASE_URL, { waitUntil: "networkidle" });
+  await pp.waitForTimeout(3000);
+  const pg = await pp.evaluate(`(() => {
+    const main = document.querySelector('.mantine-AppShell-main');
+    const col = main?.querySelector('div[style*="max-width"]');
+    if (!col) return null;
+    const cb = col.getBoundingClientRect();
+    const nav = document.querySelector('[data-cx="navbar"]');
+    const navW = nav ? Math.round(nav.getBoundingClientRect().width) : 0;
+    return {
+      vw: window.innerWidth,
+      navW,
+      colW: Math.round(cb.width),
+      leftGap: Math.round(cb.left - navW),
+      rightGap: Math.round(window.innerWidth - cb.right),
+      overflowX: document.documentElement.scrollWidth > window.innerWidth,
+    };
+  })()`);
+  check(
+    "portrait tablet keeps a right gutter",
+    !!pg && pg.rightGap >= 12,
+    pg ? `rightGap=${pg.rightGap} colW=${pg.colW} vw=${pg.vw}` : "n/a"
+  );
+  check(
+    "portrait tablet keeps the left and right gutters balanced",
+    !!pg && Math.abs(pg.leftGap - pg.rightGap) <= 8,
+    pg ? `leftGap=${pg.leftGap} rightGap=${pg.rightGap}` : "n/a"
+  );
+  check(
+    "portrait tablet does not overflow horizontally",
+    !!pg && pg.overflowX === false,
+    pg ? `overflowX=${pg.overflowX}` : "n/a"
+  );
+  await portrait.close();
+}
+
 // 6j. Mobile club bar (drikin 2026-09-25: 「Discord の代替になるように、UX を含めて
 // 検討してほしい」). The bar exists so a club switch costs ONE tap on mobile instead
 // of two (open the full-screen menu → pick), and so the club list stays visible while
