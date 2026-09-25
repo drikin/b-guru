@@ -1301,8 +1301,24 @@ console.log("\n6m. Duplicate-post warning");
   //   ★ 判定材料は postId ではなく **reason** で見る。URL が既存記事そのもの
   //     なら postId は必ず一致する（正しい動作）。本文が効いていれば AI の
   //     理由づけが変わるので、そこを観測する。
+  //
+  //   ★ 既存投稿に依存しないこと。候補クエリは直近3日に限定しているので、
+  //     特定の投稿IDを前提にすると**時間が経つと候補から外れて FAIL する**
+  //     （実測: 5307 が3日を過ぎて `bare=[] withText=[]` になった）。
+  //     ここでは自分でテスト投稿を作り、その投稿を候補に出す。
   const typedMatters = await page.evaluate(`(async () => {
+    // テスト投稿を作る（後で消す）。URL は実在する記事を使う。
     const url = 'https://gigazine.net/news/20260923-ambient-css/';
+    const mk = await fetch('/api/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'E2E 重複判定テスト ' + url }),
+    });
+    if (!mk.ok) return { error: 'publish failed ' + mk.status };
+    const created = await mk.json();
+    const postId = created?.post?.id;
+    if (!postId) return { error: 'no post id: ' + JSON.stringify(created).slice(0, 80) };
+
     const ask = async (t) => {
       const r = await fetch('/api/posts/duplicates', {
         method: 'POST',
@@ -1314,12 +1330,18 @@ console.log("\n6m. Duplicate-post warning");
     };
     const bare = await ask(url);
     const withText = await ask('ネコの新種、100年以上ぶりに発見 ' + url);
-    return { bare, withText };
+
+    // 後片付け。
+    await fetch('/api/posts/' + postId, { method: 'DELETE' }).catch(() => {});
+    return { bare, withText, postId };
   })()`);
   check(
     "the poster's own text affects the AI verdict",
-    JSON.stringify(typedMatters.bare) !== JSON.stringify(typedMatters.withText),
-    `bare=${JSON.stringify(typedMatters.bare)} withText=${JSON.stringify(typedMatters.withText)}`
+    !typedMatters.error &&
+      JSON.stringify(typedMatters.bare) !== JSON.stringify(typedMatters.withText),
+    typedMatters.error
+      ? typedMatters.error
+      : `bare=${JSON.stringify(typedMatters.bare)} withText=${JSON.stringify(typedMatters.withText)}`
   );
 }
 
