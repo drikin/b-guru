@@ -9326,7 +9326,7 @@ export default function Home() {
           //   そこで「左右に最低限のガター」を確保する。`100%` から
           //   ガター分を引いた幅を上限にするので、`mx-auto` が機能する。
           //   ガターは 16px（モバイルの px-3 と揃える）。
-          style={{ maxWidth: "min(720px, calc(100% - 32px))" }}
+          style={{ maxWidth: "min(720px, 100%)" }} // DEGRADE
         >
           {isCenterView && (
             <Stack gap="md">
