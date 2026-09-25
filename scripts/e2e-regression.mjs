@@ -680,6 +680,81 @@ await page.evaluate(`(() => {
 })()`);
 await page.waitForTimeout(2000);
 
+// 6i-2. Tablet width + enlarged text must not squeeze the timeline
+// (drikin 2026-09-25: 「タブレットとかである程度画面が広いけどそこまで大きくない時に
+// 文字サイズ拡大するとメインタイムラインが狭くなりすぎるので適切にサイドバーを
+// 扱ってタイムラインの幅を確保してほしい」).
+//
+// Two independent causes, both font-relative:
+//   (a) the sidebar widths are rem-based, so enlarging text fattens the chrome
+//       while the timeline column stays fixed — measured at 1024px/150%: the
+//       column's right edge was pushed to 997px of a 1024px viewport.
+//   (b) the breakpoints are em-based, so enlarging text pushes `lg` (75em) from
+//       1200px to 1500px and the right sidebar never appears on a tablet.
+//
+// ★ Assert the MEASURED column width, not the CSS. The whole point is that the
+//   column keeps a usable width once the text is enlarged.
+console.log("\n6i-2. Tablet width keeps the timeline usable when text is enlarged");
+{
+  const tablet = await browser.newContext({
+    viewport: { width: 1024, height: 768 },
+    deviceScaleFactor: 2,
+  });
+  await tablet.addCookies([
+    { name: "bsm_session", value: SESSION, domain: "bsm.backspace.fm", path: "/" },
+  ]);
+  const tp = await tablet.newPage();
+  await tp.goto(BASE_URL, { waitUntil: "networkidle" });
+  await tp.waitForTimeout(3000);
+
+  const measure = async (pct) => {
+    await tp.evaluate(
+      pct === 100
+        ? `document.documentElement.style.fontSize = ''`
+        : `document.documentElement.style.fontSize = '${pct}%'`
+    );
+    await tp.waitForTimeout(700);
+    return await tp.evaluate(`(() => {
+      const nav = document.querySelector('[data-cx="navbar"]');
+      const main = document.querySelector('.mantine-AppShell-main');
+      const col = main?.querySelector('div[style*="max-width"]');
+      const navW = nav ? Math.round(nav.getBoundingClientRect().width) : 0;
+      const cb = col ? col.getBoundingClientRect() : null;
+      return {
+        vw: window.innerWidth,
+        navW,
+        colW: cb ? Math.round(cb.width) : null,
+        colRight: cb ? Math.round(cb.right) : null,
+        // 列の右端から画面右端までの余白
+        rightGap: cb ? Math.round(window.innerWidth - cb.right) : null,
+      };
+    })()`);
+  };
+
+  const at100 = await measure(100);
+  const at150 = await measure(150);
+
+  // (a) The sidebar must not fatten with the text.
+  check(
+    "the sidebar width does not grow when text is enlarged",
+    at100.navW > 0 && at150.navW === at100.navW,
+    `nav 100%=${at100.navW} 150%=${at150.navW}`
+  );
+  // (b) The timeline column must stay usable — at least 600px of content.
+  check(
+    "the timeline column stays usable at 150% text",
+    at150.colW !== null && at150.colW >= 600,
+    `colW 100%=${at100.colW} 150%=${at150.colW}`
+  );
+  // (c) The column must not be jammed against the viewport edge.
+  check(
+    "the timeline column keeps breathing room at 150% text",
+    at150.rightGap !== null && at150.rightGap >= 16,
+    `rightGap 100%=${at100.rightGap} 150%=${at150.rightGap}`
+  );
+  await tablet.close();
+}
+
 // 6j. Mobile club bar (drikin 2026-09-25: 「Discord の代替になるように、UX を含めて
 // 検討してほしい」). The bar exists so a club switch costs ONE tap on mobile instead
 // of two (open the full-screen menu → pick), and so the club list stays visible while
