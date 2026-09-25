@@ -9331,8 +9331,21 @@ export default function Home() {
                     marginTop: -24,
                     zIndex: 60,
                     background: "var(--bg-primary)",
-                    paddingTop: 24,
-                    paddingBottom: 4,
+                    // ★ 上下の余白を均等にする（drikin 2026-09-25「タイムラインの
+                    //   タブと部活動のフィルターが近いので、タブをもう少し上に
+                    //   あげて上下の余白を均等にする」）。
+                    //
+                    //   実測（390px 幅）: タブバー 56→120（高さ64）、
+                    //   SegmentedControl 80→116（高さ36）。上 24px / 下 4px で
+                    //   上が20px 広く、下は部活バーまで 4px しかなかった。
+                    //
+                    //   上下を 8px ずつにする。タブバーは 56→108（高さ52）になり、
+                    //   タブは 64→100。部活バーまで 16px 空く。
+                    //
+                    //   ★ タブバーの高さは SegmentedControl の実寸（36px）で決まる。
+                    //     padding から逆算できないので、変えたら必ず実測すること。
+                    paddingTop: 8,
+                    paddingBottom: 8,
                     display: "flex",
                     justifyContent: "center",
                   }}
@@ -9398,15 +9411,18 @@ export default function Home() {
                 <Box
                   data-cx="clubbars"
                   style={{
-                    // タブバーの直下に貼る。タブバーは top:56px から始まり高さ 64px
-                    // （実測: 56→120）なので、その下端 120px に合わせる。
-                    // 当初 `+40px` と書いて 24px 潜り込んだ（実測 gap=-24）— タブバーの
-                    // 高さは SegmentedControl の実寸で決まり、padding から逆算できない。
+                    // タブバーの直下に貼る。タブバーは top:56px から始まり
+                    // 高さ 52px（実測: 56→108）なので、その下端 108px に合わせる。
+                    //
+                    // ★ タブバーの高さは SegmentedControl の実寸（36px）+ 上下
+                    //   padding 8px×2 で決まる。padding から逆算できないので、
+                    //   タブバーの余白を変えたらここも必ず実測して直すこと。
+                    //   当初 `+40px` と書いて 24px 潜り込んだ（実測 gap=-24）。
                     position: "sticky",
-                    top: "calc(var(--app-shell-header-height, 56px) + 64px)",
+                    top: "calc(var(--app-shell-header-height, 56px) + 52px)",
                     zIndex: 59,
                     background: "var(--bg-primary)",
-                    marginTop: -4,
+                    marginTop: 0,
                     paddingBottom: 6,
                     // 横スクロールのみ。縦の引っ張りリロードに取られないようにする。
                     overflowX: "auto",
