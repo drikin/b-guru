@@ -1385,11 +1385,17 @@ console.log("\n6m. Duplicate-post warning");
   //     ここでは自分でテスト投稿を作り、その投稿を候補に出す。
   const typedMatters = await page.evaluate(`(async () => {
     // テスト投稿を作る（後で消す）。URL は実在する記事を使う。
+    //
+    // ★ 本文は毎回ユニークにする。/api/publish には「同じ著者 + 同じ本文 +
+    //   同じ親」を30秒間キャッシュする重複防止があり、2回目以降は**削除済みの
+    //   投稿**を返してしまう（実測: CI で bare=[] withText=[] になった）。
+    //   ユニークにすればキャッシュに当たらない。
     const url = 'https://gigazine.net/news/20260923-ambient-css/';
+    const stamp = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
     const mk = await fetch('/api/publish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: 'E2E 重複判定テスト ' + url }),
+      body: JSON.stringify({ text: 'E2E 重複判定テスト ' + stamp + ' ' + url }),
     });
     if (!mk.ok) return { error: 'publish failed ' + mk.status };
     const created = await mk.json();
