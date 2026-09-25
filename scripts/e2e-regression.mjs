@@ -640,6 +640,39 @@ console.log("\n6j. Mobile club bar (one-tap club switching)");
     bar ? `scrollable=${bar.scrollable}` : "n/a"
   );
 
+  // (e) The tab bar's own top/bottom padding must stay symmetric, and it must
+  // not crowd the club bar. drikin 2026-09-25: 「タイムラインのタブと部活動の
+  // フィルターが近いので、タブをもう少し上にあげて上下の余白を均等にする」.
+  // Measured before the fix: tab bar 56→120, SegmentedControl 80→116 — 24px
+  // above vs 4px below, and only 4px down to the club bar.
+  //
+  // ★ Assert the MEASURED geometry, not the CSS. The tab bar's height comes
+  //   from the SegmentedControl's intrinsic size (36px), so padding cannot be
+  //   reasoned about from the stylesheet alone.
+  const spacing = await mp.evaluate(`(() => {
+    const t = document.querySelector('[data-cx="navtabs"]');
+    const c = document.querySelector('[data-cx="clubbars"]');
+    if (!t) return null;
+    const seg = t.querySelector('[role="group"], .mantine-SegmentedControl-root');
+    if (!seg) return null;
+    const tb = t.getBoundingClientRect(), sb = seg.getBoundingClientRect();
+    return {
+      padTop: Math.round(sb.top - tb.top),
+      padBottom: Math.round(tb.bottom - sb.bottom),
+      gapToClubs: c ? Math.round(c.getBoundingClientRect().top - tb.bottom) : null,
+    };
+  })()`);
+  check(
+    "the tab bar's top and bottom padding are even",
+    !!spacing && Math.abs(spacing.padTop - spacing.padBottom) <= 2,
+    spacing ? `padTop=${spacing.padTop} padBottom=${spacing.padBottom}` : "n/a"
+  );
+  check(
+    "the tab bar does not crowd the club bar",
+    !!spacing && spacing.gapToClubs !== null && spacing.gapToClubs >= 8,
+    spacing ? `gapToClubs=${spacing.gapToClubs}` : "n/a"
+  );
+
   // (c) sticky offset: the bar must sit flush under the tab bar at every scroll
   // position. A negative gap means it slid behind the tabs.
   const gaps = [];
