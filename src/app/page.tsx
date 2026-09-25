@@ -9353,8 +9353,8 @@ export default function Home() {
                     //
                     //   ★ タブバーの高さは SegmentedControl の実寸（36px）で決まる。
                     //     padding から逆算できないので、変えたら必ず実測すること。
-                    paddingTop: 16,
-                    paddingBottom: 8,
+                    paddingTop: 24,
+                    paddingBottom: 4,
                     display: "flex",
                     justifyContent: "center",
                   }}
