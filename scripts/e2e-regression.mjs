@@ -473,6 +473,85 @@ if (backLabels.length >= 1) {
   await page.waitForTimeout(1500);
 }
 
+// 6f-2. Pull-to-refresh must actually WORK on iPad (のぶさん 2026-09-25:
+// 「iPadだとPull-to-Refreshしても更新されない」).
+//
+// ★ iPad Safari reports a `Macintosh` user agent (iPadOS 13+), so a detector
+//   built only on /iPad|iPhone|iPod/ never matches and the whole gesture is
+//   dead. The fix keys on "claims to be a Mac but has touch points".
+//
+// This guard drives the real gesture on an iPad-shaped context and asserts the
+// feed actually reloads — not merely that the listener is attached. A detector
+// regression makes the pull a no-op, which is exactly the reported bug.
+console.log("\n6f-2. Pull-to-refresh works on iPad");
+{
+  const ipad = await browser.newContext({
+    viewport: { width: 820, height: 1180 },
+    deviceScaleFactor: 2,
+    isMobile: true,
+    hasTouch: true,
+    // The real iPad Safari UA: Macintosh, not iPad.
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+  });
+  await ipad.addCookies([
+    { name: "bsm_session", value: SESSION, domain: "bsm.backspace.fm", path: "/" },
+  ]);
+  const ip = await ipad.newPage();
+  await ip.goto(BASE_URL, { waitUntil: "networkidle" });
+  await ip.waitForTimeout(3000);
+
+  // The detector must classify this context as iOS. Assert the predicate the
+  // component uses, so a UA-regex regression fails here with a clear message.
+  const detected = await ip.evaluate(`(() => {
+    const ua = navigator.userAgent;
+    const isIPadOS = /Macintosh/.test(ua) && navigator.maxTouchPoints > 0;
+    return {
+      isIOS: (/iPad|iPhone|iPod/.test(ua) || isIPadOS) && !window.MSStream,
+      maxTouchPoints: navigator.maxTouchPoints,
+    };
+  })()`);
+  check(
+    "an iPad (Macintosh UA + touch) is detected as iOS",
+    detected.isIOS === true,
+    `isIOS=${detected.isIOS} maxTouchPoints=${detected.maxTouchPoints}`
+  );
+
+  // Drive the gesture and watch for the feed request it must trigger.
+  const feedReqs = [];
+  const onFeedReq = (r) => {
+    if (r.url().includes("/api/posts")) feedReqs.push(r.url());
+  };
+  ip.on("request", onFeedReq);
+  await ip.evaluate(`window.scrollTo(0, 0)`);
+  await ip.waitForTimeout(300);
+  const pulled = await ip.evaluate(`(async () => {
+    const fire = (type, y) => {
+      const t = new Touch({ identifier: 1, target: document.body, clientX: 200, clientY: y });
+      document.body.dispatchEvent(new TouchEvent(type, {
+        touches: type === 'touchend' ? [] : [t],
+        changedTouches: [t], bubbles: true, cancelable: true,
+      }));
+    };
+    fire('touchstart', 100);
+    for (let y = 110; y <= 260; y += 20) {
+      fire('touchmove', y);
+      await new Promise(r => setTimeout(r, 30));
+    }
+    fire('touchend', 260);
+    await new Promise(r => setTimeout(r, 2500));
+    return true;
+  })()`);
+  await ip.waitForTimeout(1500);
+  ip.off("request", onFeedReq);
+  check(
+    "pulling down on iPad reloads the feed",
+    pulled && feedReqs.length > 0,
+    `feed requests after pull = ${feedReqs.length}`
+  );
+  await ipad.close();
+}
+
 // 6g. Presence visibility (drikin 2026-09-23): the オンライン panel must dim
 // members whose tab is backgrounded. The flag travels client → server via the
 // heartbeat body, so assert the whole round trip: report hidden, read it back
