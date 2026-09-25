@@ -501,20 +501,18 @@ console.log("\n6f-2. Pull-to-refresh works on iPad");
   await ip.goto(BASE_URL, { waitUntil: "networkidle" });
   await ip.waitForTimeout(3000);
 
-  // The detector must classify this context as iOS. Assert the predicate the
-  // component uses, so a UA-regex regression fails here with a clear message.
-  const detected = await ip.evaluate(`(() => {
-    const ua = navigator.userAgent;
-    const isIPadOS = /Macintosh/.test(ua) && navigator.maxTouchPoints > 0;
-    return {
-      isIOS: (/iPad|iPhone|iPod/.test(ua) || isIPadOS) && !window.MSStream,
-      maxTouchPoints: navigator.maxTouchPoints,
-    };
-  })()`);
+  // ★ 判定そのものを再実装して検証しないこと。テスト側で同じ述語を書き直すと、
+  //   コンポーネントが壊れていてもテストは通る（実測: デグレ版でこのチェックが
+  //   PASS してしまった）。ここで見るのは「実際に引っ張りが効くか」だけ。
+  //   判定の正しさは下のジェスチャー検証が結果として担保する。
+  const touchInfo = await ip.evaluate(`(() => ({
+    maxTouchPoints: navigator.maxTouchPoints,
+    ua: navigator.userAgent,
+  }))()`);
   check(
-    "an iPad (Macintosh UA + touch) is detected as iOS",
-    detected.isIOS === true,
-    `isIOS=${detected.isIOS} maxTouchPoints=${detected.maxTouchPoints}`
+    "the iPad context really is a Macintosh UA with touch",
+    /Macintosh/.test(touchInfo.ua) && touchInfo.maxTouchPoints > 0,
+    `maxTouchPoints=${touchInfo.maxTouchPoints}`
   );
 
   // Drive the gesture and watch for the feed request it must trigger.
