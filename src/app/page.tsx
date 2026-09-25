@@ -4043,10 +4043,21 @@ function PullToRefresh({
   };
 
   useEffect(() => {
+    // ★ iPad の Safari は UA で `Macintosh` を名乗る（iPadOS 13 以降）。
+    //   `/iPad|iPhone|iPod/` だけでは iPad を検出できず、この機能が
+    //   丸ごと動かなかった（のぶさん 2026-09-25「iPadだとPull-to-Refreshしても
+    //   更新されない」）。実測: iPad Safari の UA は
+    //   `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ... Safari/605.1.15`
+    //   で、`isIOS` が false になっていた。
+    //
+    //   正しい判定は「Mac を名乗るがタッチ対応」= iPad。
+    //   `maxTouchPoints > 1` がその目印（実機の Mac は 0、iPad は 5）。
+    //   ★ ヘッドレスの検証では maxTouchPoints が 1 になることがあるので、
+    //     `> 1` ではなく `> 0` で見る（実機 Mac は 0 なので誤検出しない）。
+    const ua = navigator.userAgent as string;
+    const isIPadOS = /Macintosh/.test(ua) && navigator.maxTouchPoints > 0;
     const isIOS =
-      typeof window !== "undefined" &&
-      /iPad|iPhone|iPod/.test(navigator.userAgent as string) &&
-      !(window as any).MSStream;
+      (/iPad|iPhone|iPod/.test(ua) || isIPadOS) && !(window as any).MSStream;
     if (!active || !isIOS) return;
 
     const onTouchStart = (e: TouchEvent) => {
