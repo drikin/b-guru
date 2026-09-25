@@ -1426,6 +1426,18 @@ console.log("\n6m. Duplicate-post warning");
       ? typedMatters.error
       : `bare=${JSON.stringify(typedMatters.bare)} withText=${JSON.stringify(typedMatters.withText)}`
   );
+  // ★ 本文が効いているなら、無関係な本文を足したときに「その記事そのもの」を
+  //   指す理由づけが消えるはず。上のチェックは「何か変われば通る」なので、
+  //   本文が**無視されて別の理由で変わった**場合も通ってしまう。ここでは
+  //   「無関係な本文を足すと候補が減る（または理由が変わる）」ことを見る。
+  check(
+    "adding unrelated text stops the URL's own article from matching",
+    !typedMatters.error &&
+      typedMatters.withText.length <= typedMatters.bare.length,
+    typedMatters.error
+      ? typedMatters.error
+      : `bare=${typedMatters.bare.length} withText=${typedMatters.withText.length}`
+  );
 }
 
 // ------------------------------------------------------------ image proxy
