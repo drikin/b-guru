@@ -4014,6 +4014,9 @@ function PullToRefresh({
   const [refreshing, setRefreshing] = useState(false);
   const barRef = useRef<HTMLDivElement | null>(null);
   const startY = useRef<number | null>(null);
+  // ★ 横方向の開始位置。横スクロールする帯の上で引っ張りを誤発動させないため、
+  //   `|dy| > |dx|` の判定に使う（リュー 2026-09-26 のバグ）。
+  const startX = useRef<number>(0);
   const pulling = useRef(false);
   const pullPx = useRef(0);
   const refreshingRef = useRef(false);
@@ -4060,6 +4063,22 @@ function PullToRefresh({
       (/iPad|iPhone|iPod/.test(ua) || isIPadOS) && !(window as any).MSStream;
     if (!active || !isIOS) return;
 
+    // ★ 横スクロールする要素（部活バー）の上では引っ張りを発動させない。
+    //   ここで preventDefault すると**横スクロールが死ぬ**（リュー 2026-09-26）。
+    //   タッチ対象から親に遡り、横に溢れていて overflow-x が auto/scroll の
+    //   要素があれば「横スクロールの領分」と判断する。
+    const inHScrollable = (t: EventTarget | null) => {
+      let el = t as HTMLElement | null;
+      while (el && el !== document.body) {
+        if (el.scrollWidth > el.clientWidth + 4) {
+          const ox = getComputedStyle(el).overflowX;
+          if (ox === "auto" || ox === "scroll") return true;
+        }
+        el = el.parentElement;
+      }
+      return false;
+    };
+
     const onTouchStart = (e: TouchEvent) => {
       // ★ 引っ張り開始時に「上端にいるか」を判定する。`window.scrollY > 0` だけ
       //   だと、standalone（ホーム画面に追加した PWA）で**リロード後にスクロール
@@ -4072,7 +4091,14 @@ function PullToRefresh({
         startY.current = null;
         return;
       }
+      // ★ 横スクロールする帯の上では引っ張りを始めない。開始点で弾いておくと、
+      //   以降の touchmove で preventDefault が掛からない（リュー 2026-09-26）。
+      if (inHScrollable(e.target)) {
+        startY.current = null;
+        return;
+      }
       startY.current = e.touches[0].clientY;
+      startX.current = e.touches[0].clientX;
       pulling.current = false;
     };
     const onTouchMove = (e: TouchEvent) => {
@@ -4083,7 +4109,23 @@ function PullToRefresh({
         applyPull(0);
         return;
       }
+      // ★ 横スクロールする帯の上では引っ張りを中断する（リュー 2026-09-26）。
+      if (inHScrollable(e.target)) {
+        startY.current = null;
+        pulling.current = false;
+        applyPull(0);
+        return;
+      }
       const dy = e.touches[0].clientY - startY.current;
+      const dx = e.touches[0].clientX - startX.current;
+      // ★ 横方向が主なら引っ張りではない。`dy > 0` だけで preventDefault すると、
+      //   **横ドラッグでも指はわずかに下に動く**ため条件が成立し、部活バーの
+      //   ネイティブ横スクロールが殺される（リュー 2026-09-26 のバグの本体）。
+      if (Math.abs(dy) <= Math.abs(dx)) {
+        pulling.current = false;
+        applyPull(0);
+        return;
+      }
       if (dy > 0 && !refreshingRef.current) {
         pulling.current = true;
         if (e.cancelable) e.preventDefault();
