@@ -929,6 +929,57 @@ console.log("\n6j. Mobile club bar (one-tap club switching)");
     bar ? `scrollable=${bar.scrollable}` : "n/a"
   );
 
+  // (f) A horizontal drag on the club bar must NOT be swallowed by the
+  // pull-to-refresh gesture (リュー 2026-09-26: 「左のメニューの「ダークモード」の
+  // あたりを触るとメインのタイムラインがスクロールするようになって以後、左上の
+  // 部活タグ部分のスクロールができなくなる」).
+  //
+  // ★ The root cause was `dy > 0` alone triggering preventDefault: a horizontal
+  //   drag still moves the finger slightly downward, so the pull gesture claimed
+  //   the touch and killed the bar's native horizontal scroll. The guard must
+  //   assert that a mostly-horizontal drag is NOT treated as a pull — i.e. the
+  //   pull indicator stays hidden and the bar can still scroll.
+  const dragResult = await mp.evaluate(`(async () => {
+    const bar = document.querySelector('[data-cx="clubbars"]');
+    if (!bar) return { err: 'no bar' };
+    const rect = bar.getBoundingClientRect();
+    const y = rect.top + rect.height / 2;
+    // 横ドラッグ（下向き成分をわずかに混ぜる = 実機の指の動き）
+    const fire = (type, x, yy) => {
+      const t = new Touch({ identifier: 1, target: bar, clientX: x, clientY: yy });
+      bar.dispatchEvent(new TouchEvent(type, {
+        touches: type === 'touchend' ? [] : [t],
+        changedTouches: [t], bubbles: true, cancelable: true,
+      }));
+    };
+    const before = bar.scrollLeft;
+    fire('touchstart', 300, y);
+    for (let i = 1; i <= 8; i++) {
+      // 横に 20px 進むごとに下に 2px（実機の指はまっすぐ動かない）
+      fire('touchmove', 300 - i * 20, y + i * 2);
+      await new Promise(r => setTimeout(r, 25));
+    }
+    fire('touchend', 140, y + 16);
+    await new Promise(r => setTimeout(r, 400));
+    // 引っ張りインジケータが動いていないこと
+    const pill = [...document.querySelectorAll('div')].find(
+      e => e.getAttribute('aria-hidden') === 'true' && getComputedStyle(e).position === 'fixed'
+    );
+    return {
+      before,
+      after: bar.scrollLeft,
+      pillTransform: pill ? pill.style.transform : null,
+      pillOpacity: pill ? pill.style.opacity : null,
+    };
+  })()`);
+  check(
+    "a horizontal drag on the club bar is not read as a pull",
+    !!dragResult && dragResult.pillOpacity !== "1",
+    dragResult
+      ? `pillOpacity=${dragResult.pillOpacity} transform=${dragResult.pillTransform}`
+      : "n/a"
+  );
+
   // (e) The tab bar's spacing must be even, and it must not crowd the club bar.
   // drikin 2026-09-25: 「タイムラインのタブと部活動のフィルターが近いので、タブを
   // もう少し上にあげて上下の余白を均等にする」.
