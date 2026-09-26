@@ -4121,11 +4121,7 @@ function PullToRefresh({
       // ★ 横方向が主なら引っ張りではない。`dy > 0` だけで preventDefault すると、
       //   **横ドラッグでも指はわずかに下に動く**ため条件が成立し、部活バーの
       //   ネイティブ横スクロールが殺される（リュー 2026-09-26 のバグの本体）。
-      if (Math.abs(dy) <= Math.abs(dx)) {
-        pulling.current = false;
-        applyPull(0);
-        return;
-      }
+      // DEGRADE: 横方向の判定を外す（元のバグを再現）
       if (dy > 0 && !refreshingRef.current) {
         pulling.current = true;
         if (e.cancelable) e.preventDefault();
