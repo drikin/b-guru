@@ -1375,6 +1375,64 @@ console.log("\n6k. Reactions on posts");
   await page.keyboard.press("Escape");
   await page.waitForTimeout(500);
 
+  // ★ おもち 2026-09-26: 「アイコンでは「14」と表示されているのにマウスオーバー
+  //   すると「12人」と表示される」。`reactors` は REACTOR_LIMIT=12 で切られるが、
+  //   ツールチップが `reactors.length` を人数として出していたため、13人以上で
+  //   必ず食い違っていた。
+  //
+  //   ★ 観測点は「ツールチップの人数 == チップの数字」そのもの。片方だけ見ても
+  //     食い違いは検出できない。DB に 12人超のリアクションがある投稿を探し、
+  //     実際にホバーして両方を読む。
+  const countMatch = await page.evaluate(`(async () => {
+    // 12人超のリアクションを持つチップを探す（上限を超えている必要がある）
+    const chips = [...document.querySelectorAll('[data-reaction]')];
+    const target = chips.find(c => {
+      const m = (c.getAttribute('aria-label') || '').match(/(\\d+)件/);
+      return m && Number(m[1]) > 12;
+    });
+    if (!target) return { skip: true, reason: 'no chip with >12 reactions in the feed' };
+    const chipCount = Number((target.getAttribute('aria-label') || '').match(/(\\d+)件/)[1]);
+    // ホバーしてツールチップを出す
+    target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    target.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+    await new Promise(r => setTimeout(r, 900));
+    const tip = document.querySelector('[data-cx="reaction-who"]');
+    if (!tip) return { chipCount, err: 'tooltip did not open' };
+    const text = tip.textContent || '';
+    const m = text.match(/(\\d+)人/);
+    const tipCount = m ? Number(m[1]) : null;
+    // 「他N人」も読む（切られていることの明示）
+    const hiddenM = text.match(/他(\\d+)人/);
+    return {
+      chipCount,
+      tipCount,
+      hidden: hiddenM ? Number(hiddenM[1]) : 0,
+      names: (text.match(/、/g) || []).length + 1,
+    };
+  })()`);
+  check(
+    "the tooltip's head count matches the chip's number",
+    !!countMatch && (countMatch.skip || countMatch.tipCount === countMatch.chipCount),
+    countMatch
+      ? countMatch.skip
+        ? `skipped: ${countMatch.reason}`
+        : `chip=${countMatch.chipCount} tooltip=${countMatch.tipCount} hidden=${countMatch.hidden} names=${countMatch.names}`
+      : "n/a"
+  );
+  // 切られている場合は「他N人」で補う（黙って少なく出さない）
+  check(
+    "a truncated reactor list is disclosed as 他N人",
+    !!countMatch &&
+      (countMatch.skip ||
+        countMatch.hidden === 0 ||
+        countMatch.tipCount === countMatch.names + countMatch.hidden),
+    countMatch
+      ? countMatch.skip
+        ? `skipped: ${countMatch.reason}`
+        : `names=${countMatch.names} + hidden=${countMatch.hidden} = ${countMatch.names + countMatch.hidden} (tooltip=${countMatch.tipCount})`
+      : "n/a"
+  );
+
 }
 
 // 6l. Chat message actions sit to the RIGHT of the bubble
