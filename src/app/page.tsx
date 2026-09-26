@@ -4091,7 +4091,12 @@ function PullToRefresh({
         startY.current = null;
         return;
       }
-      // DEGRADE: 開始点のガードを外す
+      // ★ 横スクロールする帯の上では引っ張りを始めない。開始点で弾いておくと、
+      //   以降の touchmove で preventDefault が掛からない（リュー 2026-09-26）。
+      if (inHScrollable(e.target)) {
+        startY.current = null;
+        return;
+      }
       startY.current = e.touches[0].clientY;
       startX.current = e.touches[0].clientX;
       pulling.current = false;
@@ -4104,7 +4109,13 @@ function PullToRefresh({
         applyPull(0);
         return;
       }
-      // DEGRADE: move のガードを外す
+      // ★ 横スクロールする帯の上では引っ張りを中断する（リュー 2026-09-26）。
+      if (inHScrollable(e.target)) {
+        startY.current = null;
+        pulling.current = false;
+        applyPull(0);
+        return;
+      }
       const dy = e.touches[0].clientY - startY.current;
       const dx = e.touches[0].clientX - startX.current;
       // ★ 横方向が主なら引っ張りではない。`dy > 0` だけで preventDefault すると、

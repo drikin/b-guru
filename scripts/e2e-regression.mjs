@@ -944,7 +944,17 @@ console.log("\n6j. Mobile club bar (one-tap club switching)");
     if (!bar) return { err: 'no bar' };
     const rect = bar.getBoundingClientRect();
     const y = rect.top + rect.height / 2;
-    // 横ドラッグ（下向き成分をわずかに混ぜる = 実機の指の動き）
+    // ★ 観測するのは「preventDefault が呼ばれたか」そのもの。
+    //   preventDefault が掛かるとブラウザのネイティブ横スクロールが止まる
+    //   = リュー 2026-09-26 のバグの実体。ピルの位置や opacity では
+    //   閾値(64px)に届かないと差が出ず、デグレ版でも PASS してしまう
+    //   （実測で確認済み）。
+    let prevented = 0;
+    const origPD = Event.prototype.preventDefault;
+    Event.prototype.preventDefault = function () {
+      if (this.type === 'touchmove') prevented++;
+      return origPD.call(this);
+    };
     const fire = (type, x, yy) => {
       const t = new Touch({ identifier: 1, target: bar, clientX: x, clientY: yy });
       bar.dispatchEvent(new TouchEvent(type, {
@@ -952,7 +962,6 @@ console.log("\n6j. Mobile club bar (one-tap club switching)");
         changedTouches: [t], bubbles: true, cancelable: true,
       }));
     };
-    const before = bar.scrollLeft;
     fire('touchstart', 300, y);
     for (let i = 1; i <= 8; i++) {
       // 横に 20px 進むごとに下に 2px（実機の指はまっすぐ動かない）
@@ -960,23 +969,15 @@ console.log("\n6j. Mobile club bar (one-tap club switching)");
       await new Promise(r => setTimeout(r, 25));
     }
     fire('touchend', 140, y + 16);
-    await new Promise(r => setTimeout(r, 400));
-    // 引っ張りインジケータが動いていないこと
-    const pill = [...document.querySelectorAll('div')].find(
-      e => e.getAttribute('aria-hidden') === 'true' && getComputedStyle(e).position === 'fixed'
-    );
-    return {
-      before,
-      after: bar.scrollLeft,
-      pillTransform: pill ? pill.style.transform : null,
-      pillOpacity: pill ? pill.style.opacity : null,
-    };
+    await new Promise(r => setTimeout(r, 300));
+    Event.prototype.preventDefault = origPD;
+    return { prevented };
   })()`);
   check(
     "a horizontal drag on the club bar is not read as a pull",
-    !!dragResult && dragResult.pillOpacity !== "1",
+    !!dragResult && dragResult.prevented === 0,
     dragResult
-      ? `pillOpacity=${dragResult.pillOpacity} transform=${dragResult.pillTransform}`
+      ? `touchmove preventDefault count=${dragResult.prevented} (must be 0)`
       : "n/a"
   );
 
