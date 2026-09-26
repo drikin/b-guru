@@ -160,7 +160,7 @@ export function ReactionWhoList({
       <Group gap={6} align="center" wrap="nowrap" mb={reactors.length ? 4 : 0}>
         <ReactionGlyph emoji={emoji} customEmojis={customEmojis} size={14} />
         <Text size="xs" fw={700}>
-          {reactors.length}人
+          {count}人
         </Text>
       </Group>
       {reactors.length > 0 && (
