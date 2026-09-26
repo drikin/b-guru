@@ -141,23 +141,37 @@ export function ReactionGlyph({
 export function ReactionWhoList({
   emoji,
   reactors,
+  count,
   customEmojis,
 }: {
   emoji: string;
   reactors: string[];
+  /** ★ The true number of reactors. `reactors` is capped at REACTOR_LIMIT, so
+   *  its length is NOT the count — using it made the tooltip say "12人" for a
+   *  chip showing 14 (おもち 2026-09-26). */
+  count: number;
   customEmojis: CustomEmoji[];
 }) {
+  // ★ 名前リストは上限で切られているので、切られている時は「他N人」を出す。
+  //   黙って少ない人数を出すと、アイコンの数字と食い違って嘘になる。
+  const hidden = Math.max(0, count - reactors.length);
   return (
     <Box data-cx="reaction-who" style={{ maxWidth: 260 }}>
       <Group gap={6} align="center" wrap="nowrap" mb={reactors.length ? 4 : 0}>
         <ReactionGlyph emoji={emoji} customEmojis={customEmojis} size={14} />
         <Text size="xs" fw={700}>
-          {reactors.length}人
+          {count}人
         </Text>
       </Group>
       {reactors.length > 0 && (
         <Text size="xs" style={{ lineHeight: 1.5, wordBreak: "break-word" }}>
           {reactors.join("、")}
+          {hidden > 0 && (
+            <Text span size="xs" c="dimmed">
+              {" "}
+              他{hidden}人
+            </Text>
+          )}
         </Text>
       )}
     </Box>
@@ -230,7 +244,14 @@ export function ReactionBar({
           key={r.emoji}
           withArrow
           openDelay={120}
-          label={<ReactionWhoList emoji={r.emoji} reactors={r.reactors} customEmojis={customEmojis} />}
+          label={
+            <ReactionWhoList
+              emoji={r.emoji}
+              reactors={r.reactors}
+              count={r.count}
+              customEmojis={customEmojis}
+            />
+          }
           disabled={r.reactors.length === 0}
         >
           <UnstyledButton

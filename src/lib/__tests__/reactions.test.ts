@@ -187,6 +187,34 @@ describe("getReactions", () => {
     await getReactions("post", [1, 2, 3, 4, 5], "a@b.c");
     expect(query).toHaveBeenCalledTimes(1);
   });
+
+  // ★ おもち 2026-09-26: 「アイコンでは「14」と表示されているのにマウスオーバー
+  //   すると「12人」と表示される」。原因は `reactors` が REACTOR_LIMIT=12 で
+  //   切られているのに、ツールチップが `reactors.length` を人数として出していた
+  //   こと。**count は実数、reactors は上限つき**という関係を固定する。
+  it("caps the reactor list but keeps the true count", async () => {
+    query.mockResolvedValueOnce({ rows: [] });
+    await getReactions("post", [1], null);
+    const sql = query.mock.calls[query.mock.calls.length - 1][0] as string;
+    // リストは上限で切る
+    expect(sql).toMatch(/\)\)\[1:\d+\] AS reactors/);
+    // 件数は COUNT(*) の実数（切らない）
+    expect(sql).toContain("COUNT(*)::int AS count");
+  });
+
+  it("keeps count larger than the truncated reactor list", async () => {
+    // 14人がリアクション、名前リストは12件まで（実測されたバグの形）
+    const reactors = Array.from({ length: 12 }, (_, i) => `user${i}`);
+    query.mockResolvedValueOnce({
+      rows: [{ target_id: 1, emoji: "🎉", count: 14, mine: false, reactors }],
+    });
+    const m = await getReactions("post", [1], null);
+    const r = m.get(1)![0];
+    // ツールチップは count を使うので 14 と出る。reactors.length は 12。
+    expect(r.count).toBe(14);
+    expect(r.reactors.length).toBe(12);
+    expect(r.count).toBeGreaterThan(r.reactors.length);
+  });
 });
 
 describe("createCustomEmoji", () => {
