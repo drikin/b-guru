@@ -4091,12 +4091,7 @@ function PullToRefresh({
         startY.current = null;
         return;
       }
-      // ★ 横スクロールする帯の上では引っ張りを始めない。開始点で弾いておくと、
-      //   以降の touchmove で preventDefault が掛からない（リュー 2026-09-26）。
-      if (inHScrollable(e.target)) {
-        startY.current = null;
-        return;
-      }
+      // DEGRADE: 開始点のガードを外す
       startY.current = e.touches[0].clientY;
       startX.current = e.touches[0].clientX;
       pulling.current = false;
@@ -4109,23 +4104,13 @@ function PullToRefresh({
         applyPull(0);
         return;
       }
-      // ★ 横スクロールする帯の上では引っ張りを中断する（リュー 2026-09-26）。
-      if (inHScrollable(e.target)) {
-        startY.current = null;
-        pulling.current = false;
-        applyPull(0);
-        return;
-      }
+      // DEGRADE: move のガードを外す
       const dy = e.touches[0].clientY - startY.current;
       const dx = e.touches[0].clientX - startX.current;
       // ★ 横方向が主なら引っ張りではない。`dy > 0` だけで preventDefault すると、
       //   **横ドラッグでも指はわずかに下に動く**ため条件が成立し、部活バーの
       //   ネイティブ横スクロールが殺される（リュー 2026-09-26 のバグの本体）。
-      if (Math.abs(dy) <= Math.abs(dx)) {
-        pulling.current = false;
-        applyPull(0);
-        return;
-      }
+      // DEGRADE: 横方向の判定を外す
       if (dy > 0 && !refreshingRef.current) {
         pulling.current = true;
         if (e.cancelable) e.preventDefault();
