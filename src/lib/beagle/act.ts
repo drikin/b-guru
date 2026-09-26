@@ -1,5 +1,6 @@
 /* ビーグルエージェント: 実行（ビーグル名義で投稿/コメント） */
 import { createPost } from "../posts";
+import { createNotification } from "../notifications";
 import { pool } from "../db";
 import { SYSTEM_EMAIL, SYSTEM_NAME } from "./store";
 import { PROFILE_INTRO_GRACE } from "./types";
@@ -77,8 +78,41 @@ export async function applyActions(
         authorName: SYSTEM_NAME,
         text,
         parentId: a.parentId,
+        // ★ ビーグルの返信は囁き（whisper）にする。whisper は last_activity を
+        //   上げないので、**タイムラインの並びが動かない**（drikin 2026-09-26
+        //   「ビーグルがコメントする時は、常に囁くモードにしてタイムラインの上に
+        //   上げないようにする代わりに、そのタイムラインのユーザーにはちゃんと
+        //   通知を渡すような仕様に」）。
+        //
+        //   実測（2026-09-26）: 直近7日でビーグルの返信149件が全部タイムラインを
+        //   上げ、通知は2件しか出ていなかった。真逆の状態だった。
+        isWhisper: true,
       });
       postedIds.push(p.id);
+      // ★ 囁きにした代わりに、返信先の作者へ通知を渡す。これが無いと
+      //   「タイムラインからも消え、通知も来ない」= 誰にも届かない返信になる。
+      //   自分の投稿への返信では通知しない（人間の投稿経路と同じ扱い）。
+      try {
+        const parent = await pool.query(
+          `SELECT author_email FROM posts WHERE id = $1`,
+          [a.parentId]
+        );
+        const parentAuthor = parent.rows[0]?.author_email;
+        if (parentAuthor && parentAuthor !== SYSTEM_EMAIL) {
+          await createNotification({
+            userEmail: parentAuthor,
+            type: "reply",
+            actorEmail: SYSTEM_EMAIL,
+            actorName: SYSTEM_NAME,
+            postId: a.parentId,
+            replyId: p.id,
+            text: text.length > 60 ? text.slice(0, 57) + "…" : text,
+          });
+        }
+      } catch (ne) {
+        // 通知の失敗で返信自体を失敗させない（人間の投稿経路と同じ扱い）
+        console.error("beagle notify reply error:", (ne as any).message);
+      }
     } else if (a.type === "introduce") {
       // 紹介対象が今も未紹介（更新が最新・かつグレース期間経過済み）のときだけ導入
       const awaiting = await pool.query(

@@ -1,10 +1,38 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { parseDecision } from "../beagle/decide";
 import { normalizeNextActivityAt } from "../beagle/schedule";
 import { parseRssItems } from "../beagle/sources";
 import { dedupeLearnings, extractLearningRequests } from "../beagle/learn";
 import { isExplicitMention } from "../beagle/observe";
 import { replyBudget, isDuplicateNewsUrl, normalizeNewsUrl } from "../beagle/act";
+
+// ★ applyActions は DB と createPost を直接叩くので、モジュール読み込み前に
+//   モックする（vi.mock は hoist される）。テスト内で vi.doMock しても
+//   act.ts が既に pool を掴んでいるため効かない（実測で踏んだ）。
+const createPostCalls: any[] = [];
+const notifyCalls: any[] = [];
+vi.mock("../posts", () => ({
+  createPost: async (input: any) => {
+    createPostCalls.push(input);
+    return { id: 999 };
+  },
+}));
+vi.mock("../notifications", () => ({
+  createNotification: async (input: any) => {
+    notifyCalls.push(input);
+    return { id: 1 };
+  },
+}));
+vi.mock("../db", () => ({
+  pool: {
+    query: async (sql: string) => {
+      if (/SELECT 1 FROM posts WHERE id/.test(sql)) return { rows: [{ ok: 1 }] };
+      if (/SELECT author_email FROM posts/.test(sql))
+        return { rows: [{ author_email: "someone@example.com" }] };
+      return { rows: [] };
+    },
+  },
+}));
 
 describe("parseDecision", () => {
   it("parses valid JSON", () => {
@@ -217,5 +245,78 @@ describe("isDuplicateNewsUrl", () => {
   });
   it("returns false for empty existing list", () => {
     expect(isDuplicateNewsUrl([], "https://a.example.com/xだわん")).toBe(false);
+  });
+});
+
+// ★ drikin 2026-09-26: 「ビーグルがコメントする時は、常に囁くモードにして
+//   タイムラインの上に上げないようにする代わりに、そのタイムラインのユーザーには
+//   ちゃんと通知を渡すような仕様に変更する方が、タイムラインが荒れなくて良さそう」
+//
+//   実測（2026-09-26）: 直近7日でビーグルの返信149件が全部タイムラインを上げ、
+//   通知は2件しか出ていなかった。真逆の状態だった。
+//
+//   ★ 「返信が whisper で作られること」と「通知が作られること」の両方を固定する。
+//     片方だけ直すと「タイムラインからも消え、通知も来ない」= 誰にも届かない返信になる。
+describe("applyActions — Beagle replies are whispers + notify", () => {
+  it("creates replies with isWhisper: true", async () => {
+    const { applyActions } = await import("../beagle/act");
+    createPostCalls.length = 0;
+    notifyCalls.length = 0;
+    const res = await applyActions(
+      { actions: [{ type: "reply", parentId: 42, text: "わん！" }] } as any,
+      false
+    );
+    expect(createPostCalls.length).toBe(1);
+    expect(createPostCalls[0].isWhisper).toBe(true);
+    expect(createPostCalls[0].parentId).toBe(42);
+    expect(res.repliedTo).toEqual([42]);
+  });
+
+  it("notifies the parent author when replying", async () => {
+    const { applyActions } = await import("../beagle/act");
+    createPostCalls.length = 0;
+    notifyCalls.length = 0;
+    await applyActions(
+      { actions: [{ type: "reply", parentId: 42, text: "わん！" }] } as any,
+      false
+    );
+    expect(notifyCalls.length).toBe(1);
+    expect(notifyCalls[0].userEmail).toBe("someone@example.com");
+    expect(notifyCalls[0].type).toBe("reply");
+    expect(notifyCalls[0].postId).toBe(42);
+    expect(notifyCalls[0].replyId).toBe(999);
+  });
+
+  it("does NOT notify when the parent is Beagle's own post", async () => {
+    const { applyActions } = await import("../beagle/act");
+    createPostCalls.length = 0;
+    notifyCalls.length = 0;
+    const db = await import("../db");
+    const orig = db.pool.query;
+    (db.pool as any).query = async (sql: string) => {
+      if (/SELECT 1 FROM posts WHERE id/.test(sql)) return { rows: [{ ok: 1 }] };
+      if (/SELECT author_email FROM posts/.test(sql))
+        return { rows: [{ author_email: "system@backspace.fm" }] };
+      return { rows: [] };
+    };
+    await applyActions(
+      { actions: [{ type: "reply", parentId: 42, text: "わん！" }] } as any,
+      false
+    );
+    (db.pool as any).query = orig;
+    expect(notifyCalls.length).toBe(0);
+  });
+
+  it("root posts are NOT whispers (they must stay on the timeline)", async () => {
+    const { applyActions } = await import("../beagle/act");
+    createPostCalls.length = 0;
+    notifyCalls.length = 0;
+    await applyActions(
+      { actions: [{ type: "post", text: "ニュースだわん https://example.com/x" }] } as any,
+      false
+    );
+    expect(createPostCalls.length).toBe(1);
+    expect(createPostCalls[0].isWhisper).toBeFalsy();
+    expect(createPostCalls[0].parentId ?? null).toBeNull();
   });
 });
