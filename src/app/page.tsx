@@ -8007,18 +8007,24 @@ export default function Home() {
       //   正しいのは **sticky の `top` が示す最終位置**。これは CSS で決まって
       //   いてスクロールに依らない。`top` を読んで、帯の高さを足す。
       //   `top` は `calc(...)` で計算値が返るので px に解決される。
+      // ★★ どちらの測り方も単独では正しくない。実測で両方踏んだ:
+      //   - `offsetHeight` の足し算 → 隙間(16px)が入らず 15px 足りない
+      //   - `getBoundingClientRect()` → スクロール位置で変わる（174→158）
+      //   - sticky の `top` → 貼り付いた後の位置(150)で、**貼り付く前の
+      //     実位置(165)より上**。ジャンプ直後はまだ貼り付いていないので足りない
+      //
+      //   帯は「貼り付く前は下にあり、スクロールすると上に詰まる」。どちらの
+      //   状態でも隠れないためには **両方の下端の大きい方**を採る。
       const tab = document.querySelector<HTMLElement>('[data-cx="navtabs"]');
       const club = document.querySelector<HTMLElement>('[data-cx="clubbars"]');
       let bottom = headerH;
       for (const el of [tab, club]) {
         if (!el) continue;
         const cs = getComputedStyle(el);
-        // sticky でなければ top は auto。その場合は今の位置でよい。
+        const rectBottom = el.getBoundingClientRect().bottom;
         const top = cs.position === "sticky" ? parseFloat(cs.top) : NaN;
-        const anchor = Number.isFinite(top)
-          ? top
-          : el.getBoundingClientRect().top;
-        const b = anchor + el.offsetHeight;
+        const stuckBottom = Number.isFinite(top) ? top + el.offsetHeight : 0;
+        const b = Math.max(rectBottom, stuckBottom);
         if (b > bottom) bottom = b;
       }
       return Math.ceil(bottom) + 8;
