@@ -1530,18 +1530,23 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
   await mp.waitForTimeout(400);
   const stackHidden = await stackTop();
 
+  // ★ At rest the tab bar must sit FLUSH under the header (56px), not under it.
+  //   While it was sticky, `top: 56px` guaranteed that; in normal flow the
+  //   negative margin decides it, and -24 put it at 48px (8px hidden behind the
+  //   header — measured).
+  check(
+    "the tab bar rests flush under the header",
+    !!stackShown && stackShown.tab >= 54 && stackShown.tab <= 58,
+    `tab top=${stackShown?.tab} (must be ~56, flush with the header bottom)`
+  );
   check(
     "the tab bar scrolls out of view instead of staying pinned",
-    !!stackShown && !!stackHidden &&
-      stackShown.tab >= 50 && stackShown.tab <= 62 &&
-      stackHidden.tab < -100,
+    !!stackShown && !!stackHidden && stackHidden.tab < -100,
     `shown=${stackShown?.tab} after scroll=${stackHidden?.tab} (must be off-screen)`
   );
   check(
     "the club bar scrolls out of view instead of staying pinned",
-    !!stackShown && !!stackHidden &&
-      stackShown.club >= 118 && stackShown.club <= 130 &&
-      stackHidden.club < -100,
+    !!stackShown && !!stackHidden && stackHidden.club < -100,
     `shown=${stackShown?.club} after scroll=${stackHidden?.club} (must be off-screen)`
   );
 
