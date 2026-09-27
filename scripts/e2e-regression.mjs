@@ -1487,6 +1487,70 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
     `top=${hTop2?.top} hidden=${hTop2?.hidden}`
   );
 
+  // --- the sticky stack must follow the header when it hides ---
+  //
+  // drikin 2026-09-27: 「タブやチャンネルフィルターが固定されているため、
+  // ヘッダーがスクロールアウトした時の見た目が破綻してしまいます」— the tab bar
+  // and club bar are sticky at 56px/124px, so if they do NOT move with the
+  // header they leave a 56px strip at the top where scrolled content shows
+  // through.
+  const stackTop = async () =>
+    mp.evaluate(`(() => {
+      const t = document.querySelector('[data-cx="navtabs"]');
+      const c = document.querySelector('[data-cx="clubbars"]');
+      return {
+        tab: t ? Math.round(t.getBoundingClientRect().top) : null,
+        club: c ? Math.round(c.getBoundingClientRect().top) : null,
+      };
+    })()`);
+
+  await mp.evaluate(`window.scrollTo(0, 0)`);
+  await waitHeader(false);
+  await mp.waitForTimeout(400);
+  const stackShown = await stackTop();
+
+  await mp.evaluate(`window.scrollTo(0, 1200)`);
+  await waitHeader(true);
+  await mp.waitForTimeout(400);
+  const stackHidden = await stackTop();
+
+  check(
+    "the tab bar follows the header when it hides",
+    !!stackShown && !!stackHidden &&
+      stackShown.tab >= 50 && stackShown.tab <= 62 &&
+      stackHidden.tab >= -2 && stackHidden.tab <= 6,
+    `shown=${stackShown?.tab} hidden=${stackHidden?.tab} (must move from ~56 to ~0)`
+  );
+  check(
+    "the club bar follows the header when it hides",
+    !!stackShown && !!stackHidden &&
+      stackShown.club >= 118 && stackShown.club <= 130 &&
+      stackHidden.club >= 62 && stackHidden.club <= 74,
+    `shown=${stackShown?.club} hidden=${stackHidden?.club} (must move from ~124 to ~68)`
+  );
+
+  // --- the drawer can be closed by swiping it back out ---
+  //
+  // drikin 2026-09-27: 「開く動作のジェスチャーはできても、閉じるジェスチャーが
+  // ないので、とても使いづらいです」.
+  await mp.evaluate(`window.scrollTo(0, 0)`);
+  await mp.waitForTimeout(400);
+  await drag(6, 400, 200, 400);
+  const openedForClose = await drawerOpen('[data-cx="navbar"]');
+  check(
+    "the left drawer is open before the close gesture",
+    !!openedForClose && openedForClose.left >= -2,
+    `left=${openedForClose?.left}`
+  );
+  // Drag it back toward the left edge, starting INSIDE the drawer.
+  await drag(150, 400, 6, 400);
+  const afterClose = await drawerOpen('[data-cx="navbar"]');
+  check(
+    "swiping the open drawer back toward its edge closes it",
+    !!afterClose && afterClose.right <= 1,
+    `left=${afterClose?.left} right=${afterClose?.right} (must be off-screen)`
+  );
+
   await mob.close();
 }
 

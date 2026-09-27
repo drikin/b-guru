@@ -8593,7 +8593,7 @@ export default function Home() {
         setHeaderHidden(false);
       } else if (navOpenedRef.current || asideOpenedRef.current) {
         setHeaderHidden(false);
-      } else if (false && dy > 0 && y > HIDE_AFTER) {
+      } else if (dy > 0 && y > HIDE_AFTER) {
         setHeaderHidden(true);
       } else if (dy < -SHOW_AFTER) {
         setHeaderHidden(false);
@@ -8693,7 +8693,7 @@ export default function Home() {
       //   history-back swipe. Doing it here (not on the first move) is what
       //   makes iOS Safari and iOS Chrome give up their native gesture.
       //   `passive: false` on this listener is what makes it legal.
-      // DEGRADE: preventDefault を外す
+      e.preventDefault();
     };
     const onMove = (e: TouchEvent) => {
       if (!armed) return;
@@ -8729,6 +8729,71 @@ export default function Home() {
       claimed = false;
       side = 0;
     };
+    // ---- Close gesture: drag the OPEN drawer back toward its edge ----
+    //
+    // drikin 2026-09-27: 「開く動作のジェスチャーはできても、閉じるジェスチャーが
+    // ないので、とても使いづらいです」— opening by swipe but closing only by
+    // tapping the backdrop is asymmetric and feels broken.
+    //
+    // ★ This is a separate listener pair because the open/close cases have
+    //   opposite preconditions: the open gesture refuses to arm while a drawer
+    //   is open, and this one refuses to arm while none is. Keeping them in one
+    //   handler made the state machine hard to reason about.
+    //
+    // ★ The drag must START INSIDE the open drawer (not on the backdrop), so a
+    //   horizontal drag on the page behind it is never read as a close.
+    let csx = 0, csy = 0, cside = 0, carmed = false, cclaimed = false;
+    const drawerEl = (s: number) =>
+      document.querySelector(s === -1 ? '[data-cx="navbar"]' : '[data-cx="aside"]');
+    const onCloseStart = (e: TouchEvent) => {
+      carmed = false;
+      cclaimed = false;
+      cside = 0;
+      const t = e.touches[0];
+      if (!t) return;
+      const openSide = navOpenedRef.current ? -1 : asideOpenedRef.current ? 1 : 0;
+      if (openSide === 0) return;
+      const el = drawerEl(openSide);
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      // Must start on the drawer itself.
+      if (t.clientX < r.left || t.clientX > r.right) return;
+      if (t.clientY < r.top || t.clientY > r.bottom) return;
+      if (isEditable(e.target) || inHScrollable(e.target)) return;
+      csx = t.clientX; csy = t.clientY; cside = openSide; carmed = true;
+    };
+    const onCloseMove = (e: TouchEvent) => {
+      if (!carmed) return;
+      const t = e.touches[0];
+      if (!t) return;
+      const dx = t.clientX - csx;
+      const dy = t.clientY - csy;
+      if (Math.abs(dy) > EDGE_MAX_DY && Math.abs(dy) > Math.abs(dx)) {
+        carmed = false;
+        return;
+      }
+      // Outward travel: left for the left drawer, right for the right drawer.
+      const outward = cside === -1 ? -dx : dx;
+      if (outward < 8) return;
+      if (!cclaimed) {
+        cclaimed = true;
+        e.preventDefault();
+      }
+      if (outward >= EDGE_MIN_DX) {
+        carmed = false;
+        if (cside === -1) setNavOpened(false);
+        else setAsideOpened(false);
+      }
+    };
+    const onCloseEnd = () => {
+      carmed = false;
+      cclaimed = false;
+      cside = 0;
+    };
+    document.addEventListener("touchstart", onCloseStart, { capture: true, passive: true });
+    document.addEventListener("touchmove", onCloseMove, { capture: true, passive: false });
+    document.addEventListener("touchend", onCloseEnd, { capture: true, passive: true });
+    document.addEventListener("touchcancel", onCloseEnd, { capture: true, passive: true });
     document.addEventListener("touchstart", onStart, { capture: true, passive: false });
     document.addEventListener("touchmove", onMove, { capture: true, passive: false });
     document.addEventListener("touchend", onEnd, { capture: true, passive: true });
@@ -8738,6 +8803,10 @@ export default function Home() {
       document.removeEventListener("touchmove", onMove, { capture: true });
       document.removeEventListener("touchend", onEnd, { capture: true });
       document.removeEventListener("touchcancel", onEnd, { capture: true });
+      document.removeEventListener("touchstart", onCloseStart, { capture: true });
+      document.removeEventListener("touchmove", onCloseMove, { capture: true });
+      document.removeEventListener("touchend", onCloseEnd, { capture: true });
+      document.removeEventListener("touchcancel", onCloseEnd, { capture: true });
     };
   }, []);
 
@@ -9958,11 +10027,22 @@ export default function Home() {
                     // cancels the wrapper's top padding so the bar starts at 56px
                     // instead of 80px; the padding is re-added below the bar so
                     // the content keeps its breathing room.
-                    top: "var(--app-shell-header-height, 56px)",
+                    // ★ Follows the header when it auto-hides. The header
+                    //   slides up by its own height (56px), so the tab bar's
+                    //   sticky offset must slide with it — otherwise the bar
+                    //   stays pinned at 56px and leaves a 56px strip at the top
+                    //   where scrolled content shows through (drikin
+                    //   2026-09-27: 「タブやチャンネルフィルターが固定されて
+                    //   いるため、ヘッダーがスクロールアウトした時の見た目が
+                    //   破綻してしまいます」).
+                    top: headerHidden
+                      ? "0px"
+                      : "var(--app-shell-header-height, 56px)",
                     // Cancel the wrapper's top padding (24px at sm:py-6) so the
                     // bar starts flush at 56px instead of 80px. Measured: -16
                     // left it at 64px, so the full 24px is needed.
                     marginTop: -24,
+                    transition: "top 180ms ease",
                     zIndex: 60,
                     background: "var(--bg-primary)",
                     // ★ 上下の余白を均等にする（drikin 2026-09-25「タイムラインの
@@ -10073,8 +10153,15 @@ export default function Home() {
                     //   ★ この `+68px` はタブバーの実寸と**必ず一致**させる。
                     //     一致していないと部活バーの休位置と貼付位置がずれ、
                     //     j/k ジャンプがどちらかで潜り込む（tochi 2026-09-27）。
+                    //
+                    //   ★ ヘッダーが自動的に隠れたら、タブバーごと上に詰める
+                    //     （drikin 2026-09-27）。ヘッダーが 56px スライドする
+                    //     ので、その分だけ sticky の基準も上げる。
                     position: "sticky",
-                    top: "calc(var(--app-shell-header-height, 56px) + 68px)",
+                    top: headerHidden
+                      ? "68px"
+                      : "calc(var(--app-shell-header-height, 56px) + 68px)",
+                    transition: "top 180ms ease",
                     zIndex: 59,
                     background: "var(--bg-primary)",
                     // ★ tochi 2026-09-27「jkのショートカットで投稿をジャンプ…投稿と、
