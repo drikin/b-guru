@@ -354,26 +354,29 @@ for (const y of [50, 200, 800, 2500, 6000]) {
   tabWhileScrolling.push(await tabPos());
 }
 const tops = tabWhileScrolling.map((t) => t?.top);
-// ★ The original bug was a 24px JUMP (80px → 56px) on the first scroll, which
-//   made every tab switch look jittery. The bar must still never sit at an
-//   arbitrary intermediate offset.
+// ★ The bar is no longer sticky at all (drikin 2026-09-27: 「いっそこれらも
+//   スクロールアウトして良い」). It must scroll away with the content, i.e. its
+//   top must DECREASE monotonically as the page scrolls down — never stay
+//   pinned, and never jump back down.
 //
-//   Since 2026-09-27 the bar deliberately follows the auto-hiding header, so
-//   the legal positions are exactly two: 56px (header shown) and 0px (header
-//   hidden). Anything else is the old jitter coming back.
-const LEGAL_TOPS = [tabAtTop?.top, 0];
-const allLegal = tops.every((t) => LEGAL_TOPS.includes(t));
+//   The original bug this guard was written for was a 24px JUMP (80px → 56px)
+//   on the first scroll, which made every tab switch look jittery. A monotonic
+//   decrease rules that out too: a jump would show as a value going UP.
+const monotonic = tops.every((t, i) => i === 0 || t <= tops[i - 1] + 1);
+const scrolledAway = tops[tops.length - 1] < (tabAtTop?.top ?? 0) - 100;
 check(
-  "tab bar only ever rests at the header-shown or header-hidden offset",
-  allLegal,
-  `at top=${tabAtTop?.top}px, while scrolling=${tops.join("/")}px (legal: ${LEGAL_TOPS.join(" or ")})`
+  "tab bar scrolls away with the content (no longer pinned)",
+  monotonic && scrolledAway,
+  `at top=${tabAtTop?.top}px, while scrolling=${tops.join("/")}px (must decrease monotonically)`
 );
 
 // 6e. The bar must sit FLUSH against the header. Pinning it lower (80px) left a
 // 24px strip above it where scrolled content showed through, which looks broken
 // (drikin: 「スクロールしたコンテンツがタブの裏側に見えて変」).
 console.log("\n6e. Tab bar sits flush under the header (no gap)");
-await page.evaluate(() => window.scrollTo(0, 3000));
+// ★ Measure at the TOP of the page. The bar is no longer sticky, so scrolling
+//   first would move it off-screen and the gap check would be meaningless.
+await page.evaluate(() => window.scrollTo(0, 0));
 await page.waitForTimeout(600);
 const gapInfo = await page.evaluate(`(() => {
   const t = document.querySelector('[data-cx="navtabs"]');
@@ -1266,8 +1269,6 @@ console.log("\n6j-2. j/k jump clears the sticky stack");
   await p2.goto(BASE_URL, { waitUntil: "domcontentloaded" });
   await p2.waitForTimeout(6000);
   const jump = await p2.evaluate(`(async () => {
-    const club = document.querySelector('[data-cx="clubbars"]');
-    if (!club) return { error: 'no club bar on desktop' };
     const out = [];
     for (let i = 0; i < 3; i++) {
       document.body.focus();
@@ -1276,17 +1277,21 @@ console.log("\n6j-2. j/k jump clears the sticky stack");
       const el = document.querySelector('.kbd-focus');
       if (!el) { out.push({ i, err: 'no kbd-focus' }); continue; }
       const rect = el.getBoundingClientRect();
-      // ★ Re-measure the club bar AFTER the jump, not once before the loop.
-      //   Jumping scrolls the page, which auto-hides the header, which slides
-      //   the sticky club bar up (124 → 68). Comparing against a stale
-      //   pre-jump bottom reported a phantom 47-48px overlap while the card
-      //   was in fact correctly placed below the bar.
-      const clubBottom = club.getBoundingClientRect().bottom;
+      // ★ The club bar is no longer sticky (drikin 2026-09-27), so after a jump
+      //   it is scrolled off-screen and its bottom edge is meaningless as a
+      //   collision boundary. What must not cover the card is the HEADER, and
+      //   only while it is visible.
+      const headerEl = document.querySelector('[data-cx="header"]');
+      const headerVisible =
+        !headerEl || headerEl.getAttribute('data-hidden') !== 'true';
+      const headerBottom = headerVisible && headerEl
+        ? headerEl.getBoundingClientRect().bottom
+        : 0;
       out.push({
         i,
         cardTop: Math.round(rect.top),
-        clubBottom: Math.round(clubBottom),
-        overlap: Math.round(clubBottom - rect.top),
+        headerBottom: Math.round(headerBottom),
+        overlap: Math.round(headerBottom - rect.top),
       });
     }
     return { out };
@@ -1298,10 +1303,10 @@ console.log("\n6j-2. j/k jump clears the sticky stack");
     // i.e. the card is hidden underneath it.
     const bad = (jump.out || []).filter((x) => x.err || x.overlap > 0);
     check(
-      "j/k jump lands the focused post below the club bar",
+      "j/k jump lands the focused post below the header",
       bad.length === 0,
       bad.length === 0
-        ? `clubBottom=${jump.clubBottom} overlaps=${JSON.stringify((jump.out || []).map((x) => x.overlap))}`
+        ? `overlaps=${JSON.stringify((jump.out || []).map((x) => x.overlap))}`
         : `card hidden under the club bar: ${JSON.stringify(bad)}`
     );
   }
@@ -1500,13 +1505,11 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
     `top=${hTop2?.top} hidden=${hTop2?.hidden}`
   );
 
-  // --- the sticky stack must follow the header when it hides ---
+  // --- the tab bar and club bar scroll away with the content ---
   //
-  // drikin 2026-09-27: 「タブやチャンネルフィルターが固定されているため、
-  // ヘッダーがスクロールアウトした時の見た目が破綻してしまいます」— the tab bar
-  // and club bar are sticky at 56px/124px, so if they do NOT move with the
-  // header they leave a 56px strip at the top where scrolled content shows
-  // through.
+  // drikin 2026-09-27: 「スクロールした時のタブとフィルターのレイアウトが崩れる。
+  // いっそこれらもスクロールアウトして良い」— they are no longer sticky, so
+  // after scrolling they must be off-screen (negative top), not pinned.
   const stackTop = async () =>
     mp.evaluate(`(() => {
       const t = document.querySelector('[data-cx="navtabs"]');
@@ -1528,18 +1531,18 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
   const stackHidden = await stackTop();
 
   check(
-    "the tab bar follows the header when it hides",
+    "the tab bar scrolls out of view instead of staying pinned",
     !!stackShown && !!stackHidden &&
       stackShown.tab >= 50 && stackShown.tab <= 62 &&
-      stackHidden.tab >= -2 && stackHidden.tab <= 6,
-    `shown=${stackShown?.tab} hidden=${stackHidden?.tab} (must move from ~56 to ~0)`
+      stackHidden.tab < -100,
+    `shown=${stackShown?.tab} after scroll=${stackHidden?.tab} (must be off-screen)`
   );
   check(
-    "the club bar follows the header when it hides",
+    "the club bar scrolls out of view instead of staying pinned",
     !!stackShown && !!stackHidden &&
       stackShown.club >= 118 && stackShown.club <= 130 &&
-      stackHidden.club >= 62 && stackHidden.club <= 74,
-    `shown=${stackShown?.club} hidden=${stackHidden?.club} (must move from ~124 to ~68)`
+      stackHidden.club < -100,
+    `shown=${stackShown?.club} after scroll=${stackHidden?.club} (must be off-screen)`
   );
 
   // --- the drawer can be closed by swiping it back out ---

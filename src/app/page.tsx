@@ -8274,27 +8274,30 @@ export default function Home() {
       //   （実測: 16px の隙間があり、rect は 174→158 とスクロールで変わった）。
       //   部活バー側で `marginTop: -16` を入れて隙間を消してあるので、
       //   ここは sticky の `top` + 高さで一意に決まる。
-      const tab = document.querySelector<HTMLElement>('[data-cx="navtabs"]');
-      const club = document.querySelector<HTMLElement>('[data-cx="clubbars"]');
-      // ★ When the header has auto-hidden it occupies no space, so it must not
-      //   be added to the offset. The tab bar and club bar also slide up with
-      //   it (their sticky `top` becomes 0 / 68), and reading their computed
-      //   `top` below already accounts for that — but the header's own 56px
-      //   would otherwise be counted twice, pushing the focused card 56px too
-      //   far down (measured: overlap 47-48px, i.e. the card landed under the
-      //   club bar again — the exact bug tochi reported on 2026-09-27).
+      // ★ The tab bar and club bar are no longer sticky (drikin 2026-09-27:
+      //   「いっそこれらもスクロールアウトして良い」), so they do NOT occupy
+      //   space at the top once the page is scrolled — only the header does,
+      //   and only while it is visible.
+      //
+      //   The old code added their sticky `top` + height unconditionally, which
+      //   would now push the focused card far too low. Measure what is actually
+      //   pinned at the top instead: the header, and only if it is showing.
       const headerEl = document.querySelector<HTMLElement>('[data-cx="header"]');
       const headerVisible =
         !headerEl || headerEl.getAttribute("data-hidden") !== "true";
       let bottom = headerVisible ? headerH : 0;
-      for (const el of [tab, club]) {
+      // Any element that is still sticky (none today, but keep this honest if
+      // one is added back) contributes its pinned bottom edge.
+      for (const el of [
+        document.querySelector<HTMLElement>('[data-cx="navtabs"]'),
+        document.querySelector<HTMLElement>('[data-cx="clubbars"]'),
+      ]) {
         if (!el) continue;
         const cs = getComputedStyle(el);
-        const top = cs.position === "sticky" ? parseFloat(cs.top) : NaN;
-        const anchor = Number.isFinite(top)
-          ? top
-          : el.getBoundingClientRect().top;
-        const b = anchor + el.offsetHeight;
+        if (cs.position !== "sticky") continue;
+        const top = parseFloat(cs.top);
+        if (!Number.isFinite(top)) continue;
+        const b = top + el.offsetHeight;
         if (b > bottom) bottom = b;
       }
       return Math.ceil(bottom) + 8;
@@ -8699,11 +8702,22 @@ export default function Home() {
       if (s === 0) return;
       if (isEditable(e.target) || inHScrollable(e.target)) return;
       sx = t.clientX; sy = t.clientY; side = s; armed = true;
-      // ★ Claim the touch IMMEDIATELY, before the browser decides this is a
-      //   history-back swipe. Doing it here (not on the first move) is what
-      //   makes iOS Safari and iOS Chrome give up their native gesture.
-      //   `passive: false` on this listener is what makes it legal.
-      e.preventDefault();
+      // ★ Do NOT preventDefault here.
+      //
+      //   Calling it on `touchstart` unconditionally looked like the safest way
+      //   to beat the browser's native edge gesture, but on a real device it
+      //   breaks the gesture AFTER the page has been scrolled: iOS treats a
+      //   preventDefault'd touchstart during an active scroll as "stop
+      //   scrolling", and the following touchmove events never arrive — so the
+      //   drag is dead (drikin 2026-09-27: 「スクロールすると両端ジェスチャーが
+      //   効かない」). Headless Chromium does not reproduce this, which is why
+      //   the guard stayed green.
+      //
+      //   Instead we only MARK the touch here and claim it on the first
+      //   touchmove, once the drag is clearly horizontal. That is still early
+      //   enough to beat the native gesture (the browser needs a few pixels of
+      //   travel before it commits) and it leaves a plain tap or a vertical
+      //   scroll completely untouched.
     };
     const onMove = (e: TouchEvent) => {
       if (!armed) return;
@@ -8718,7 +8732,10 @@ export default function Home() {
       }
       // Inward travel for this side: right for the left edge, left for the right.
       const inward = side === -1 ? dx : -dx;
-      if (inward < 8) return; // not yet clearly an inward drag
+      if (inward < 4) return; // not yet clearly an inward drag
+      // ★ Claim as early as possible on the move path — this is what stops the
+      //   browser's native edge gesture. 4px is enough to know the direction
+      //   and still early enough that the browser has not committed.
       if (!claimed) {
         claimed = true;
         e.preventDefault();
@@ -10020,7 +10037,15 @@ export default function Home() {
                 <Box
                   data-cx="navtabs"
                   style={{
-                    position: "sticky",
+                    // ★ スクロールで流れ去る（drikin 2026-09-27「いっそこれらも
+                    //   スクロールアウトして良い」）。
+                    //
+                    //   これまで sticky でヘッダー直下に貼っていたが、ヘッダーが
+                    //   自動的に隠れるようになると「ヘッダーだけ消えてタブが残る」
+                    //   という中途半端な状態になり、レイアウトが破綻して見えた。
+                    //   タブとフィルターも一緒に流れ去れば、その状態自体が
+                    //   存在しなくなる。sticky の基準を追従させる複雑さも消える。
+                    position: "relative",
                     // Pin the bar directly under the header (56px), with no gap.
                     //
                     // The bar used to rest at 80px (pushed down by the 16px
@@ -10037,22 +10062,10 @@ export default function Home() {
                     // cancels the wrapper's top padding so the bar starts at 56px
                     // instead of 80px; the padding is re-added below the bar so
                     // the content keeps its breathing room.
-                    // ★ Follows the header when it auto-hides. The header
-                    //   slides up by its own height (56px), so the tab bar's
-                    //   sticky offset must slide with it — otherwise the bar
-                    //   stays pinned at 56px and leaves a 56px strip at the top
-                    //   where scrolled content shows through (drikin
-                    //   2026-09-27: 「タブやチャンネルフィルターが固定されて
-                    //   いるため、ヘッダーがスクロールアウトした時の見た目が
-                    //   破綻してしまいます」).
-                    top: headerHidden
-                      ? "0px"
-                      : "var(--app-shell-header-height, 56px)",
                     // Cancel the wrapper's top padding (24px at sm:py-6) so the
                     // bar starts flush at 56px instead of 80px. Measured: -16
                     // left it at 64px, so the full 24px is needed.
                     marginTop: -24,
-                    transition: "top 180ms ease",
                     zIndex: 60,
                     background: "var(--bg-primary)",
                     // ★ 上下の余白を均等にする（drikin 2026-09-25「タイムラインの
@@ -10167,11 +10180,10 @@ export default function Home() {
                     //   ★ ヘッダーが自動的に隠れたら、タブバーごと上に詰める
                     //     （drikin 2026-09-27）。ヘッダーが 56px スライドする
                     //     ので、その分だけ sticky の基準も上げる。
-                    position: "sticky",
-                    top: headerHidden
-                      ? "68px"
-                      : "calc(var(--app-shell-header-height, 56px) + 68px)",
-                    transition: "top 180ms ease",
+                    // ★ タブバーと同じくスクロールで流れ去る（drikin 2026-09-27
+                    //   「いっそこれらもスクロールアウトして良い」）。sticky を
+                    //   やめたので、タブバーの高さに追従させる必要も消えた。
+                    position: "relative",
                     zIndex: 59,
                     background: "var(--bg-primary)",
                     // ★ tochi 2026-09-27「jkのショートカットで投稿をジャンプ…投稿と、
