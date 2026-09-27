@@ -1659,9 +1659,17 @@ console.log("\n6j-3. Unread state syncs across devices");
   //   direction: the server must report the cards as read. That still proves
   //   the server round trip works — which is what tochi asked for — without
   //   inventing data.
-  const unreadCount = await pa.evaluate(
-    `document.querySelectorAll('[data-unread-id]').length`
-  );
+  // ★ Count cards that are ACTUALLY unread. `[data-unread-id]` is on every
+  //   card (it is the observer hook), so counting that always returns the full
+  //   feed and the branch below never fires. Unread is expressed as a
+  //   background colour, which is also what the guard's own isUnread() checks.
+  const unreadCount = await pa.evaluate(`(() => {
+    const cards = [...document.querySelectorAll('[data-unread-id]')];
+    return cards.filter((el) => {
+      const bg = getComputedStyle(el).backgroundColor;
+      return bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent';
+    }).length;
+  })()`);
   if (unreadCount === 0) {
     const serverRead = await pa.evaluate(`(async () => {
       const r = await fetch('/api/posts?limit=20');
