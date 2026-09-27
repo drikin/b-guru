@@ -1907,23 +1907,26 @@ console.log("\n6m. Duplicate-post warning");
     });
     if (!orig.ok) return { status: orig.status, err: 'could not create the source post' };
     const origPost = await orig.json();
-    // 2. 別サイトが同じニュースを報じた体で AI 層に問い合わせる
-    const r = await fetch('/api/posts/duplicates', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        phase: 'ai',
-        text: 'セルシスの「クリスタ」素材が大量に非公開へ、ユーザーが混乱　誤判定もあったと説明 https://www.gigazine.net/news/20260924-clip-studio-paint/',
-      }),
-    });
-    if (!r.ok) {
+    // ★ 後片付けは try/finally で必ず走らせる。早期 return や例外で抜けると
+    //   テスト投稿が本番タイムラインに残る（実測: 失敗した run の分が3件残り、
+    //   ユーザーから「僕のアカウントでテスト投稿したものはちゃんと最後消して
+    //   おいてね」と指摘された）。
+    try {
+      // 2. 別サイトが同じニュースを報じた体で AI 層に問い合わせる
+      const r = await fetch('/api/posts/duplicates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phase: 'ai',
+          text: 'セルシスの「クリスタ」素材が大量に非公開へ、ユーザーが混乱　誤判定もあったと説明 https://www.gigazine.net/news/20260924-clip-studio-paint/',
+        }),
+      });
+      if (!r.ok) return { status: r.status, origId: origPost.id };
+      const d = await r.json();
+      return { status: r.status, dupes: d.duplicates ?? [], origId: origPost.id };
+    } finally {
       await fetch('/api/posts/' + origPost.id, { method: 'DELETE' }).catch(() => {});
-      return { status: r.status, origId: origPost.id };
     }
-    const d = await r.json();
-    // 後片付け（テスト投稿を残さない）
-    await fetch('/api/posts/' + origPost.id, { method: 'DELETE' }).catch(() => {});
-    return { status: r.status, dupes: d.duplicates ?? [], origId: origPost.id };
   })()`);
   check(
     "the AI layer finds the same news reported by a different site",
