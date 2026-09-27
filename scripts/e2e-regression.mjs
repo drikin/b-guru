@@ -1171,6 +1171,12 @@ console.log("\n6j. Mobile club bar (one-tap club switching)");
 console.log("\n6j-2. j/k jump clears the sticky stack");
 {
   const desk = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  // ★ 新しい context には cookie が引き継がれない。付け忘れると未ログインで
+  //   描画され、部活バーが存在せず「no club bar on desktop」で FAIL する
+  //   （実測で踏んだ）。
+  await desk.addCookies([
+    { name: "bsm_session", value: SESSION, domain: "bsm.backspace.fm", path: "/" },
+  ]);
   const p2 = await desk.newPage();
   await p2.goto(BASE_URL, { waitUntil: "domcontentloaded" });
   await p2.waitForTimeout(6000);
