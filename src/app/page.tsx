@@ -7993,7 +7993,11 @@ export default function Home() {
           )
         ) || 56;
       const tab = document.querySelector<HTMLElement>('[data-cx="navtabs"]');
-      const stack = tab ? headerH + tab.offsetHeight : headerH;
+      const club = document.querySelector<HTMLElement>('[data-cx="clubbars"]');
+      // 部活バーは `navtabs` の直下に貼られるので、両方の高さを足す。
+      // どちらかが無い画面（チャット表示中は部活バーが出ない）でも正しく動く。
+      const stack =
+        headerH + (tab ? tab.offsetHeight : 0) + (club ? club.offsetHeight : 0);
       return Math.ceil(stack) + 8;
     };
     const setRing = (id: number | null) => {
