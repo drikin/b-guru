@@ -120,9 +120,18 @@ check("no uncaught page errors", consoleErrors.length === 0, consoleErrors.slice
 // ------------------------------------------------- chat scroll: open at bottom
 console.log("\n2. Chat opens at the bottom (drikin 2026-09-23)");
 // Scroll the timeline down first — this is the exact precondition reported.
-await page.evaluate(() => window.scrollBy(0, 6000));
-await page.waitForTimeout(1200);
-const timelineScroll = await page.evaluate(() => Math.round(window.scrollY));
+//
+// ★ Retry until it actually takes. The feed grows as posts stream in, so a
+//   single scrollBy can land while the document is still short and get clamped
+//   back to 0 (measured: scrollY=0 on a run where the same call worked
+//   standalone). Poll instead of assuming one call is enough.
+let timelineScroll = 0;
+for (let i = 0; i < 20; i++) {
+  await page.evaluate(() => window.scrollTo(0, 6000));
+  await page.waitForTimeout(400);
+  timelineScroll = await page.evaluate(() => Math.round(window.scrollY));
+  if (timelineScroll > 1000) break;
+}
 check("timeline scrolled down", timelineScroll > 1000, `scrollY=${timelineScroll}`);
 
 await page.evaluate(clickTab("チャット"));
@@ -376,8 +385,21 @@ check(
 console.log("\n6e. Tab bar sits flush under the header (no gap)");
 // ★ Measure at the TOP of the page. The bar is no longer sticky, so scrolling
 //   first would move it off-screen and the gap check would be meaningless.
+//
+//   ★ Wait for the header's 180ms transform transition to finish. Sampling
+//   mid-transition reads a header bottom of 54px instead of 56px and reports a
+//   phantom 2px gap.
 await page.evaluate(() => window.scrollTo(0, 0));
-await page.waitForTimeout(600);
+for (let i = 0; i < 20; i++) {
+  await page.waitForTimeout(150);
+  const settled = await page.evaluate(`(() => {
+    const h = document.querySelector('[data-cx="header"]');
+    if (!h) return true;
+    return h.getAttribute('data-hidden') !== 'true' &&
+      Math.abs(h.getBoundingClientRect().bottom - 56) < 1;
+  })()`);
+  if (settled) break;
+}
 const gapInfo = await page.evaluate(`(() => {
   const t = document.querySelector('[data-cx="navtabs"]');
   const header = document.querySelector('[data-cx="header"]') || document.querySelector('header');
@@ -1694,27 +1716,44 @@ console.log("\n6j-3. Unread state syncs across devices");
   //   後続のガードが走ってテスト投稿が残る。
   //   ここでは「スクロール後に実際にビューポート内へ入り、既読になった」ことを
   //   確認してから返す。既読にならなければ次の候補を試す。
+  // ★ Pick a card that is unread AND actually becomes read.
+  //
+  //   Two traps measured here:
+  //     1. A collapsed reply (COLLAPSE_THRESHOLD=4) has a zero-height box, so
+  //        scrollIntoView never brings it into the viewport and the
+  //        IntersectionObserver (threshold 0.25) never fires — it stays unread
+  //        forever. Skip anything with no height.
+  //     2. The loop must not give up on the first candidate. Try several and
+  //        return the first that genuinely flips to read.
   const target = await pa.evaluate(`(async () => {
-    const cards = [...document.querySelectorAll('[data-unread-id]')];
     const isUnread = (el) => {
       const bg = getComputedStyle(el).backgroundColor;
       return bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent';
     };
+    const cards = [...document.querySelectorAll('[data-unread-id]')];
+    const tried = [];
     for (const c of cards) {
       const id = Number(c.getAttribute('data-unread-id'));
       if (!id) continue;
       if (!isUnread(c)) continue;
+      const r0 = c.getBoundingClientRect();
+      // Zero-height (collapsed reply) can never be observed — skip it.
+      if (r0.height < 20) { tried.push({ id, skip: 'zero-height' }); continue; }
       c.scrollIntoView({ block: 'center' });
       // 自動既読（AUTO_READ_DWELL_MS=1000）を待つ
       await new Promise((r) => setTimeout(r, 2200));
       const el = document.querySelector('[data-unread-id="' + id + '"]');
-      if (el && !isUnread(el)) return { id };
-      // 既読にならなかった（折りたたみ等）→ 次の候補へ
+      if (el && !isUnread(el)) return { id, tried };
+      tried.push({ id, skip: 'stayed-unread' });
     }
-    return null;
+    return { id: null, tried };
   })()`);
-  if (!target) {
-    check("unread state syncs across devices", false, "no unread card found on device A");
+  if (!target?.id) {
+    check(
+      "unread state syncs across devices",
+      false,
+      `no unread card could be marked read on device A — tried=${JSON.stringify(target?.tried ?? [])}`
+    );
   } else {
     // 1.5 秒待って自動既読（AUTO_READ_DWELL_MS=1000）を発火させる
     await pa.waitForTimeout(2000);
