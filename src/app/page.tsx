@@ -9616,8 +9616,13 @@ export default function Home() {
                     //
                     //   隙間を消して「休んでいるとき = 貼り付いたとき」にすれば、
                     //   位置が一意に決まり、オフセットも1つの値で足りる。
-                    //   隙間はタブバー側の paddingBottom に移した（下記 navtabs 参照）。
-                    marginTop: 0,
+                    //
+                    //   ★ 親の `Stack gap="md"` は **margin では消えない**。
+                    //     Mantine の Stack は子に `margin-top` を当てるのではなく
+                    //     `gap` で間隔を作るので、`marginTop: 0` では詰まらない
+                    //     （実測: 休位置 140 / 貼付位置 124 で 16px ずれたまま）。
+                    //     負の margin で打ち消す。
+                    marginTop: -16,
                     paddingBottom: 6,
                     // 横スクロールのみ。縦の引っ張りリロードに取られないようにする。
                     overflowX: "auto",
