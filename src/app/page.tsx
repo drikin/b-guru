@@ -8007,24 +8007,22 @@ export default function Home() {
       //   正しいのは **sticky の `top` が示す最終位置**。これは CSS で決まって
       //   いてスクロールに依らない。`top` を読んで、帯の高さを足す。
       //   `top` は `calc(...)` で計算値が返るので px に解決される。
-      // ★★ どちらの測り方も単独では正しくない。実測で両方踏んだ:
-      //   - `offsetHeight` の足し算 → 隙間(16px)が入らず 15px 足りない
-      //   - `getBoundingClientRect()` → スクロール位置で変わる（174→158）
-      //   - sticky の `top` → 貼り付いた後の位置(150)で、**貼り付く前の
-      //     実位置(165)より上**。ジャンプ直後はまだ貼り付いていないので足りない
-      //
-      //   帯は「貼り付く前は下にあり、スクロールすると上に詰まる」。どちらの
-      //   状態でも隠れないためには **両方の下端の大きい方**を採る。
+      // ★ 帯の「休んでいる位置」と「貼り付いた位置」が一致していることが前提。
+      //   一致していないと、どちらの測り方でも片方の状態で潜り込む
+      //   （実測: 16px の隙間があり、rect は 174→158 とスクロールで変わった）。
+      //   部活バー側で `marginTop: -16` を入れて隙間を消してあるので、
+      //   ここは sticky の `top` + 高さで一意に決まる。
       const tab = document.querySelector<HTMLElement>('[data-cx="navtabs"]');
       const club = document.querySelector<HTMLElement>('[data-cx="clubbars"]');
       let bottom = headerH;
       for (const el of [tab, club]) {
         if (!el) continue;
         const cs = getComputedStyle(el);
-        const rectBottom = el.getBoundingClientRect().bottom;
         const top = cs.position === "sticky" ? parseFloat(cs.top) : NaN;
-        const stuckBottom = Number.isFinite(top) ? top + el.offsetHeight : 0;
-        const b = Math.max(rectBottom, stuckBottom);
+        const anchor = Number.isFinite(top)
+          ? top
+          : el.getBoundingClientRect().top;
+        const b = anchor + el.offsetHeight;
         if (b > bottom) bottom = b;
       }
       return Math.ceil(bottom) + 8;
@@ -9594,7 +9592,21 @@ export default function Home() {
                     top: "calc(var(--app-shell-header-height, 56px) + 60px)",
                     zIndex: 59,
                     background: "var(--bg-primary)",
-                    marginTop: 0,
+                    // ★ tochi 2026-09-27「jkのショートカットで投稿をジャンプ…投稿と、
+                    //   タブが少し重なってしまう」の根本原因。
+                    //
+                    //   親の `Stack gap="md"` がタブバーと部活バーの間に **16px の
+                    //   隙間**を作っていた。そのため部活バーは
+                    //     貼り付く前: 132→165（隙間のぶん下にいる）
+                    //     貼り付いた後: 116→150（top に張り付く）
+                    //   と **15px 動く**。ジャンプのオフセットはどちらか一方しか
+                    //   満たせないので、必ずどちらかで潜り込む。
+                    //
+                    //   隙間を消して「休んでいるとき = 貼り付いたとき」にすれば、
+                    //   位置が一意に決まり、オフセットも1つの値で足りる。
+                    //   見た目の間隔は paddingTop で確保する（隙間ではなく余白）。
+                    marginTop: -16,
+                    paddingTop: 16,
                     paddingBottom: 6,
                     // 横スクロールのみ。縦の引っ張りリロードに取られないようにする。
                     overflowX: "auto",
