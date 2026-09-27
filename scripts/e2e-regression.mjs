@@ -1442,10 +1442,18 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
 
   // ★ The scroll handler is rAF-throttled and the header has a 180ms
   //   transition, so poll for the settled state instead of sampling once.
+  // ★ Wait for the SETTLED state, not just the flag. `data-hidden` flips as
+  //   soon as React re-renders, but the header has a 180ms transform
+  //   transition — sampling right after the flag flips reads top=0 and looks
+  //   like a failure when the header is in fact moving. Require BOTH the flag
+  //   and the geometry to agree.
   const waitHeader = async (wantHidden) => {
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 30; i++) {
       const st = await headerY();
-      if (st && st.hidden === wantHidden) return st;
+      if (st && st.hidden === wantHidden) {
+        const settled = wantHidden ? st.top <= -40 : st.top >= -2;
+        if (settled) return st;
+      }
       await mp.waitForTimeout(120);
     }
     return await headerY();
