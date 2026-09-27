@@ -1646,18 +1646,40 @@ console.log("\n6m. Duplicate-post warning");
   //     別サイト同一ニュース → same 0.98
   //     無関係             → different 0.99
   //     同じテーマ・別の話   → related 0.92（警告しない）
+  // ★ 既存の投稿に依存させない。AI 層の候補ウィンドウは3日なので、特定の
+  //   投稿IDやURLを前提にすると**時間が経つと必ず FAIL する**（実測: 投稿5469が
+  //   2日22時間前になり、あと2時間で窓から外れる状態だった）。
+  //   自分でテスト投稿を作り、検証後に消す。
   const newsCase = await page.evaluate(`(async () => {
+    // 1. 元記事を投稿する（AI 層の候補になる）
+    const uniq = 'e2e-news-' + Date.now();
+    const orig = await fetch('/api/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: '「クリスタ」素材、大量非公開でユーザー混乱　セルシス「誤判定もあった」が…… ' + uniq +
+              ' https://www.itmedia.co.jp/news/article/2609/24/2000001689/',
+      }),
+    });
+    if (!orig.ok) return { status: orig.status, err: 'could not create the source post' };
+    const origPost = await orig.json();
+    // 2. 別サイトが同じニュースを報じた体で AI 層に問い合わせる
     const r = await fetch('/api/posts/duplicates', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         phase: 'ai',
-        text: '「クリスタ」素材、大量非公開でユーザー混乱　セルシス「誤判定もあった」が…… https://www.itmedia.co.jp/news/article/2609/24/2000001689/',
+        text: 'セルシスの「クリスタ」素材が大量に非公開へ、ユーザーが混乱　誤判定もあったと説明 https://www.gigazine.net/news/20260924-clip-studio-paint/',
       }),
     });
-    if (!r.ok) return { status: r.status };
+    if (!r.ok) {
+      await fetch('/api/posts/' + origPost.id, { method: 'DELETE' }).catch(() => {});
+      return { status: r.status, origId: origPost.id };
+    }
     const d = await r.json();
-    return { status: r.status, dupes: d.duplicates ?? [] };
+    // 後片付け（テスト投稿を残さない）
+    await fetch('/api/posts/' + origPost.id, { method: 'DELETE' }).catch(() => {});
+    return { status: r.status, dupes: d.duplicates ?? [], origId: origPost.id };
   })()`);
   check(
     "the AI layer finds the same news reported by a different site",
