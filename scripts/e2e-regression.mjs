@@ -1378,7 +1378,12 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
       const el = document.querySelector('${sel}');
       if (!el) return null;
       const r = el.getBoundingClientRect();
-      return { left: Math.round(r.left), right: Math.round(r.right), w: Math.round(r.width) };
+      return {
+        left: Math.round(r.left),
+        right: Math.round(r.right),
+        top: Math.round(r.top),
+        w: Math.round(r.width),
+      };
     })()`);
 
   // --- left edge: drag right from x=6 ---
@@ -1562,6 +1567,36 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
     !!stackShown && !!stackHidden && stackHidden.club < -100,
     `shown=${stackShown?.club} after scroll=${stackHidden?.club} (must be off-screen)`
   );
+
+  // --- opening a drawer while scrolled down must bring the header back ---
+  //
+  // drikin 2026-09-27: 「スクロールした後のサイドバーの表示が変」— the drawer
+  // starts at 56px (the header's slot). If the header is still hidden from
+  // scrolling, that slot is an empty 56px strip at the top of the drawer and
+  // there is no visible way to close it.
+  await mp.evaluate(`window.scrollTo(0, 1500)`);
+  await waitHeader(true);
+  await mp.waitForTimeout(400);
+  const hiddenBeforeOpen = await headerY();
+  await drag(6, 400, 200, 400);
+  const headerAfterOpen = await headerY();
+  const drawerAfterOpen = await drawerOpen('[data-cx="navbar"]');
+  check(
+    "opening a drawer while scrolled down brings the header back",
+    !!hiddenBeforeOpen && hiddenBeforeOpen.hidden === true &&
+      !!headerAfterOpen && headerAfterOpen.hidden === false &&
+      headerAfterOpen.top >= -2,
+    `before=${hiddenBeforeOpen?.hidden} after=${headerAfterOpen?.hidden} top=${headerAfterOpen?.top}`
+  );
+  check(
+    "the open drawer starts below the visible header (no dead strip)",
+    !!drawerAfterOpen && !!headerAfterOpen &&
+      drawerAfterOpen.left >= -2 && drawerAfterOpen.top >= headerAfterOpen.top,
+    `drawer top=${drawerAfterOpen?.top} header top=${headerAfterOpen?.top}`
+  );
+  await closeDrawers();
+  await mp.evaluate(`window.scrollTo(0, 0)`);
+  await mp.waitForTimeout(400);
 
   // --- the drawer can be closed by swiping it back out ---
   //

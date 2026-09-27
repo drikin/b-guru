@@ -4521,6 +4521,16 @@ export default function Home() {
   // ヘッダーが隠せて、よりスマートになります」). Hidden while scrolling down,
   // shown again the moment the user scrolls up or reaches the top.
   const [headerHidden, setHeaderHidden] = useState(false);
+  // ★ The header must come back the moment a drawer opens, even if the page is
+  //   scrolled down. The drawer starts at 56px (below the header's slot), so if
+  //   the header stays hidden there is a 56px dead strip at the top of the
+  //   drawer with nothing in it — and no visible way to close it
+  //   (drikin 2026-09-27: 「スクロールした後のサイドバーの表示が変」).
+  //   The scroll handler already refuses to HIDE while a drawer is open, but it
+  //   cannot un-hide one that was already hidden before the drawer opened.
+  useEffect(() => {
+    if (navOpened || asideOpened) setHeaderHidden(false);
+  }, [navOpened, asideOpened]);
 
   // ---- Timeline search ----
   const [searchQuery, setSearchQuery] = useState("");
