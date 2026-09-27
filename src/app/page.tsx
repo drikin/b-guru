@@ -5840,7 +5840,10 @@ export default function Home() {
       .then((d) => {
         const posts = d.posts ?? [];
         setFeedPosts(posts);
-        // DEGRADE TEST: サーバーの既読を適用しない
+        // ★ サーバーの既読を適用（tochi 2026-09-27 の未読共通化）。
+        //   同じ応答に同梱されているので往復は増えない。localStorage の
+        //   同期キャッシュと和集合を取るので、既読が減ることはない。
+        applyServerReadIds(d.readIds);
         if (posts.length > 0) {
           feedCursorRef.current =
             posts[posts.length - 1].lastActivityAt ??
