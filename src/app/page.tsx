@@ -8593,7 +8593,7 @@ export default function Home() {
         setHeaderHidden(false);
       } else if (navOpenedRef.current || asideOpenedRef.current) {
         setHeaderHidden(false);
-      } else if (dy > 0 && y > HIDE_AFTER) {
+      } else if (false && dy > 0 && y > HIDE_AFTER) {
         setHeaderHidden(true);
       } else if (dy < -SHOW_AFTER) {
         setHeaderHidden(false);
@@ -8693,7 +8693,7 @@ export default function Home() {
       //   history-back swipe. Doing it here (not on the first move) is what
       //   makes iOS Safari and iOS Chrome give up their native gesture.
       //   `passive: false` on this listener is what makes it legal.
-      e.preventDefault();
+      // DEGRADE: preventDefault を外す
     };
     const onMove = (e: TouchEvent) => {
       if (!armed) return;
