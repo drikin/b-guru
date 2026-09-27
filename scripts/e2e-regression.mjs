@@ -1848,8 +1848,19 @@ console.log("\n6m. Duplicate-post warning");
       const d = await r.json();
       return (d.duplicates ?? []).map((x) => x.reason || '');
     };
-    const bare = await ask(url);
-    const withText = await ask('ネコの新種、100年以上ぶりに発見 ' + url);
+    // ★ 投稿直後は候補に出ないことがある（実測: bare=[] になった）。
+    //   候補に載るまで最大3回リトライする。リトライしないと
+    //   「AI が何も返さなかった」だけで FAIL し、時間依存のフレーキーになる。
+    const askUntil = async (t) => {
+      for (let i = 0; i < 3; i++) {
+        const got = await ask(t);
+        if (got.length > 0) return got;
+        await new Promise((res) => setTimeout(res, 1500));
+      }
+      return [];
+    };
+    const bare = await askUntil(url);
+    const withText = await askUntil('ネコの新種、100年以上ぶりに発見 ' + url);
 
     // 後片付け。
     await fetch('/api/posts/' + postId, { method: 'DELETE' }).catch(() => {});
