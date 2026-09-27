@@ -1175,7 +1175,7 @@ console.log("\n6k. Reactions on posts");
     for (const c of cards) {
       const id = c.getAttribute('data-post-id');
       if (!id) continue;
-      const r = await fetch('/api/posts/' + id + '/thread', { cache: 'no-store' }).catch(() => null);
+      const r = await fetch('/api/posts/' + id, { cache: 'no-store' }).catch(() => null);
       if (!r || !r.ok) continue;
       const d = await r.json().catch(() => null);
       const replies = d?.replies ?? d?.posts ?? [];
