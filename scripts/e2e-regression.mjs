@@ -624,6 +624,83 @@ console.log("\n6f-2. Pull-to-refresh works on iPad");
   await ipad.close();
 }
 
+// 6f-3. iOS Chrome must use the NATIVE pull-to-refresh, not the custom gesture
+// (drikin 2026-09-27「iOSのChromeならネイティブ対応できるはず」).
+//
+// iOS Chrome (CriOS) is WebKit-based but never runs standalone, so the browser's
+// own pull-to-refresh is available. Native is browser-optimised code, so it is
+// lighter than handling touch events in JS — and the custom gesture has been a
+// bug source (it once killed the club bar's horizontal scroll).
+//
+// ★ Safari must KEEP the custom gesture: iOS Safari's standalone PWA (added to
+//   the home screen) has native pull-to-refresh explicitly disabled by Apple.
+//
+// The guard asserts the OUTCOME: with a CriOS UA, a downward drag must NOT
+// trigger the custom gesture's feed reload (the browser handles it instead).
+console.log("\n6f-3. iOS Chrome uses the native pull-to-refresh");
+{
+  const crios = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 3,
+    isMobile: true,
+    hasTouch: true,
+    // The real iOS Chrome UA: WebKit + CriOS.
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/119.0.6045.109 Mobile/15E148 Safari/604.1",
+  });
+  await crios.addCookies([
+    { name: "bsm_session", value: SESSION, domain: "bsm.backspace.fm", path: "/" },
+  ]);
+  const cp = await crios.newPage();
+  await cp.goto(BASE_URL, { waitUntil: "networkidle" });
+  await cp.waitForTimeout(3000);
+
+  const uaInfo = await cp.evaluate(`(() => ({
+    ua: navigator.userAgent,
+    isCrios: /CriOS/.test(navigator.userAgent),
+  }))()`);
+  check(
+    "the iOS Chrome context really is a CriOS UA",
+    uaInfo.isCrios,
+    `ua=${uaInfo.ua.slice(0, 60)}`
+  );
+
+  // Drive the same downward drag the iPad guard uses. With the custom gesture
+  // disabled for CriOS, this must NOT produce a feed request.
+  const criosReqs = [];
+  const onCriosReq = (r) => {
+    if (r.url().includes("/api/posts")) criosReqs.push(r.url());
+  };
+  cp.on("request", onCriosReq);
+  await cp.evaluate(`window.scrollTo(0, 0)`);
+  await cp.waitForTimeout(300);
+  await cp.evaluate(`(async () => {
+    const fire = (type, y) => {
+      const t = new Touch({ identifier: 1, target: document.body, clientX: 200, clientY: y });
+      document.body.dispatchEvent(new TouchEvent(type, {
+        touches: type === 'touchend' ? [] : [t],
+        changedTouches: [t], bubbles: true, cancelable: true,
+      }));
+    };
+    fire('touchstart', 100);
+    for (let y = 110; y <= 260; y += 20) {
+      fire('touchmove', y);
+      await new Promise(r => setTimeout(r, 30));
+    }
+    fire('touchend', 260);
+    await new Promise(r => setTimeout(r, 2500));
+    return true;
+  })()`);
+  await cp.waitForTimeout(1500);
+  cp.off("request", onCriosReq);
+  check(
+    "iOS Chrome does not run the custom pull gesture",
+    criosReqs.length === 0,
+    `feed requests after pull = ${criosReqs.length} (must be 0 — the browser handles it)`
+  );
+  await crios.close();
+}
+
 // 6g. Presence visibility (drikin 2026-09-23): the オンライン panel must dim
 // members whose tab is backgrounded. The flag travels client → server via the
 // heartbeat body, so assert the whole round trip: report hidden, read it back

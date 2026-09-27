@@ -4282,6 +4282,27 @@ function PullToRefresh({
       (/iPad|iPhone|iPod/.test(ua) || isIPadOS) && !(window as any).MSStream;
     if (!active || !isIOS) return;
 
+    // ★ iOS の Chrome（CriOS）はネイティブの引っ張り更新を持っているので、
+    //   カスタム実装を無効化してブラウザに任せる（drikin 2026-09-27
+    //   「iOSのChromeならネイティブ対応できるはず」）。
+    //
+    //   理由: ネイティブはブラウザ最適化されたコードで動くので、JS で touch
+    //   イベントを処理するより軽い。自前実装はバグの温床でもある（実際に
+    //   部活バーの横スクロールを殺すバグを出した）。
+    //
+    //   ★ Safari は残す。iOS Safari の standalone PWA（ホーム画面追加）では
+    //     Apple がネイティブの引っ張り更新を**明示的に無効化**しているため、
+    //     カスタムが無いと引っ張り更新が使えなくなる。
+    //     Chrome は standalone にならない（常に通常タブ）のでネイティブが効く。
+    //
+    //   UA の見分け方: iOS Chrome は `CriOS/` を含む。
+    //     例: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)
+    //         AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/119.0.6045.109
+    //         Mobile/15E148 Safari/604.1
+    //   Edge も同様に `EdgiOS/` を含む（Chromium ベースなのでネイティブあり）。
+    const isIOSChrome = /CriOS|EdgiOS|FxiOS/.test(ua);
+    if (isIOSChrome) return;
+
     // ★ 横スクロールする要素（部活バー）の上では引っ張りを発動させない。
     //   ここで preventDefault すると**横スクロールが死ぬ**（リュー 2026-09-26）。
     //   タッチ対象から親に遡り、横に溢れていて overflow-x が auto/scroll の
