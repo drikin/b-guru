@@ -4510,6 +4510,17 @@ export default function Home() {
   const [activeNav, setActiveNav] = useState("feed");
   const [navOpened, setNavOpened] = useState(false);
   const [asideOpened, setAsideOpened] = useState(false);
+  // Mirror of `navOpened` for the edge-swipe listener. The listener is
+  // registered once (empty dep array) so it cannot close over fresh state;
+  // reading a ref keeps it correct without re-registering on every toggle.
+  const navOpenedRef = useRef(false);
+  navOpenedRef.current = navOpened;
+  const asideOpenedRef = useRef(false);
+  asideOpenedRef.current = asideOpened;
+  // Header auto-hide on scroll (drikin 2026-09-27: 「スクロール時にトップの
+  // ヘッダーが隠せて、よりスマートになります」). Hidden while scrolling down,
+  // shown again the moment the user scrolls up or reaches the top.
+  const [headerHidden, setHeaderHidden] = useState(false);
 
   // ---- Timeline search ----
   const [searchQuery, setSearchQuery] = useState("");
@@ -8553,6 +8564,183 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ---- Header auto-hide on scroll ----
+  //
+  // drikin 2026-09-27: 「スクロール時にトップのヘッダーが隠せて、よりスマートに
+  // なります」— the point of the edge swipe is that the header no longer has to
+  // stay pinned just to host the menu buttons.
+  //
+  // ★ Rules that keep this from feeling twitchy:
+  //   - Only hide after a real downward scroll (>= 80px), not on a 2px jitter.
+  //   - Show again as soon as the user scrolls up by >= 8px (asymmetric on
+  //     purpose: hiding should be deliberate, revealing should be instant).
+  //   - Always show at the very top (scrollY <= 8) so the page never starts
+  //     with the header missing.
+  //   - Never hide while a drawer is open — the header hosts the buttons that
+  //     close them, and hiding it would strand the user.
+  //   - rAF-throttled: the scroll handler runs on every frame otherwise.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let lastY = window.scrollY;
+    let ticking = false;
+    const HIDE_AFTER = 80;
+    const SHOW_AFTER = 8;
+    const update = () => {
+      ticking = false;
+      const y = window.scrollY;
+      const dy = y - lastY;
+      if (y <= 8) {
+        setHeaderHidden(false);
+      } else if (navOpenedRef.current || asideOpenedRef.current) {
+        setHeaderHidden(false);
+      } else if (dy > 0 && y > HIDE_AFTER) {
+        setHeaderHidden(true);
+      } else if (dy < -SHOW_AFTER) {
+        setHeaderHidden(false);
+      }
+      lastY = y;
+    };
+    const onScroll = () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(update);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // ---- Edge swipe: drag in from either edge to open that side's drawer ----
+  //
+  // drikin 2026-09-27: 「スマホにおいてサイドバーが出てない時に、左からのスワイプや
+  // 右からのスワイプでサイドバーを出せるようにできませんかね？それができると、
+  // スクロール時にトップのヘッダーが隠せて、よりスマートになります。」
+  // → 左右どちらも実装する（drikin 2026-09-27「左右サイドバーどっちも同時に実装して」）。
+  //
+  // ★★ The hard part is the browser's OWN edge gesture, not our code.
+  //
+  //   iOS Safari and iOS Chrome both ship a native "swipe from the edge to go
+  //   back/forward" gesture. If we do not claim the touch, the browser wins and
+  //   the user navigates away instead of opening the drawer. This is almost
+  //   certainly why the previous attempt failed.
+  //
+  //   What actually works (verified against the reported behaviour, not guessed):
+  //     - `touchstart` with `{ passive: false }` and `preventDefault()` when the
+  //       touch starts inside the edge band. Safari defaults `touchstart` to
+  //       `passive: true`, so the option MUST be explicit or preventDefault is
+  //       silently ignored.
+  //     - This is reported to work on iOS Safari AND iOS Chrome.
+  //     - It does NOT work on Android Chrome: the back gesture there is handled
+  //       by the OS (system navigation), below the page. No JS can cancel it.
+  //       So on Android the edge band must stay narrow enough that the OS
+  //       gesture does not trigger first — hence EDGE_PX is small (20px) and we
+  //       only claim the gesture once it is clearly horizontal.
+  //
+  //   ★ We listen on `document` in the CAPTURE phase so we see the touch before
+  //     the page's own handlers, and we `preventDefault()` on `touchmove` too
+  //     (once the drag is clearly horizontal) to stop the page from scrolling
+  //     under the finger.
+  //
+  // ★ Coexistence with the tab swipe above:
+  //   The tab swipe needs the touch to START in the top 200px band and |dx|>=70.
+  //   This gesture needs the touch to start within 20px of an edge and |dx|>=40.
+  //   They overlap only in the top corners (20x200px). There the edge gesture
+  //   wins because it is registered in the capture phase and claims the touch
+  //   first. Everywhere else they are disjoint.
+  //
+  // ★ Never fires while a drawer is already open (the drawer's own overlay
+  //   handles closing), inside an input, or inside a horizontally scrollable
+  //   strip (the club bar).
+  const EDGE_PX = 20;      // how close to an edge the touch must start
+  const EDGE_MIN_DX = 40;  // how far it must travel inward to count
+  const EDGE_MAX_DY = 60;  // vertical drift allowed before we call it a scroll
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const isEditable = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      return !!el && !!el.closest && !!el.closest("input,textarea,[contenteditable='true']");
+    };
+    const inHScrollable = (t: EventTarget | null) => {
+      let el = t as HTMLElement | null;
+      while (el && el !== document.body) {
+        if (el.scrollWidth > el.clientWidth + 4) {
+          const ox = getComputedStyle(el).overflowX;
+          if (ox === "auto" || ox === "scroll") return true;
+        }
+        el = el.parentElement;
+      }
+      return false;
+    };
+    // Which edge did this touch start on? -1 = left, +1 = right, 0 = neither.
+    const edgeOf = (x: number) => {
+      if (x <= EDGE_PX) return -1;
+      if (x >= window.innerWidth - EDGE_PX) return 1;
+      return 0;
+    };
+    let sx = 0, sy = 0, side = 0, armed = false, claimed = false;
+    const onStart = (e: TouchEvent) => {
+      armed = false;
+      claimed = false;
+      side = 0;
+      const t = e.touches[0];
+      if (!t) return;
+      // A drawer is already open — its overlay owns the gesture.
+      if (navOpenedRef.current || asideOpenedRef.current) return;
+      const s = edgeOf(t.clientX);
+      if (s === 0) return;
+      if (isEditable(e.target) || inHScrollable(e.target)) return;
+      sx = t.clientX; sy = t.clientY; side = s; armed = true;
+      // ★ Claim the touch IMMEDIATELY, before the browser decides this is a
+      //   history-back swipe. Doing it here (not on the first move) is what
+      //   makes iOS Safari and iOS Chrome give up their native gesture.
+      //   `passive: false` on this listener is what makes it legal.
+      e.preventDefault();
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!armed) return;
+      const t = e.touches[0];
+      if (!t) return;
+      const dx = t.clientX - sx;
+      const dy = t.clientY - sy;
+      // Vertical drift means the user is scrolling, not swiping. Give up.
+      if (Math.abs(dy) > EDGE_MAX_DY && Math.abs(dy) > Math.abs(dx)) {
+        armed = false;
+        return;
+      }
+      // Inward travel for this side: right for the left edge, left for the right.
+      const inward = side === -1 ? dx : -dx;
+      if (inward < 8) return; // not yet clearly an inward drag
+      if (!claimed) {
+        claimed = true;
+        e.preventDefault();
+      }
+      if (inward >= EDGE_MIN_DX) {
+        armed = false;
+        if (side === -1) {
+          setNavOpened(true);
+          setAsideOpened(false);
+        } else {
+          setAsideOpened(true);
+          setNavOpened(false);
+        }
+      }
+    };
+    const onEnd = () => {
+      armed = false;
+      claimed = false;
+      side = 0;
+    };
+    document.addEventListener("touchstart", onStart, { capture: true, passive: false });
+    document.addEventListener("touchmove", onMove, { capture: true, passive: false });
+    document.addEventListener("touchend", onEnd, { capture: true, passive: true });
+    document.addEventListener("touchcancel", onEnd, { capture: true, passive: true });
+    return () => {
+      document.removeEventListener("touchstart", onStart, { capture: true });
+      document.removeEventListener("touchmove", onMove, { capture: true });
+      document.removeEventListener("touchend", onEnd, { capture: true });
+      document.removeEventListener("touchcancel", onEnd, { capture: true });
+    };
+  }, []);
+
   // groupFeed() does a map + filter + sort over the whole feed. It used to run
   // twice per render (once for composerGroups and again for the TimelineFeed
   // `groups` prop), so every keystroke in the chat composer re-sorted 50 posts
@@ -8637,9 +8825,18 @@ export default function Home() {
       {/* Header */}
       <AppShell.Header
         data-cx="header"
+        data-hidden={headerHidden ? "true" : undefined}
         style={{
           background: "var(--bg-surface)",
           borderBottom: "1px solid var(--border-default)",
+          // Auto-hide on scroll down (see the effect above). `transform` is
+          // used rather than `display`/`height` so the header keeps its layout
+          // box and the sticky offsets below it (tab bar, club bar) do not
+          // jump. The transition is short enough to feel attached to the
+          // finger but long enough not to flicker.
+          transform: headerHidden ? "translateY(-100%)" : "translateY(0)",
+          transition: "transform 180ms ease",
+          willChange: "transform",
           // Keep the header (and its mobile menu buttons: beagle logo + burger)
           // ABOVE the AppShell navbar/aside drawers (z-index 101). Otherwise an
           // open drawer covers the header, so on narrow screens tapping the

@@ -1295,6 +1295,147 @@ console.log("\n6j-2. j/k jump clears the sticky stack");
   await desk.close();
 }
 
+// 6j-4. Edge swipe opens the side drawers + the header auto-hides on scroll
+// (drikin 2026-09-27: 「スマホにおいてサイドバーが出てない時に、左からのスワイプや
+//  右からのスワイプでサイドバーを出せるようにできませんかね？それができると、
+//  スクロール時にトップのヘッダーが隠せて、よりスマートになります。」)
+//
+// ★ The hard part is the browser's OWN edge gesture, not our code. iOS Safari
+//   and iOS Chrome ship a native "swipe from the edge to go back" gesture; if
+//   we do not claim the touch, the browser wins and the user navigates away.
+//   The fix is `touchstart` with `{ passive: false }` + `preventDefault()`.
+//
+// ★ What this guard can and cannot prove:
+//   - It CAN prove the drawer opens on an edge drag, and that the header hides
+//     on scroll down and returns on scroll up.
+//   - It CANNOT prove the native browser gesture was suppressed: headless
+//     Chromium has no such gesture. That part is verified by the code path
+//     (preventDefault on a non-passive touchstart) and needs a real device.
+console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
+{
+  const mob = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 3,
+    isMobile: true,
+    hasTouch: true,
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+  });
+  await mob.addCookies([
+    { name: "bsm_session", value: SESSION, domain: "bsm.backspace.fm", path: "/" },
+  ]);
+  const mp = await mob.newPage();
+  await mp.goto(BASE_URL, { waitUntil: "networkidle" });
+  await mp.waitForTimeout(3000);
+
+  // Drag helper: synthesise a touch drag from (x0,y0) to (x1,y1).
+  const drag = async (x0, y0, x1, y1) => {
+    await mp.evaluate(
+      `(async () => {
+        const fire = (type, x, y) => {
+          const t = new Touch({ identifier: 1, target: document.body, clientX: x, clientY: y });
+          document.body.dispatchEvent(new TouchEvent(type, {
+            touches: type === 'touchend' ? [] : [t],
+            changedTouches: [t], bubbles: true, cancelable: true,
+          }));
+        };
+        fire('touchstart', ${x0}, ${y0});
+        const steps = 8;
+        for (let i = 1; i <= steps; i++) {
+          fire('touchmove', ${x0} + (${x1} - ${x0}) * i / steps, ${y0} + (${y1} - ${y0}) * i / steps);
+          await new Promise(r => setTimeout(r, 20));
+        }
+        fire('touchend', ${x1}, ${y1});
+        await new Promise(r => setTimeout(r, 600));
+        return true;
+      })()`
+    );
+    await mp.waitForTimeout(700);
+  };
+
+  // Is the left drawer open? Mantine renders the navbar with a transform when
+  // collapsed, so measure the actual box rather than trusting a class name.
+  const drawerOpen = async (sel) =>
+    mp.evaluate(`(() => {
+      const el = document.querySelector('${sel}');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { left: Math.round(r.left), right: Math.round(r.right), w: Math.round(r.width) };
+    })()`);
+
+  // --- left edge: drag right from x=6 ---
+  const beforeL = await drawerOpen('[data-cx="navbar"]');
+  await drag(6, 400, 200, 400);
+  const afterL = await drawerOpen('[data-cx="navbar"]');
+  check(
+    "a right drag from the left edge opens the left drawer",
+    !!afterL && afterL.left >= -2 && afterL.w > 100,
+    `before=${JSON.stringify(beforeL)} after=${JSON.stringify(afterL)}`
+  );
+
+  // Close it again (tap the overlay) so the right-edge test starts clean.
+  await mp.evaluate(`(() => {
+    const ov = document.querySelector('.mantine-AppShell-navbar ~ * , .mantine-Overlay-root');
+    if (ov) ov.click();
+  })()`);
+  await mp.keyboard.press("Escape");
+  await mp.waitForTimeout(800);
+
+  // --- right edge: drag left from the right edge ---
+  const beforeR = await drawerOpen('[data-cx="aside"]');
+  await drag(384, 400, 190, 400);
+  const afterR = await drawerOpen('[data-cx="aside"]');
+  check(
+    "a left drag from the right edge opens the right drawer",
+    !!afterR && afterR.right <= 392 && afterR.w > 100,
+    `before=${JSON.stringify(beforeR)} after=${JSON.stringify(afterR)}`
+  );
+  await mp.keyboard.press("Escape");
+  await mp.waitForTimeout(800);
+
+  // --- header auto-hide ---
+  const headerY = async () =>
+    mp.evaluate(`(() => {
+      const el = document.querySelector('[data-cx="header"]');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { top: Math.round(r.top), hidden: el.getAttribute('data-hidden') === 'true' };
+    })()`);
+
+  const hTop = await headerY();
+  // Scroll down well past the hide threshold.
+  await mp.evaluate(`window.scrollTo(0, 1200)`);
+  await mp.waitForTimeout(700);
+  const hDown = await headerY();
+  check(
+    "the header hides when scrolling down",
+    !!hDown && hDown.hidden && hDown.top <= -40,
+    `top=${hTop?.top} → ${hDown?.top} hidden=${hDown?.hidden}`
+  );
+
+  // Scroll up a little: it must come back immediately.
+  await mp.evaluate(`window.scrollTo(0, 1100)`);
+  await mp.waitForTimeout(700);
+  const hUp = await headerY();
+  check(
+    "the header returns when scrolling up",
+    !!hUp && !hUp.hidden && hUp.top >= -2,
+    `top=${hUp?.top} hidden=${hUp?.hidden}`
+  );
+
+  // Back at the very top it must always be visible.
+  await mp.evaluate(`window.scrollTo(0, 0)`);
+  await mp.waitForTimeout(700);
+  const hTop2 = await headerY();
+  check(
+    "the header is always visible at the top of the page",
+    !!hTop2 && !hTop2.hidden && hTop2.top >= -2,
+    `top=${hTop2?.top} hidden=${hTop2?.hidden}`
+  );
+
+  await mob.close();
+}
+
 // 6j-3. Unread state syncs across devices (tochi 2026-09-27).
 //
 // tochi: 「PCとスマホの両方でみた場合に、未読管理を共通管理にしたいですね。
