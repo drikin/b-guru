@@ -1240,17 +1240,30 @@ console.log("\n6j-3. Unread state syncs across devices");
   await pa.goto(BASE_URL, { waitUntil: "domcontentloaded" });
   await pa.waitForTimeout(6000);
 
-  // 未読カードを1枚選び、1.5秒表示して自動既読にする
+  // 未読カードを1枚選び、1.5秒表示して自動既読にする。
+  //
+  // ★ 選び方に条件が要る。実測で踏んだ: 折りたたまれた返信（COLLAPSE_THRESHOLD=4）
+  //   や画面外のカードを選ぶと、scrollIntoView しても IntersectionObserver の
+  //   threshold 0.25 に届かず**既読にならない**。すると readOnA=false で FAIL し、
+  //   後続のガードが走ってテスト投稿が残る。
+  //   ここでは「スクロール後に実際にビューポート内へ入り、既読になった」ことを
+  //   確認してから返す。既読にならなければ次の候補を試す。
   const target = await pa.evaluate(`(async () => {
     const cards = [...document.querySelectorAll('[data-unread-id]')];
+    const isUnread = (el) => {
+      const bg = getComputedStyle(el).backgroundColor;
+      return bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent';
+    };
     for (const c of cards) {
       const id = Number(c.getAttribute('data-unread-id'));
       if (!id) continue;
-      const bg = getComputedStyle(c).backgroundColor;
-      const unread = bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent';
-      if (!unread) continue;
+      if (!isUnread(c)) continue;
       c.scrollIntoView({ block: 'center' });
-      return { id };
+      // 自動既読（AUTO_READ_DWELL_MS=1000）を待つ
+      await new Promise((r) => setTimeout(r, 2200));
+      const el = document.querySelector('[data-unread-id="' + id + '"]');
+      if (el && !isUnread(el)) return { id };
+      // 既読にならなかった（折りたたみ等）→ 次の候補へ
     }
     return null;
   })()`);
