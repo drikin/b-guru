@@ -10082,7 +10082,7 @@ export default function Home() {
                     //   the bar's own paddingTop (16px) is what puts the
                     //   SegmentedControl at the right visual distance — the
                     //   "flush" requirement is about the CONTROL, not the box.
-                    marginTop: -24,
+                    marginTop: -32,
                     zIndex: 60,
                     background: "var(--bg-primary)",
                     // ★ 上下の余白を均等にする（drikin 2026-09-25「タイムラインの
@@ -10115,11 +10115,18 @@ export default function Home() {
                     //     オフセットがどちらか一方でしか合わない。
                     //     16px にするとタブバー下端 = 116px = 部活バーの sticky top
                     //     になり、位置が一意に決まる。見た目の間隔も 16px で揃う。
-                    // ★ 24, not 16. Measured on the live build with
-                    //   marginTop -24: paddingTop 16 puts the SegmentedControl
-                    //   8px below the header, while the gap below it is 16px —
-                    //   visibly lopsided. 24 makes both sides 16px.
-                    paddingTop: 24,
+                    // ★ 16, and marginTop -32 to compensate.
+                    //
+                    //   Measured on the live build (390px, 2026-09-27):
+                    //   marginTop -24 + paddingTop 24 gave visualAbove=24 /
+                    //   visualBelow=16 — lopsided by 8px. The earlier note
+                    //   claiming 24 made both sides 16px was wrong.
+                    //
+                    //   The bar's top edge must stay at 56px (flush under the
+                    //   header) while the CONTROL sits 16px below it. So the
+                    //   paddingTop drops to 16 and the negative margin grows by
+                    //   the same 8px to keep the box anchored at 56px.
+                    paddingTop: 16,
                     paddingBottom: 16,
                     display: "flex",
                     justifyContent: "center",
