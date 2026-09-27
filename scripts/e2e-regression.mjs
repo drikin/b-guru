@@ -1169,8 +1169,10 @@ console.log("\n6k. Reactions on posts");
 //     返信を持つスレッドを開き、返信のチップが描画されているかを見る。
 {
   // 返信にリアクションが付いている親投稿を探す（DB に実在するもの）
+  // ★ 「返信を持つ投稿」ではなく「**リアクションが付いた返信**を持つ投稿」を探す。
+  //   リアクションが1つも無い返信で検証すると、画面に出ていなくても PASS する
+  //   空振りのガードになる（実測で踏んだ: withReactionsOnServer=0 で PASS）。
   const replyTarget = await page.evaluate(`(async () => {
-    // フィードから返信を持つ投稿を1つ選び、スレッドを開く
     const cards = [...document.querySelectorAll('[data-post-id]')];
     for (const c of cards) {
       const id = c.getAttribute('data-post-id');
@@ -1178,8 +1180,19 @@ console.log("\n6k. Reactions on posts");
       const r = await fetch('/api/posts/' + id, { cache: 'no-store' }).catch(() => null);
       if (!r || !r.ok) continue;
       const d = await r.json().catch(() => null);
-      const replies = d?.replies ?? d?.posts ?? [];
-      if (replies.length > 0) return { parentId: id, replyIds: replies.map((x) => x.id) };
+      const replies = d?.replies ?? [];
+      if (replies.length === 0) continue;
+      // この返信たちにリアクションが付いているか確認する
+      const ids = replies.map((x) => x.id).join(',');
+      const rr = await fetch('/api/reactions?targetType=post&ids=' + ids, { cache: 'no-store' }).catch(() => null);
+      if (!rr || !rr.ok) continue;
+      const rd = await rr.json().catch(() => null);
+      const withRx = Object.entries(rd?.reactions ?? {}).filter(
+        ([, list]) => Array.isArray(list) && list.length > 0
+      );
+      if (withRx.length > 0) {
+        return { parentId: id, replyIds: replies.map((x) => x.id), withRx: withRx.map(([k]) => Number(k)) };
+      }
     }
     return null;
   })()`);
@@ -1218,9 +1231,11 @@ console.log("\n6k. Reactions on posts");
       if (!shown || shown.chips.length === 0) missing.push(id);
     }
     const withReactions = Object.values(serverSide).filter((l) => Array.isArray(l) && l.length > 0).length;
+    // ★ withReactions === 0 は「検証対象が無かった」= 空振りなので FAIL にする。
+    //   0 で PASS させると、返信のリアクションが全部消えていても気付けない。
     check(
       "replies' reactions are fetched from the server",
-      missing.length === 0,
+      missing.length === 0 && withReactions > 0,
       `replies=${ids.length} withReactionsOnServer=${withReactions} missingOnScreen=${JSON.stringify(missing)}`
     );
     // フィードに戻す（後続のチェックがタイムライン前提のため）
