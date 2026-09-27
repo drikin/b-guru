@@ -594,6 +594,11 @@ console.log("\n6f-2. Pull-to-refresh works on iPad");
   const onDouble = (r) => {
     if (r.url().includes("/api/posts")) doubleReqs.push(r.url());
   };
+  // ★ Let the PREVIOUS pull's reload finish before counting this one.
+  //   The two pulls run back to back; if the first reload is still in flight
+  //   when the second pull starts, its /api/posts lands inside this window and
+  //   the count reads 2 for a single pull (measured: feed requests = 2).
+  await ip.waitForTimeout(2500);
   ip.on("request", onDouble);
   await ip.evaluate(`window.scrollTo(0, 0)`);
   await ip.waitForTimeout(300);
@@ -1737,8 +1742,18 @@ console.log("\n6j-3. Unread state syncs across devices");
       if (!id) continue;
       if (!isUnread(c)) continue;
       const r0 = c.getBoundingClientRect();
-      // Zero-height (collapsed reply) can never be observed — skip it.
-      if (r0.height < 20) { tried.push({ id, skip: 'zero-height' }); continue; }
+      // ★ A zero-height card is a reply hidden inside a collapsed thread
+      //   (COLLAPSE_THRESHOLD=4). It can never be observed, so it can never be
+      //   marked read. Expand its thread first, then re-measure.
+      if (r0.height < 20) {
+        const fold = c.closest('[data-post-id]')?.querySelector('[data-fold]');
+        if (fold) {
+          fold.click();
+          await new Promise((r) => setTimeout(r, 400));
+        }
+        const r1 = c.getBoundingClientRect();
+        if (r1.height < 20) { tried.push({ id, skip: 'zero-height' }); continue; }
+      }
       c.scrollIntoView({ block: 'center' });
       // 自動既読（AUTO_READ_DWELL_MS=1000）を待つ
       await new Promise((r) => setTimeout(r, 2200));
