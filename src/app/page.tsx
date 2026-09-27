@@ -8013,7 +8013,7 @@ export default function Home() {
       //   部活バー側で `marginTop: -16` を入れて隙間を消してあるので、
       //   ここは sticky の `top` + 高さで一意に決まる。
       const tab = document.querySelector<HTMLElement>('[data-cx="navtabs"]');
-      const club = document.querySelector<HTMLElement>('[data-cx="clubbars"]');
+      const club = null;
       let bottom = headerH;
       for (const el of [tab, club]) {
         if (!el) continue;
