@@ -2005,7 +2005,12 @@ console.log("\n6m. Duplicate-post warning");
       }),
     });
     if (!orig.ok) return { status: orig.status, err: 'could not create the source post' };
-    const origPost = await orig.json();
+    const origJson = await orig.json();
+    // ★ /api/publish のレスポンスは { post: { id } }。以前は origPost.id を
+    //   直接読んでいて undefined になり、DELETE もポーリングも
+    //   /api/posts/undefined を叩いていた（実測: status=0 で FAIL）。
+    const origPost = origJson.post ?? origJson;
+    if (!origPost?.id) return { status: 0, err: 'publish returned no post id' };
 
     // ★★ プレビューが付くまで待つ。createPost は fetchUrlPreview を
     //    fire-and-forget で走らせ、url_preview: null を即座に返す
