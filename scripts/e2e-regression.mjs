@@ -1920,27 +1920,34 @@ console.log("\n6m. Duplicate-post warning");
     });
     if (!orig.ok) return { status: orig.status, err: 'could not create the source post' };
     const origPost = await orig.json();
-    // ★ 後片付けは try/finally で必ず走らせる。早期 return や例外で抜けると
-    //   テスト投稿が本番タイムラインに残る（実測: 失敗した run の分が3件残り、
-    //   ユーザーから「僕のアカウントでテスト投稿したものはちゃんと最後消して
-    //   おいてね」と指摘された）。
-    try {
-      // 2. 別サイトが同じニュースを報じた体で AI 層に問い合わせる
-      const r = await fetch('/api/posts/duplicates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phase: 'ai',
-          text: 'セルシスの「クリスタ」素材が大量に非公開へ、ユーザーが混乱　誤判定もあったと説明 https://www.gigazine.net/news/20260924-clip-studio-paint/',
-        }),
-      });
-      if (!r.ok) return { status: r.status, origId: origPost.id };
-      const d = await r.json();
-      return { status: r.status, dupes: d.duplicates ?? [], origId: origPost.id };
-    } finally {
-      await fetch('/api/posts/' + origPost.id, { method: 'DELETE' }).catch(() => {});
-    }
-  })()`);
+    // ★★ 後片付けは evaluate の**外**で行う。中で try/finally にしても、
+    //    Playwright の evaluate 自体がタイムアウト（既定30秒）で中断されると
+    //    finally は走らない。AI 層は実測 9.4 秒 + 候補検索なので 30 秒を
+    //    超えることがあり、実際にテスト投稿が本番に残り続けた
+    //    （ユーザー指摘:「僕のアカウントでテスト投稿したものはちゃんと最後
+    //      消しておいてね」）。
+    //    投稿 ID を返し、呼び出し側で必ず消す。
+    const r = await fetch('/api/posts/duplicates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phase: 'ai',
+        text: 'セルシスの「クリスタ」素材が大量に非公開へ、ユーザーが混乱　誤判定もあったと説明 https://www.gigazine.net/news/20260924-clip-studio-paint/',
+      }),
+    });
+    if (!r.ok) return { status: r.status, origId: origPost.id };
+    const d = await r.json();
+    return { status: r.status, dupes: d.duplicates ?? [], origId: origPost.id };
+  })()`, undefined, { timeout: 120000 });
+  // ★ 後片付け（evaluate の外なので、タイムアウトでも必ずここに来る）
+  if (newsCase?.origId) {
+    await page
+      .evaluate(
+        (id) => fetch('/api/posts/' + id, { method: 'DELETE' }).catch(() => {}),
+        newsCase.origId
+      )
+      .catch(() => {});
+  }
   check(
     "the AI layer finds the same news reported by a different site",
     newsCase.status === 200 && newsCase.dupes.length > 0,
@@ -2115,6 +2122,36 @@ if (notFound.length) {
 
 // ------------------------------------------------------------ final
 check("no uncaught page errors at the end", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
+
+// ------------------------------------------------------------ cleanup
+// ★ 最後の安全網: この run が作ったテスト投稿を必ず消す。
+//
+//   個々のガードが後片付けを持っていても、evaluate のタイムアウトや
+//   プロセス中断で残ることがある（実測: 失敗した run の分が本番タイムラインに
+//   4件残り、ユーザーから「僕のアカウントでテスト投稿したものはちゃんと最後
+//   消しておいてね」と指摘された）。
+//   ここで一括で掃除する。E2E のテスト投稿は本文に必ず e2e-news- を含む。
+{
+  const cleaned = await page
+    .evaluate(`(async () => {
+      const r = await fetch('/api/posts?limit=100', { cache: 'no-store' }).catch(() => null);
+      if (!r || !r.ok) return { error: 'could not list posts' };
+      const d = await r.json().catch(() => null);
+      const posts = d?.posts ?? [];
+      let deleted = 0;
+      for (const p of posts) {
+        if (typeof p.text === 'string' && p.text.includes('e2e-news-')) {
+          const dr = await fetch('/api/posts/' + p.id, { method: 'DELETE' }).catch(() => null);
+          if (dr && dr.ok) deleted++;
+        }
+      }
+      return { deleted };
+    })()`)
+    .catch((e) => ({ error: String(e) }));
+  if (cleaned?.deleted > 0) {
+    console.log(`  [cleanup] removed ${cleaned.deleted} leftover test post(s)`);
+  }
+}
 
 await browser.close();
 
