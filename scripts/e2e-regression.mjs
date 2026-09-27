@@ -1156,6 +1156,62 @@ console.log("\n6j. Mobile club bar (one-tap club switching)");
 // (drikin 2026-09-25: 「ボタンの位置は、このカードの右上で…この編集ボタンの左側に
 // 並べるイメージの方がスペース的に効率が良い」), and the separate one-tap heart was
 // removed as redundant with the picker's ❤️ chip. Both are asserted below.
+// 6j-2. j/k keyboard jump must clear EVERY sticky bar (tochi 2026-09-27).
+//
+// tochi: 「PCで閲覧中でjkのショートカットで投稿をジャンプできるのは便利ですが、
+// 上部に部活のタブリンクを追加した影響で投稿と、タブが少し重なってしまうみたいです」
+//
+// The jump offset measured only `navtabs` (the timeline/chat tab bar) and forgot
+// `clubbars` (the club chip strip) stuck directly below it. Measured on prod:
+// header 56 → navtabs bottom 116 → clubbars 132..166, so the focused card landed
+// at top=124 and sat 41px UNDER the club bar.
+//
+// ★ Assert the measured overlap, not the CSS. The bug was a missing term in a
+//   height sum, so any assertion on the sum's inputs would have passed.
+console.log("\n6j-2. j/k jump clears the sticky stack");
+{
+  const desk = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const p2 = await desk.newPage();
+  await p2.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+  await p2.waitForTimeout(6000);
+  const jump = await p2.evaluate(`(async () => {
+    const club = document.querySelector('[data-cx="clubbars"]');
+    if (!club) return { error: 'no club bar on desktop' };
+    const clubBottom = club.getBoundingClientRect().bottom;
+    const out = [];
+    for (let i = 0; i < 3; i++) {
+      document.body.focus();
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true }));
+      await new Promise((r) => setTimeout(r, 900));
+      const el = document.querySelector('.kbd-focus');
+      if (!el) { out.push({ i, err: 'no kbd-focus' }); continue; }
+      const rect = el.getBoundingClientRect();
+      out.push({
+        i,
+        cardTop: Math.round(rect.top),
+        clubBottom: Math.round(clubBottom),
+        overlap: Math.round(clubBottom - rect.top),
+      });
+    }
+    return { out, clubBottom: Math.round(clubBottom) };
+  })()`);
+  if (jump.error) {
+    check("j/k jump lands the focused post below the club bar", false, jump.error);
+  } else {
+    // overlap > 0 means the card's top edge is ABOVE the club bar's bottom edge,
+    // i.e. the card is hidden underneath it.
+    const bad = (jump.out || []).filter((x) => x.err || x.overlap > 0);
+    check(
+      "j/k jump lands the focused post below the club bar",
+      bad.length === 0,
+      bad.length === 0
+        ? `clubBottom=${jump.clubBottom} overlaps=${JSON.stringify((jump.out || []).map((x) => x.overlap))}`
+        : `card hidden under the club bar: ${JSON.stringify(bad)}`
+    );
+  }
+  await desk.close();
+}
+
 console.log("\n6k. Reactions on posts");
 
 // ★ takuto 2026-09-26: 「返信に対するリアクションが、うまく表示されていないそうです。

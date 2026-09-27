@@ -7970,6 +7970,22 @@ export default function Home() {
       // CSS var the sticky tab itself sticks under) + tab height + ring buffer.
       // Independent of where the page is scrolled, and follows any header/tab
       // height changes in future layout work (QA robustness review 2026-08).
+      //
+      // ★ tochi 2026-09-27「PCで閲覧中でjkのショートカットで投稿をジャンプできる
+      //   のは便利ですが、上部に部活のタブリンクを追加した影響で投稿と、タブが
+      //   少し重なってしまうみたいです」
+      //
+      //   原因: ここは `navtabs`（タイムライン/チャットのタブバー）の高さしか
+      //   測っていなかった。しかしその直下には **`clubbars`（部活チップの帯）が
+      //   もう1本 sticky で貼られている**。実測の積み上げは
+      //     56px（ヘッダ）→ 116px（タブバー下端）→ 部活バー
+      //   なので、部活バーの高さぶんだけ足りず、ジャンプした投稿が
+      //   **部活バーの下に潜り込む**。
+      //
+      //   ★ 片方だけ直すと片方だけ壊れる。sticky で重なる帯は**全部**足す。
+      //     将来また帯が増えたら、ここに足すのではなく
+      //     `[data-cx="stickystack"]` のような共通の目印を付けて一括で測る形に
+      //     すること（今は2本なので個別に足す）。
       const headerH =
         parseFloat(
           getComputedStyle(document.documentElement).getPropertyValue(
