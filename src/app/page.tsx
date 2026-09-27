@@ -8945,6 +8945,31 @@ export default function Home() {
         </div>
       </AppShell.Header>
 
+      {/* Drawer backdrop (mobile/tablet only).
+          ★ Mantine 9's AppShell has no `overlayProps` — the navbar/aside
+            drawers render with no backdrop at all, so a drawer opened by the
+            edge swipe could only be dismissed by tapping the beagle logo
+            again. That is a dead end for a gesture the user just discovered.
+            This is a plain div: tap anywhere outside the drawer to close it.
+            It sits below the drawers (z-index 100) and above the content, and
+            only exists while a drawer is actually open. */}
+      {(navOpened || asideOpened) && (
+        <div
+          data-cx="drawer-backdrop"
+          onClick={() => {
+            setNavOpened(false);
+            setAsideOpened(false);
+          }}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 100,
+            background: "rgba(0, 0, 0, 0.35)",
+            backdropFilter: "blur(2px)",
+          }}
+        />
+      )}
+
       {/* Left sidebar */}
       <AppShell.Navbar data-cx="navbar" p="xs" style={{ background: "var(--bg-primary)", borderRight: "1px solid var(--border-default)" }}>
         <ScrollArea>

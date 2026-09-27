@@ -1381,9 +1381,11 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
   //   first failed. Close it and WAIT until it is actually off-screen.
   const closeDrawers = async () => {
     await mp.keyboard.press("Escape");
+    // ★ Mantine 9's AppShell renders no backdrop, so the app supplies its own
+    //   (`data-cx="drawer-backdrop"`). Clicking it is the real user path.
     await mp.evaluate(`(() => {
-      const ov = document.querySelector('.mantine-Overlay-root');
-      if (ov) ov.click();
+      const bd = document.querySelector('[data-cx="drawer-backdrop"]');
+      if (bd) bd.click();
     })()`);
     for (let i = 0; i < 20; i++) {
       const st = await mp.evaluate(`(() => {
@@ -1401,6 +1403,16 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
     }
     return false;
   };
+  // The backdrop must exist while a drawer is open — it is the only way out.
+  const hasBackdrop = await mp.evaluate(
+    `!!document.querySelector('[data-cx="drawer-backdrop"]')`
+  );
+  check(
+    "an open drawer shows a tappable backdrop",
+    hasBackdrop,
+    `backdrop present=${hasBackdrop}`
+  );
+
   const closed = await closeDrawers();
   check(
     "both drawers can be closed again before the next gesture",
