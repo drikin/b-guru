@@ -1373,13 +1373,40 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
     `before=${JSON.stringify(beforeL)} after=${JSON.stringify(afterL)}`
   );
 
-  // Close it again (tap the overlay) so the right-edge test starts clean.
-  await mp.evaluate(`(() => {
-    const ov = document.querySelector('.mantine-AppShell-navbar ~ * , .mantine-Overlay-root');
-    if (ov) ov.click();
-  })()`);
-  await mp.keyboard.press("Escape");
-  await mp.waitForTimeout(800);
+  // Close it again so the right-edge test starts clean.
+  //
+  // ★ The edge gesture refuses to arm while EITHER drawer is open (the open
+  //   drawer's overlay owns the gesture). If the left drawer is still open the
+  //   right-edge drag is silently ignored — which is exactly how this guard
+  //   first failed. Close it and WAIT until it is actually off-screen.
+  const closeDrawers = async () => {
+    await mp.keyboard.press("Escape");
+    await mp.evaluate(`(() => {
+      const ov = document.querySelector('.mantine-Overlay-root');
+      if (ov) ov.click();
+    })()`);
+    for (let i = 0; i < 20; i++) {
+      const st = await mp.evaluate(`(() => {
+        const n = document.querySelector('[data-cx="navbar"]');
+        const a = document.querySelector('[data-cx="aside"]');
+        const nr = n ? n.getBoundingClientRect() : null;
+        const ar = a ? a.getBoundingClientRect() : null;
+        return {
+          navClosed: !nr || nr.right <= 1,
+          asideClosed: !ar || ar.left >= window.innerWidth - 1,
+        };
+      })()`);
+      if (st.navClosed && st.asideClosed) return true;
+      await mp.waitForTimeout(150);
+    }
+    return false;
+  };
+  const closed = await closeDrawers();
+  check(
+    "both drawers can be closed again before the next gesture",
+    closed,
+    `closed=${closed}`
+  );
 
   // --- right edge: drag left from the right edge ---
   const beforeR = await drawerOpen('[data-cx="aside"]');
@@ -1390,8 +1417,7 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
     !!afterR && afterR.right <= 392 && afterR.w > 100,
     `before=${JSON.stringify(beforeR)} after=${JSON.stringify(afterR)}`
   );
-  await mp.keyboard.press("Escape");
-  await mp.waitForTimeout(800);
+  await closeDrawers();
 
   // --- header auto-hide ---
   const headerY = async () =>
@@ -1402,11 +1428,21 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
       return { top: Math.round(r.top), hidden: el.getAttribute('data-hidden') === 'true' };
     })()`);
 
+  // ★ The scroll handler is rAF-throttled and the header has a 180ms
+  //   transition, so poll for the settled state instead of sampling once.
+  const waitHeader = async (wantHidden) => {
+    for (let i = 0; i < 25; i++) {
+      const st = await headerY();
+      if (st && st.hidden === wantHidden) return st;
+      await mp.waitForTimeout(120);
+    }
+    return await headerY();
+  };
+
   const hTop = await headerY();
   // Scroll down well past the hide threshold.
   await mp.evaluate(`window.scrollTo(0, 1200)`);
-  await mp.waitForTimeout(700);
-  const hDown = await headerY();
+  const hDown = await waitHeader(true);
   check(
     "the header hides when scrolling down",
     !!hDown && hDown.hidden && hDown.top <= -40,
@@ -1415,8 +1451,7 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
 
   // Scroll up a little: it must come back immediately.
   await mp.evaluate(`window.scrollTo(0, 1100)`);
-  await mp.waitForTimeout(700);
-  const hUp = await headerY();
+  const hUp = await waitHeader(false);
   check(
     "the header returns when scrolling up",
     !!hUp && !hUp.hidden && hUp.top >= -2,
@@ -1425,8 +1460,7 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
 
   // Back at the very top it must always be visible.
   await mp.evaluate(`window.scrollTo(0, 0)`);
-  await mp.waitForTimeout(700);
-  const hTop2 = await headerY();
+  const hTop2 = await waitHeader(false);
   check(
     "the header is always visible at the top of the page",
     !!hTop2 && !hTop2.hidden && hTop2.top >= -2,
