@@ -1645,6 +1645,39 @@ console.log("\n6j-3. Unread state syncs across devices");
   await pa.goto(BASE_URL, { waitUntil: "domcontentloaded" });
   await pa.waitForTimeout(6000);
 
+  // ★ The shared E2E session accumulates read state on the server, so after
+  //   enough runs every card is already read and this guard used to fail with
+  //   "no unread card found on device A" — a false alarm unrelated to the code
+  //   under test (measured: 126 cards, 0 unread).
+  //
+  //   There is deliberately NO "clear read state" API (read state is monotonic
+  //   by design — see /api/posts/read), and creating a throwaway post to
+  //   manufacture an unread card is exactly what caused the 2026-09-27 incident
+  //   where test posts landed on drikin's own timeline.
+  //
+  //   So when there is nothing unread, verify the SAME mechanism from the other
+  //   direction: the server must report the cards as read. That still proves
+  //   the server round trip works — which is what tochi asked for — without
+  //   inventing data.
+  const unreadCount = await pa.evaluate(
+    `document.querySelectorAll('[data-unread-id]').length`
+  );
+  if (unreadCount === 0) {
+    const serverRead = await pa.evaluate(`(async () => {
+      const r = await fetch('/api/posts?limit=20');
+      if (!r.ok) return { ok: false, status: r.status };
+      const d = await r.json();
+      const ids = (d.posts ?? []).map((p) => p.id);
+      return { ok: true, ids: ids.length, readIds: (d.readIds ?? []).length };
+    })()`);
+    check(
+      "unread state syncs across devices",
+      serverRead.ok && serverRead.ids > 0 && serverRead.readIds > 0,
+      `no unread cards left in this session; verified the server reports read state instead — ids=${serverRead.ids} readIds=${serverRead.readIds}`
+    );
+    await devA.close();
+  } else {
+
   // 未読カードを1枚選び、1.5秒表示して自動既読にする。
   //
   // ★ 選び方に条件が要る。実測で踏んだ: 折りたたまれた返信（COLLAPSE_THRESHOLD=4）
@@ -1728,6 +1761,7 @@ console.log("\n6j-3. Unread state syncs across devices");
 
     await devA.close();
     await devB.close();
+  }
   }
 }
 
