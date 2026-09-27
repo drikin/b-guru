@@ -10082,7 +10082,7 @@ export default function Home() {
                     //   the bar's own paddingTop (16px) is what puts the
                     //   SegmentedControl at the right visual distance — the
                     //   "flush" requirement is about the CONTROL, not the box.
-                    marginTop: -32,
+                    marginTop: -24,
                     zIndex: 60,
                     background: "var(--bg-primary)",
                     // ★ 上下の余白を均等にする（drikin 2026-09-25「タイムラインの
@@ -10115,17 +10115,18 @@ export default function Home() {
                     //     オフセットがどちらか一方でしか合わない。
                     //     16px にするとタブバー下端 = 116px = 部活バーの sticky top
                     //     になり、位置が一意に決まる。見た目の間隔も 16px で揃う。
-                    // ★ 16, and marginTop -32 to compensate.
+                    // ★ 16, with marginTop -24 (NOT -32).
                     //
                     //   Measured on the live build (390px, 2026-09-27):
-                    //   marginTop -24 + paddingTop 24 gave visualAbove=24 /
-                    //   visualBelow=16 — lopsided by 8px. The earlier note
-                    //   claiming 24 made both sides 16px was wrong.
+                    //     marginTop -24 + paddingTop 24 → visualAbove=24 / below=16
+                    //     marginTop -32 + paddingTop 16 → bar top=48 (8px under the
+                    //       header), visualAbove=0 / below=16
+                    //     marginTop -24 + paddingTop 16 → bar top=56, above=16 / below=16 ✓
                     //
                     //   The bar's top edge must stay at 56px (flush under the
-                    //   header) while the CONTROL sits 16px below it. So the
-                    //   paddingTop drops to 16 and the negative margin grows by
-                    //   the same 8px to keep the box anchored at 56px.
+                    //   header) while the CONTROL sits 16px below it. -24 anchors
+                    //   the box; paddingTop 16 places the control. Changing one
+                    //   without the other breaks the anchor — always re-measure.
                     paddingTop: 16,
                     paddingBottom: 16,
                     display: "flex",
