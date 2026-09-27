@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listPosts, listHotTopics } from "@/lib/posts";
+import { getReadIdsForPosts } from "@/lib/read-state-server";
 import { findMemberByEmail } from "@/lib/ghost";
 import { getSessionEmail } from "@/lib/session";
 
@@ -45,7 +46,18 @@ export async function GET(req: NextRequest) {
       before,
       limit,
     });
-    return NextResponse.json({ posts }, { headers: NO_CACHE });
+    // ★ 既読 ID を同じ応答に同梱する（tochi 2026-09-27 の未読共通化）。
+    //   新規 GET エンドポイントを作ると初回ペイントに 1 往復増え、
+    //   オーナー制約「パフォーマンスは低下させない」に反する。
+    //   フィードは既に毎回この API を叩いているので、同梱なら往復ゼロ増。
+    //   返すのは**この応答に含まれる投稿の既読だけ**（全件返すと無駄が大きい）。
+    const visibleIds: number[] = [];
+    for (const p of posts) {
+      visibleIds.push(p.id);
+      for (const r of p.replies ?? []) visibleIds.push(r.id);
+    }
+    const readIds = await getReadIdsForPosts(email, visibleIds);
+    return NextResponse.json({ posts, readIds }, { headers: NO_CACHE });
   } catch (e: any) {
     console.error("posts GET error:", e.message);
     return NextResponse.json(

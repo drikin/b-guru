@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { buildReadPayload, mergeReadState, normalizeReadIds } from "@/lib/read-state";
 import {
   AppShell,
   NavLink,
@@ -865,6 +866,125 @@ let readStore: ReadStore = loadReadStore();
 // immediately hydrates with the real localStorage-backed store.
 const readServerSnapshot: ReadStore = { enabled: true, read: new Set<number>() };
 const readListeners = new Set<() => void>();
+
+// =====================================================================
+// ★ 既読のサーバー同期（tochi 2026-09-27「PCとスマホの両方でみた場合に、
+//   未読管理を共通管理にしたい」）
+//
+//   設計: localStorage は**同期ファーストペイントのキャッシュ**として残し、
+//   PostgreSQL を権威とする。初回ペイントは現行と完全に同一（同期読み）で、
+//   サーバーの値は到着後に差分適用する。これで往復は増えず、振る舞いも変わらない。
+//
+//   ★ 新規 GET エンドポイントは作らない。既存の /api/posts 応答に readIds を
+//     同梱する（listPosts は既に viewerEmail を受け取っている）。往復ゼロ増。
+// =====================================================================
+
+/** サーバーへ送る未送信の既読 ID。デバウンスしてまとめて送る。 */
+const pendingReadIds = new Set<number>();
+let readFlushTimer: ReturnType<typeof setTimeout> | null = null;
+/** 送信中のフラッシュがあるか（多重送信を防ぐ）。 */
+let readFlushInFlight = false;
+
+/**
+ * 送信間隔。
+ *
+ * ★ 自動既読は「スクロールするだけで」発火する。1 件ずつ送るとスクロールだけで
+ *   毎秒数十リクエストになる。実測: DB プールは max: 10、pm2 は fork_mode
+ *   （単一プロセス）なので、まとめて送らないとサイト全体が無応答になる。
+ */
+const READ_FLUSH_DEBOUNCE_MS = 5000;
+
+/** サーバーへ既読を送る。失敗したらキューに戻す（既読を失わない）。 */
+async function flushReadIds(useBeacon = false): Promise<void> {
+  if (readFlushInFlight) return;
+  if (pendingReadIds.size === 0) return;
+  const ids = [...pendingReadIds];
+  const payload = buildReadPayload(ids);
+  if (!payload) {
+    pendingReadIds.clear();
+    return;
+  }
+  // 送信済みとして先にキューから外す。失敗したら戻す。
+  for (const id of payload.ids) pendingReadIds.delete(id);
+
+  // ★ ページ離脱時は sendBeacon。fetch だと離脱でキャンセルされる。
+  if (useBeacon && typeof navigator !== "undefined" && navigator.sendBeacon) {
+    try {
+      const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+      navigator.sendBeacon("/api/posts/read", blob);
+      return;
+    } catch {
+      // フォールバックして fetch を試す
+    }
+  }
+
+  readFlushInFlight = true;
+  try {
+    const res = await fetch("/api/posts/read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    });
+    if (!res.ok) {
+      // ★ 401（セッション切れ）でも 500 でも、既読は失わない。
+      //   キューに戻して次回に再送する。localStorage には既に入っているので
+      //   この端末では既読のまま。サーバー同期だけが遅れる。
+      for (const id of payload.ids) pendingReadIds.add(id);
+    }
+  } catch {
+    for (const id of payload.ids) pendingReadIds.add(id);
+  } finally {
+    readFlushInFlight = false;
+  }
+}
+
+function scheduleReadFlush() {
+  if (readFlushTimer !== null) return;
+  readFlushTimer = setTimeout(() => {
+    readFlushTimer = null;
+    void flushReadIds();
+  }, READ_FLUSH_DEBOUNCE_MS);
+}
+
+/**
+ * サーバーの既読を取得してローカルと統合する（移行 + 差分適用）。
+ *
+ * ★★ 順序が本質: **GET → ローカルと和集合 → サーバーに無い分を POST**。
+ *   逆順にすると既読が消える。統合は必ず和集合で、どちらの既読も失わない。
+ *
+ * 移行は初回 1 回だけ。フラグで二重実行を防ぐ。
+ */
+const READ_MIGRATED_KEY = "bguru_read_migrated_v1";
+async function syncReadFromServer(serverIds: number[]): Promise<void> {
+  const { merged, toPost } = mergeReadState(readStore.read, serverIds);
+  // サーバーに無いローカル分を送る（移行）。初回だけフラグを立てる。
+  let migrated = false;
+  try {
+    migrated = localStorage.getItem(READ_MIGRATED_KEY) === "1";
+  } catch {}
+  if (!migrated && toPost.length > 0) {
+    for (const id of toPost) pendingReadIds.add(id);
+    scheduleReadFlush();
+    try {
+      localStorage.setItem(READ_MIGRATED_KEY, "1");
+    } catch {}
+  }
+  // 和集合をローカルに反映（サーバー分を追加。既読は減らさない）。
+  if (merged.size !== readStore.read.size) {
+    readStore = { ...readStore, read: merged };
+    persistReadStore();
+    readListeners.forEach((l) => l());
+  }
+}
+
+/** フィード応答に同梱された readIds を適用する。 */
+export function applyServerReadIds(ids: unknown): void {
+  const clean = normalizeReadIds(ids);
+  if (clean.length === 0) return;
+  void syncReadFromServer(clean);
+}
+
 function persistReadStore() {
   try {
     localStorage.setItem(BGURU_READ_KEY, JSON.stringify({ read: [...readStore.read] }));
@@ -883,6 +1003,85 @@ function getReadSnapshot() {
 function isReadId(id: number) {
   return readStore.read.has(id);
 }
+
+// =====================================================================
+// ★ カード単位の購読（パフォーマンス改善の本命）
+//
+//   現行は PostCard が1枚ごとに `useSyncExternalStore(subscribeRead, ...)` を
+//   呼んでいた。readStore は markReadId のたびに identity が変わるので、
+//   **既読1件につきマウント済みの全カードが再レンダリングされる**。
+//
+//   本番実測: 描画カード 112枚（うち未読95枚）。jump-to-post は最大 4,000
+//   ルートまで遡ってマウントするので、深く遡った状態では 4,000枚が全部
+//   再レンダリングされる。これが現行の支配的コスト。
+//
+//   ★ id ごとに購読を分けると、既読1件につき**そのカード1枚**しか
+//     再レンダリングしない。112分の1 になる。
+//
+//   ★ 振る舞いは変えない。ハイライトの見た目・タイミング・粒度は同一。
+// =====================================================================
+
+/** id ごとのリスナー。既読になった id のカードだけを起こす。 */
+const readIdListeners = new Map<number, Set<() => void>>();
+
+function subscribeReadId(id: number, l: () => void) {
+  let set = readIdListeners.get(id);
+  if (!set) {
+    set = new Set();
+    readIdListeners.set(id, set);
+  }
+  set.add(l);
+  return () => {
+    const s = readIdListeners.get(id);
+    if (!s) return;
+    s.delete(l);
+    if (s.size === 0) readIdListeners.delete(id);
+  };
+}
+
+/** その id が既読かどうかだけを購読する。boolean を返すので参照が安定する。 */
+function useIsRead(id: number): boolean {
+  return useSyncExternalStore(
+    useCallback((l: () => void) => subscribeReadId(id, l), [id]),
+    () => readStore.read.has(id),
+    () => false
+  );
+}
+
+/** 自動既読の ON/OFF だけを購読する（カードごとに readStore 全体を購読しない）。 */
+function useUnreadEnabled(): boolean {
+  return useSyncExternalStore(
+    subscribeRead,
+    () => readStore.enabled,
+    () => true
+  );
+}
+
+/** 既読になった id のカードだけを起こす。 */
+function notifyReadId(id: number) {
+  const s = readIdListeners.get(id);
+  if (s) s.forEach((l) => l());
+}
+
+/**
+ * 既読キャッシュを消す（ログアウト時）。
+ *
+ * ★ 共用端末で A がログアウト → B がログインしたとき、A の既読 Set が
+ *   B の初回 GET に和集合として POST され、B のアカウントに A の既読が
+ *   恒久保存される。localStorage だけの時代は B のブラウザに見えるだけだったが、
+ *   サーバー化で新たに生じるデグレ。ログアウトで必ず消す。
+ */
+function clearReadCache() {
+  readStore = { enabled: readStore.enabled, read: new Set<number>() };
+  pendingReadIds.clear();
+  try {
+    localStorage.removeItem(BGURU_READ_KEY);
+    localStorage.removeItem(READ_MIGRATED_KEY);
+  } catch {}
+  readListeners.forEach((l) => l());
+  // カード単位の購読も全部起こす（全カードが未読に戻る）
+  readIdListeners.forEach((s) => s.forEach((l) => l()));
+}
 function setUnreadEnabled(v: boolean) {
   if (readStore.enabled === v) return;
   readStore = { ...readStore, enabled: v };
@@ -893,7 +1092,23 @@ function markReadId(id: number) {
   if (readStore.read.has(id)) return;
   readStore = { ...readStore, read: new Set(readStore.read).add(id) };
   persistReadStore();
-  readListeners.forEach((l) => l());
+  // ★ 全カードを起こすのではなく、この id のカードだけを起こす。
+  //   実測: 112枚 → 1枚。振る舞いは同じ（このカードのハイライトが消える）。
+  notifyReadId(id);
+  // サーバーへはデバウンスしてまとめて送る（楽観更新。UI は待たない）。
+  pendingReadIds.add(id);
+  scheduleReadFlush();
+}
+
+// ★ ページ離脱時に未送信分を確実に送る。fetch は離脱でキャンセルされるので
+//   sendBeacon を使う。visibilitychange は iOS Safari でも発火する。
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") void flushReadIds(true);
+  });
+}
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => void flushReadIds(true));
 }
 
 // Shared IntersectionObserver: a single observer tracks every unread card and
@@ -1249,17 +1464,21 @@ function PostCard({
   };
 
   // ---- Auto read/unread (self-contained per card) ----
-  const readSnap = useSyncExternalStore(subscribeRead, getReadSnapshot, () => readServerSnapshot);
+  // ★ カード単位の購読。readStore 全体を購読すると、既読1件につき
+  //   マウント済みの全カード（実測112枚、深く遡ると最大4,000枚）が
+  //   再レンダリングされる。id ごとに分けて1枚だけ起こす。
+  const readEnabled = useUnreadEnabled();
+  const readDone = useIsRead(post.id);
   const setUnreadRef = useCallback((el: HTMLElement | null) => {
     observeUnreadCard(el);
   }, []);
   // Unread = the feature is ON and this browser has not yet marked the post
   // read. Own posts are never highlighted (you just wrote them).
   const isUnread =
-    readSnap.enabled &&
+    readEnabled &&
     post.id > 0 &&
     auth.email !== post.authorEmail &&
-    !readSnap.read.has(post.id);
+    !readDone;
 
   // ---- 部活動ラベル（ルート投稿のみ表示） ----
   const clubName = clubLabel(post.club);
@@ -5621,6 +5840,10 @@ export default function Home() {
       .then((d) => {
         const posts = d.posts ?? [];
         setFeedPosts(posts);
+        // ★ サーバーの既読を適用（tochi 2026-09-27 の未読共通化）。
+        //   同じ応答に同梱されているので往復は増えない。localStorage の
+        //   同期キャッシュと和集合を取るので、既読が減ることはない。
+        applyServerReadIds(d.readIds);
         if (posts.length > 0) {
           feedCursorRef.current =
             posts[posts.length - 1].lastActivityAt ??
@@ -5669,6 +5892,8 @@ export default function Home() {
           ...prev,
           ...posts.filter((np: FeedPost) => !prev.some((p) => p.id === np.id)),
         ]);
+        // ★ ページング時もサーバーの既読を適用する（同梱なので往復ゼロ増）。
+        applyServerReadIds(d.readIds);
         if (posts.length > 0) {
           feedCursorRef.current =
             posts[posts.length - 1].lastActivityAt ??
@@ -6509,6 +6734,11 @@ export default function Home() {
     await fetch("/api/auth/logout", { method: "POST" });
     setAuth(null);
     setFeedPosts([]);
+    // ★ 既読キャッシュを消す。共用端末で A がログアウト → B がログインしたとき、
+    //   A の既読 Set が B の初回 GET に和集合として POST され、**B のアカウントに
+    //   A の既読が恒久保存される**。localStorage だけの時代は B のブラウザに
+    //   見えるだけだったが、サーバー化で新たに生じるデグレ。
+    clearReadCache();
   };
 
   // ---- Image upload ----

@@ -239,11 +239,46 @@ export async function initSchema() {
 
     -- Per-user read cursor for the feed/club unread badges (タイムラインを見ると進む).
     -- 同じ「既読カーソル」の考え方で、最新ルート投稿 id までを既読とする。
+    --
+    -- ★ 2026-09-27: これは**デッドスキーマ**。読み書きするコードが 1 行も無い
+    --   （grep -rn 'forum_read_state' src/ はこの CREATE TABLE のみ）。
+    --   履歴: c3b3b11 で部活バッジを未読数ベースにするため新設 → 2日後の
+    --   df70d9f で「直近7日アクティビティ数」に置換され、/api/clubs/read は削除。
+    --   コミットメッセージに「forum_read_state はデッドスキーマとして残置」と明記。
+    --
+    --   ★ 再利用してはいけない。カーソル方式は「返信を読むと親も既読になる」
+    --     （実測: 返信 ID は常に親より大きい）し、COLLAPSE_THRESHOLD=4 で
+    --     折りたたまれた返信を開いたときに未読が出ない。per-post が必須。
+    --     将来の実装者が「既読はここ」と誤認しないよう、DROP を推奨する。
     CREATE TABLE IF NOT EXISTS forum_read_state (
       email TEXT PRIMARY KEY,
       last_read_id INTEGER NOT NULL DEFAULT 0,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    -- Per-post read state (tochi 2026-09-27「PCとスマホの両方でみた場合に、
+    -- 未読管理を共通管理にしたい」). 既読の粒度は post.id 単位・返信独立・
+    -- 自分の投稿除外で、これは従来の localStorage 実装と同一。保存先だけを
+    -- サーバーに移して複数端末で共有する。
+    --
+    -- ★ カーソル方式（forum_read_state）ではなく per-row にした理由:
+    --   返信 ID は常に親より大きいので、カーソルだと「返信を読んだ」で親も
+    --   既読になる。さらに COLLAPSE_THRESHOLD=4 で折りたたまれた返信は
+    --   親だけが見えるので、カーソルだと開いたときに未読が出ない。
+    --   notifications の read_at（per-row 既読）が正しい先行例。
+    --
+    -- ★ read_at 列は持たない。GET は readIds しか返さないので write-only の
+    --   列になり、forum_read_state をデッドスキーマにしたのと同じ過ちになる。
+    --
+    -- ★ 剪定（保持件数の上限）もしない。jump-to-post は最大 80 ページ × 50 =
+    --   4,000 ルートまで遡ってマウントするので、剪定すると古い投稿が未読として
+    --   復活する。5,647 行 × 151 人 = 最大 85 万行は PostgreSQL では無視できる。
+    CREATE TABLE IF NOT EXISTS post_read_state (
+      email   TEXT    NOT NULL,
+      post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      PRIMARY KEY (email, post_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_post_read_state_email ON post_read_state(email);
 
     -- 部活の「部長」（各クラブの担当メンバー）。admin のみ管理画面(右SB部長カード)から編集。
     CREATE TABLE IF NOT EXISTS club_leaders (

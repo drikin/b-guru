@@ -1218,6 +1218,101 @@ console.log("\n6j-2. j/k jump clears the sticky stack");
   await desk.close();
 }
 
+// 6j-3. Unread state syncs across devices (tochi 2026-09-27).
+//
+// tochi: 「PCとスマホの両方でみた場合に、未読管理を共通管理にしたいですね。
+// 今はブラウザベースのローカル管理になっていると思うので、DB管理になってしまうので
+// 大変なのは分かっているんですが・・・」
+//
+// 実測: アクティブ 151 人中 82 人（54%）が複数セッション（= 複数端末）を持つ。
+// 既読は post.id 単位・返信独立で、粒度は従来と同一。保存先だけがサーバーに移る。
+//
+// ★ 核心の検証: 端末Aで既読にした投稿が、端末B（別 context = 別ブラウザ）で
+//   未読ハイライトされないこと。これが tochi の要望そのもの。
+console.log("\n6j-3. Unread state syncs across devices");
+{
+  // 端末A: ログインしてフィードを読み、未読カードを1枚既読にする
+  const devA = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await devA.addCookies([
+    { name: "bsm_session", value: SESSION, domain: "bsm.backspace.fm", path: "/" },
+  ]);
+  const pa = await devA.newPage();
+  await pa.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+  await pa.waitForTimeout(6000);
+
+  // 未読カードを1枚選び、1.5秒表示して自動既読にする
+  const target = await pa.evaluate(`(async () => {
+    const cards = [...document.querySelectorAll('[data-unread-id]')];
+    for (const c of cards) {
+      const id = Number(c.getAttribute('data-unread-id'));
+      if (!id) continue;
+      const bg = getComputedStyle(c).backgroundColor;
+      const unread = bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent';
+      if (!unread) continue;
+      c.scrollIntoView({ block: 'center' });
+      return { id };
+    }
+    return null;
+  })()`);
+  if (!target) {
+    check("unread state syncs across devices", false, "no unread card found on device A");
+  } else {
+    // 1.5 秒待って自動既読（AUTO_READ_DWELL_MS=1000）を発火させる
+    await pa.waitForTimeout(2000);
+    // サーバーへ送られるまで待つ（デバウンス 5 秒 + 余裕）
+    await pa.waitForTimeout(7000);
+    // 端末Aで既読になったことを確認
+    const readOnA = await pa.evaluate(`(() => {
+      const el = document.querySelector('[data-unread-id="${target.id}"]');
+      if (!el) return null;
+      const bg = getComputedStyle(el).backgroundColor;
+      return bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent';
+    })()`);
+
+    // 端末B: 別 context（= 別ブラウザ、localStorage が空）でログイン
+    const devB = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await devB.addCookies([
+      { name: "bsm_session", value: SESSION, domain: "bsm.backspace.fm", path: "/" },
+    ]);
+    const pb = await devB.newPage();
+    await pb.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+    await pb.waitForTimeout(7000);
+    // 端末Bの localStorage が空であることを確認（本当に別端末の再現になっているか）
+    const bHasLocal = await pb.evaluate(`(() => {
+      try { return !!localStorage.getItem('bguru_read_posts_v2'); } catch { return false; }
+    })()`);
+    // 端末Bでその投稿が既読になっているか（サーバーから復元されたか）
+    const readOnB = await pb.evaluate(`(() => {
+      const el = document.querySelector('[data-unread-id="${target.id}"]');
+      if (!el) return 'not-rendered';
+      const bg = getComputedStyle(el).backgroundColor;
+      return bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent';
+    })()`);
+
+    check(
+      "unread state syncs across devices",
+      readOnA === true && readOnB === true,
+      `postId=${target.id} readOnA=${readOnA} readOnB=${readOnB} bHadLocalStorage=${bHasLocal}`
+    );
+
+    // ★ 書き込み量: スクロールで POST が乱発されないこと
+    const readPosts = [];
+    pb.on("request", (r) => {
+      if (r.url().includes("/api/posts/read") && r.method() === "POST") readPosts.push(r.url());
+    });
+    await pb.evaluate(`window.scrollBy(0, 3000)`);
+    await pb.waitForTimeout(3000);
+    check(
+      "auto-read does not flood the server with requests",
+      readPosts.length <= 5,
+      `POST /api/posts/read count=${readPosts.length} in 3s of scrolling (must be <= 5)`
+    );
+
+    await devA.close();
+    await devB.close();
+  }
+}
+
 console.log("\n6k. Reactions on posts");
 
 // ★ takuto 2026-09-26: 「返信に対するリアクションが、うまく表示されていないそうです。
