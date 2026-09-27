@@ -1514,9 +1514,17 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
     mp.evaluate(`(() => {
       const t = document.querySelector('[data-cx="navtabs"]');
       const c = document.querySelector('[data-cx="clubbars"]');
+      const h = document.querySelector('header');
+      const seg = t
+        ? t.querySelector('[role="group"], .mantine-SegmentedControl-root')
+        : null;
       return {
         tab: t ? Math.round(t.getBoundingClientRect().top) : null,
         club: c ? Math.round(c.getBoundingClientRect().top) : null,
+        visualAbove:
+          seg && h
+            ? Math.round(seg.getBoundingClientRect().top - h.getBoundingClientRect().bottom)
+            : null,
       };
     })()`);
 
@@ -1534,10 +1542,15 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
   //   While it was sticky, `top: 56px` guaranteed that; in normal flow the
   //   negative margin decides it, and -24 put it at 48px (8px hidden behind the
   //   header — measured).
+  // ★ The bar's BOX starts at 48px (its -24 margin pulls it under the header's
+  //   bottom edge), but what the user sees is the SegmentedControl inside it.
+  //   The requirement is that the control sits 16px below the header — the same
+  //   visual gap as below it. Assert the control, not the box.
   check(
-    "the tab bar rests flush under the header",
-    !!stackShown && stackShown.tab >= 54 && stackShown.tab <= 58,
-    `tab top=${stackShown?.tab} (must be ~56, flush with the header bottom)`
+    "the tab switcher sits at an even visual distance from the header",
+    !!stackShown && stackShown.visualAbove !== null &&
+      Math.abs(stackShown.visualAbove - 16) <= 3,
+    `visualAbove=${stackShown?.visualAbove} (must be ~16)`
   );
   check(
     "the tab bar scrolls out of view instead of staying pinned",
