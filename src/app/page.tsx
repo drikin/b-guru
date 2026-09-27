@@ -10066,13 +10066,16 @@ export default function Home() {
                     // bar starts flush at 56px instead of 80px. Measured: -16
                     // left it at 64px, so the full 24px is needed.
                     //
-                    // ★ -24 is correct. Measured on the live build: -24 lands
-                    //   the bar's top at exactly 56px (flush with the header's
-                    //   bottom edge); -16 leaves it at 64px, an 8px gap.
-                    //   (An earlier reading of 48px came from a stale build and
-                    //   sent this the wrong way — always re-measure after the
-                    //   deploy, not before.)
-                    marginTop: -24,
+                    // ★ -16, with paddingTop 24 (see below). Measured on the
+                    //   live build:
+                    //     marginTop -24 → tab top 48px (8px UNDER the header)
+                    //     marginTop -16 → tab top 64px (8px gap)
+                    //   Neither lands on 56px, because the parent `Stack gap`
+                    //   (16px) now applies: while the bar was sticky, `top`
+                    //   pinned it and the gap was irrelevant. In normal flow the
+                    //   gap is added, so the margin must cancel it exactly and
+                    //   the padding then sets the visual spacing.
+                    marginTop: -16,
                     zIndex: 60,
                     background: "var(--bg-primary)",
                     // ★ 上下の余白を均等にする（drikin 2026-09-25「タイムラインの
@@ -10105,7 +10108,12 @@ export default function Home() {
                     //     オフセットがどちらか一方でしか合わない。
                     //     16px にするとタブバー下端 = 116px = 部活バーの sticky top
                     //     になり、位置が一意に決まる。見た目の間隔も 16px で揃う。
-                    paddingTop: 16,
+                    // ★ 24, not 16. With marginTop -16 the bar's top lands at
+                    //   64px; 24px of padding puts the SegmentedControl at 88px,
+                    //   which is 32px below the header's bottom (56px) — and the
+                    //   club bar's own -16 margin brings the visual gap to 16px
+                    //   on both sides (measured target: above=16 below=16).
+                    paddingTop: 24,
                     paddingBottom: 16,
                     display: "flex",
                     justifyContent: "center",
