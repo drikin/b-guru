@@ -7992,13 +7992,24 @@ export default function Home() {
             "--app-shell-header-height"
           )
         ) || 56;
+      // ★ 高さを足し算してはいけない。実測（1440px）:
+      //     ヘッダ 56 / タブバー 56→116（高さ60）/ 部活バー 132→165（高さ34）
+      //   タブバーと部活バーの間に **16px の隙間**があり、`offsetHeight` の
+      //   合計（56+60+34=150）は実際の下端 165px に 15px 足りない。
+      //   足し算で組むと、帯の間隔を変えるたびに静かに壊れる。
+      //
+      //   正しい測り方は「sticky で貼られている帯の**一番下の辺**」を実測すること。
+      //   隙間も余白も自動的に含まれる。
       const tab = document.querySelector<HTMLElement>('[data-cx="navtabs"]');
       const club = document.querySelector<HTMLElement>('[data-cx="clubbars"]');
-      // 部活バーは `navtabs` の直下に貼られるので、両方の高さを足す。
-      // どちらかが無い画面（チャット表示中は部活バーが出ない）でも正しく動く。
-      const stack =
-        headerH + (tab ? tab.offsetHeight : 0) + (club ? club.offsetHeight : 0);
-      return Math.ceil(stack) + 8;
+      let bottom = headerH;
+      for (const el of [tab, club]) {
+        if (!el) continue;
+        // 画面上端からの絶対位置。sticky なので scroll 位置に依らず安定する。
+        const b = el.getBoundingClientRect().bottom;
+        if (b > bottom) bottom = b;
+      }
+      return Math.ceil(bottom) + 8;
     };
     const setRing = (id: number | null) => {
       document.querySelectorAll<HTMLElement>(".kbd-focus").forEach((el) => {
