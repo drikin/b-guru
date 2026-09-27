@@ -10066,13 +10066,13 @@ export default function Home() {
                     // bar starts flush at 56px instead of 80px. Measured: -16
                     // left it at 64px, so the full 24px is needed.
                     //
-                    // ★ -16, not -24. While the bar was sticky, `top: 56px`
-                    //   pinned it and the negative margin only affected where it
-                    //   rested before the first scroll. Now that it is in normal
-                    //   flow, the full -24 puts its top at 48px — 8px UNDER the
-                    //   header (measured). -16 lands it exactly at 56px, flush
-                    //   with the header's bottom edge.
-                    marginTop: -16,
+                    // ★ -24 is correct. Measured on the live build: -24 lands
+                    //   the bar's top at exactly 56px (flush with the header's
+                    //   bottom edge); -16 leaves it at 64px, an 8px gap.
+                    //   (An earlier reading of 48px came from a stale build and
+                    //   sent this the wrong way — always re-measure after the
+                    //   deploy, not before.)
+                    marginTop: -24,
                     zIndex: 60,
                     background: "var(--bg-primary)",
                     // ★ 上下の余白を均等にする（drikin 2026-09-25「タイムラインの
