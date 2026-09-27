@@ -1986,17 +1986,48 @@ console.log("\n6m. Duplicate-post warning");
   //   自分でテスト投稿を作り、検証後に消す。
   const newsCase = await page.evaluate(`(async () => {
     // 1. 元記事を投稿する（AI 層の候補になる）
+    // ★ uniq は本文の**先頭**に置く。末尾に付けると similarity が下がり、
+    //   他の投稿が候補の上位5件を占めたときに元記事が候補から漏れて
+    //   dupes=0 になる（CI で実際に FAIL した）。
+    //   先頭なら「e2e-news-<ts>」が共通接頭辞になるが、AI が見るのは
+    //   タイトルと説明（url_preview）なので本文の位置は判定に影響しない。
+    //   ここで効かせたいのは**候補選定**（similarity は title/description で
+    //   計算される）なので、本文の uniq は候補に影響しない。
+    //   本当に効かせたいのは「元記事が候補の上位に入ること」なので、
+    //   タイトルに固有の語を足して similarity を上げる。
     const uniq = 'e2e-news-' + Date.now();
     const orig = await fetch('/api/publish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text: '「クリスタ」素材、大量非公開でユーザー混乱　セルシス「誤判定もあった」が…… ' + uniq +
+        text: uniq + ' 「クリスタ」素材、大量非公開でユーザー混乱　セルシス「誤判定もあった」が……' +
               ' https://www.itmedia.co.jp/news/article/2609/24/2000001689/',
       }),
     });
     if (!orig.ok) return { status: orig.status, err: 'could not create the source post' };
     const origPost = await orig.json();
+
+    // ★★ プレビューが付くまで待つ。createPost は fetchUrlPreview を
+    //    fire-and-forget で走らせ、url_preview: null を即座に返す
+    //    （src/lib/posts.ts:171 と 198 のコメント参照）。AI 層の候補は
+    //    url_preview->>'title' IS NOT NULL で絞られるので、プレビューが
+    //    付く前に判定をかけると**元記事が候補から丸ごと落ちて dupes=0** に
+    //    なる。これが CI で FAIL したりローカルで PASS したりする
+    //    フレーキーの正体（実測: 3回中1回 FAIL）。
+    //    ポーリングして url_preview が入るのを確認してから進む。
+    let previewReady = false;
+    for (let i = 0; i < 40; i++) {
+      const pr = await fetch('/api/posts/' + origPost.id);
+      if (pr.ok) {
+        const pj = await pr.json();
+        const p = pj.post ?? pj;
+        if (p?.urlPreview?.title) { previewReady = true; break; }
+      }
+      await new Promise(r => setTimeout(r, 500));
+    }
+    if (!previewReady) {
+      return { status: 0, err: 'url_preview never arrived', origId: origPost.id };
+    }
     // ★★ 後片付けは evaluate の**外**で行う。中で try/finally にしても、
     //    Playwright の evaluate 自体がタイムアウト（既定30秒）で中断されると
     //    finally は走らない。AI 層は実測 9.4 秒 + 候補検索なので 30 秒を
