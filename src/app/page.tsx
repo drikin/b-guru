@@ -4300,8 +4300,7 @@ function PullToRefresh({
     //         AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/119.0.6045.109
     //         Mobile/15E148 Safari/604.1
     //   Edge も同様に `EdgiOS/` を含む（Chromium ベースなのでネイティブあり）。
-    const isIOSChrome = /CriOS|EdgiOS|FxiOS/.test(ua);
-    if (isIOSChrome) return;
+    // DEGRADE TEST: iOS Chrome でもカスタム実装を動かす
 
     // ★ 横スクロールする要素（部活バー）の上では引っ張りを発動させない。
     //   ここで preventDefault すると**横スクロールが死ぬ**（リュー 2026-09-26）。
