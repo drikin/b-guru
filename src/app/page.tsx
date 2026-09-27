@@ -7996,17 +7996,29 @@ export default function Home() {
       //     ヘッダ 56 / タブバー 56→116（高さ60）/ 部活バー 132→165（高さ34）
       //   タブバーと部活バーの間に **16px の隙間**があり、`offsetHeight` の
       //   合計（56+60+34=150）は実際の下端 165px に 15px 足りない。
-      //   足し算で組むと、帯の間隔を変えるたびに静かに壊れる。
       //
-      //   正しい測り方は「sticky で貼られている帯の**一番下の辺**」を実測すること。
-      //   隙間も余白も自動的に含まれる。
+      // ★★ さらに `getBoundingClientRect()` も使ってはいけない。
+      //   実測で踏んだ: 1回目のジャンプは 174px で正しいのに、2回目以降は
+      //   158px に縮んだ。理由は**スクロール位置で sticky の位置が変わる**ため:
+      //     スクロール前: 部活バー 132→165（まだ貼り付いていない）
+      //     スクロール後: 部活バー 116→150（top に張り付いた）
+      //   rect は「今の見た目」なので、スクロール量で答えが変わる。
+      //
+      //   正しいのは **sticky の `top` が示す最終位置**。これは CSS で決まって
+      //   いてスクロールに依らない。`top` を読んで、帯の高さを足す。
+      //   `top` は `calc(...)` で計算値が返るので px に解決される。
       const tab = document.querySelector<HTMLElement>('[data-cx="navtabs"]');
       const club = document.querySelector<HTMLElement>('[data-cx="clubbars"]');
       let bottom = headerH;
       for (const el of [tab, club]) {
         if (!el) continue;
-        // 画面上端からの絶対位置。sticky なので scroll 位置に依らず安定する。
-        const b = el.getBoundingClientRect().bottom;
+        const cs = getComputedStyle(el);
+        // sticky でなければ top は auto。その場合は今の位置でよい。
+        const top = cs.position === "sticky" ? parseFloat(cs.top) : NaN;
+        const anchor = Number.isFinite(top)
+          ? top
+          : el.getBoundingClientRect().top;
+        const b = anchor + el.offsetHeight;
         if (b > bottom) bottom = b;
       }
       return Math.ceil(bottom) + 8;
