@@ -8276,7 +8276,17 @@ export default function Home() {
       //   ここは sticky の `top` + 高さで一意に決まる。
       const tab = document.querySelector<HTMLElement>('[data-cx="navtabs"]');
       const club = document.querySelector<HTMLElement>('[data-cx="clubbars"]');
-      let bottom = headerH;
+      // ★ When the header has auto-hidden it occupies no space, so it must not
+      //   be added to the offset. The tab bar and club bar also slide up with
+      //   it (their sticky `top` becomes 0 / 68), and reading their computed
+      //   `top` below already accounts for that — but the header's own 56px
+      //   would otherwise be counted twice, pushing the focused card 56px too
+      //   far down (measured: overlap 47-48px, i.e. the card landed under the
+      //   club bar again — the exact bug tochi reported on 2026-09-27).
+      const headerEl = document.querySelector<HTMLElement>('[data-cx="header"]');
+      const headerVisible =
+        !headerEl || headerEl.getAttribute("data-hidden") !== "true";
+      let bottom = headerVisible ? headerH : 0;
       for (const el of [tab, club]) {
         if (!el) continue;
         const cs = getComputedStyle(el);
