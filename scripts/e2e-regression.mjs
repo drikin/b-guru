@@ -1754,7 +1754,19 @@ console.log("\n6j-3. Unread state syncs across devices");
         const r1 = c.getBoundingClientRect();
         if (r1.height < 20) { tried.push({ id, skip: 'zero-height' }); continue; }
       }
-      c.scrollIntoView({ block: 'center' });
+      // ★ Scroll, then WAIT until the card is genuinely inside the viewport.
+      //   A single scrollIntoView can land the card outside it (measured:
+      //   rect.top=1041 on a 900px viewport), and the IntersectionObserver
+      //   (threshold 0.25) then never fires — the card stays unread forever.
+      //   Re-issue the scroll until the box is on screen.
+      let inView = false;
+      for (let k = 0; k < 12; k++) {
+        c.scrollIntoView({ block: 'center' });
+        await new Promise((r) => setTimeout(r, 250));
+        const rr = c.getBoundingClientRect();
+        if (rr.top >= 0 && rr.bottom <= window.innerHeight) { inView = true; break; }
+      }
+      if (!inView) { tried.push({ id, skip: 'never-in-view' }); continue; }
       // 自動既読（AUTO_READ_DWELL_MS=1000）を待つ
       await new Promise((r) => setTimeout(r, 2200));
       const el = document.querySelector('[data-unread-id="' + id + '"]');

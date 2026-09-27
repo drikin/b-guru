@@ -8292,10 +8292,15 @@ export default function Home() {
       //   The old code added their sticky `top` + height unconditionally, which
       //   would now push the focused card far too low. Measure what is actually
       //   pinned at the top instead: the header, and only if it is showing.
-      const headerEl = document.querySelector<HTMLElement>('[data-cx="header"]');
-      const headerVisible =
-        !headerEl || headerEl.getAttribute("data-hidden") !== "true";
-      let bottom = headerVisible ? headerH : 0;
+      // ★ Always reserve the header's height, even while it is auto-hidden.
+      //
+      //   Measured (2026-09-27): jumping while the header was hidden gave
+      //   scrollMarginTop=8, so the card landed at top=8 — and then the header
+      //   came back on the next scroll and covered it (cardTop=8,
+      //   headerBottom=56, overlap=48). The header is only *translated* away,
+      //   not removed: it returns the moment the user scrolls up, which a jump
+      //   does. Reserving its height unconditionally is the only stable answer.
+      let bottom = headerH;
       // Any element that is still sticky (none today, but keep this honest if
       // one is added back) contributes its pinned bottom edge.
       for (const el of [
