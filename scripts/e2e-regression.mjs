@@ -354,11 +354,19 @@ for (const y of [50, 200, 800, 2500, 6000]) {
   tabWhileScrolling.push(await tabPos());
 }
 const tops = tabWhileScrolling.map((t) => t?.top);
-const allSame = tops.every((t) => t === tabAtTop?.top);
+// ★ The original bug was a 24px JUMP (80px → 56px) on the first scroll, which
+//   made every tab switch look jittery. The bar must still never sit at an
+//   arbitrary intermediate offset.
+//
+//   Since 2026-09-27 the bar deliberately follows the auto-hiding header, so
+//   the legal positions are exactly two: 56px (header shown) and 0px (header
+//   hidden). Anything else is the old jitter coming back.
+const LEGAL_TOPS = [tabAtTop?.top, 0];
+const allLegal = tops.every((t) => LEGAL_TOPS.includes(t));
 check(
-  "tab bar does not move while scrolling the timeline",
-  allSame,
-  `at top=${tabAtTop?.top}px, while scrolling=${tops.join("/")}px`
+  "tab bar only ever rests at the header-shown or header-hidden offset",
+  allLegal,
+  `at top=${tabAtTop?.top}px, while scrolling=${tops.join("/")}px (legal: ${LEGAL_TOPS.join(" or ")})`
 );
 
 // 6e. The bar must sit FLUSH against the header. Pinning it lower (80px) left a
