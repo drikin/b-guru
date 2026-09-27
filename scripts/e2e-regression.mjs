@@ -1260,7 +1260,6 @@ console.log("\n6j-2. j/k jump clears the sticky stack");
   const jump = await p2.evaluate(`(async () => {
     const club = document.querySelector('[data-cx="clubbars"]');
     if (!club) return { error: 'no club bar on desktop' };
-    const clubBottom = club.getBoundingClientRect().bottom;
     const out = [];
     for (let i = 0; i < 3; i++) {
       document.body.focus();
@@ -1269,6 +1268,12 @@ console.log("\n6j-2. j/k jump clears the sticky stack");
       const el = document.querySelector('.kbd-focus');
       if (!el) { out.push({ i, err: 'no kbd-focus' }); continue; }
       const rect = el.getBoundingClientRect();
+      // ★ Re-measure the club bar AFTER the jump, not once before the loop.
+      //   Jumping scrolls the page, which auto-hides the header, which slides
+      //   the sticky club bar up (124 → 68). Comparing against a stale
+      //   pre-jump bottom reported a phantom 47-48px overlap while the card
+      //   was in fact correctly placed below the bar.
+      const clubBottom = club.getBoundingClientRect().bottom;
       out.push({
         i,
         cardTop: Math.round(rect.top),
@@ -1276,7 +1281,7 @@ console.log("\n6j-2. j/k jump clears the sticky stack");
         overlap: Math.round(clubBottom - rect.top),
       });
     }
-    return { out, clubBottom: Math.round(clubBottom) };
+    return { out };
   })()`);
   if (jump.error) {
     check("j/k jump lands the focused post below the club bar", false, jump.error);
