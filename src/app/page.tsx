@@ -9514,8 +9514,16 @@ export default function Home() {
                     //
                     //   ★ タブバーの高さは SegmentedControl の実寸（36px）で決まる。
                     //     padding から逆算できないので、変えたら必ず実測すること。
+                    //
+                    //   ★ tochi 2026-09-27 の j/k 重なり対策で paddingBottom を
+                    //     8 → 16 にした。理由: 部活バーは `top: ヘッダ+60px` に
+                    //     貼り付くので、**タブバーの下端がその 60px と一致して
+                    //     いないと、休位置と貼付位置がずれる**。ずれると j/k の
+                    //     オフセットがどちらか一方でしか合わない。
+                    //     16px にするとタブバー下端 = 116px = 部活バーの sticky top
+                    //     になり、位置が一意に決まる。見た目の間隔も 16px で揃う。
                     paddingTop: 16,
-                    paddingBottom: 8,
+                    paddingBottom: 16,
                     display: "flex",
                     justifyContent: "center",
                   }}
@@ -9582,14 +9590,18 @@ export default function Home() {
                   data-cx="clubbars"
                   style={{
                     // タブバーの直下に貼る。タブバーは top:56px から始まり
-                    // 高さ 60px（実測: 56→116）なので、その下端 116px に合わせる。
+                    // 高さ 68px（実測: 56→124）なので、その下端 124px に合わせる。
                     //
                     // ★ タブバーの高さは SegmentedControl の実寸（36px）+ 上下
-                    //   padding（16+8）で決まる。padding から逆算できないので、
+                    //   padding（16+16）で決まる。padding から逆算できないので、
                     //   タブバーの余白を変えたらここも必ず実測して直すこと。
                     //   当初 `+40px` と書いて 24px 潜り込んだ（実測 gap=-24）。
+                    //
+                    //   ★ この `+68px` はタブバーの実寸と**必ず一致**させる。
+                    //     一致していないと部活バーの休位置と貼付位置がずれ、
+                    //     j/k ジャンプがどちらかで潜り込む（tochi 2026-09-27）。
                     position: "sticky",
-                    top: "calc(var(--app-shell-header-height, 56px) + 60px)",
+                    top: "calc(var(--app-shell-header-height, 56px) + 68px)",
                     zIndex: 59,
                     background: "var(--bg-primary)",
                     // ★ tochi 2026-09-27「jkのショートカットで投稿をジャンプ…投稿と、
@@ -9604,9 +9616,8 @@ export default function Home() {
                     //
                     //   隙間を消して「休んでいるとき = 貼り付いたとき」にすれば、
                     //   位置が一意に決まり、オフセットも1つの値で足りる。
-                    //   見た目の間隔は paddingTop で確保する（隙間ではなく余白）。
-                    marginTop: -16,
-                    paddingTop: 16,
+                    //   隙間はタブバー側の paddingBottom に移した（下記 navtabs 参照）。
+                    marginTop: 0,
                     paddingBottom: 6,
                     // 横スクロールのみ。縦の引っ張りリロードに取られないようにする。
                     overflowX: "auto",
