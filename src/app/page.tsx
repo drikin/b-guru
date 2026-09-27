@@ -7357,10 +7357,12 @@ export default function Home() {
   //   症状は「付けた直後は楽観的更新で出るが、しばらくすると消える」
   //   （takuto 2026-09-26 のバグ報告）。DB には保存されているのに、
   //   取得リクエストに ID が入っていないため画面から消える。
-  const feedPostIds = useMemo(
-    () => feedPosts.map((p) => p.id),
-    [feedPosts]
-  );
+  const feedPostIds = useMemo(() => {
+    const ids = feedPosts.map((p) => p.id);
+    // スレッド表示中の返信も対象にする（重複は Set で潰す）
+    for (const r of threadReplies) ids.push(r.id);
+    return Array.from(new Set(ids));
+  }, [feedPosts, threadReplies]);
   const { reactions: postReactions, setFor: setPostReactions } = useReactions(
     "post",
     feedPostIds
