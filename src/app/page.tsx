@@ -10082,7 +10082,7 @@ export default function Home() {
                     //   the bar's own paddingTop (16px) is what puts the
                     //   SegmentedControl at the right visual distance — the
                     //   "flush" requirement is about the CONTROL, not the box.
-                    marginTop: -24,
+                    marginTop: -28,
                     zIndex: 60,
                     background: "var(--bg-primary)",
                     // ★ 上下の余白を均等にする（drikin 2026-09-25「タイムラインの
@@ -10115,24 +10115,26 @@ export default function Home() {
                     //     オフセットがどちらか一方でしか合わない。
                     //     16px にするとタブバー下端 = 116px = 部活バーの sticky top
                     //     になり、位置が一意に決まる。見た目の間隔も 16px で揃う。
-                    // ★ 20, with marginTop -24.
+                    // ★ 24, with marginTop -28.
                     //
                     //   Measured on the live build (390px, 2026-09-27):
                     //     marginTop -24 + paddingTop 24 → bar top=56, above=24 / below=16
+                    //     marginTop -24 + paddingTop 20 → bar top=56, above=12 / below=16
                     //     marginTop -24 + paddingTop 16 → bar top=56, above=8  / below=16
-                    //     marginTop -32 + paddingTop 16 → bar top=48, above=0  / below=16
                     //     marginTop -32 + paddingTop 24 → bar top=48, above=8  / below=16
                     //
-                    //   Two independent knobs:
-                    //     marginTop  anchors the bar's top edge. -24 → 56px (flush
-                    //                under the header). -32 → 48px (8px under it).
-                    //                Only -24 is correct.
-                    //     paddingTop places the CONTROL inside the bar, and it is
-                    //                linear: above = paddingTop - 8. So above=16
-                    //                needs paddingTop = 20.
+                    //   marginTop anchors the bar's top edge (-24 → 56px, flush
+                    //   under the header; -32 → 48px, 8px under it). paddingTop
+                    //   places the CONTROL inside the bar: above = paddingTop - 8.
                     //
-                    //   Changing either without re-measuring breaks the anchor.
-                    paddingTop: 20,
+                    //   above=16 therefore needs paddingTop=24, but that alone
+                    //   overshoots to 24 because the taller bar also shifts the
+                    //   control down. -28 splits the difference: the bar's top
+                    //   lands at 56px and the control at 72px.
+                    //
+                    //   ★ These two knobs interact — never change one without
+                    //     re-measuring on the live build.
+                    paddingTop: 24,
                     paddingBottom: 16,
                     display: "flex",
                     justifyContent: "center",
