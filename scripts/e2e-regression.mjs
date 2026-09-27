@@ -1157,6 +1157,78 @@ console.log("\n6j. Mobile club bar (one-tap club switching)");
 // 並べるイメージの方がスペース的に効率が良い」), and the separate one-tap heart was
 // removed as redundant with the picker's ❤️ chip. Both are asserted below.
 console.log("\n6k. Reactions on posts");
+
+// ★ takuto 2026-09-26: 「返信に対するリアクションが、うまく表示されていないそうです。
+//   出たり出なかったりします。一枚目でつけたリアクションがしばらく来ると消えてます」
+//
+//   原因: `feedPostIds` が `feedPosts`（ルート投稿）からしか作られておらず、返信は
+//   `threadReplies` という別 state なので**返信のIDがリアクション取得APIに一度も
+//   送られていなかった**。付けた直後は楽観的更新で出るが、再取得で消える。
+//
+//   ★ 観測点は「返信のリアクションがサーバーから取得されていること」そのもの。
+//     返信を持つスレッドを開き、返信のチップが描画されているかを見る。
+{
+  // 返信にリアクションが付いている親投稿を探す（DB に実在するもの）
+  const replyTarget = await page.evaluate(`(async () => {
+    // フィードから返信を持つ投稿を1つ選び、スレッドを開く
+    const cards = [...document.querySelectorAll('[data-post-id]')];
+    for (const c of cards) {
+      const id = c.getAttribute('data-post-id');
+      if (!id) continue;
+      const r = await fetch('/api/posts/' + id + '/thread', { cache: 'no-store' }).catch(() => null);
+      if (!r || !r.ok) continue;
+      const d = await r.json().catch(() => null);
+      const replies = d?.replies ?? d?.posts ?? [];
+      if (replies.length > 0) return { parentId: id, replyIds: replies.map((x) => x.id) };
+    }
+    return null;
+  })()`);
+  if (!replyTarget) {
+    check("replies' reactions are fetched from the server", false, "no post with replies found in the feed");
+  } else {
+    // スレッドを開いて返信のリアクションを読む
+    await page.goto(`${BASE_URL}/#/post/${replyTarget.parentId}`, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(6000);
+    const replyReactions = await page.evaluate(`(() => {
+      const out = [];
+      for (const el of document.querySelectorAll('[data-reply-id]')) {
+        const id = Number(el.getAttribute('data-reply-id'));
+        const chips = [...el.querySelectorAll('[data-reaction]')].map((c) => ({
+          emoji: c.getAttribute('data-reaction'),
+          count: Number((c.getAttribute('aria-label') || '').match(/(\\d+)件/)?.[1] ?? 0),
+        }));
+        out.push({ id, chips });
+      }
+      return out;
+    })()`);
+    // サーバーが返すリアクションと突き合わせる
+    const ids = replyReactions.map((r) => r.id);
+    const serverSide = ids.length
+      ? await page.evaluate(`(async () => {
+          const r = await fetch('/api/reactions?targetType=post&ids=${ids.join(",")}', { cache: 'no-store' });
+          const d = await r.json();
+          return d.reactions ?? {};
+        })()`)
+      : {};
+    // サーバーにリアクションがある返信は、画面にも出ていなければならない
+    const missing = [];
+    for (const [id, list] of Object.entries(serverSide)) {
+      if (!Array.isArray(list) || list.length === 0) continue;
+      const shown = replyReactions.find((r) => String(r.id) === String(id));
+      if (!shown || shown.chips.length === 0) missing.push(id);
+    }
+    const withReactions = Object.values(serverSide).filter((l) => Array.isArray(l) && l.length > 0).length;
+    check(
+      "replies' reactions are fetched from the server",
+      missing.length === 0,
+      `replies=${ids.length} withReactionsOnServer=${withReactions} missingOnScreen=${JSON.stringify(missing)}`
+    );
+    // フィードに戻す（後続のチェックがタイムライン前提のため）
+    await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+    await page.waitForTimeout(5000);
+  }
+}
+
 {
   const before = await page.evaluate(`(() => {
     const bars = document.querySelectorAll('[data-cx="reaction-bar"]');
