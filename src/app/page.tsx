@@ -10146,7 +10146,14 @@ export default function Home() {
                     //     bar at 56px on desktop but at 48px on mobile — 8px
                     //     under the header (measured at 390px: tabBarTop=48,
                     //     gap=-8). Cancel exactly the wrapper's own padding.
-                    paddingTop: 21,
+                    //
+                    //   ★★ paddingTop is simply the visual gap: above = paddingTop.
+                    //     The earlier "above = paddingTop - 8" reading was an
+                    //     artifact of marginTop being wrong — the bar's top edge
+                    //     was 8px too high, so the control looked 8px closer to
+                    //     the header than the padding said. With marginTop
+                    //     anchoring the bar at 56px, 16 gives above=16 / below=16.
+                    paddingTop: 16,
                     paddingBottom: 16,
                     display: "flex",
                     justifyContent: "center",
