@@ -2486,10 +2486,10 @@ function ReplyBubble({
 }) {
   return (
     <Box
-      ml={6}
       style={{
-        borderLeft: "2px solid var(--border-green-soft)",
-        paddingLeft: 8,
+        // ★ 返信の緑の左バーは廃止（drikin 2026-09-28「リプライの横の緑の
+        //   バーは不要では？」）。ml=6 + バー2px + paddingLeft 8px = 16px を
+        //   本文に回す。返信であることはインデントとアバターで十分伝わる。
         borderRadius: 8,
       }}
     >
@@ -2864,10 +2864,10 @@ function ProfileView({
                 key={`${g.dateKey}|${g.authorEmail}|${post.id}`}
                 data-post-id={post.id}
                 style={{
-                  borderLeft: "3px solid var(--border-green-soft)",
-                  borderTopLeftRadius: 8,
-                  borderBottomLeftRadius: 8,
-                  paddingLeft: 12,
+                  // ★ 緑の左バーは廃止（drikin 2026-09-28「リプライの横の緑の
+                  //   バーは不要では？その分横幅増やしたい」）。バー3px +
+                  //   paddingLeft 12px = 15px を丸ごと本文に回す。
+                  //   グループの区切りは下の marginTop だけで足りる。
                   display: "flex",
                   flexDirection: "column",
                   gap: 8,
@@ -3450,10 +3450,7 @@ function TimelineFeed({
         key={gkey}
         data-post-id={g.posts[0].id}
         style={{
-          borderLeft: "3px solid var(--border-green-soft)",
-          borderTopLeftRadius: 8,
-          borderBottomLeftRadius: 8,
-          paddingLeft: 12,
+          // ★ 緑の左バーは廃止（drikin 2026-09-28）。15px を本文に回す。
           display: "flex",
           flexDirection: "column",
           gap: 8,
@@ -10019,7 +10016,7 @@ export default function Home() {
           onRefresh={pullRefresh}
         />
         <div
-          className="mx-auto px-3 py-4 sm:px-6 sm:py-6"
+          className="mx-auto px-1 py-4 sm:px-6 sm:py-6"
           // ★ タイムライン列の幅（drikin 2026-09-25「タブレットとかである程度
           //   画面が広いけどそこまで大きくない時に文字サイズ拡大するとメイン
           //   タイムラインが狭くなりすぎるので適切にサイドバーを扱って
@@ -10043,7 +10040,17 @@ export default function Home() {
           //   使える幅が 720px + ガター以上あるなら、720px のまま中央に置けば
           //   自然に余白ができる。`min()` に 720px を先に書くことで、
           //   広い画面では 720px が勝ち、狭い画面ではガター付きの値が勝つ。
-          style={{ maxWidth: "min(720px, calc(100% - 32px))" }}
+          // ★ スマホでは画面幅をほぼ使い切る（drikin 2026-09-28「全体にも
+          //   スマホでは横幅いっぱい活かした方が情報密度上がる」）。
+          //
+          //   実測（390px、修正前）: main 390 → ラッパー `mx-auto` の左右
+          //   16px ずつ + `px-3` の左右 12px ずつで、列は 334px。さらに
+          //   グループの緑バー3px + paddingLeft 12px が乗って、カードは
+          //   319px しか使えていなかった（画面の 82%）。
+          //
+          //   狭い画面ではガターを最小にする。`sm:` からは従来どおり
+          //   720px 上限 + 32px ガターで、広い画面の見た目は変えない。
+          style={{ maxWidth: "min(720px, calc(100% - 8px))" }}
         >
           {isCenterView && (
             <Stack gap="md">
