@@ -19,7 +19,10 @@ export type { UrlPreview };
 
 export interface FeedPost {
   id: number;
-  authorEmail: string;
+  /** Opaque public author id (users.user_id) — never the email. */
+  authorId: string;
+  /** True when the VIEWER is the author (server-computed). */
+  isAuthor: boolean;
   authorName: string | null;
   authorAvatar?: string | null;
   parentId?: number | null;
@@ -46,11 +49,21 @@ export interface FeedPost {
 
 export interface FeedGroup {
   dateKey: string;
-  authorEmail: string;
+  /** Opaque public author id (users.user_id) — never the email. */
+  authorId: string;
   authorName: string;
   authorAvatar?: string | null;
   lastActivity: string;
   posts: FeedPost[]; // exactly ONE root post per group (its replies live in posts[0].replies)
+}
+
+/**
+ * Stable React key for a group. The date alone is NOT unique: one member can
+ * post several root posts on the same day, and two different members can post
+ * on the same day. `dateKey|authorId|postId` is unique because a post id is.
+ */
+export function groupKey(g: Pick<FeedGroup, "dateKey" | "authorId" | "posts">): string {
+  return `${g.dateKey}|${g.authorId}|${g.posts[0]?.id ?? ""}`;
 }
 
 /** JST date string "YYYY-MM-DD" for grouping (empty when the timestamp is bad). */
@@ -71,8 +84,10 @@ export function groupFeed(posts: FeedPost[]): FeedGroup[] {
       if (!dateKey) return null;
       return {
         dateKey,
-        authorEmail: p.authorEmail,
-        authorName: p.authorName || p.authorEmail.split("@")[0],
+        authorId: p.authorId,
+        // No email fallback: the local part of an email IS the address, so
+        // deriving a display name from it would re-leak what we just removed.
+        authorName: p.authorName ?? "",
         authorAvatar: p.authorAvatar || null,
         lastActivity: act,
         posts: [p],
@@ -109,7 +124,8 @@ export function appendReplyLocal(
   const now = created.createdAt || new Date().toISOString();
   const reply: FeedPost = {
     id: created.id,
-    authorEmail: created.authorEmail,
+    authorId: created.authorId,
+    isAuthor: created.isAuthor ?? false,
     authorName: created.authorName ?? null,
     authorAvatar: created.authorAvatar ?? null,
     parentId,

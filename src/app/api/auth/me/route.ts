@@ -3,6 +3,7 @@ import { getSessionEmail } from "@/lib/session";
 import { getProfile } from "@/lib/profile";
 import { findMemberByEmail } from "@/lib/ghost";
 import { gravatarUrl } from "@/lib/posts";
+import { ensureUserId } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
 
@@ -42,8 +43,27 @@ export async function GET() {
     }
   } catch {}
 
+  // The caller's own opaque user id. This is the ONLY identity field a client
+  // needs to decide "is this post/chat message/comment mine?" — it compares it
+  // against the `authorId` on each DTO. `email` stays because it is the
+  // viewer's OWN address (never someone else's) and the mention highlighter
+  // still matches on it.
+  //
+  // If this fails we return null rather than a wrong value, and log it. Note
+  // there is NO client-side email fallback: the client compares
+  // `authorId === auth.userId`, so a null here degrades the SSE self-check and
+  // the chat "mine" flag until the next successful call. Post edit/delete
+  // controls are unaffected — those use the server-computed `post.isAuthor`.
+  let userId: string | null = null;
+  try {
+    userId = await ensureUserId(email);
+  } catch (e: any) {
+    console.error("auth/me ensureUserId failed:", e?.message);
+  }
+
   return NextResponse.json({
     authenticated: true,
+    userId,
     email,
     name,
     avatar,

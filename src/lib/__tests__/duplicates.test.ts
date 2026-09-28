@@ -158,6 +158,7 @@ describe("findDuplicates", () => {
         {
           id: 5511,
           author_email: "crusader@bp.iij4u.or.jp",
+          author_id: "opaqueUserId",
           author_name: "crusader",
           text: "https://www.youtube.com/watch?v=GzI_qMqWq7s",
           created_at: "2026-09-25T06:00:23Z",
@@ -173,6 +174,11 @@ describe("findDuplicates", () => {
     expect(out[0].postId).toBe(5511);
     expect(out[0].kind).toBe("video");
     expect(out[0].exact).toBe(true);
+    // The candidate exposes the OPAQUE author id, never the email — this
+    // payload goes to every member who opens the composer.
+    expect(out[0].authorId).toBe("opaqueUserId");
+    expect("authorEmail" in out[0]).toBe(false);
+    expect(JSON.stringify(out[0])).not.toContain("@");
     // 動画IDで見つかったので、あいまい類似のクエリは走らせない。
     expect(query).toHaveBeenCalledTimes(2);
   });
@@ -183,6 +189,7 @@ describe("findDuplicates", () => {
         {
           id: 1,
           author_email: "x@y.z",
+          author_id: "opaqueUserId",
           author_name: null,
           text: "https://youtu.be/aaaaaaaaaaa",
           created_at: "2026-09-25T00:00:00Z",
@@ -204,6 +211,7 @@ describe("findDuplicates", () => {
         {
           id: 1,
           author_email: "someone@example.com",
+          author_id: "opaqueUserId",
           author_name: null,
           text: "https://youtu.be/aaaaaaaaaaa",
           created_at: "2026-09-25T00:00:00Z",
@@ -224,6 +232,7 @@ describe("findDuplicates", () => {
         {
           id: 1,
           author_email: "x@y.z",
+          author_id: "opaqueUserId",
           author_name: "x",
           text: "https://youtu.be/aaaaaaaaaaa",
           created_at: "2026-09-25T00:00:00Z",
@@ -244,6 +253,7 @@ describe("findDuplicates", () => {
         {
           id: 99,
           author_email: "x@y.z",
+          author_id: "opaqueUserId",
           author_name: "x",
           text: "Gino Vannelli – Brother To Brother は名曲だと思う",
           created_at: "2026-09-24T00:00:00Z",
@@ -266,6 +276,7 @@ describe("findDuplicates", () => {
         {
           id: 1,
           author_email: "x@y.z",
+          author_id: "opaqueUserId",
           author_name: "x",
           text: "https://youtu.be/aaaaaaaaaaa",
           created_at: "2026-09-20T00:00:00Z",
@@ -285,6 +296,7 @@ describe("findDuplicates", () => {
       rows: Array.from({ length: 10 }, (_, i) => ({
         id: i + 1,
         author_email: "x@y.z",
+        author_id: "opaqueUserId",
         author_name: "x",
         text: "https://youtu.be/aaaaaaaaaaa",
         created_at: "2026-09-25T00:00:00Z",
@@ -372,6 +384,7 @@ describe("findDuplicates — AI news layer", () => {
         {
           id: 1,
           author_email: "x@y.z",
+          author_id: "opaqueUserId",
           author_name: "x",
           text: "https://youtu.be/aaaaaaaaaaa",
           created_at: "2026-09-25T00:00:00Z",
@@ -402,6 +415,7 @@ describe("findDuplicates — AI news layer", () => {
         {
           id: 5346,
           author_email: "x@y.z",
+          author_id: "opaqueUserId",
           author_name: "x",
           text: "https://news.example/typhoon",
           created_at: "2026-09-24T03:00:00Z",
@@ -437,6 +451,7 @@ describe("findDuplicates — AI news layer", () => {
         {
           id: 5323,
           author_email: "x@y.z",
+          author_id: "opaqueUserId",
           author_name: "x",
           text: "https://gizmodo.jp/macmini",
           created_at: "2026-09-24T01:51:00Z",

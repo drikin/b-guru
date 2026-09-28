@@ -10,6 +10,7 @@ import { emitLive } from "@/lib/live";
 import { sendWebPush } from "@/lib/push";
 import { validatePollInput } from "@/lib/poll";
 import { classifyPost } from "@/lib/clubs";
+import { ensureUserId } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -205,9 +206,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Push a live "timeline changed" signal to connected clients.
-    // Include the author's email so the author's own client can skip
+    // Include the author's OPAQUE user id (never the email — this payload is
+    // broadcast to every connected client) so the author's own client can skip
     // a redundant silentRefreshFeed (it already did an optimistic update).
-    emitLive({ type: "post", postId: post.id, action: "create", authorEmail: email });
+    emitLive({ type: "post", postId: post.id, action: "create", authorId: await ensureUserId(email) });
 
     // 部活動ラベル自動付与（ルート投稿のみ・非同期）。投稿の即時反映をブロックしない
     // よう fire-and-forget で投げる。分類完了は SSE club イベントで各クライアントへ

@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
   const before = beforeRaw ? Number(beforeRaw) : undefined;
   const limit = limitRaw ? Number(limitRaw) : CHAT_PAGE_SIZE;
   const [messages, unreadCount, latestId] = await Promise.all([
-    listChatMessages({ before, limit }),
+    listChatMessages({ before, limit, viewerEmail: email }),
     getUnreadCount(email),
     getLatestChatId(),
   ]);
@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
   const name = await resolveName(email);
   let message: ChatMessage;
   try {
-    message = await createChatMessage(email, name, bodyText);
+    message = await createChatMessage(email, name, bodyText, email);
   } catch (e) {
     console.error("chat create error:", (e as any)?.message);
     return new Response(JSON.stringify({ error: "db error" }), {
@@ -102,7 +102,16 @@ export async function POST(req: NextRequest) {
   }
 
   // Realtime broadcast over the existing SSE channel.
-  emitLive({ type: "chat", message, action: "create" });
+  //
+  // `isAuthor` must NOT go out on the bus: one payload is fanned out to every
+  // connected client, and the flag is per-RECEIVER (true only for the author's
+  // own client). `createChatMessage` is called with viewerEmail = the sender,
+  // so `message.isAuthor` is true here — broadcasting it verbatim made every
+  // other member render the sender's message as their own (right-aligned, with
+  // edit/delete buttons that then 403). Each client derives the flag locally
+  // from `authorId` instead. See the contract note in lib/live.ts.
+  const { isAuthor: _perReceiver, ...broadcast } = message;
+  emitLive({ type: "chat", message: broadcast, action: "create" });
 
   const unreadCount = await getUnreadCount(email);
   return new Response(

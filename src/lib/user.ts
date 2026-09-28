@@ -77,3 +77,62 @@ export async function emailToUserId(email: string): Promise<string | null> {
   ]);
   return r.rows[0]?.user_id ?? null;
 }
+
+/**
+ * Batch-resolve emails to user_ids in ONE query.
+ *
+ * `emailToUserId` is a per-row round-trip; calling it inside a row mapper turns
+ * a 100-post timeline into 100 extra queries (N+1). Callers that map a list of
+ * rows must resolve the whole set up front with this and pass the map down.
+ *
+ * Emails with no `users` row are simply absent from the map — callers decide
+ * the fallback (the DTOs use `''` so the client can treat it as "no profile").
+ */
+export async function emailToUserIds(
+  emails: (string | null | undefined)[]
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const uniq = [
+    ...new Set(
+      emails
+        .filter((e): e is string => !!e)
+        .map((e) => e.trim().toLowerCase())
+    ),
+  ];
+  if (uniq.length === 0) return out;
+  const r = await pool.query(
+    `SELECT email, user_id FROM users WHERE email = ANY($1::text[])`,
+    [uniq]
+  );
+  for (const row of r.rows as { email: string; user_id: string }[]) {
+    out.set(row.email, row.user_id);
+  }
+  return out;
+}
+
+/**
+ * Resolve a URL path segment to an email, or null when it cannot be resolved.
+ *
+ * The canonical public identifier is the opaque user_id (`#/user/<user_id>`).
+ * Legacy `#/user/<email>` links still resolve so old bookmarks keep working —
+ * a segment containing `@` is treated as an email, anything else is looked up
+ * as a user_id.
+ *
+ * This is the SINGLE implementation: `/api/user/[id]` and
+ * `/api/user/[id]/posts` both used to carry their own copy, which is exactly
+ * how the two drifted apart.
+ */
+export async function resolveEmailSegment(
+  segment: string
+): Promise<string | null> {
+  let dec: string;
+  try {
+    dec = decodeURIComponent(segment ?? "").trim();
+  } catch {
+    // Malformed percent-encoding (e.g. "%") — not a resolvable user.
+    return null;
+  }
+  if (!dec) return null;
+  if (looksLikeEmail(dec)) return dec.toLowerCase(); // legacy email URL
+  return userIdToEmail(dec); // opaque public user_id (canonical)
+}

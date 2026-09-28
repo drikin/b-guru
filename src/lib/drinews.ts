@@ -5,14 +5,21 @@
 import { pool } from "./db";
 import { mdToHtml } from "./md";
 import { gravatarUrl } from "./posts";
+import { emailToUserId, emailToUserIds } from "./user";
 
 export const DRINEWS_AUTHOR_EMAIL = "drikin@gmail.com";
 
 export type DrinewsStatus = "draft" | "published";
 
+/**
+ * An article as serialized to the client. `authorId` is the opaque public
+ * identifier; `isAuthor` is computed per-viewer (true only for the article's
+ * own author) so the UI can show edit controls without knowing the address.
+ */
 export interface DrinewsArticle {
   id: number;
-  authorEmail: string;
+  authorId: string | null;
+  isAuthor: boolean;
   title: string;
   bodyMd: string;
   bodyHtml: string;
@@ -25,10 +32,16 @@ export interface DrinewsArticle {
   commentCount: number;
 }
 
+/**
+ * A comment as serialized to the client. `canDelete` is per-viewer: true for
+ * the comment's own author and for drikin (admin moderation).
+ */
 export interface DrinewsComment {
   id: number;
   articleId: number;
-  authorEmail: string;
+  authorId: string | null;
+  isAuthor: boolean;
+  canDelete: boolean;
   authorName: string | null;
   authorAvatar: string | null;
   comment: string;
@@ -39,9 +52,14 @@ export function isDrikin(email: string): boolean {
   return email.toLowerCase() === DRINEWS_AUTHOR_EMAIL.toLowerCase();
 }
 
-const rowToArticle = (r: any): DrinewsArticle => ({
+const rowToArticle = async (
+  r: any,
+  viewerEmail: string | null,
+  authorId: string | null
+): Promise<DrinewsArticle> => ({
   id: r.id,
-  authorEmail: r.author_email,
+  authorId: authorId ?? "",
+  isAuthor: viewerEmail != null && r.author_email === viewerEmail,
   title: r.title,
   bodyMd: r.body_md,
   bodyHtml: r.body_html,
@@ -68,7 +86,11 @@ export async function createDrinews(input: {
      RETURNING *`,
     [input.authorEmail, input.title, input.bodyMd, mdToHtml(input.bodyMd), input.headerImage ?? null]
   );
-  return rowToArticle(res.rows[0]);
+  return rowToArticle(
+    res.rows[0],
+    input.authorEmail,
+    await emailToUserId(input.authorEmail)
+  );
 }
 
 /** Update a draft article (only own / drikin). Optionally set a schedule time. */
@@ -101,7 +123,11 @@ export async function updateDrinews(
     params
   );
   if (res.rows.length === 0) throw new Error("not_found_or_published");
-  return rowToArticle(res.rows[0]);
+  return rowToArticle(
+    res.rows[0],
+    null,
+    await emailToUserId(res.rows[0].author_email)
+  );
 }
 
 /** Publish an article immediately (drikin only). Sets published_at to now. */
@@ -113,7 +139,11 @@ export async function publishDrinews(id: number): Promise<DrinewsArticle> {
     [id]
   );
   if (res.rows.length === 0) throw new Error("not_found");
-  const article = rowToArticle(res.rows[0]);
+  const article = await rowToArticle(
+    res.rows[0],
+    null,
+    await emailToUserId(res.rows[0].author_email)
+  );
   await postDrinewsToFeed(article);
   return article;
 }
@@ -157,7 +187,11 @@ export async function unpublishDrinews(id: number): Promise<DrinewsArticle> {
     [id]
   );
   if (res.rows.length === 0) throw new Error("not_found_or_not_published");
-  return rowToArticle(res.rows[0]);
+  return rowToArticle(
+    res.rows[0],
+    null,
+    await emailToUserId(res.rows[0].author_email)
+  );
 }
 
 /** Delete an article (drikin only). Comments on it are removed via ON DELETE CASCADE. */
@@ -167,51 +201,86 @@ export async function deleteDrinews(id: number): Promise<void> {
 }
 
 /** List published articles, newest first (for members). */
-export async function listPublishedDrinews(): Promise<DrinewsArticle[]> {
+export async function listPublishedDrinews(
+  viewerEmail: string | null = null
+): Promise<DrinewsArticle[]> {
   const res = await pool.query(
     `SELECT a.*, (SELECT count(*) FROM drinews_comments c WHERE c.article_id = a.id) AS comment_count
      FROM drinews_articles a
      WHERE a.status = 'published'
      ORDER BY a.published_at DESC`
   );
-  return res.rows.map(rowToArticle);
+  const ids = await emailToUserIds(res.rows.map((r) => r.author_email));
+  return Promise.all(
+    res.rows.map((r) =>
+      rowToArticle(r, viewerEmail, ids.get(r.author_email?.trim().toLowerCase()) ?? null)
+    )
+  );
 }
 
 /** List all articles including drafts (drikin only). Newest first. */
-export async function listAllDrinews(): Promise<DrinewsArticle[]> {
+export async function listAllDrinews(
+  viewerEmail: string | null = null
+): Promise<DrinewsArticle[]> {
   const res = await pool.query(
     `SELECT a.*, (SELECT count(*) FROM drinews_comments c WHERE c.article_id = a.id) AS comment_count
      FROM drinews_articles a
      ORDER BY COALESCE(a.published_at, a.updated_at) DESC`
   );
-  return res.rows.map(rowToArticle);
+  const ids = await emailToUserIds(res.rows.map((r) => r.author_email));
+  return Promise.all(
+    res.rows.map((r) =>
+      rowToArticle(r, viewerEmail, ids.get(r.author_email?.trim().toLowerCase()) ?? null)
+    )
+  );
 }
 
 /** Get one article by id. */
-export async function getDrinews(id: number): Promise<DrinewsArticle | null> {
+export async function getDrinews(
+  id: number,
+  viewerEmail: string | null = null
+): Promise<DrinewsArticle | null> {
   const res = await pool.query(
     `SELECT a.*, (SELECT count(*) FROM drinews_comments c WHERE c.article_id = a.id) AS comment_count
      FROM drinews_articles a WHERE a.id = $1`,
     [id]
   );
-  return res.rows.length ? rowToArticle(res.rows[0]) : null;
+  return res.rows.length
+    ? rowToArticle(
+        res.rows[0],
+        viewerEmail,
+        await emailToUserId(res.rows[0].author_email)
+      )
+    : null;
 }
 
 /** Get comments for an article, oldest first. */
-export async function listComments(articleId: number): Promise<DrinewsComment[]> {
+export async function listComments(
+  articleId: number,
+  viewerEmail: string | null = null
+): Promise<DrinewsComment[]> {
   const res = await pool.query(
     `SELECT * FROM drinews_comments WHERE article_id = $1 ORDER BY created_at ASC`,
     [articleId]
   );
-  return res.rows.map((r) => ({
-    id: r.id,
-    articleId: r.article_id,
-    authorEmail: r.author_email,
-    authorName: r.author_name,
-    authorAvatar: gravatarUrl(r.author_email),
-    comment: r.comment,
-    createdAt: new Date(r.created_at).toISOString(),
-  }));
+  const viewerIsDrikin = viewerEmail != null && isDrikin(viewerEmail);
+  const ids = await emailToUserIds(res.rows.map((r) => r.author_email));
+  return Promise.all(
+    res.rows.map(async (r) => {
+      const isAuthor = viewerEmail != null && r.author_email === viewerEmail;
+      return {
+        id: r.id,
+        articleId: r.article_id,
+        authorId: ids.get(r.author_email?.trim().toLowerCase()) ?? "",
+        isAuthor,
+        canDelete: isAuthor || viewerIsDrikin,
+        authorName: r.author_name,
+        authorAvatar: gravatarUrl(r.author_email),
+        comment: r.comment,
+        createdAt: new Date(r.created_at).toISOString(),
+      };
+    })
+  );
 }
 
 /** Add a comment to a published article (member).
@@ -259,7 +328,11 @@ export async function addComment(
     return {
       id: r.id,
       articleId: r.article_id,
-      authorEmail: r.author_email,
+      authorId: (await emailToUserId(r.author_email)) ?? "",
+      // The caller just posted this comment, so it is by definition theirs and
+      // they may delete it.
+      isAuthor: true,
+      canDelete: true,
       authorName: r.author_name,
       authorAvatar: gravatarUrl(r.author_email),
       comment: r.comment,
@@ -379,7 +452,11 @@ export async function scheduleDrinews(
     [id, scheduledAtISO]
   );
   if (res.rows.length === 0) throw new Error("not_found_or_published");
-  return rowToArticle(res.rows[0]);
+  return rowToArticle(
+    res.rows[0],
+    null,
+    await emailToUserId(res.rows[0].author_email)
+  );
 }
 
 /**
@@ -413,7 +490,11 @@ export async function processScheduledDrinews(): Promise<{
     );
     if (claimed.rows.length === 0) continue; // already handled by another run
 
-    const article = rowToArticle(claimed.rows[0]);
+    const article = await rowToArticle(
+      claimed.rows[0],
+      null,
+      await emailToUserId(claimed.rows[0].author_email)
+    );
     published.push(article.id);
 
     try {

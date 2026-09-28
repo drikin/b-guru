@@ -32,13 +32,23 @@ export const liveBus = new EventEmitter();
 liveBus.setMaxListeners(0);
 
 export type LiveEvent =
-  | { type: "post"; postId: number; action: "create" | "update" | "delete"; authorEmail?: string; urlPreview?: UrlPreview | null }
+  | { type: "post"; postId: number; action: "create" | "update" | "delete"; authorId?: string; urlPreview?: UrlPreview | null }
   | { type: "pin"; postId: number; action: "toggle" }
-  | { type: "presence"; emails: string[] }
+  | { type: "presence"; userIds: string[] }
   | { type: "chat"; message: ChatLiveMessage; action: "create" | "delete" | "edit" }
   | { type: "poll"; action: "vote" | "edit"; postId: number; poll: PostPoll }
   | { type: "club"; postId: number; club: string | null };
 
+/**
+ * ⚠️ Every event on this bus is broadcast VERBATIM to every connected SSE
+ * client, so a payload must never contain a member's email address.
+ *
+ *   - `post.authorId` / `presence.userIds` are opaque `users.user_id` values.
+ *   - `chat.message` carries `authorId` only. It deliberately does NOT carry
+ *     `isAuthor`: that flag is per-RECEIVER (it is true only for the author's
+ *     own client), and one shared payload cannot express it. Each client
+ *     derives it locally by comparing `authorId` with its own user id.
+ */
 export function emitLive(event: LiveEvent): void {
   // fire-and-forget; guard against listener errors crashing the API route
   try {

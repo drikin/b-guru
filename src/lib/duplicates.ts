@@ -27,7 +27,8 @@ export type DuplicateKind = "video" | "url" | "text" | "similar" | "news";
 export interface DuplicateCandidate {
   postId: number;
   authorName: string;
-  authorEmail: string;
+  /** Opaque public author id (users.user_id) — never the email. */
+  authorId: string;
   text: string;
   createdAt: string;
   /** どの規則で見つかったか。UI の文言と強調度に使う。 */
@@ -139,6 +140,8 @@ export function normalizeUrl(raw: string): string {
  */
 export async function findDuplicates(input: {
   text: string;
+  /** Author's email — INTERNAL only (used for the reply/self checks). The
+   *  returned candidates carry the opaque `authorId`, never this. */
   authorEmail: string;
   parentId?: number | null;
 }): Promise<DuplicateCandidate[]> {
@@ -156,9 +159,11 @@ export async function findDuplicates(input: {
   if (videoId) {
     const res = await pool.query(
       `SELECT p.id, p.author_email, p.text, p.created_at,
+              COALESCE(u.user_id, '') AS author_id,
               COALESCE(up.display_name, p.author_name, p.author_email) AS author_name
          FROM posts p
          LEFT JOIN user_profiles up ON up.email = p.author_email
+         LEFT JOIN users u ON u.email = p.author_email
         WHERE p.parent_id IS NULL
           AND p.url_preview->>'videoId' = $1
         ORDER BY p.created_at DESC
@@ -169,7 +174,7 @@ export async function findDuplicates(input: {
       found.set(Number(r.id), {
         postId: Number(r.id),
         authorName: displayName(r.author_name, r.author_email),
-        authorEmail: r.author_email,
+        authorId: r.author_id ?? "",
         text: r.text,
         createdAt: r.created_at,
         kind: "video",
@@ -187,9 +192,11 @@ export async function findDuplicates(input: {
     // 正規化できないので、直近の URL 付き投稿を取って JS で突き合わせる。
     const res = await pool.query(
       `SELECT p.id, p.author_email, p.text, p.created_at, p.url_preview->>'url' AS url,
+              COALESCE(u.user_id, '') AS author_id,
               COALESCE(up.display_name, p.author_name, p.author_email) AS author_name
          FROM posts p
          LEFT JOIN user_profiles up ON up.email = p.author_email
+         LEFT JOIN users u ON u.email = p.author_email
         WHERE p.parent_id IS NULL
           AND p.url_preview->>'url' IS NOT NULL
           AND p.created_at > now() - interval '${SIMILAR_WINDOW_DAYS} days'
@@ -205,7 +212,7 @@ export async function findDuplicates(input: {
       found.set(id, {
         postId: id,
         authorName: displayName(r.author_name, r.author_email),
-        authorEmail: r.author_email,
+        authorId: r.author_id ?? "",
         text: r.text,
         createdAt: r.created_at,
         kind: "url",
@@ -220,9 +227,11 @@ export async function findDuplicates(input: {
   if (normText.length >= 4) {
     const res = await pool.query(
       `SELECT p.id, p.author_email, p.text, p.created_at,
+              COALESCE(u.user_id, '') AS author_id,
               COALESCE(up.display_name, p.author_name, p.author_email) AS author_name
          FROM posts p
          LEFT JOIN user_profiles up ON up.email = p.author_email
+         LEFT JOIN users u ON u.email = p.author_email
         WHERE p.parent_id IS NULL
           AND lower(btrim(regexp_replace(p.text, 'https?://\\S+', ' ', 'g'))) = lower(btrim($1))
           AND p.created_at > now() - interval '${SIMILAR_WINDOW_DAYS} days'
@@ -236,7 +245,7 @@ export async function findDuplicates(input: {
       found.set(id, {
         postId: id,
         authorName: displayName(r.author_name, r.author_email),
-        authorEmail: r.author_email,
+        authorId: r.author_id ?? "",
         text: r.text,
         createdAt: r.created_at,
         kind: "text",
@@ -252,9 +261,11 @@ export async function findDuplicates(input: {
   if (found.size === 0 && normText.length >= 6) {
     const res = await pool.query(
       `SELECT p.id, p.author_email, p.text, p.created_at,
+              COALESCE(u.user_id, '') AS author_id,
               COALESCE(up.display_name, p.author_name, p.author_email) AS author_name
          FROM posts p
          LEFT JOIN user_profiles up ON up.email = p.author_email
+         LEFT JOIN users u ON u.email = p.author_email
         WHERE p.parent_id IS NULL
           AND p.created_at > now() - interval '${SIMILAR_WINDOW_DAYS} days'
         ORDER BY p.created_at DESC
@@ -268,7 +279,7 @@ export async function findDuplicates(input: {
       scored.push({
         postId: Number(r.id),
         authorName: displayName(r.author_name, r.author_email),
-        authorEmail: r.author_email,
+        authorId: r.author_id ?? "",
         text: r.text,
         createdAt: r.created_at,
         kind: "similar",
@@ -441,9 +452,11 @@ async function findNewsDuplicatesWithPreview(
     `SELECT p.id, p.author_email, p.text, p.created_at,
             p.url_preview->>'title' AS title,
             p.url_preview->>'description' AS description,
+            COALESCE(u.user_id, '') AS author_id,
             COALESCE(up.display_name, p.author_name, p.author_email) AS author_name
        FROM posts p
        LEFT JOIN user_profiles up ON up.email = p.author_email
+       LEFT JOIN users u ON u.email = p.author_email
       WHERE p.parent_id IS NULL
         AND p.url_preview->>'title' IS NOT NULL
         AND p.created_at > now() - interval '3 days'
@@ -488,7 +501,7 @@ async function findNewsDuplicatesWithPreview(
     out.push({
       postId: Number(r.id),
       authorName: displayName(r.author_name, r.author_email),
-      authorEmail: r.author_email,
+      authorId: r.author_id ?? "",
       text: r.text,
       createdAt: r.created_at,
       kind: "news",

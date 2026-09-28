@@ -1,10 +1,13 @@
 import { pool } from "./db";
 import { resolveDisplayNames } from "./display-name";
 import { gravatarUrl } from "./posts";
+import { emailToUserIds } from "./user";
 
 export interface ClubLeader {
   club: string;
-  email: string;
+  /** Opaque public identifier. This is what the client uses for profile links
+   *  and display fallbacks — the email must never leave the server. */
+  userId: string;
   name: string | null;
   avatar: string;
   headerImage: string | null;
@@ -48,12 +51,13 @@ export async function getClubLeaders(): Promise<Record<string, ClubLeader>> {
   const emails = rows.map((r) => r.email);
   const names = await resolveDisplayNames(emails);
   const profs = await profileChunks(emails);
+  const ids = await emailToUserIds(emails);
   const out: Record<string, ClubLeader> = {};
   for (const r of rows) {
     const p = profs.get(r.email) ?? { headerImage: null, bio: null };
     out[r.club] = {
       club: r.club,
-      email: r.email,
+      userId: ids.get(r.email.trim().toLowerCase()) ?? "",
       name: names.get(r.email) ?? null,
       avatar: gravatarUrl(r.email),
       headerImage: p.headerImage,
@@ -80,9 +84,10 @@ export async function setClubLeader(
       headerImage: null,
       bio: null,
     };
+    const ids = await emailToUserIds([email]);
     return {
       club,
-      email,
+      userId: ids.get(email.trim().toLowerCase()) ?? "",
       name,
       avatar: gravatarUrl(email),
       headerImage: p.headerImage,

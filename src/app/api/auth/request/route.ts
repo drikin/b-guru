@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isPaidMember, findMemberByEmail } from "@/lib/ghost";
 import { createSession, setSessionCookie } from "@/lib/session";
+import { ensureUserId } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
 
@@ -48,5 +49,17 @@ export async function POST(req: NextRequest) {
   const token = await createSession(email);
   await setSessionCookie(token);
 
-  return NextResponse.json({ ok: true, email });
+  // The client compares `authorId === auth.userId` to decide whether a post is
+  // its own (edit/delete controls). Returning userId here keeps that comparison
+  // valid from the very first render after login — without it the field is
+  // undefined until /api/auth/me resolves, and the author briefly loses their
+  // own controls.
+  let userId: string | null = null;
+  try {
+    userId = await ensureUserId(email);
+  } catch (e: any) {
+    console.error("auth/request ensureUserId failed:", e?.message);
+  }
+
+  return NextResponse.json({ ok: true, email, userId });
 }

@@ -1,13 +1,23 @@
 /* Notifications library: reply/like notifications with read/unread state. */
 import { pool } from "./db";
-import { resolveDisplayNames } from "./display-name";
+import { resolveDisplayNames, cleanDisplayName } from "./display-name";
+import { emailToUserId, emailToUserIds } from "./user";
 
+/**
+ * A notification as serialized to the client.
+ *
+ * The recipient's own email is never included (the client already knows who it
+ * is), and the actor is identified by the opaque `actorId` — a notification
+ * list is served to one member but the actor's address must not travel with it.
+ * `isActor` is computed per-recipient so the UI can label "あなた" without
+ * needing the actor's email.
+ */
 export interface Notification {
   id: number;
-  userEmail: string;
   type: string; // 'reply' | 'like'
-  actorEmail: string;
+  actorId: string | null;
   actorName: string | null;
+  isActor: boolean;
   postId: number | null;
   replyId: number | null;
   text: string;
@@ -20,6 +30,10 @@ export interface Notification {
  * (e.g. a reply to someone else's post). Idempotent-ish: dedupes consecutive
  * identical (user, type, replyId) entries so spamming replies/ likes doesn't
  * flood the same user.
+ *
+ * NOTE: the INPUT keeps `userEmail` / `actorEmail` — the DB stores emails and
+ * the callers (beagle/act.ts, api/publish) speak in emails. Only the RETURNED
+ * shape is email-free; it is what reaches the client.
  */
 export async function createNotification(input: {
   userEmail: string;
@@ -43,10 +57,10 @@ export async function createNotification(input: {
     const r = dup.rows[0];
     return {
       id: r.id,
-      userEmail: input.userEmail,
       type: input.type,
-      actorEmail: input.actorEmail,
-      actorName: input.actorName ?? null,
+      actorId: await emailToUserId(input.actorEmail),
+      actorName: cleanDisplayName(input.actorName) ?? null,
+      isActor: input.actorEmail === input.userEmail,
       postId: input.postId ?? null,
       replyId: input.replyId ?? null,
       text: input.text,
@@ -71,10 +85,10 @@ export async function createNotification(input: {
   const r = res.rows[0];
   return {
     id: r.id,
-    userEmail: r.user_email,
     type: r.type,
-    actorEmail: r.actor_email,
-    actorName: r.actor_name,
+    actorId: await emailToUserId(r.actor_email),
+    actorName: cleanDisplayName(r.actor_name) ?? null,
+    isActor: r.actor_email === input.userEmail,
     postId: r.post_id,
     replyId: r.reply_id,
     text: r.text,
@@ -91,20 +105,24 @@ export async function listNotifications(userEmail: string): Promise<Notification
   );
   const rows = res.rows;
   const names = await resolveDisplayNames(rows.map((r) => r.actor_email));
+  const actorIds = await emailToUserIds(rows.map((r) => r.actor_email));
   return rows.map((r) => {
     const resolved = names.get(r.actor_email) ?? null;
     return {
-    id: r.id,
-    userEmail: r.user_email,
-    type: r.type,
-    actorEmail: r.actor_email,
-    actorName: resolved ?? r.actor_name,
-    postId: r.post_id,
-    replyId: r.reply_id,
-    text: r.text,
-    readAt: r.read_at ? new Date(r.read_at).toISOString() : null,
-    createdAt: new Date(r.created_at).toISOString(),
-  };});
+      id: r.id,
+      type: r.type,
+      actorId: actorIds.get(r.actor_email?.trim().toLowerCase()) ?? null,
+      // Resolved display name wins; fall back to the name stored at write time,
+      // reduced to its local part if it is itself an address.
+      actorName: resolved ?? cleanDisplayName(r.actor_name) ?? null,
+      isActor: r.actor_email === userEmail,
+      postId: r.post_id,
+      replyId: r.reply_id,
+      text: r.text,
+      readAt: r.read_at ? new Date(r.read_at).toISOString() : null,
+      createdAt: new Date(r.created_at).toISOString(),
+    };
+  });
 }
 
 /** Count unread notifications for a user. */

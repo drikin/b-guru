@@ -27,6 +27,24 @@ vi.mock("../posts", () => ({
 }));
 vi.mock("../db", () => ({ pool: { query: async () => ({ rows: [] }) } }));
 vi.mock("../live", () => ({ liveBus: { emit: () => {} } }));
+// `getOnlineMembers` now identifies members by the opaque user_id, which it
+// resolves through `users`. The real resolver would hit Postgres (mocked to
+// return no rows above) and yield null for everyone, so it is mocked here with
+// a deterministic email→id mapping. The registry and visibility logic under
+// test stay real.
+vi.mock("../user", () => ({
+  emailToUserId: async (email: string) =>
+    email ? `uid_${email.split("@")[0]}` : null,
+  // presence now resolves the whole online set in one batched query instead of
+  // one round-trip per member, so the mock must expose the batch form too.
+  emailToUserIds: async (emails: (string | null | undefined)[]) => {
+    const m = new Map<string, string>();
+    for (const e of emails) {
+      if (e) m.set(e.trim().toLowerCase(), `uid_${e.split("@")[0]}`);
+    }
+    return m;
+  },
+}));
 
 // The module keeps its registry in module scope, so each test needs a fresh
 // import. `vi.resetModules()` + dynamic import gives that.
@@ -113,9 +131,9 @@ describe("presence visibility", () => {
     p.touch("active@example.com", true);
     p.touch("away@example.com", false);
     const members = await p.getOnlineMembers();
-    const byEmail = Object.fromEntries(members.map((m) => [m.email, m.visible]));
-    expect(byEmail["active@example.com"]).toBe(true);
-    expect(byEmail["away@example.com"]).toBe(false);
+    const byId = Object.fromEntries(members.map((m) => [m.userId, m.visible]));
+    expect(byId["uid_active"]).toBe(true);
+    expect(byId["uid_away"]).toBe(false);
   });
 
   it("keeps unreported members distinct from confirmed-active ones", async () => {
@@ -124,10 +142,33 @@ describe("presence visibility", () => {
     p.markOnline("confirmed@example.com");
     p.touch("confirmed@example.com", true);
     const members = await p.getOnlineMembers();
-    const byEmail = Object.fromEntries(members.map((m) => [m.email, m.visible]));
+    const byId = Object.fromEntries(members.map((m) => [m.userId, m.visible]));
     // Both render as active in the UI, but only one is a confirmed foreground
     // tab. Collapsing them would hide the "older client never reports" case.
-    expect(byEmail["unknown@example.com"]).toBeNull();
-    expect(byEmail["confirmed@example.com"]).toBe(true);
+    expect(byId["uid_unknown"]).toBeNull();
+    expect(byId["uid_confirmed"]).toBe(true);
+  });
+
+  it("identifies online members by opaque user id, never by email", async () => {
+    const p = await freshPresence();
+    p.markOnline("someone@example.com");
+    const members = await p.getOnlineMembers();
+    expect(members[0].userId).toBe("uid_someone");
+    expect("email" in members[0]).toBe(false);
+    // The identity fields carry no address. (The avatar is a gravatar URL whose
+    // hash is derived from the email server-side; the test mock echoes the
+    // address, so it is excluded here.)
+    const { avatar, ...identity } = members[0];
+    expect(JSON.stringify(identity)).not.toContain("@");
+  });
+
+  it("broadcasts presence as user ids, not emails", async () => {
+    const p = await freshPresence();
+    p.markOnline("someone@example.com");
+    // broadcast() is fire-and-forget; let its microtasks settle.
+    await new Promise((r) => setTimeout(r, 0));
+    const ids = await p.getOnlineUserIds();
+    expect(ids).toEqual(["uid_someone"]);
+    expect(JSON.stringify(ids)).not.toContain("@");
   });
 });
