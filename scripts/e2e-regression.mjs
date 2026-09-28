@@ -848,13 +848,15 @@ console.log("\n6f-3. iOS Chrome uses the native pull-to-refresh");
 // heartbeat body, so assert the whole round trip: report hidden, read it back
 // from /api/presence, then report visible and read it back again.
 console.log("\n6g. Presence reports tab visibility");
-// Resolve the signed-in email from the app's own auth endpoint so the check
-// works with any session token (no hardcoded address).
-const selfEmail = await page.evaluate(
-  `fetch('/api/auth/me', { cache: 'no-store' }).then(r => r.json()).then(d => d.email || null)`
+// Resolve the signed-in user's opaque id from the app's own auth endpoint so
+// the check works with any session token. /api/presence identifies members by
+// userId only — it must never carry an email (privacy fix 2026-09-28), so the
+// old `m.email === email` lookup can no longer (and must not) find anyone.
+const selfUserId = await page.evaluate(
+  `fetch('/api/auth/me', { cache: 'no-store' }).then(r => r.json()).then(d => d.userId || null)`
 );
 const visRoundTrip = await page.evaluate(`(async () => {
-  const email = ${JSON.stringify(selfEmail)};
+  const userId = ${JSON.stringify(selfUserId)};
   const post = (visible) => fetch('/api/presence/ping', {
     method: 'POST',
     cache: 'no-store',
@@ -863,7 +865,7 @@ const visRoundTrip = await page.evaluate(`(async () => {
   }).then(r => r.json());
   const readSelf = async () => {
     const d = await fetch('/api/presence', { cache: 'no-store' }).then(r => r.json());
-    const me = (d.members || []).find(m => m.email === email);
+    const me = (d.members || []).find(m => m.userId === userId);
     return me ? me.visible : null;
   };
   // ★ ページ自身のハートビートが割り込むと、post() した値が上書きされて
