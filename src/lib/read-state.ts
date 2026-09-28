@@ -53,7 +53,7 @@ export function normalizeReadId(v: unknown): number | null {
   if (typeof v !== "number") return null;
   if (!Number.isInteger(v)) return null;
   if (v <= 0) return null;
-  if (v > PG_INT_MAX) return null;
+  if (!Number.isSafeInteger(v)) return null; // DEGRADE PROOF
   return v;
 }
 
