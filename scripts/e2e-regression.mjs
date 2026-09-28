@@ -417,6 +417,64 @@ check(
   !!gapInfo && gapInfo.gap !== null && Math.abs(gapInfo.gap) <= 1,
   gapInfo ? `header bottom=${gapInfo.headerBottom}px tab top=${gapInfo.tabTop}px gap=${gapInfo.gap}px` : "not found"
 );
+
+// ★ The same check at PHONE width. The column wrapper's top padding is
+//   responsive (`py-4` = 16px on mobile, `sm:py-6` = 24px from 640px), so a
+//   hard-coded negative margin anchors the bar correctly on desktop and 8px
+//   under the header on a phone (measured at 390px: tabBarTop=48, gap=-8).
+//   Desktop-only coverage missed it entirely.
+{
+  const mctx = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+  });
+  await mctx.addCookies([
+    { name: "bsm_session", value: SESSION, domain: "bsm.backspace.fm", path: "/" },
+  ]);
+  const mp = await mctx.newPage();
+  await mp.goto(BASE_URL, { waitUntil: "domcontentloaded", timeout: 60000 });
+  await mp.waitForTimeout(5000);
+  await mp.evaluate(() => window.scrollTo(0, 0));
+  for (let i = 0; i < 20; i++) {
+    await mp.waitForTimeout(150);
+    const settled = await mp.evaluate(`(() => {
+      const h = document.querySelector('[data-cx="header"]');
+      return h && h.getAttribute('data-hidden') !== 'true' &&
+        Math.abs(h.getBoundingClientRect().bottom - 56) < 1;
+    })()`);
+    if (settled) break;
+  }
+  const mGap = await mp.evaluate(`(() => {
+    const t = document.querySelector('[data-cx="navtabs"]');
+    const header = document.querySelector('[data-cx="header"]');
+    const seg = document.querySelector('[data-cx="navtabs"] .mantine-SegmentedControl-root');
+    const club = document.querySelector('[data-cx="clubbars"]');
+    if (!t || !header || !seg || !club) return null;
+    const hr = header.getBoundingClientRect();
+    const tr = t.getBoundingClientRect();
+    const sr = seg.getBoundingClientRect();
+    const cr = club.getBoundingClientRect();
+    return {
+      gap: Math.round(tr.top - hr.bottom),
+      above: Math.round(sr.top - hr.bottom),
+      below: Math.round(cr.top - sr.bottom),
+    };
+  })()`);
+  check(
+    "the tab bar is flush under the header on a phone too",
+    !!mGap && Math.abs(mGap.gap) <= 1,
+    mGap ? `390px: gap=${mGap.gap}px (must be 0)` : "not found"
+  );
+  check(
+    "the tab switcher has even 16px gaps on a phone too",
+    !!mGap && Math.abs(mGap.above - 16) <= 1 && Math.abs(mGap.below - 16) <= 1,
+    mGap ? `390px: above=${mGap.above} below=${mGap.below} (both must be ~16)` : "not found"
+  );
+  await mctx.close();
+}
 await page.evaluate(() => window.scrollTo(0, 0));
 await page.waitForTimeout(500);
 

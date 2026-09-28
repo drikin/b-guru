@@ -10087,7 +10087,7 @@ export default function Home() {
                     //   the bar's own paddingTop (16px) is what puts the
                     //   SegmentedControl at the right visual distance — the
                     //   "flush" requirement is about the CONTROL, not the box.
-                    marginTop: -24,
+                    marginTop: "calc(-1 * var(--bguru-col-pad-top, 24px))",
                     zIndex: 60,
                     background: "var(--bg-primary)",
                     // ★ 上下の余白を均等にする（drikin 2026-09-25「タイムラインの
@@ -10138,6 +10138,14 @@ export default function Home() {
                     //
                     //   ★ These two knobs interact — never change one without
                     //     re-measuring on the live build.
+                    //
+                    //   ★★ marginTop must be RESPONSIVE. The column wrapper is
+                    //     `py-4` (16px) on mobile and `sm:py-6` (24px) from
+                    //     640px up, so the Stack starts at 56+16=72px on a phone
+                    //     and 56+24=80px on a desktop. A single -24 anchors the
+                    //     bar at 56px on desktop but at 48px on mobile — 8px
+                    //     under the header (measured at 390px: tabBarTop=48,
+                    //     gap=-8). Cancel exactly the wrapper's own padding.
                     paddingTop: 21,
                     paddingBottom: 16,
                     display: "flex",

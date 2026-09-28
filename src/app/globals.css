@@ -372,6 +372,19 @@ body {
 .appshell-center {
   --shell-w: 1240px;
   --shell-m: max(0px, calc((100vw - var(--shell-w)) / 2));
+  /* ★ Top padding of the timeline column wrapper (`py-4` / `sm:py-6`).
+   *
+   * The tab bar cancels exactly this much with a negative margin so its top
+   * edge lands flush under the 56px header. The wrapper's padding is
+   * responsive, so the value has to be too — a hard-coded -24 anchored the bar
+   * at 56px on desktop but at 48px on a phone (8px under the header, measured
+   * at 390px). Keep this in sync with the wrapper's Tailwind classes. */
+  --bguru-col-pad-top: 16px;
+}
+@media (min-width: 640px) {
+  .appshell-center {
+    --bguru-col-pad-top: 24px;
+  }
 }
 
 /* ★ サイドバーの幅を文字サイズに追従させない（drikin 2026-09-25）。
