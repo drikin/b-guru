@@ -222,12 +222,9 @@ const NAV_ITEMS: { key: string; label: string; icon: string }[] = [
 ];
 
 // External-link menu bookmarks are DB-backed (admins manage them from the UI).
-// Admin email allowlist — these members get the edit/delete/add UI.
-const ADMIN_EMAILS: ReadonlySet<string> = new Set([
-  "drikin@gmail.com",
-  "matsuo@gmail.com",
-  "zenjinishikawa@gmail.com",
-]);
+// Admin status comes from the server (`isAdmin` on /api/auth/me, computed by
+// lib/admin.ts). The allowlist itself must not ship in the client bundle: it
+// would publish the admins' addresses to every visitor.
 
 interface MenuLinkItem {
   id: number;
@@ -1431,7 +1428,7 @@ function PostCard({
   reactionBar,
 }: {
   post: FeedPost;
-  auth: { email: string };
+  auth: { email: string; isAdmin?: boolean };
   avatarSrc?: string | null;
   isThreadRoot?: boolean;
   showReplyButton?: boolean;
@@ -1494,7 +1491,7 @@ function PostCard({
   const canChangeClub =
     !post.parentId &&
     onSetClub != null &&
-    (post.isAuthor || ADMIN_EMAILS.has(auth.email));
+    (post.isAuthor || !!auth.isAdmin);
   // 通常メンバーには「部活あり or 未設定」の投稿だけが対象外でラベル非表示（表示＝ラベル/未設定がある時だけ）。
   const showClubRow = canChangeClub || !!clubName;
 
@@ -2309,7 +2306,7 @@ function CollapsibleReplies({
 }: {
   parentId: number;
   replies: FeedPost[];
-  auth: { email: string };
+  auth: { email: string; isAdmin?: boolean };
   avatarSrc?: string | null;
   mentionMembers?: MentionMember[];
   searchQuery?: string;
@@ -2477,7 +2474,7 @@ function ReplyBubble({
   renderReactionBar,
 }: {
   rep: FeedPost;
-  auth: { email: string };
+  auth: { email: string; isAdmin?: boolean };
   avatarSrc?: string | null;
   mentionMembers?: MentionMember[];
   searchQuery?: string;
@@ -2724,7 +2721,7 @@ function ProfileView({
   loading: boolean;
   hasMore: boolean;
   isOwn: boolean;
-  auth: { email: string };
+  auth: { email: string; isAdmin?: boolean };
   avatarSrc?: string | null;
   mentionMembers?: MentionMember[];
   searchQuery?: string;
@@ -3358,7 +3355,7 @@ function TimelineFeed({
   skipFirstDate,
 }: {
   groups: FeedGroup[];
-  auth: { email: string };
+  auth: { email: string; isAdmin?: boolean };
   avatarSrc?: string | null;
   mentionMembers?: MentionMember[];
   searchQuery?: string;
@@ -4471,6 +4468,7 @@ export default function Home() {
   const [auth, setAuth] = useState<null | {
     userId: string;
     email: string;
+    isAdmin?: boolean;
     name?: string | null;
     avatar?: string | null;
   }>(null);
@@ -4478,7 +4476,7 @@ export default function Home() {
   // identity changes (e.g. the SSE stream: `setAuth` is called with a fresh
   // object literal on every profile save, which would otherwise tear down and
   // recreate the EventSource and re-fire every panel reload).
-  const authRef = useRef<null | { userId: string; email: string; name?: string | null; avatar?: string | null }>(null);
+  const authRef = useRef<null | { userId: string; email: string; isAdmin?: boolean; name?: string | null; avatar?: string | null }>(null);
   authRef.current = auth;
   const [checking, setChecking] = useState(true);
 
@@ -4555,7 +4553,7 @@ export default function Home() {
   const [linkSaving, setLinkSaving] = useState(false);
   const [linkError, setLinkError] = useState<string | null>(null);
 
-  const isAdminAuth = !!auth && ADMIN_EMAILS.has(auth.email);
+  const isAdminAuth = !!auth?.isAdmin;
   const loadMenuLinks = useCallback(() => {
     // cache: "no-store" — the GET list is re-read right after add/edit/delete,
     // so the sidebar must always reflect the latest state (never a stale copy).
@@ -4829,6 +4827,7 @@ export default function Home() {
           setAuth({
             userId: d.userId ?? undefined,
             email: d.email,
+            isAdmin: !!d.isAdmin,
             name: d.name,
             avatar: d.avatar,
           });
@@ -6774,7 +6773,7 @@ export default function Home() {
       const d = await r.json();
       if (!r.ok) setMsg({ type: "err", text: d.error || "エラー" });
       else {
-        setAuth({ userId: d.userId, email: d.email });
+        setAuth({ userId: d.userId, email: d.email, isAdmin: !!d.isAdmin });
         setMsg(null);
         checkAuth();
       }
@@ -9152,7 +9151,7 @@ export default function Home() {
               <Text size="xs" fw={700} c="dimmed">
                 部活
               </Text>
-              {auth && ADMIN_EMAILS.has(auth.email) && (
+              {auth?.isAdmin && (
                 <ActionIcon
                   variant="subtle"
                   size="sm"
@@ -9527,7 +9526,7 @@ export default function Home() {
                 <Paper p="sm" radius="md" withBorder shadow="xs">
                   <Group justify="space-between" align="center" mb={4} wrap="nowrap">
                     <Text fw={700} size="sm">部長</Text>
-                    {auth && ADMIN_EMAILS.has(auth.email) && (
+                    {auth?.isAdmin && (
                       <Menu position="bottom-start" withinPortal shadow="md" width={240} onClose={() => setLeaderQ("")}>
                         <Menu.Target>
                           <UnstyledButton

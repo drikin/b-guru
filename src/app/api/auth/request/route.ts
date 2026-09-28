@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isPaidMember, findMemberByEmail } from "@/lib/ghost";
 import { createSession, setSessionCookie } from "@/lib/session";
 import { ensureUserId } from "@/lib/user";
+import { isAdmin } from "@/lib/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -61,5 +62,5 @@ export async function POST(req: NextRequest) {
     console.error("auth/request ensureUserId failed:", e?.message);
   }
 
-  return NextResponse.json({ ok: true, email, userId });
+  return NextResponse.json({ ok: true, email, userId, isAdmin: isAdmin(email) });
 }

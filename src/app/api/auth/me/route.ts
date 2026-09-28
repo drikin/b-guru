@@ -4,6 +4,7 @@ import { getProfile } from "@/lib/profile";
 import { findMemberByEmail } from "@/lib/ghost";
 import { gravatarUrl } from "@/lib/posts";
 import { ensureUserId } from "@/lib/user";
+import { isAdmin } from "@/lib/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +65,8 @@ export async function GET() {
   return NextResponse.json({
     authenticated: true,
     userId,
+    // Server-computed; the client no longer carries the admin allowlist.
+    isAdmin: isAdmin(email),
     email,
     name,
     avatar,

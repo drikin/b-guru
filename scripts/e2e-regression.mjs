@@ -932,6 +932,35 @@ for (const r of leakProbe) {
   );
 }
 
+// The admin allowlist used to be hard-coded in the client bundle, publishing
+// the admins' addresses to every visitor. Admin status now comes from the
+// server; assert it arrives and that no JS the browser loaded carries an
+// address (example.com placeholders excluded).
+const adminFlag = await page.evaluate(
+  `fetch('/api/auth/me', { cache: 'no-store' }).then(r => r.json()).then(d => d.isAdmin)`
+);
+check(
+  "auth/me reports isAdmin from the server (guard session is an admin)",
+  adminFlag === true,
+  `isAdmin=${JSON.stringify(adminFlag)}`
+);
+const bundleScan = await page.evaluate(`(async () => {
+  const srcs = [...new Set(performance.getEntriesByType('resource')
+    .map(e => e.name).filter(u => /\\.js(\\?|$)/.test(u) && u.startsWith(location.origin)))];
+  const re = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}/g;
+  const found = [];
+  for (const s of srcs) {
+    const txt = await fetch(s, { cache: 'no-store' }).then(r => r.text()).catch(() => '');
+    for (const m of txt.match(re) || []) if (!/@example\\.(com|org|net)$/i.test(m)) found.push(m);
+  }
+  return { scripts: srcs.length, found: [...new Set(found)] };
+})()`);
+check(
+  "client JS bundles contain no email addresses",
+  bundleScan.scripts > 0 && bundleScan.found.length === 0,
+  `scripts=${bundleScan.scripts} addresses=${bundleScan.found.length}`
+);
+
 // 6h. The SSE stream must actually be OPEN. This is the regression that hid the
 // whole feature: the stream effect had `[]` deps, ran before the async session
 // check resolved, hit `if (!authRef.current) return`, and never retried — so
