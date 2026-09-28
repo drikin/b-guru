@@ -50,6 +50,15 @@ export async function PATCH(req: Request) {
   if (!CLUB_KEYS.has(club)) {
     return NextResponse.json({ error: "不正な部活です" }, { status: 400, headers: NO_CACHE });
   }
+  // 旧契約 { club, email } は受け付けない。userId が無い body を「解除」と解釈すると、
+  // 古い JS のままの admin タブで部長を選んだ瞬間に、既存の部長が 200 のまま消える。
+  // 解除は明示の { userId: null } のみ。
+  if (!("userId" in body)) {
+    return NextResponse.json(
+      { error: "画面が古いバージョンです。再読み込みしてください" },
+      { status: 400, headers: NO_CACHE }
+    );
+  }
   // userId: null = 部長を外す。非 null は users に存在する userId のみ許可。
   let leaderEmail: string | null = null;
   if (body.userId !== null && body.userId !== undefined) {

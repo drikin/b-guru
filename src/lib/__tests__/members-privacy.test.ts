@@ -105,13 +105,13 @@ describe("PATCH /api/clubs/leaders — takes userId, resolves email server-side"
     expect(setClubLeader).not.toHaveBeenCalled();
   });
 
-  it("no longer accepts a raw email in the body", async () => {
+  it("rejects the old { club, email } contract instead of silently removing the leader", async () => {
+    // A stale admin tab still running old JS sends { club, email }. Treating the
+    // missing userId as "remove" would clear the current leader with a 200.
     sessionEmail.mockResolvedValue("drikin@gmail.com");
-    setClubLeader.mockResolvedValue({ club: "motorsport" });
-    // Old contract `{ club, email }` has no userId → treated as "remove leader",
-    // never as "appoint this address".
-    await patch({ club: "motorsport", email: "attacker@example.com" });
-    expect(setClubLeader).not.toHaveBeenCalledWith("motorsport", "attacker@example.com");
+    const res = await patch({ club: "motorsport", email: "attacker@example.com" });
+    expect(res.status).toBe(400);
+    expect(setClubLeader).not.toHaveBeenCalled();
   });
 
   it("never treats an address smuggled into userId as an email", async () => {
