@@ -20,6 +20,7 @@
  * Requires a session token in BSM_SESSION (see the skill for how to mint one).
  */
 
+import { findEmailLeaks } from "./leak-scan.mjs";
 import { chromium } from "playwright";
 
 const BASE_URL = process.env.BASE_URL || "https://bsm.backspace.fm";
@@ -895,6 +896,41 @@ check(
   visRoundTrip.afterVisible === true,
   `visible=${visRoundTrip.afterVisible} (expected true)`
 );
+check(
+  "auth/me returns the viewer's opaque userId",
+  typeof selfUserId === "string" && selfUserId.length > 0,
+  `userId=${JSON.stringify(selfUserId)}`
+);
+
+// 6g'. Privacy (2026-09-28): no member-facing API may carry an email address.
+// These endpoints go to EVERY logged-in member; any "@" in them is a leak of
+// someone's address. Checked against PRODUCTION on every deploy, so a leak
+// that slips past the unit tests is still caught here.
+console.log("\n6g'. Member-facing APIs carry no email addresses");
+// The page only fetches (so the session cookie applies); scanning happens in
+// Node with the shared, unit-tested findEmailLeaks().
+const leakBodies = await page.evaluate(`(async () => {
+  const eps = ['/api/presence', '/api/members', '/api/clubs/leaders',
+               '/api/posts?limit=20', '/api/chat', '/api/notifications', '/api/drinews'];
+  const out = [];
+  for (const ep of eps) {
+    try {
+      const r = await fetch(ep, { cache: 'no-store' });
+      out.push({ ep, status: r.status, json: await r.json() });
+    } catch (e) { out.push({ ep, status: 0, json: null, err: String(e) }); }
+  }
+  return out;
+})()`);
+const leakProbe = leakBodies.map(({ ep, status, json, err }) => ({
+  ep, status, hits: err ? ["error: " + err] : findEmailLeaks(json),
+}));
+for (const r of leakProbe) {
+  check(
+    `${r.ep} carries no email address`,
+    r.status === 200 && r.hits.length === 0,
+    `status=${r.status} leaks=${r.hits.length}${r.hits.length ? " e.g. " + r.hits.slice(0, 3).join(", ") : ""}`
+  );
+}
 
 // 6h. The SSE stream must actually be OPEN. This is the regression that hid the
 // whole feature: the stream effect had `[]` deps, ran before the async session

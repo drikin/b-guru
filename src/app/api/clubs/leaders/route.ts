@@ -3,6 +3,7 @@ import { getSessionEmail } from "@/lib/session";
 import { isAdmin } from "@/lib/admin";
 import { CLUB_KEYS } from "@/lib/club-catalog";
 import { getClubLeaders, setClubLeader } from "@/lib/club-leaders";
+import { userIdToEmail } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
 
@@ -25,9 +26,11 @@ export async function GET() {
   }
 }
 
-/** 部長の設定/解除（admin のみ）。body: { club, email | null }
+/** 部長の設定/解除（admin のみ）。body: { club, userId | null }
  *  - club が不正 → 400 / 未認証 → 401 / 非 admin → 403。
- *  - 部長に指定できるのは有効なメール形式の値に限る（任意入力は許可しない）。 */
+ *  - userId は /api/members が返す不透明ID。サーバーが users から email を引く
+ *    （club_leaders は内部的に email キーのまま。email は API 境界を越えない）。
+ *  - 未知の userId → 400（任意の email を部長にすることはできない）。 */
 export async function PATCH(req: Request) {
   const email = await getSessionEmail();
   if (!email) {
@@ -37,7 +40,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "権限がありません" }, { status: 403, headers: NO_CACHE });
   }
 
-  let body: { club?: unknown; email?: unknown } = {};
+  let body: { club?: unknown; userId?: unknown } = {};
   try {
     body = await req.json();
   } catch {
@@ -47,15 +50,15 @@ export async function PATCH(req: Request) {
   if (!CLUB_KEYS.has(club)) {
     return NextResponse.json({ error: "不正な部活です" }, { status: 400, headers: NO_CACHE });
   }
-  // email: null = 部長を外す。非 null は有効なメール形式のみ許可。
+  // userId: null = 部長を外す。非 null は users に存在する userId のみ許可。
   let leaderEmail: string | null = null;
-  if (body.email !== null && body.email !== undefined) {
-    if (typeof body.email !== "string") {
-      return NextResponse.json({ error: "email が不正です" }, { status: 400, headers: NO_CACHE });
+  if (body.userId !== null && body.userId !== undefined) {
+    if (typeof body.userId !== "string" || !body.userId.trim()) {
+      return NextResponse.json({ error: "userId が不正です" }, { status: 400, headers: NO_CACHE });
     }
-    const e = body.email.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
-      return NextResponse.json({ error: "email の形式が不正です" }, { status: 400, headers: NO_CACHE });
+    const e = await userIdToEmail(body.userId.trim());
+    if (!e) {
+      return NextResponse.json({ error: "該当するメンバーがいません" }, { status: 400, headers: NO_CACHE });
     }
     leaderEmail = e;
   }

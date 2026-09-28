@@ -288,7 +288,7 @@ function SafeAvatar({
 
 
 // ---- @mention support ----
-interface MentionMember { userId: string; email: string; name: string; avatar: string | null }
+interface MentionMember { userId: string; name: string; avatar: string | null }
 
 /** Highlight @mentions in post text by wrapping them in a markdown link
  *  that mdToHtml turns into <a href="#mention-name">@name</a>, styled via CSS. */
@@ -350,11 +350,11 @@ function isMentionedIn(body: string, myNames: Set<string>): boolean {
 function renderChatBody(
   body: string,
   members: MentionMember[],
-  myEmail: string
+  myUserId: string
 ): React.ReactNode {
   const nameSet = new Set(members.map((m) => normWs(m.name)));
   const myNameSet = new Set(
-    members.filter((m) => m.email === myEmail).map((m) => normWs(m.name))
+    members.filter((m) => !!myUserId && m.userId === myUserId).map((m) => normWs(m.name))
   );
   const parts: React.ReactNode[] = [];
   const re = /(@\[[^\]]+\]|@[^\s@\[\]]+)/g;
@@ -5180,7 +5180,7 @@ export default function Home() {
   // list (authoritative) plus the session's name/email as fallbacks.
   useEffect(() => {
     const s = new Set<string>();
-    const me = mentionMembers.find((m) => m.email === auth?.email);
+    const me = mentionMembers.find((m) => !!auth?.userId && m.userId === auth.userId);
     if (me?.name) s.add(normWs(me.name));
     if (auth?.name) s.add(normWs(auth.name));
     if (auth?.email) s.add(normWs(auth.email.split("@")[0]));
@@ -5843,11 +5843,11 @@ export default function Home() {
   }, []);
 
   // admin が部長を設定/解除（email=null で解除）→ 部長一覧を即時反映
-  const setClubLeader = useCallback((club: string, email: string | null) => {
+  const setClubLeader = useCallback((club: string, userId: string | null) => {
     fetch("/api/clubs/leaders", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ club, email }),
+      body: JSON.stringify({ club, userId }),
     })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
@@ -9574,9 +9574,7 @@ export default function Home() {
                               const q = leaderQ.trim().toLowerCase();
                               const list = q
                                 ? mentionMembers.filter(
-                                    (m) =>
-                                      (m.name || "").toLowerCase().includes(q) ||
-                                      m.email.toLowerCase().includes(q)
+                                    (m) => (m.name || "").toLowerCase().includes(q)
                                   )
                                 : mentionMembers;
                               if (list.length === 0) {
@@ -9587,11 +9585,11 @@ export default function Home() {
                                 );
                               }
                               return list.map((m) => (
-                                <Menu.Item key={m.email} onClick={() => setClubLeader(clubFilter, m.email)}>
+                                <Menu.Item key={m.userId} onClick={() => setClubLeader(clubFilter, m.userId)}>
                                   <Group gap={8} wrap="nowrap">
                                     <SafeAvatar src={m.avatar} initial={m.name} size="xs" />
                                     <Text size="sm" truncate style={{ flex: 1, minWidth: 0 }}>
-                                      {m.name || m.email}
+                                      {m.name}
                                     </Text>
                                   </Group>
                                 </Menu.Item>
@@ -10490,7 +10488,7 @@ export default function Home() {
                                     <Group gap={4} align="center" wrap="nowrap" justify={mine ? "flex-end" : "flex-start"}>
                                       {mine && chatActions}
                                       <div style={bubbleStyle}>
-                                        {renderChatBody(m.body, mentionMembers, auth?.email || "")}
+                                        {renderChatBody(m.body, mentionMembers, auth?.userId || "")}
                                       </div>
                                       {!mine && chatActions}
                                     </Group>

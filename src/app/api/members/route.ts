@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 // In-process cache with 60s TTL to avoid hammering Ghost API on every keystroke
 let cache: {
-  data: { userId: string; email: string; name: string; avatar: string | null }[];
+  data: { userId: string; name: string; avatar: string | null }[];
   ts: number;
 } | null = null;
 const CACHE_TTL = 60_000;
@@ -44,7 +44,6 @@ export async function GET() {
     const data = [
       {
         userId: await ensureUserId("system@backspace.fm"),
-        email: "system@backspace.fm",
         name: "ビーグル",
         avatar: "/icon-192.png",
       },
@@ -52,12 +51,12 @@ export async function GET() {
         members
           .filter((m) => m.status === "paid" || m.status === "comped")
           .map(async (m) => ({
+            // Opaque public id only. This list goes to EVERY logged-in member,
+            // so an `email` field here was a full paid-membership address dump.
+            // The club-leader picker PATCHes the userId and the server resolves
+            // it (club_leaders stays email-keyed internally); the mention
+            // highlighter compares userId with the viewer's own.
             userId: await ensureUserId(m.email),
-            // `email` is deliberately kept: the club-leader picker PATCHes it
-            // back (club_leaders is keyed by email) and the chat mention
-            // highlighter compares it with the viewer's own address. `userId`
-            // is the field clients should use for identity/links.
-            email: m.email,
             name: cleanDisplayName(m.name) || m.email.split("@")[0],
             avatar: toProxiedAvatar(m.avatar_image, m.email) || gravatarUrl(m.email),
           }))
