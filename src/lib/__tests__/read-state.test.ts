@@ -53,6 +53,20 @@ describe("normalizeReadId", () => {
   it("安全でない整数を弾く", () => {
     expect(normalizeReadId(Number.MAX_SAFE_INTEGER + 1)).toBeNull();
   });
+
+  it("★ int32 の上限を超える値を弾く（PostgreSQL の 22003 を防ぐ）", () => {
+    // 実測（2026-09-28・本番ログ）: `value "1786692568957" is out of range for
+    // type integer` が 269 件（[posts/read] 119 / reactions 132）。
+    // 渡っていた値はすべて 13 桁 = ミリ秒タイムスタンプ（楽観投稿の tempId）。
+    //
+    // `Number.isSafeInteger` は 2^53 まで通すので 13 桁を弾けない。
+    // PostgreSQL の integer は int32（最大 2147483647）なので、
+    // ここで上限を締めないと `$2::int[]` で必ず 22003 になる。
+    expect(normalizeReadId(2147483647)).toBe(2147483647); // int32 の最大値は通す
+    expect(normalizeReadId(2147483648)).toBeNull(); // 上限 +1 は弾く
+    expect(normalizeReadId(1786692568957)).toBeNull(); // 実測で観測された 13 桁
+    expect(normalizeReadId(Date.now())).toBeNull(); // tempId = Date.now() は必ず弾かれる
+  });
 });
 
 describe("normalizeReadIds", () => {

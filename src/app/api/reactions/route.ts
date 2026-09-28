@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { toggleReaction, getReactions, type ReactionTarget } from "@/lib/reactions";
 import { getSessionEmail } from "@/lib/session";
+import { PG_INT_MAX } from "@/lib/read-state";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -9,6 +10,20 @@ const TARGETS = new Set<ReactionTarget>(["post", "chat"]);
 
 function parseTarget(v: string | null): ReactionTarget | null {
   return v && TARGETS.has(v as ReactionTarget) ? (v as ReactionTarget) : null;
+}
+
+/**
+ * リアクション対象 ID として妥当か。
+ *
+ * ★ `Number.isInteger(n) && n > 0` だけでは不十分。**int32 の上限を見ないと**
+ *   楽観投稿の `tempId = Date.now()`（13 桁）がそのまま `$2::int[]` に渡り
+ *   `22003: value "..." is out of range for type integer` になる。
+ *   実測（2026-09-28・本番ログ）: `reactions fetch error` 132 件。
+ *
+ * 上限は `read-state.ts` の `PG_INT_MAX` を正本として共有する（重複定義しない）。
+ */
+function isValidTargetId(n: number): boolean {
+  return Number.isInteger(n) && n > 0 && n <= PG_INT_MAX;
 }
 
 // POST /api/reactions — toggle one emoji on one target.
@@ -34,7 +49,7 @@ export async function POST(req: NextRequest) {
   if (!targetType) {
     return NextResponse.json({ error: "不正な対象種別" }, { status: 400 });
   }
-  if (!Number.isInteger(targetId) || targetId <= 0) {
+  if (!isValidTargetId(targetId)) {
     return NextResponse.json({ error: "不正な対象ID" }, { status: 400 });
   }
   if (!emoji) {
@@ -70,7 +85,7 @@ export async function GET(req: NextRequest) {
   const ids = raw
     .split(",")
     .map((s) => Number(s.trim()))
-    .filter((n) => Number.isInteger(n) && n > 0)
+    .filter(isValidTargetId)
     .slice(0, 200); // cap: the feed never shows more than a few pages at once
 
   if (ids.length === 0) {

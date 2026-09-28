@@ -24,17 +24,36 @@ export type ReadIds = Set<number>;
 export const MAX_READ_BATCH = 500;
 
 /**
+ * PostgreSQL の `integer`（int32）の最大値。
+ *
+ * ★ これを超える値を `$2::int[]` に渡すと `22003: value "..." is out of range
+ *   for type integer` になる。実測（2026-09-28・本番ログ）: 269 件発生
+ *   （`[posts/read]` 119 / `reactions fetch error` 132）。渡っていた値は
+ *   **すべて 13 桁**で、正体は楽観投稿の `tempId = Date.now()`。
+ *
+ * `Number.isSafeInteger` は 2^53 まで通すので 13 桁を弾けない。**int32 の上限で
+ * 締める必要がある**（DB のカラム型が int32 である限り、これが唯一の正しい境界）。
+ */
+export const PG_INT_MAX = 2147483647;
+
+/**
  * 任意の値を「既読 ID として妥当な正の整数」に正規化する。
  *
  * ★ `Number.isInteger` を必ず通す。PostgreSQL の `$2::int[]` は `1.5` を
  *   1 に丸めるので、サーバー側で弾かないと意図しない ID が保存される。
  *   負数・0・NaN・Infinity・文字列・null も同様に落とす。
+ *
+ * ★★ **int32 の上限（`PG_INT_MAX`）も必ず見る。** これが無いと、楽観投稿の
+ *   `tempId = Date.now()`（13 桁）がそのまま DB に渡り 22003 で失敗する。
+ *   実測で 269 件のエラーが出ていた（既読が保存されない・リアクションが
+ *   表示されないという実害）。**この上限はここ 1 箇所に集約する** —
+ *   呼び出し側で個別に判定すると、片方だけ直して片方が漏れる。
  */
 export function normalizeReadId(v: unknown): number | null {
   if (typeof v !== "number") return null;
   if (!Number.isInteger(v)) return null;
   if (v <= 0) return null;
-  if (!Number.isSafeInteger(v)) return null;
+  if (v > PG_INT_MAX) return null;
   return v;
 }
 

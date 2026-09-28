@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { buildReadPayload, mergeReadState, normalizeReadIds } from "@/lib/read-state";
+import { buildReadPayload, mergeReadState, normalizeReadIds, PG_INT_MAX } from "@/lib/read-state";
 import {
   AppShell,
   NavLink,
@@ -1117,7 +1117,10 @@ let readObserver: IntersectionObserver | null = null;
 const readDwellTimers = new Map<number, ReturnType<typeof setTimeout>>();
 function readIdOf(el: Element) {
   const n = Number(el.getAttribute("data-unread-id"));
-  return Number.isFinite(n) && n > 0 ? n : null;
+  // ★ int32 の上限も見る。楽観投稿の tempId = Date.now()（13 桁）を observe すると
+  //   markPostsRead が 22003 で失敗し続ける（実測 119 件）。上限は read-state.ts の
+  //   PG_INT_MAX を正本として共有する。
+  return Number.isFinite(n) && n > 0 && n <= PG_INT_MAX ? n : null;
 }
 function ensureReadObserver() {
   if (readObserver || typeof IntersectionObserver === "undefined") return;
@@ -7626,11 +7629,18 @@ export default function Home() {
   //   症状は「付けた直後は楽観的更新で出るが、しばらくすると消える」
   //   （takuto 2026-09-26 のバグ報告）。DB には保存されているのに、
   //   取得リクエストに ID が入っていないため画面から消える。
+  //
+  // ★★ 楽観投稿の tempId（= Date.now()・13 桁）は**必ず除外する**。含めると
+  //   `/api/reactions?ids=...` が `$2::int[]` で 22003 になり、**バッチ全体が
+  //   失敗して他の全カードのリアクションも表示されなくなる**（実測 132 件）。
+  //   除外しても投稿直後の表示は壊れない — `setFor(tempId, ...)` がローカル
+  //   state に入るため、サーバー確定で id が差し替わるまで楽観表示が維持される。
   const feedPostIds = useMemo(() => {
     const ids = feedPosts.map((p) => p.id);
     // スレッド表示中の返信も対象にする（重複は Set で潰す）
     for (const r of threadReplies) ids.push(r.id);
-    return Array.from(new Set(ids));
+    // tempId（int32 を超える楽観 ID）を落とす。上限は read-state.ts が正本。
+    return Array.from(new Set(ids)).filter((id) => id > 0 && id <= PG_INT_MAX);
   }, [feedPosts, threadReplies]);
   const { reactions: postReactions, setFor: setPostReactions } = useReactions(
     "post",
@@ -7708,8 +7718,11 @@ export default function Home() {
   // ---- Reactions (chat) --------------------------------------------------
   // Same machinery as posts, different target type. Kept as a separate hook
   // call because the id set comes from a different source (the chat list).
+  //
+  // ★ 投稿側と同じく int32 の上限でフィルタする。チャットに楽観 tempId は
+  //   現状無いが、片方だけ直して片方が漏れる事故を防ぐため同じ境界を適用する。
   const chatMessageIds = useMemo(
-    () => chatMessages.map((m) => m.id),
+    () => chatMessages.map((m) => m.id).filter((id) => id > 0 && id <= PG_INT_MAX),
     [chatMessages]
   );
   const { reactions: chatReactions, setFor: setChatReactions } = useReactions(

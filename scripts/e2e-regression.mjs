@@ -2799,6 +2799,70 @@ if (notFound.length) {
 // ------------------------------------------------------------ final
 check("no uncaught page errors at the end", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 
+// ------------------------------------------- int32 境界: 22003 が出ないこと
+// ★ 実測（2026-09-28）: 楽観投稿の tempId = Date.now()（13 桁）が
+//   `$2::int[]` に渡り `22003: value "..." is out of range for type integer` が
+//   269 件（[posts/read] 119 / reactions 132）発生していた。
+//
+//   このバグは**本番の実データ（13 桁タイムスタンプ）でしか再現しない**ため、
+//   ユニットテストだけでは「本番で出ない」ことを保証できない。ここでは
+//   「実際に投稿 → 既読化 → リアクション」の経路を踏み、**その間に
+//   22003 が発生しないこと**を観測可能な結果として検証する。
+//
+//   検証方法: クライアントから `/api/reactions` と `/api/posts/read` を
+//   13 桁 ID 付きで叩き、**400（正しく弾かれた）または 200（正常）** が返り、
+//   500（22003 で失敗）が返らないことを確認する。
+//   ★ サーバーログの検査は時間窓に依存してフレーキーになるため使わない。
+{
+  const int32 = await page
+    .evaluate(`(async () => {
+      const out = {};
+      // 13 桁 = 楽観投稿の tempId 相当。修正前は 500（22003）になっていた。
+      const tempId = Date.now();
+      out.tempIdDigits = String(tempId).length;
+
+      // (1) reactions GET: 13 桁 ID を混ぜても 500 にならないこと
+      const g = await fetch('/api/reactions?targetType=post&ids=1,' + tempId, { cache: 'no-store' })
+        .then((r) => ({ status: r.status })).catch((e) => ({ error: String(e) }));
+      out.reactionsGet = g.status ?? g.error;
+
+      // (2) reactions POST: 13 桁 ID は 400 で弾かれること（500 ではない）
+      const p = await fetch('/api/reactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetType: 'post', targetId: tempId, emoji: '👍' }),
+      }).then((r) => ({ status: r.status })).catch((e) => ({ error: String(e) }));
+      out.reactionsPost = p.status ?? p.error;
+
+      // (3) posts/read: 13 桁 ID を混ぜても 500 にならないこと
+      const rd = await fetch('/api/posts/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [1, tempId] }),
+      }).then((r) => ({ status: r.status })).catch((e) => ({ error: String(e) }));
+      out.postsRead = rd.status ?? rd.error;
+
+      return out;
+    })()`)
+    .catch((e) => ({ error: String(e) }));
+
+  check(
+    "int32: 13桁IDでも reactions GET が 500 にならない",
+    int32?.reactionsGet === 200,
+    `status=${int32?.reactionsGet} (tempId=${int32?.tempIdDigits}桁)`
+  );
+  check(
+    "int32: 13桁IDは reactions POST で 400 に弾かれる（500 ではない）",
+    int32?.reactionsPost === 400,
+    `status=${int32?.reactionsPost}`
+  );
+  check(
+    "int32: 13桁IDでも posts/read が 500 にならない",
+    int32?.postsRead === 200,
+    `status=${int32?.postsRead}`
+  );
+}
+
 // ------------------------------------------------------------ cleanup
 // ★ 最後の安全網: この run が作ったテスト投稿を必ず消す。
 //
