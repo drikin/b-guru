@@ -6,8 +6,9 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 // GET /api/presence — enriched list of currently-online paid members.
-// Returns [{ email, name, avatar }] so the right-sidebar panel can render
-// names and avatars without further lookups.
+// Returns [{ userId, name, avatar, visible }] so the right-sidebar panel can
+// render names and avatars without further lookups. `userId` is the opaque
+// public identifier; member emails are never included.
 export async function GET(req: NextRequest) {
   ensurePresenceSweeper();
   const email = await getSessionEmail();

@@ -6,10 +6,17 @@ import { emitLive } from "./live";
 import { buildPostPoll, endsAtOf, type PostPoll } from "./poll";
 import { isActiveClubKey } from "./club-store";
 import { isAdmin } from "./admin";
+import { ensureUserId } from "./user";
 
 export interface FeedPost {
   id: number;
-  authorEmail: string;
+  /** Opaque public author id (users.user_id). NEVER the email — the timeline
+   *  payload is served to every logged-in member, so an email here leaks it. */
+  authorId: string;
+  /** True when the VIEWER is the author. Computed server-side in SQL
+   *  (`p.author_email = $1`) because the client cannot derive it from an
+   *  opaque authorId without knowing the viewer's own email. */
+  isAuthor: boolean;
   authorName: string | null;
   authorAvatar?: string | null;
   parentId?: number | null;
@@ -45,6 +52,8 @@ export interface FeedPost {
 }
 
 export interface NewPostInput {
+  /** Author's email — INTERNAL only (posts.author_email). Never returned to a
+   *  client: the public shape carries the opaque `authorId` instead. */
   authorEmail: string;
   authorName: string | null;
   text: string;
@@ -169,16 +178,15 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
     const pid = postId;
     const author = input.authorEmail;
     fetchUrlPreview(rawUrl)
-      .then((pv) => {
-        return pool
-          .query(`UPDATE posts SET url_preview = $1 WHERE id = $2`, [JSON.stringify(pv), pid])
-          .then(() => {
-            try {
-              emitLive({ type: "post", postId: pid, action: "update", authorEmail: author, urlPreview: pv });
-            } catch {
-              /* ignore */
-            }
-          });
+      .then(async (pv) => {
+        await pool.query(`UPDATE posts SET url_preview = $1 WHERE id = $2`, [JSON.stringify(pv), pid]);
+        try {
+          // authorId (opaque), never the email: this event is broadcast to
+          // every connected SSE client.
+          emitLive({ type: "post", postId: pid, action: "update", authorId: await ensureUserId(author), urlPreview: pv });
+        } catch {
+          /* ignore */
+        }
       })
       .catch((e) => console.error("preview update error:", (e as any)?.message));
   }
@@ -186,7 +194,10 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
   const isoCreated = new Date(createdAt).toISOString();
   return {
     id: postId,
-    authorEmail: input.authorEmail,
+    // The caller IS the author (this function just created the post), so the
+    // viewer-is-author flag is known without a round trip.
+    authorId: await ensureUserId(input.authorEmail),
+    isAuthor: true,
     authorName: input.authorName,
     authorAvatar: gravatarUrl(input.authorEmail),
     parentId: input.parentId ?? null,
@@ -211,6 +222,19 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
 /** Shared SELECT fragment and row→FeedPost mapper used by listPosts / getPostThread. */
 const POST_SELECT = `
   SELECT p.id, p.author_email,
+    -- Public author id: the opaque users.user_id, resolved from the author's
+    -- email. LEFT JOIN (not INNER) so a post whose author has no users row yet
+    -- still appears — author_id then falls back to '' and the UI shows the
+    -- name/initial avatar instead of a broken profile link.
+    --
+    -- MAX() is a no-op here (users.email is UNIQUE, so at most one row joins)
+    -- and exists only to satisfy the GROUP BY p.id below without widening it to
+    -- every users column. A bare u.user_id is rejected by Postgres:
+    -- "column u.user_id must appear in the GROUP BY clause".
+    COALESCE(MAX(u.user_id), '') AS author_id,
+    -- Viewer-is-author, computed HERE (server-side) so the client never needs
+    -- the author's email to decide whether to show edit/pin/delete controls.
+    (p.author_email = $1) AS is_author,
     CASE
       WHEN COALESCE((SELECT up.display_name FROM user_profiles up WHERE up.email = p.author_email), p.author_name) LIKE '%@%'
       THEN split_part(COALESCE((SELECT up.display_name FROM user_profiles up WHERE up.email = p.author_email), p.author_name), '@', 1)
@@ -253,12 +277,14 @@ const POST_SELECT = `
       ELSE NULL END AS poll_json
   FROM posts p
   LEFT JOIN post_likes l ON l.post_id = p.id
+  LEFT JOIN users u ON u.email = p.author_email
 `;
 
 function mapRow(r: any): FeedPost {
   return {
     id: r.id,
-    authorEmail: r.author_email,
+    authorId: r.author_id ?? "",
+    isAuthor: !!r.is_author,
     authorName: r.author_name,
     authorAvatar: gravatarUrl(r.author_email),
     parentId: r.parent_id,

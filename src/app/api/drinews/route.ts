@@ -18,7 +18,10 @@ export async function GET(req: NextRequest) {
 
   try {
     const all = req.nextUrl.searchParams.get("all") === "1";
-    const articles = all && isDrikin(email) ? await listAllDrinews() : await listPublishedDrinews();
+    const articles =
+      all && isDrikin(email)
+        ? await listAllDrinews(email)
+        : await listPublishedDrinews(email);
     return NextResponse.json({ articles, isDrikin: isDrikin(email) });
   } catch (e: any) {
     console.error("drinews GET:", e.message);

@@ -82,7 +82,7 @@ export async function PATCH(
       headers: NO_STORE,
     });
   }
-  const updated = await editChatMessage(msgId, email, body);
+  const updated = await editChatMessage(msgId, email, body, email);
   if (!updated) {
     return new Response(JSON.stringify({ error: "not editable" }), {
       status: 403,

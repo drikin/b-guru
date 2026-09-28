@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { deletePost, getPostThread, updatePost } from "@/lib/posts";
 import { getSessionEmail } from "@/lib/session";
 import { emitLive } from "@/lib/live";
+import { ensureUserId } from "@/lib/user";
 import { pool } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -50,7 +51,7 @@ export async function DELETE(
     const status = result.error === "not_found" ? 404 : 403;
     return NextResponse.json({ error: result.error }, { status, headers: NO_CACHE });
   }
-  emitLive({ type: "post", postId, action: "delete", authorEmail: email });
+  emitLive({ type: "post", postId, action: "delete", authorId: await ensureUserId(email) });
   return NextResponse.json({ ok: true }, { headers: NO_CACHE });
 }
 
@@ -111,6 +112,6 @@ export async function PATCH(
     const status = result.error === "not_found" ? 404 : 403;
     return NextResponse.json({ error: result.error }, { status, headers: NO_CACHE });
   }
-  emitLive({ type: "post", postId, action: "update", authorEmail: email });
+  emitLive({ type: "post", postId, action: "update", authorId: await ensureUserId(email) });
   return NextResponse.json({ ok: true }, { headers: NO_CACHE });
 }

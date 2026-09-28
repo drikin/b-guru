@@ -9,11 +9,20 @@
 import { pool } from "./db";
 import { gravatarUrl } from "./posts";
 import { resolveDisplayNames } from "./display-name";
+import { emailToUserId, emailToUserIds } from "./user";
 import { emitLive } from "./live";
 
+/**
+ * A chat message as serialized to the client.
+ *
+ * `authorId` is the opaque public identifier. `isAuthor` is per-VIEWER and is
+ * therefore only meaningful on a response to one client — it must never be put
+ * on an SSE broadcast, which is fanned out to everyone (see live.ts).
+ */
 export interface ChatMessage {
   id: number;
-  authorEmail: string;
+  authorId: string | null;
+  isAuthor: boolean;
   authorName: string | null;
   body: string;
   createdAt: string; // ISO timestamp
@@ -59,19 +68,24 @@ export function ensureChatSweeper(): void {
   }, 60_000);
 }
 
-/** Map a chat_messages row into the API shape. */
-function mapRow(r: {
-  id: number;
-  author_email: string;
-  author_name: string | null;
-  body: string;
-  edited: boolean;
-  edited_at: Date | string | null;
-  created_at: Date | string;
-}): ChatMessage {
+/** Map a chat_messages row into the API shape. `viewerEmail` decides `isAuthor`. */
+async function mapRow(
+  r: {
+    id: number;
+    author_email: string;
+    author_name: string | null;
+    body: string;
+    edited: boolean;
+    edited_at: Date | string | null;
+    created_at: Date | string;
+  },
+  viewerEmail: string | null,
+  authorId: string | null
+): Promise<ChatMessage> {
   return {
     id: r.id,
-    authorEmail: r.author_email,
+    authorId: authorId ?? "",
+    isAuthor: viewerEmail != null && r.author_email === viewerEmail,
     authorName: r.author_name,
     body: r.body,
     createdAt: new Date(r.created_at).toISOString(),
@@ -85,6 +99,7 @@ function mapRow(r: {
 export async function listChatMessages(opts: {
   before?: number;
   limit?: number;
+  viewerEmail?: string | null;
 } = {}): Promise<ChatMessage[]> {
   const limit = Math.min(opts.limit ?? CHAT_PAGE_SIZE, 200);
   const res = await pool.query(
@@ -100,19 +115,28 @@ export async function listChatMessages(opts: {
   // Resolve each author's CURRENT display name at read time so profile
   // display_name edits propagate to historical messages too.
   const names = await resolveDisplayNames(rows.map((r) => r.author_email));
-  return rows.map((r) => {
-    const m = mapRow(r);
-    const resolved = names.get(r.author_email) ?? null;
-    if (resolved) m.authorName = resolved;
-    return m;
-  });
+  const ids = await emailToUserIds(rows.map((r) => r.author_email));
+  const viewerEmail = opts.viewerEmail ?? null;
+  return Promise.all(
+    rows.map(async (r) => {
+      const m = await mapRow(
+        r,
+        viewerEmail,
+        ids.get(r.author_email?.trim().toLowerCase()) ?? null
+      );
+      const resolved = names.get(r.author_email) ?? null;
+      if (resolved) m.authorName = resolved;
+      return m;
+    })
+  );
 }
 
 /** Insert a new chat message. Returns the created message. */
 export async function createChatMessage(
   email: string,
   name: string | null,
-  body: string
+  body: string,
+  viewerEmail: string | null = email
 ): Promise<ChatMessage> {
   const res = await pool.query(
     `INSERT INTO chat_messages (author_email, author_name, body)
@@ -120,7 +144,7 @@ export async function createChatMessage(
      RETURNING id, author_email, author_name, body, edited, edited_at, created_at`,
     [email, name, body]
   );
-  return mapRow(res.rows[0]);
+  return mapRow(res.rows[0], viewerEmail, await emailToUserId(email));
 }
 
 /** Edit a chat message's body (author self-fix for typos). Only the original
@@ -130,7 +154,8 @@ export async function createChatMessage(
 export async function editChatMessage(
   id: number,
   email: string,
-  body: string
+  body: string,
+  viewerEmail: string | null = email
 ): Promise<ChatMessage | null> {
   const res = await pool.query(
     `UPDATE chat_messages
@@ -141,7 +166,7 @@ export async function editChatMessage(
     [body, id, email, CHAT_TTL]
   );
   if (res.rowCount === 0) return null;
-  return mapRow(res.rows[0]);
+  return mapRow(res.rows[0], viewerEmail, await emailToUserId(email));
 }
 
 /** Delete a chat message (admin moderation). */

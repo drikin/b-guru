@@ -9,7 +9,8 @@ export const dynamic = "force-dynamic";
 const NO_CACHE = { "Cache-Control": "no-store, no-cache, must-revalidate" };
 
 /** 部活「部長」の一覧（右SBの部長カード表示用）。要ログイン。
- *  応答: { leaders: { [club]: { club, email, name, avatar } } } */
+ *  応答: { leaders: { [club]: { club, userId, name, avatar, headerImage, bio } } }
+ *  userId は不透明な公開ID。email はサーバー内部にのみ残す（漏洩防止）。 */
 export async function GET() {
   const email = await getSessionEmail();
   if (!email) {

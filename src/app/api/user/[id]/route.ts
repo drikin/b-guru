@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getProfile, updateProfile, MAX_BIO } from "@/lib/profile";
 import { getSessionEmail } from "@/lib/session";
 import { isAdmin } from "@/lib/admin";
-import { userIdToEmail } from "@/lib/user";
+import { resolveEmailSegment } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -10,15 +10,6 @@ export const runtime = "nodejs";
 const NO_CACHE = { "Cache-Control": "no-store, no-cache, must-revalidate" };
 
 type Ctx = { params: Promise<{ id: string }> };
-
-/** Resolve a path segment (opaque user_id OR legacy email) to an email, or
- *  null when it can't be resolved (unknown user_id / empty / bad). */
-async function resolveEmail(segment: string): Promise<string | null> {
-  const dec = decodeURIComponent(segment).trim();
-  if (!dec) return null;
-  if (dec.includes("@")) return dec.toLowerCase(); // legacy email URL
-  return userIdToEmail(dec); // opaque public user_id (canonical)
-}
 
 async function popProfile(email: string, me: string) {
   const profile = await getProfile(email);
@@ -37,7 +28,7 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const me = await getSessionEmail();
   if (!me) return NextResponse.json({ error: "ログインが必要です" }, { status: 401, headers: NO_CACHE });
 
-  const email = await resolveEmail((await params).id);
+  const email = await resolveEmailSegment((await params).id);
   if (!email)
     return NextResponse.json({ error: "ユーザーが見つかりません" }, { status: 404, headers: NO_CACHE });
 
@@ -52,7 +43,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   const me = await getSessionEmail();
   if (!me) return NextResponse.json({ error: "ログインが必要です" }, { status: 401, headers: NO_CACHE });
 
-  const email = await resolveEmail((await params).id);
+  const email = await resolveEmailSegment((await params).id);
   if (!email) return NextResponse.json({ error: "ユーザーが見つかりません" }, { status: 404, headers: NO_CACHE });
   if (me.toLowerCase() !== email && !isAdmin(me))
     return NextResponse.json({ error: "このプロフィールは編集できません" }, { status: 403, headers: NO_CACHE });

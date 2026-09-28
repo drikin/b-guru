@@ -6,6 +6,7 @@ import {
   replaceReplyInFeed,
   removeReplyTemp,
   groupFeed,
+  groupKey,
   mergeFreshFeed,
 } from "../feed";
 
@@ -16,7 +17,8 @@ function makePost(id: number, over: Partial<FeedPost> = {}): FeedPost {
   const createdAt = over.createdAt ?? "2026-08-13T09:00:00.000Z";
   return {
     id,
-    authorEmail: over.authorEmail ?? "u" + id + "@example.com",
+    authorId: over.authorId ?? "user" + id,
+    isAuthor: over.isAuthor ?? false,
     authorName: over.authorName ?? "User" + id,
     authorAvatar: null,
     parentId: over.parentId ?? null,
@@ -37,7 +39,7 @@ function makePost(id: number, over: Partial<FeedPost> = {}): FeedPost {
 
 /** A reply-shaped post (parentId set). */
 function makeReply(id: number, parentId: number, over: Partial<FeedPost> = {}): FeedPost {
-  return makePost(id, { parentId, authorEmail: "rep" + id + "@x.com", ...over });
+  return makePost(id, { parentId, authorId: "rep" + id, ...over });
 }
 
 describe("FeedPost shape (server/createPost contract parity)", () => {
@@ -45,7 +47,8 @@ describe("FeedPost shape (server/createPost contract parity)", () => {
     const p = makePost(1);
     for (const k of [
       "id",
-      "authorEmail",
+      "authorId",
+      "isAuthor",
       "authorName",
       "authorAvatar",
       "parentId",
@@ -62,6 +65,12 @@ describe("FeedPost shape (server/createPost contract parity)", () => {
     ] as const) {
       expect(k in p, `${k} should be present`).toBe(true);
     }
+  });
+
+  it("carries NO email field — the timeline payload is served to every member", () => {
+    const p = makePost(1);
+    expect("authorEmail" in p).toBe(false);
+    expect("email" in p).toBe(false);
   });
 });
 
@@ -189,6 +198,32 @@ describe("groupFeed (timeline sort + group key)", () => {
   it("drops posts with an invalid date (no crash)", () => {
     const groups = groupFeed([makePost(1, { lastActivityAt: "not-a-date", createdAt: "garbage" })]);
     expect(groups).toHaveLength(0);
+  });
+
+  it("gives two root posts by the SAME author on the SAME day distinct group keys", () => {
+    // Regression guard: the React key used to be `dateKey|authorEmail`, which
+    // collided for a member posting twice in one day (React then reused the
+    // wrong card). The key must include the post id.
+    const groups = groupFeed([
+      makePost(1, { authorId: "sameAuthor", lastActivityAt: "2026-08-13T09:00:00.000Z" }),
+      makePost(2, { authorId: "sameAuthor", lastActivityAt: "2026-08-13T10:00:00.000Z" }),
+    ]);
+    expect(groups).toHaveLength(2);
+    const keys = groups.map(groupKey);
+    expect(new Set(keys).size).toBe(2);
+  });
+
+  it("gives two DIFFERENT authors posting on the same day distinct group keys", () => {
+    const groups = groupFeed([
+      makePost(1, { authorId: "authorA", lastActivityAt: "2026-08-13T09:00:00.000Z" }),
+      makePost(2, { authorId: "authorB", lastActivityAt: "2026-08-13T10:00:00.000Z" }),
+    ]);
+    expect(new Set(groups.map(groupKey)).size).toBe(2);
+  });
+
+  it("group key never contains an email address", () => {
+    const groups = groupFeed([makePost(1)]);
+    expect(groupKey(groups[0])).not.toContain("@");
   });
 });
 

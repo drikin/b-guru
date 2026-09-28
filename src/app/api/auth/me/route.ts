@@ -3,6 +3,7 @@ import { getSessionEmail } from "@/lib/session";
 import { getProfile } from "@/lib/profile";
 import { findMemberByEmail } from "@/lib/ghost";
 import { gravatarUrl } from "@/lib/posts";
+import { ensureUserId } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
 
@@ -42,8 +43,26 @@ export async function GET() {
     }
   } catch {}
 
+  // The caller's own opaque user id. This is the ONLY identity field a client
+  // needs to decide "is this post/chat message/comment mine?" — it compares it
+  // against the `authorId` on each DTO. `email` stays because it is the
+  // viewer's OWN address (never someone else's) and the mention highlighter
+  // still matches on it.
+  //
+  // If this fails we return null rather than a wrong value, and log it: the
+  // client treats null as "identity unknown" and falls back to the email
+  // comparison, so the author does not silently lose their own edit/delete
+  // controls (which is what a bare `catch {}` caused).
+  let userId: string | null = null;
+  try {
+    userId = await ensureUserId(email);
+  } catch (e: any) {
+    console.error("auth/me ensureUserId failed:", e?.message);
+  }
+
   return NextResponse.json({
     authenticated: true,
+    userId,
     email,
     name,
     avatar,

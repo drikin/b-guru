@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
   const before = beforeRaw ? Number(beforeRaw) : undefined;
   const limit = limitRaw ? Number(limitRaw) : CHAT_PAGE_SIZE;
   const [messages, unreadCount, latestId] = await Promise.all([
-    listChatMessages({ before, limit }),
+    listChatMessages({ before, limit, viewerEmail: email }),
     getUnreadCount(email),
     getLatestChatId(),
   ]);
@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
   const name = await resolveName(email);
   let message: ChatMessage;
   try {
-    message = await createChatMessage(email, name, bodyText);
+    message = await createChatMessage(email, name, bodyText, email);
   } catch (e) {
     console.error("chat create error:", (e as any)?.message);
     return new Response(JSON.stringify({ error: "db error" }), {

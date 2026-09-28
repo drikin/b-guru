@@ -188,7 +188,8 @@ function jstDateLabel(dateKey: string): string {
 
 interface DrinewsArticle {
   id: number;
-  authorEmail: string;
+  authorId: string | null;
+  isAuthor: boolean;
   title: string;
   bodyMd: string;
   bodyHtml: string;
@@ -204,7 +205,9 @@ interface DrinewsArticle {
 interface DrinewsComment {
   id: number;
   articleId: number;
-  authorEmail: string;
+  authorId: string | null;
+  isAuthor: boolean;
+  canDelete: boolean;
   authorName: string | null;
   authorAvatar?: string | null;
   comment: string;
@@ -285,7 +288,7 @@ function SafeAvatar({
 
 
 // ---- @mention support ----
-interface MentionMember { email: string; name: string; avatar: string | null }
+interface MentionMember { userId: string; email: string; name: string; avatar: string | null }
 
 /** Highlight @mentions in post text by wrapping them in a markdown link
  *  that mdToHtml turns into <a href="#mention-name">@name</a>, styled via CSS. */
@@ -712,7 +715,7 @@ function MentionTextarea({
         >
           {filtered.map((m, i) => (
             <div
-              key={m.email}
+              key={m.userId}
               onClick={() => insertMention(m)}
               style={{
                 padding: "6px 10px",
@@ -1480,7 +1483,7 @@ function PostCard({
   const isUnread =
     readEnabled &&
     post.id > 0 &&
-    auth.email !== post.authorEmail &&
+    !post.isAuthor &&
     !readDone;
 
   // ---- 部活動ラベル（ルート投稿のみ表示） ----
@@ -1491,7 +1494,7 @@ function PostCard({
   const canChangeClub =
     !post.parentId &&
     onSetClub != null &&
-    (auth.email === post.authorEmail || ADMIN_EMAILS.has(auth.email));
+    (post.isAuthor || ADMIN_EMAILS.has(auth.email));
   // 通常メンバーには「部活あり or 未設定」の投稿だけが対象外でラベル非表示（表示＝ラベル/未設定がある時だけ）。
   const showClubRow = canChangeClub || !!clubName;
 
@@ -1537,7 +1540,7 @@ function PostCard({
         style={{ position: "absolute", top: 6, right: 6, zIndex: 2 }}
       >
         {reactionBar}
-        {auth.email === post.authorEmail && (
+        {post.isAuthor && (
           <>
             {/* Pin is only for the ROOT (parent) post, not replies. */}
             {!post.parentId && (
@@ -1589,7 +1592,7 @@ function PostCard({
         <UnstyledButton
           onClick={(e) => {
             e.stopPropagation();
-            onOpenProfile?.(post.authorEmail);
+            onOpenProfile?.(post.authorId);
           }}
           style={{
             display: "flex",
@@ -1600,15 +1603,15 @@ function PostCard({
             textAlign: "left",
             color: "inherit",
           }}
-          aria-label={`${post.authorName || post.authorEmail.split("@")[0]} のプロフィールを見る`}
+          aria-label={`${post.authorName} のプロフィールを見る`}
         >
           <SafeAvatar
-            src={post.authorEmail === auth.email ? avatarSrc : post.authorAvatar || undefined}
-            initial={(post.authorName || post.authorEmail.split("@")[0] || "?")}
+            src={post.isAuthor ? avatarSrc : post.authorAvatar || undefined}
+            initial={(post.authorName || "?")}
           />
           <div style={{ minWidth: 0 }}>
             <Text size="sm" fw={600} c="inherit">
-              {post.authorName || post.authorEmail.split("@")[0]}
+              {post.authorName}
             </Text>
             <Text size="xs" c="dimmed">
               {formatJSTPDT(post.createdAt)}
@@ -2020,7 +2023,7 @@ function PostCard({
             variant="subtle"
             color="blue"
             leftSection={<span style={{ fontSize: 13 }}>💬</span>}
-            onClick={() => onReply(post.id, post.authorName || post.authorEmail.split("@")[0])}
+            onClick={() => onReply(post.id, post.authorName ?? "")}
           >
             返信{post.replyCount ? ` (${post.replyCount})` : ""}
           </Button>
@@ -2078,9 +2081,9 @@ function SidebarPostCard({
       }}
     >
       <Group gap="xs" align="center" wrap="nowrap" mb={4}>
-        <SafeAvatar src={post.authorAvatar} initial={post.authorName || post.authorEmail.split("@")[0]} size="xs" />
+        <SafeAvatar src={post.authorAvatar} initial={post.authorName ?? ""} size="xs" />
         <Text size="xs" fw={600} c="inherit" truncate style={{ flex: 1 }}>
-          {post.authorName || post.authorEmail.split("@")[0]}
+          {post.authorName}
         </Text>
       </Group>
 
@@ -2864,7 +2867,7 @@ function ProfileView({
             const post = g.posts[0];
             return (
               <Box
-                key={`${g.dateKey}|${g.authorEmail}|${post.id}`}
+                key={`${g.dateKey}|${g.authorId}|${post.id}`}
                 data-post-id={post.id}
                 style={{
                   // ★ 緑の左バーは廃止（drikin 2026-09-28「リプライの横の緑の
@@ -3436,12 +3439,12 @@ function TimelineFeed({
     }
 
     // MUST be unique per ROOT post: two groups by the same author on the same
-    // day would otherwise collide on the React key (`dateKey|authorEmail`),
+    // day would otherwise collide on the React key (`dateKey|authorId`),
     // which makes React mis-reconcile siblings when a comment floats a group
     // to the top — leaving a stale copy of the ORIGINAL card group and its
     // still-open comment box behind (the "original group + posting screen
     // remain" bug). Appending the root post id makes every key unique.
-    const gkey = `${g.dateKey}|${g.authorEmail}|${g.posts[0].id}`;
+    const gkey = `${g.dateKey}|${g.authorId}|${g.posts[0].id}`;
 
     // Minimal grouping: no header/frame. A subtle green left-accent bar plus
     // tight inner spacing visually "chains" this author's consecutive posts
@@ -3517,7 +3520,7 @@ function TimelineFeed({
             {inlineReplyFor === post.id ? (
               <InlineReplyBox
                 postId={post.id}
-                authorLabel={g.authorName || g.authorEmail.split("@")[0]}
+                authorLabel={g.authorName}
                 uploadImages={uploadImages}
                 uploadVideo={uploadVideo}
                 uploadAudio={uploadAudio}
@@ -4466,6 +4469,7 @@ function PullToRefresh({
 
 export default function Home() {
   const [auth, setAuth] = useState<null | {
+    userId: string;
     email: string;
     name?: string | null;
     avatar?: string | null;
@@ -4474,7 +4478,7 @@ export default function Home() {
   // identity changes (e.g. the SSE stream: `setAuth` is called with a fresh
   // object literal on every profile save, which would otherwise tear down and
   // recreate the EventSource and re-fire every panel reload).
-  const authRef = useRef<null | { email: string; name?: string | null; avatar?: string | null }>(null);
+  const authRef = useRef<null | { userId: string; email: string; name?: string | null; avatar?: string | null }>(null);
   authRef.current = auth;
   const [checking, setChecking] = useState(true);
 
@@ -4709,14 +4713,17 @@ export default function Home() {
   const [actionError, setActionError] = useState<string | null>(null);
 
   // ---- Profile timeline view ----
-  const [profileEmail, setProfileEmail] = useState<string | null>(null);
+  // `profileUserId` holds the opaque public user id (never an email). Legacy
+  // `#/user/<email>` links still resolve because the server's
+  // `resolveEmailSegment` accepts either segment.
+  const [profileUserId, setProfileUserId] = useState<string | null>(null);
   const [profileData, setProfileData] = useState<ProfileData | null>(null);
   const [profilePosts, setProfilePosts] = useState<FeedPost[]>([]);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileHasMore, setProfileHasMore] = useState(false);
   const [profileBefore, setProfileBefore] = useState<string | null>(null);
-  const profileEmailRef = useRef<string | null>(null);
-  profileEmailRef.current = profileEmail;
+  const profileUserIdRef = useRef<string | null>(null);
+  profileUserIdRef.current = profileUserId;
   // ---- Profile edit modal ----
   const [editingProfile, setEditingProfile] = useState(false);
   const [profileForm, setProfileForm] = useState({ displayName: "", bio: "", headerImage: "" });
@@ -4819,7 +4826,12 @@ export default function Home() {
       .then((r) => r.json())
       .then((d) => {
         if (d.authenticated)
-          setAuth({ email: d.email, name: d.name, avatar: d.avatar });
+          setAuth({
+            userId: d.userId ?? undefined,
+            email: d.email,
+            name: d.name,
+            avatar: d.avatar,
+          });
       })
       .finally(() => setChecking(false));
   }, []);
@@ -4827,7 +4839,7 @@ export default function Home() {
   // Holds the latest openThread so the mount-time hashchange listener never
   // captures a stale closure (openThread is a plain fn recreated every render).
   const openThreadRef = useRef<(postId: number) => void>(() => {});
-  const openProfileRef = useRef<(email: string) => void>(() => {});
+  const openProfileRef = useRef<(userId: string) => void>(() => {});
 
   useEffect(() => {
     checkAuth();
@@ -4843,7 +4855,7 @@ export default function Home() {
         setThreadPost(null);
         setThreadReplies([]);
         setThreadReplyBoxOpen(false);
-        setProfileEmail(null);
+        setProfileUserId(null);
         setProfileData(null);
         setProfilePosts([]);
         setProfileBefore(null);
@@ -4869,7 +4881,7 @@ export default function Home() {
         setThreadPost(null);
         setThreadReplies([]);
         setThreadReplyBoxOpen(false);
-        setProfileEmail(null);
+        setProfileUserId(null);
         setProfileData(null);
         setProfilePosts([]);
         setProfileBefore(null);
@@ -5064,7 +5076,7 @@ export default function Home() {
   }, [auth]);
 
   const [onlineMembers, setOnlineMembers] = useState<
-    { email: string; name: string | null; avatar?: string | null; visible?: boolean | null }[]
+    { userId: string; name: string | null; avatar?: string | null; visible?: boolean | null }[]
   >([]);
   const loadOnline = useCallback(() => {
     if (!auth) {
@@ -5774,13 +5786,14 @@ export default function Home() {
   const [clubTrendUnset, setClubTrendUnset] = useState<"up" | "flat" | "down">("flat");
   // 部長選択メニューのメンバー検索クエリ（admin が部長を選ぶとき用）
   const [leaderQ, setLeaderQ] = useState("");
-  // 部長一覧（club → { club, email, name, avatar, headerImage, bio }）。右SBの部長カード表示・admin 編集用。
+  // 部長一覧（club → { club, userId, name, avatar, headerImage, bio }）。右SBの部長カード表示・admin 編集用。
+  // userId は不透明な公開ID。email はサーバー内部にのみ残る（漏洩防止）。
   const [clubLeaders, setClubLeaders] = useState<
     Record<
       string,
       {
         club: string;
-        email: string;
+        userId: string;
         name: string | null;
         avatar: string;
         headerImage: string | null;
@@ -5966,7 +5979,7 @@ export default function Home() {
     clubFilterRef.current = key;
     setClubFilter(key);
     setThreadPost(null);
-    setProfileEmail(null);
+    setProfileUserId(null);
     setNavOpened(false);
     setActiveNav("feed");
     // URL を ?club= と同期（他パラメータ/ハッシュは保持）
@@ -6088,18 +6101,18 @@ export default function Home() {
       // Skip events triggered by our own posts — we already did an optimistic
       // update, and a silentRefreshFeed here would race with the POST response
       // handler, causing duplicates / missing replies.
-      let authorEmail: string | undefined;
+      let authorId: string | undefined;
       let action: string | undefined;
       let urlPreview: any;
       let postId: number | undefined;
       try {
         const d = JSON.parse(e.data);
-        authorEmail = d?.authorEmail;
+        authorId = d?.authorId;
         action = d?.action;
         urlPreview = d?.urlPreview;
         postId = d?.postId;
       } catch {}
-      if (authRef.current && authorEmail && authorEmail === authRef.current.email) {
+      if (authRef.current && authorId && authorId === authRef.current.userId) {
         // 自分の投稿の URL プレビュー更新（action==="update" で urlPreview 付き）は
         // スキップせず反映する。投稿直後は urlPreview:null で、プレビューは非同期で
         // DB 更新され SSE update で届く。ここでスキップするとリロードまで
@@ -6163,14 +6176,14 @@ export default function Home() {
         if (chatViewRef.current) {
           setChatUnread(0);
           fetch("/api/chat/read", { method: "POST" }).catch(() => {});
-        } else if (msg.authorEmail !== authRef.current.email) {
+        } else if (msg.authorId !== authRef.current.userId) {
           setChatUnread((u) => u + 1);
           // This message @mentions the current user: on top of the unread
           // badge, make the beagle bark in the center of the screen so the
           // message really demands attention (remount via barkKey restart).
           if (isMentionedIn(msg.body, myNameRef.current)) {
             setBarkKey((k) => k + 1);
-            setBarkFrom(msg.authorName || msg.authorEmail.split("@")[0]);
+            setBarkFrom(msg.authorName ?? "");
           }
         }
       } else if (d.action === "delete" && d.message?.id != null) {
@@ -6761,7 +6774,7 @@ export default function Home() {
       const d = await r.json();
       if (!r.ok) setMsg({ type: "err", text: d.error || "エラー" });
       else {
-        setAuth({ email: d.email });
+        setAuth({ userId: d.userId, email: d.email });
         setMsg(null);
         checkAuth();
       }
@@ -6971,7 +6984,8 @@ export default function Home() {
       const tempId = Date.now();
       const tempPost: FeedPost = {
         id: tempId,
-        authorEmail: auth?.email ?? "",
+        authorId: auth?.userId ?? "",
+        isAuthor: true,
         authorName: auth?.name ?? null,
         authorAvatar: avatarSrc ?? null,
         parentId: null,
@@ -7155,7 +7169,8 @@ export default function Home() {
     const tempId = Date.now();
     const tempReply: FeedPost = {
       id: tempId,
-      authorEmail: auth?.email ?? "",
+      authorId: auth?.userId ?? "",
+      isAuthor: true,
       authorName: auth?.name ?? null,
       authorAvatar: avatarSrc ?? null,
       parentId,
@@ -7273,10 +7288,10 @@ export default function Home() {
   // Open the individual thread view (post + chronological replies)
   const openThread = (postId: number) => {
     // Opening a thread must leave any open profile view — ProfileView takes
-    // render priority over the thread, so a stale profileEmail would hide the
+    // render priority over the thread, so a stale profileUserId would hide the
     // thread the user just tapped (reported bug, 2026-08-19). The #/user hash
     // (if any) is left alone so the back button still returns to the profile.
-    setProfileEmail(null);
+    setProfileUserId(null);
     // Seed the thread view INSTANTLY from already-loaded data (the clicked
     // root post is in feedPosts and carries its replies in `.replies`) instead
     // of blanking the screen and waiting on a network round-trip. This is what
@@ -7312,29 +7327,32 @@ export default function Home() {
   openThreadRef.current = openThread;
 
   // ---- Profile timeline ----
-  // Navigate to a user's profile timeline. On the first entry push #/user/<email>
+  // Navigate to a user's profile timeline. On the first entry push #/user/<userId>
   // so the back button closes it; when already on a profile (avatar→avatar) REPLACE
-  // so the hash never stacks.
+  // so the hash never stacks. The segment is the opaque public userId — never an
+  // email. Legacy `#/user/<email>` links still work: the server's
+  // `resolveEmailSegment` accepts either form, and the response canonicalizes the
+  // URL back to the userId below.
   const openProfile = useCallback(
-    async (email: string) => {
+    async (userId: string) => {
       const inProfile = (window.location.hash || "").startsWith("#/user/");
-      const url = `#/user/${encodeURIComponent(email)}`;
-      if (inProfile) window.history.replaceState({ profile: email }, "", url);
-      else window.history.pushState({ profile: email }, "", url);
+      const url = `#/user/${encodeURIComponent(userId)}`;
+      if (inProfile) window.history.replaceState({ profile: userId }, "", url);
+      else window.history.pushState({ profile: userId }, "", url);
       setThreadPost(null);
       setThreadReplies([]);
-      setProfileEmail(email);
+      setProfileUserId(userId);
       setProfileData(null);
       setProfilePosts([]);
       setProfileLoading(true);
       // Seed the header instantly from an already-loaded card (if any).
       for (const root of feedPosts) {
         for (const p of [root, ...(root.replies ?? [])]) {
-          if (p.authorEmail === email) {
+          if (p.authorId === userId) {
             setProfileData({
-              email,
-              isSelf: !!auth && auth.email === email,
-              name: p.authorName || email.split("@")[0],
+              userId,
+              isSelf: !!auth && auth.userId === userId,
+              name: p.authorName || "",
               avatar: avatarSrc || p.authorAvatar || "",
               bio: "",
               headerImage: null,
@@ -7346,7 +7364,7 @@ export default function Home() {
           }
         }
       }
-      const enc = encodeURIComponent(email);
+      const enc = encodeURIComponent(userId);
       try {
         const [hdr, posts] = await Promise.all([
           fetch(`/api/user/${enc}`, { cache: "no-store" }),
@@ -7377,7 +7395,7 @@ export default function Home() {
   openProfileRef.current = openProfile;
 
   const closeProfile = useCallback(() => {
-    setProfileEmail(null);
+    setProfileUserId(null);
     setProfileData(null);
     setProfilePosts([]);
     setProfileBefore(null);
@@ -7385,9 +7403,9 @@ export default function Home() {
   }, []);
 
   const loadMoreProfile = useCallback(async () => {
-    if (!profileEmailRef.current || !profileBefore || profileLoading) return;
+    if (!profileUserIdRef.current || !profileBefore || profileLoading) return;
     setProfileLoading(true);
-    const seg = profileData?.userId || profileEmailRef.current;
+    const seg = profileData?.userId || profileUserIdRef.current;
     const enc = encodeURIComponent(seg);
     try {
       const res = await fetch(
@@ -7465,14 +7483,14 @@ export default function Home() {
   );
 
   const saveProfile = useCallback(async () => {
-    if (!profileEmailRef.current || profileSaving) return;
+    if (!profileUserIdRef.current || profileSaving) return;
     setProfileSaving(true);
     try {
       // Use the opaque userId (never the email) as the path segment. The email
       // is an internal key; exposing it in the URL is what the user_id switch
       // was meant to stop, and a raw email in the path can 404 if the segment
       // isn't resolved. profileData.userId is set once the profile loads.
-      const seg = profileData?.userId || profileEmailRef.current;
+      const seg = profileData?.userId || profileUserIdRef.current;
       const res = await fetch(`/api/user/${encodeURIComponent(seg)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -7495,7 +7513,7 @@ export default function Home() {
       // Saving our OWN profile: refresh the session name so the bottom-left
       // corner and composer (both rendered from auth?.name) reflect the change
       // immediately, instead of showing the stale name until a reload.
-      if (profileEmailRef.current?.toLowerCase() === auth?.email?.toLowerCase() && d.profile?.name) {
+      if (profileUserIdRef.current === auth?.userId && d.profile?.name) {
         setAuth((a) => (a ? { ...a, name: d.profile.name } : a));
       }
     } catch {
@@ -7560,8 +7578,8 @@ export default function Home() {
     // Closing the profile view + right panel here is what makes the sidebar
     // 「タイムライン」link work while the profile (or the right drawer) is open —
     // ProfileView takes priority over the feed in render order, so leaving
-    // profileEmail set would keep showing the profile (reported bug, 2026-08-19).
-    setProfileEmail(null);
+    // profileUserId set would keep showing the profile (reported bug, 2026-08-19).
+    setProfileUserId(null);
     setAsideOpened(false);
     // Clear search when going home
     if (searchQuery) setSearchQuery("");
@@ -8456,7 +8474,7 @@ export default function Home() {
 
   // Tab bar (タイムライン / チャット) is only rendered on the home feed root.
   const showNavTabs =
-    activeNav === "feed" && !threadPost && !searchActive && !profileEmail;
+    activeNav === "feed" && !threadPost && !searchActive && !profileUserId;
   // The chat view itself is NOT gated on showNavTabs. Gating it there meant that
   // opening a thread / search / profile while the chat tab was selected hid the
   // chat body while the tab still read "チャット" — and because re-tapping an
@@ -9104,9 +9122,9 @@ export default function Home() {
                 onClick={() => {
                   // Switching views from the sidebar must also close the
                   // profile / right panel — ProfileView takes render priority
-                  // over the feed, so a stale profileEmail would keep covering
+                  // over the feed, so a stale profileUserId would keep covering
                   // the newly selected view (reported bug, 2026-08-19).
-                  setProfileEmail(null);
+                  setProfileUserId(null);
                   setAsideOpened(false);
                   if (item.key === "feed") {
                     // "タイムライン" should always return to the full timeline
@@ -9443,7 +9461,7 @@ export default function Home() {
               // the drawer — otherwise the menu stays open over the profile
               // (reported bug, 2026-08-19).
               setNavOpened(false);
-              if (auth) openProfile(auth.email);
+              if (auth) openProfile(auth.userId);
             }}
             aria-label="自分のプロフィールを開く"
           >
@@ -9590,7 +9608,7 @@ export default function Home() {
                   </Group>
                   {leader ? (
                     <UnstyledButton
-                      onClick={() => openProfile(leader.email)}
+                      onClick={() => openProfile(leader.userId)}
                       style={{
                         display: "block",
                         width: "100%",
@@ -9616,7 +9634,7 @@ export default function Home() {
                         <SafeAvatar src={leader.avatar} initial={leader.name || ""} size="md" />
                         <Box style={{ minWidth: 0, flex: 1 }}>
                           <Text size="sm" fw={600} truncate>
-                            {leader.name || leader.email.split("@")[0]}
+                            {leader.name || ""}
                           </Text>
                           <Text size="xs" c="dimmed">
                             {clubTitle} 部長
@@ -9782,7 +9800,7 @@ export default function Home() {
                       </Text>
                       <div style={{ minWidth: 0 }}>
                         <Text size="sm" c="inherit" style={{ wordBreak: "break-word" }}>
-                          <b>{n.actorName || n.actorEmail.split("@")[0]}</b>
+                          <b>{n.actorName}</b>
                           {n.type === "reply" ? " があなたの投稿に返信しました" : n.type === "mention" ? " があなたをメンションしました" : " があなたの投稿にいいねしました"}
                         </Text>
                         {n.text ? (
@@ -9832,7 +9850,7 @@ export default function Home() {
             ) : (
               <Stack gap={4}>
                 {onlineMembers.map((m) => {
-                  const isSelf = !!auth && m.email === auth.email;
+                  const isSelf = !!auth && m.userId === auth.userId;
                   // Three states, because "we don't know" is not the same as
                   // "in front" (drikin 2026-09-23: 「僕以外全員アクティブとは
                   // 考えられない」 — the panel was claiming everyone was active
@@ -9859,9 +9877,9 @@ export default function Home() {
                     : "オンライン（タブの状態は未取得）";
                   return (
                     <UnstyledButton
-                      key={m.email}
+                      key={m.userId}
                       title={title}
-                      onClick={() => openChatMention(m.name || m.email.split("@")[0])}
+                      onClick={() => openChatMention(m.name || "")}
                       style={{
                         display: "block",
                         width: "100%",
@@ -9879,7 +9897,7 @@ export default function Home() {
                         wrap="nowrap"
                         style={{ minWidth: 0 }}
                       >
-                        <SafeAvatar src={m.avatar} initial={m.name || m.email.split("@")[0]} size="sm" />
+                        <SafeAvatar src={m.avatar} initial={m.name || ""} size="sm" />
                         {/* Presence dot: filled green when the tab is confirmed
                             in front, hollow grey otherwise. Fixed width so the
                             names stay aligned across all three states. */}
@@ -9901,7 +9919,7 @@ export default function Home() {
                           truncate
                           style={{ minWidth: 0 }}
                         >
-                          {m.name || m.email.split("@")[0]}
+                          {m.name || ""}
                           {isSelf && (
                             <Text span c="green" fw={600}>
                               （あなた）
@@ -9949,7 +9967,7 @@ export default function Home() {
                     post={p}
                     onOpen={scrollToPinnedPost}
                     onUnpin={handlePin}
-                    canUnpin={!!auth && auth.email === p.authorEmail}
+                    canUnpin={!!auth && p.isAuthor}
                     loading={scrollingPostId === p.id}
                   />
                 ))}
@@ -10352,9 +10370,9 @@ export default function Home() {
                         </Text>
                       ) : (
                         chatMessages.map((m) => {
-                          const mine = !!auth && m.authorEmail === auth.email;
+                          const mine = !!auth && m.isAuthor;
                           const editing = chatEditingId === m.id;
-                          const name = m.authorName || m.authorEmail.split("@")[0];
+                          const name = m.authorName ?? "";
                           // Slack-like: emoji-only messages render big.
                           const emojiOnly = !editing && isEmojiOnly(m.body);
                           const bubbleStyle = {
@@ -10676,7 +10694,7 @@ export default function Home() {
               )}
 
               {/* Profile timeline (avatar/name click) */}
-              {profileEmail ? (
+              {profileUserId ? (
                 <ProfileView
                   renderReactionBar={renderReactionBar}
                   profile={profileData}
@@ -11289,16 +11307,16 @@ export default function Home() {
                       <Group align="center" gap="xs" mb={2}>
                         <SafeAvatar
                           src={c.authorAvatar}
-                          initial={c.authorName || c.authorEmail}
+                          initial={c.authorName ?? ""}
                           size="sm"
                         />
                         <Text size="xs" fw={600} c="inherit">
-                          {c.authorName || c.authorEmail}
+                          {c.authorName}
                         </Text>
                         <Text size="xs" c="dimmed">
                           {formatJSTPDT(c.createdAt)}
                         </Text>
-                        {(auth.email === c.authorEmail || dnIsDrikin) && (
+                        {c.canDelete && (
                           <ActionIcon
                             size="xs"
                             variant="subtle"

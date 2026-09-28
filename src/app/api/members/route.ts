@@ -3,13 +3,14 @@ import { NextResponse } from "next/server";
 import { getSessionEmail } from "@/lib/session";
 import { listMembers } from "@/lib/ghost";
 import { gravatarUrl } from "@/lib/posts";
+import { ensureUserId } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 // In-process cache with 60s TTL to avoid hammering Ghost API on every keystroke
 let cache: {
-  data: { email: string; name: string; avatar: string | null }[];
+  data: { userId: string; email: string; name: string; avatar: string | null }[];
   ts: number;
 } | null = null;
 const CACHE_TTL = 60_000;
@@ -41,14 +42,26 @@ export async function GET() {
     const members = await listMembers();
     // ビーグル（システムアカウント）を先頭に追加 → @ビーグル で明示的にメンション可能に
     const data = [
-      { email: "system@backspace.fm", name: "ビーグル", avatar: "/icon-192.png" },
-      ...members
-        .filter((m) => m.status === "paid" || m.status === "comped")
-        .map((m) => ({
-          email: m.email,
-          name: cleanDisplayName(m.name) || m.email.split("@")[0],
-          avatar: toProxiedAvatar(m.avatar_image, m.email) || gravatarUrl(m.email),
-        })),
+      {
+        userId: await ensureUserId("system@backspace.fm"),
+        email: "system@backspace.fm",
+        name: "ビーグル",
+        avatar: "/icon-192.png",
+      },
+      ...(await Promise.all(
+        members
+          .filter((m) => m.status === "paid" || m.status === "comped")
+          .map(async (m) => ({
+            userId: await ensureUserId(m.email),
+            // `email` is deliberately kept: the club-leader picker PATCHes it
+            // back (club_leaders is keyed by email) and the chat mention
+            // highlighter compares it with the viewer's own address. `userId`
+            // is the field clients should use for identity/links.
+            email: m.email,
+            name: cleanDisplayName(m.name) || m.email.split("@")[0],
+            avatar: toProxiedAvatar(m.avatar_image, m.email) || gravatarUrl(m.email),
+          }))
+      )),
     ];
     cache = { data, ts: Date.now() };
     return NextResponse.json({ members: data });

@@ -26,14 +26,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const id = await parseId(params);
   if (id === null) return NextResponse.json({ error: "不正なID" }, { status: 400 });
 
-  const article = await getDrinews(id);
+  const article = await getDrinews(id, email);
   if (!article) return NextResponse.json({ error: "記事が見つかりません" }, { status: 404 });
   // drafts only visible to drikin
   if (article.status !== "published" && !isDrikin(email)) {
     return NextResponse.json({ error: "まだ公開されていません" }, { status: 403 });
   }
 
-  const comments = await listComments(id);
+  const comments = await listComments(id, email);
   return NextResponse.json({ article, comments });
 }
 

@@ -3,7 +3,7 @@ import { liveBus, LiveEvent } from "@/lib/live";
 import { getSessionEmail } from "@/lib/session";
 import {
   ensurePresenceSweeper,
-  getOnlineEmails,
+  getOnlineUserIds,
   markOffline,
   markOnline,
 } from "@/lib/presence";
@@ -56,7 +56,11 @@ export async function GET(req: NextRequest) {
         markOnline(email);
         // Send the current online list to this freshly-connected client so the
         // panel renders immediately without waiting for the next change.
-        send({ type: "presence", emails: getOnlineEmails() });
+        // Opaque user ids only — this used to ship every online member's email
+        // address to every client that opened the stream.
+        void getOnlineUserIds().then((userIds) => {
+          send({ type: "presence", userIds });
+        });
       }
 
       // Initial ping so the client knows the connection is alive.
