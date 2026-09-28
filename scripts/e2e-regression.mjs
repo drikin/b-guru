@@ -767,9 +767,25 @@ console.log("\n6f-3. iOS Chrome uses the native pull-to-refresh");
   const onCriosReq = (r) => {
     if (r.url().includes("/api/posts")) criosReqs.push(r.url());
   };
-  cp.on("request", onCriosReq);
+  // ★ Let the page's own background fetches settle BEFORE counting.
+  //   The feed revalidates on load (SSE / focus refresh), so a request can land
+  //   inside the measurement window and read as "the custom gesture fired"
+  //   (measured in CI: feed requests after pull = 1). Wait for a quiet period
+  //   first, then count only what the drag itself produces.
   await cp.evaluate(`window.scrollTo(0, 0)`);
   await cp.waitForTimeout(300);
+  {
+    let quiet = 0;
+    let last = 0;
+    for (let i = 0; i < 40 && quiet < 3; i++) {
+      const n = await cp.evaluate(`performance.getEntriesByType('resource')
+        .filter((e) => e.name.includes('/api/posts')).length`);
+      if (n === last) quiet++;
+      else { quiet = 0; last = n; }
+      await cp.waitForTimeout(250);
+    }
+  }
+  cp.on("request", onCriosReq);
   await cp.evaluate(`(async () => {
     const fire = (type, y) => {
       const t = new Touch({ identifier: 1, target: document.body, clientX: 200, clientY: y });
