@@ -10050,7 +10050,11 @@ export default function Home() {
           //
           //   狭い画面ではガターを最小にする。`sm:` からは従来どおり
           //   720px 上限 + 32px ガターで、広い画面の見た目は変えない。
-          style={{ maxWidth: "min(720px, calc(100% - 8px))" }}
+          //
+          //   ★ ガターは CSS 変数で切り替える。固定値 8px にすると 820px の
+          //     縦長タブレットでも 4px しか残らず、右端が画面に張り付く
+          //     （実測: rightGap=4）。640px 未満だけ 8px にする。
+          style={{ maxWidth: "min(720px, calc(100% - var(--bguru-col-gutter, 32px)))" }}
         >
           {isCenterView && (
             <Stack gap="md">

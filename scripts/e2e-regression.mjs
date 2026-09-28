@@ -468,6 +468,36 @@ check(
     !!mGap && Math.abs(mGap.gap) <= 1,
     mGap ? `390px: gap=${mGap.gap}px (must be 0)` : "not found"
   );
+  // ★ The feed must actually USE the phone's width. Measured before the fix:
+  //   a 390px viewport gave a 319px card (82%) — 16px of `mx-auto` gutter on
+  //   each side, 12px of `px-3` on each side, then 3px of green accent bar plus
+  //   12px of paddingLeft on the group box. drikin 2026-09-28: 「全体にもスマホ
+  //   では横幅いっぱい活かした方が情報密度上がる」.
+  const mWidth = await mp.evaluate(`(() => {
+    const vw = window.innerWidth;
+    const card = document.querySelector('[data-post-id] .mantine-Card-root');
+    if (!card) return null;
+    const r = card.getBoundingClientRect();
+    return { vw, cardW: Math.round(r.width), ratio: +(r.width / vw).toFixed(3) };
+  })()`);
+  check(
+    "the feed uses the phone's full width",
+    !!mWidth && mWidth.ratio >= 0.94,
+    mWidth ? `390px: card=${mWidth.cardW}px of ${mWidth.vw}px (${Math.round(mWidth.ratio * 100)}%, must be >=94%)` : "not found"
+  );
+  // ★ And the green accent bar is gone — it cost 15px of body width.
+  const mBar = await mp.evaluate(`(() => {
+    const g = document.querySelector('[data-post-id]');
+    if (!g) return null;
+    const cs = getComputedStyle(g);
+    return { borderLeftWidth: cs.borderLeftWidth, paddingLeft: cs.paddingLeft };
+  })()`);
+  check(
+    "the green accent bar is gone from the feed",
+    !!mBar && parseFloat(mBar.borderLeftWidth) === 0,
+    mBar ? `borderLeft=${mBar.borderLeftWidth} paddingLeft=${mBar.paddingLeft}` : "not found"
+  );
+
   check(
     "the tab switcher has even 16px gaps on a phone too",
     !!mGap && Math.abs(mGap.above - 16) <= 1 && Math.abs(mGap.below - 16) <= 1,

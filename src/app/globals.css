@@ -380,10 +380,17 @@ body {
    * at 56px on desktop but at 48px on a phone (8px under the header, measured
    * at 390px). Keep this in sync with the wrapper's Tailwind classes. */
   --bguru-col-pad-top: 16px;
+  /* ★ Horizontal gutter for the timeline column. Phones get almost none so the
+   * feed uses the full width (drikin 2026-09-28「スマホでは横幅いっぱい活かした
+   * 方が情報密度上がる」); from 640px up the original 32px returns, which is what
+   * keeps a visible right gutter on a portrait tablet (measured: 8px left only
+   * 4px at 820px wide). */
+  --bguru-col-gutter: 8px;
 }
 @media (min-width: 640px) {
   .appshell-center {
     --bguru-col-pad-top: 24px;
+    --bguru-col-gutter: 32px;
   }
 }
 
