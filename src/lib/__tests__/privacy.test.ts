@@ -21,6 +21,7 @@
  * reintroduced the email and replace it with the opaque `authorId`.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFile } from "node:fs/promises";
 
 // ── Database mock ───────────────────────────────────────────────────────────
 // Every query returns the rows the test queued for it, in order. The mappers
@@ -331,6 +332,27 @@ describe("LiveEvent (SSE) payloads carry no email", () => {
     } as unknown as LiveEvent;
     expectEmailFree(e);
     expect(allKeys(e).has("isAuthor")).toBe(false);
+  });
+
+  it("the chat route strips isAuthor before broadcasting", async () => {
+    // Regression guard for a real bug: the route passed the whole ChatMessage
+    // (built with viewerEmail = the sender, so isAuthor: true) straight to
+    // emitLive. Every other member then rendered the sender's message as their
+    // own — right-aligned, with edit/delete buttons that 403'd on click.
+    // Assert on the source, because the strip happens at the call site.
+    const src = await readFile(
+      new URL("../../app/api/chat/route.ts", import.meta.url),
+      "utf8"
+    );
+    expect(src).toMatch(/const\s*\{\s*isAuthor:[^}]*\}\s*=\s*message/);
+    expect(src).not.toMatch(/emitLive\(\{\s*type:\s*"chat",\s*message,\s*action/);
+
+    const editSrc = await readFile(
+      new URL("../../app/api/chat/[id]/route.ts", import.meta.url),
+      "utf8"
+    );
+    expect(editSrc).toMatch(/const\s*\{\s*isAuthor:[^}]*\}\s*=\s*updated/);
+    expect(editSrc).not.toMatch(/emitLive\(\{\s*type:\s*"chat",\s*action:\s*"edit",\s*message:\s*updated/);
   });
 });
 

@@ -89,7 +89,10 @@ export async function PATCH(
       headers: NO_STORE,
     });
   }
-  emitLive({ type: "chat", action: "edit", message: updated });
+  // Same per-receiver rule as the create path: `isAuthor` is true for the
+  // editor's own client and must not be fanned out to everyone.
+  const { isAuthor: _perReceiver, ...broadcast } = updated;
+  emitLive({ type: "chat", action: "edit", message: broadcast });
   return new Response(
     JSON.stringify({ ok: true, message: updated }),
     { status: 200, headers: NO_STORE }

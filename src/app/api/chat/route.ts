@@ -102,7 +102,16 @@ export async function POST(req: NextRequest) {
   }
 
   // Realtime broadcast over the existing SSE channel.
-  emitLive({ type: "chat", message, action: "create" });
+  //
+  // `isAuthor` must NOT go out on the bus: one payload is fanned out to every
+  // connected client, and the flag is per-RECEIVER (true only for the author's
+  // own client). `createChatMessage` is called with viewerEmail = the sender,
+  // so `message.isAuthor` is true here — broadcasting it verbatim made every
+  // other member render the sender's message as their own (right-aligned, with
+  // edit/delete buttons that then 403). Each client derives the flag locally
+  // from `authorId` instead. See the contract note in lib/live.ts.
+  const { isAuthor: _perReceiver, ...broadcast } = message;
+  emitLive({ type: "chat", message: broadcast, action: "create" });
 
   const unreadCount = await getUnreadCount(email);
   return new Response(

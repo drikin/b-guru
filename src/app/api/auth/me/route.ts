@@ -49,10 +49,11 @@ export async function GET() {
   // viewer's OWN address (never someone else's) and the mention highlighter
   // still matches on it.
   //
-  // If this fails we return null rather than a wrong value, and log it: the
-  // client treats null as "identity unknown" and falls back to the email
-  // comparison, so the author does not silently lose their own edit/delete
-  // controls (which is what a bare `catch {}` caused).
+  // If this fails we return null rather than a wrong value, and log it. Note
+  // there is NO client-side email fallback: the client compares
+  // `authorId === auth.userId`, so a null here degrades the SSE self-check and
+  // the chat "mine" flag until the next successful call. Post edit/delete
+  // controls are unaffected — those use the server-computed `post.isAuthor`.
   let userId: string | null = null;
   try {
     userId = await ensureUserId(email);

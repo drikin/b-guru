@@ -9608,13 +9608,17 @@ export default function Home() {
                   </Group>
                   {leader ? (
                     <UnstyledButton
-                      onClick={() => openProfile(leader.userId)}
+                      // A leader whose email has no `users` row yet resolves to
+                      // userId "" — opening that would 404 on an empty profile.
+                      // Keep the card visible but inert until the row exists.
+                      onClick={() => leader.userId && openProfile(leader.userId)}
+                      disabled={!leader.userId}
                       style={{
                         display: "block",
                         width: "100%",
                         textAlign: "left",
                         borderRadius: 10,
-                        cursor: "pointer",
+                        cursor: leader.userId ? "pointer" : "default",
                         padding: 0,
                       }}
                     >
