@@ -67,11 +67,10 @@ export function groupKey(g: Pick<FeedGroup, "dateKey" | "authorId" | "posts">): 
 }
 
 /** JST date string "YYYY-MM-DD" for grouping (empty when the timestamp is bad). */
-export function jstDateKey(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-CA", { timeZone: "Asia/Tokyo" }); // YYYY-MM-DD
-}
+// YYYY-MM-DD in JST — cached formatter (lib/date-format.ts); re-exported so
+// existing `import { jstDateKey } from "@/lib/feed"` callers keep working.
+import { jstDateKey } from "./date-format";
+export { jstDateKey };
 
 /** Each ROOT post is its own group (main card + its replying comments). Date key
  *  comes from the post's LATEST activity (own or newest reply), so inserting a

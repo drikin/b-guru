@@ -4,6 +4,7 @@ import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useS
 import { buildReadPayload, mergeReadState, normalizeReadIds, PG_INT_MAX } from "@/lib/read-state";
 import { sizedAvatarSrc } from "@/lib/avatar-size";
 import { earlyOrFetch } from "@/lib/early-fetch";
+import { formatJSTPDT, chatTimeStr, jstDateLabel } from "@/lib/date-format";
 import {
   AppShell,
   NavLink,
@@ -79,48 +80,7 @@ function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   return arr;
 }
 
-function formatJSTPDT(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const jst = d.toLocaleString("ja-JP", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  const pdt = d.toLocaleString("en-US", {
-    timeZone: "America/Los_Angeles",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  return `${jst} JST / ${pdt} PDT`;
-}
 
-/** Chat bubble timestamp (JST). Same local day → "HH:MM"; older → "M/D HH:MM".
- *  Chat is 24h-ephemeral so "older" is at most yesterday. */
-function chatTimeStr(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const md = (x: Date) =>
-    x.toLocaleDateString("ja-JP", {
-      timeZone: "Asia/Tokyo",
-      month: "numeric",
-      day: "numeric",
-    });
-  const hm = d.toLocaleTimeString("en-GB", {
-    timeZone: "Asia/Tokyo",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  return md(d) === md(new Date()) ? hm : `${md(d)} ${hm}`;
-}
 
 /** Slack-like emoji picker set for the chat composer (common, hand-picked). */
 const CHAT_EMOJIS = [
@@ -176,14 +136,6 @@ function drinewsNextTitle(): string {
   return `${y}年${mo}月${d}日号`;
 }
 
-/** Human label for a JST date key, e.g. "2026年8月8日 (土)". */
-function jstDateLabel(dateKey: string): string {
-  const [y, m, dd] = dateKey.split("-").map(Number);
-  if (!y || !m || !dd) return dateKey;
-  const d = new Date(Date.UTC(y, m - 1, dd));
-  const wd = d.toLocaleDateString("ja-JP", { timeZone: "UTC", weekday: "short" });
-  return `${y}年${m}月${dd}日 (${wd})`;
-}
 
 /** Format a human label for a JST date key (rendered between date groups).
  *  (jstDateKey / groupFeed / FeedGroup moved to @/lib/feed) */
@@ -407,15 +359,30 @@ function ensureBarkCtx(): AudioContext | null {
   return barkCtx;
 }
 
+// The mp3 BYTES are prefetched on mount; the AudioContext is only created on
+// the first user gesture (or the first bark). Creating it at mount cost ~270ms
+// of main-thread time on the measured first load (CPU profile 2026-09-28) and
+// raised "AudioContext encountered an error" on machines without an audio
+// device — while it could not play anything before a gesture anyway.
+let barkBytes: Promise<ArrayBuffer | null> | null = null;
+function prefetchBarkBytes(): Promise<ArrayBuffer | null> {
+  if (!barkBytes) {
+    barkBytes = fetch("/bark.mp3", { cache: "no-store" })
+      .then((r) => (r.ok ? r.arrayBuffer() : null))
+      .catch(() => null);
+  }
+  return barkBytes;
+}
+
 async function loadBarkBuf(): Promise<void> {
   if (barkBuf || typeof window === "undefined") return;
   const ctx = ensureBarkCtx();
   if (!ctx) return;
   try {
-    const r = await fetch("/bark.mp3", { cache: "no-store" });
-    if (!r.ok) return;
-    const ab = await r.arrayBuffer();
-    barkBuf = await ctx.decodeAudioData(ab);
+    const ab = await prefetchBarkBytes();
+    if (!ab || barkBuf) return;
+    // decodeAudioData detaches its input; decode a copy so a retry can reuse it.
+    barkBuf = await ctx.decodeAudioData(ab.slice(0));
   } catch {
     /* ignore — the bark just stays silent if the sound can't load */
   }
@@ -5193,8 +5160,11 @@ export default function Home() {
   // that starts outside a user gesture, so we resume on pointer/key input —
   // once the user has interacted, the bark SE can play.
   useEffect(() => {
-    loadBarkBuf();
-    const resume = () => ensureBarkCtx();
+    prefetchBarkBytes(); // bytes only — no AudioContext until a gesture
+    const resume = () => {
+      ensureBarkCtx();
+      loadBarkBuf();
+    };
     window.addEventListener("pointerdown", resume, { once: true });
     window.addEventListener("keydown", resume, { once: true });
     window.addEventListener("touchstart", resume, { once: true });
