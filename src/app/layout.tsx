@@ -2,7 +2,8 @@ import type { Metadata, Viewport } from "next";
 import { MantineProvider, createTheme } from "@mantine/core";
 import "@mantine/core/styles.css";
 import "./globals.css";
-import { EARLY_SCRIPT } from "@/lib/early-fetch";
+import { EARLY_PRELOADS, EARLY_SCRIPT } from "@/lib/early-fetch";
+import { preload } from "react-dom";
 
 // NOTE: next/font/google Noto_Sans_JP was removed deliberately. For Japanese it
 // emits 124 unicode-range subsets (496 @font-face rules, 5.3MB of woff2) and the
@@ -76,6 +77,8 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // One hoisted <link rel="preload" as="fetch"> per early URL (see lib/early-fetch.ts).
+  for (const u of EARLY_PRELOADS) preload(u, { as: "fetch", crossOrigin: "anonymous" });
   return (
     <html lang="ja" className="h-full antialiased" suppressHydrationWarning>
       <head>

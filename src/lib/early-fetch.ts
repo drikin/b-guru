@@ -18,13 +18,27 @@ export const EARLY_AUTH_URL = "/api/auth/me";
 export const EARLY_FEED_URL = "/api/posts?limit=50"; // must equal loadFeed()'s default URL
 export const EARLY_TTL_MS = 15_000;
 
+/**
+ * Also emitted as <link rel="preload" as="fetch"> (app/layout.tsx). Measured
+ * after the first deploy: the inline script alone only started at ~665ms,
+ * because Next puts the 231KB stylesheet <link>s first in <head> and a classic
+ * script waits for pending stylesheets. A preload link is not blocked by CSS,
+ * so the request starts as soon as the HTML is parsed; the script's fetch()
+ * then picks up the preloaded response. For that match the fetch must use the
+ * same mode/credentials (crossorigin="anonymous" ≙ fetch's defaults) and no
+ * `cache: "no-store"` — the API already answers with no-store headers.
+ * The feed preload is skipped for ?club= links by the script, but a <link> is
+ * static; that case costs one unused preload, same as before this change.
+ */
+export const EARLY_PRELOADS = [EARLY_AUTH_URL, EARLY_FEED_URL] as const;
+
 // Plain ES5, no dependencies: runs before React. A ?club= deep link builds a
 // different feed URL, so skip the feed there instead of wasting a request.
 export const EARLY_SCRIPT = `(function(){try{var e=window.__bsmEarly={t:Date.now(),p:{}};e.p[${JSON.stringify(
   EARLY_AUTH_URL
 )}]=fetch(${JSON.stringify(EARLY_AUTH_URL)});if(!/[?&]club=/.test(location.search)){e.p[${JSON.stringify(
   EARLY_FEED_URL
-)}]=fetch(${JSON.stringify(EARLY_FEED_URL)},{cache:"no-store"});}}catch(_){}})();`;
+)}]=fetch(${JSON.stringify(EARLY_FEED_URL)});}}catch(_){}})();`;
 
 type EarlyStore = { t: number; p: Record<string, Promise<Response> | undefined> };
 

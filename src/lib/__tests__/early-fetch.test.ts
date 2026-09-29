@@ -10,6 +10,7 @@ import {
   EARLY_AUTH_URL,
   EARLY_FEED_URL,
   EARLY_TTL_MS,
+  EARLY_PRELOADS,
   takeEarly,
   earlyOrFetch,
 } from "../early-fetch";
@@ -41,6 +42,25 @@ describe("EARLY_SCRIPT", () => {
   });
   it("never throws even if fetch is missing", () => {
     expect(() => new Function("window", "location", "fetch", EARLY_SCRIPT)(g, { search: "" }, undefined)).not.toThrow();
+  });
+});
+
+describe("preload match", () => {
+  it("early fetches use fetch defaults so they reuse the <link rel=preload> response", () => {
+    // A `cache: "no-store"` (or other init) would stop the browser from
+    // matching the preload and issue a second request.
+    const inits: unknown[] = [];
+    new Function("window", "location", "fetch", EARLY_SCRIPT)(g, { search: "" }, (_u: string, init?: unknown) => {
+      inits.push(init);
+      return Promise.resolve(new Response("{}"));
+    });
+    expect(inits).toEqual([undefined, undefined]);
+  });
+
+  it("layout preloads exactly the early URLs", () => {
+    const layout = readFileSync(path.join(process.cwd(), "src/app/layout.tsx"), "utf8");
+    expect(layout).toMatch(/for \(const u of EARLY_PRELOADS\) preload\(u, \{ as: "fetch", crossOrigin: "anonymous" \}\)/);
+    expect(EARLY_PRELOADS).toEqual([EARLY_AUTH_URL, EARLY_FEED_URL]);
   });
 });
 
