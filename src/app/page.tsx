@@ -392,12 +392,22 @@ function playBark(): void {
   const ctx = ensureBarkCtx();
   if (!ctx) return;
   if (!barkBuf) {
-    loadBarkBuf(); // preload for the next bark
+    // Not decoded yet (the AudioContext is now created lazily, so a bark that
+    // arrives before any user gesture finds no buffer). Decode, then play this
+    // bark — where the browser allows audio without a gesture it used to sound
+    // on the very first mention, and still must.
+    loadBarkBuf().then(() => {
+      if (barkBuf) startBark(ctx, barkBuf);
+    });
     return;
   }
+  startBark(ctx, barkBuf);
+}
+
+function startBark(ctx: AudioContext, buf: AudioBuffer): void {
   try {
     const src = ctx.createBufferSource();
-    src.buffer = barkBuf;
+    src.buffer = buf;
     const gain = ctx.createGain();
     gain.gain.value = 0.8;
     src.connect(gain);
