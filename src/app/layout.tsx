@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { MantineProvider, createTheme } from "@mantine/core";
 import "@mantine/core/styles.css";
 import "./globals.css";
+import { EARLY_SCRIPT } from "@/lib/early-fetch";
 
 // NOTE: next/font/google Noto_Sans_JP was removed deliberately. For Japanese it
 // emits 124 unicode-range subsets (496 @font-face rules, 5.3MB of woff2) and the
@@ -89,6 +90,9 @@ export default function RootLayout({
          */}
         <link rel="preconnect" href="https://bsm.backspace.fm" crossOrigin="" />
         <link rel="dns-prefetch" href="https://bsm.backspace.fm" />
+        {/* Start /api/auth/me + the default feed while the JS downloads
+            (see lib/early-fetch.ts for the measurements and the fallbacks). */}
+        <script dangerouslySetInnerHTML={{ __html: EARLY_SCRIPT }} />
         {/*
          * The two stylesheets are render-blocking. Preloading them lets the
          * browser start the download in parallel with the JS chunks instead of

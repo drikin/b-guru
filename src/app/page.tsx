@@ -3,6 +3,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { buildReadPayload, mergeReadState, normalizeReadIds, PG_INT_MAX } from "@/lib/read-state";
 import { sizedAvatarSrc } from "@/lib/avatar-size";
+import { earlyOrFetch } from "@/lib/early-fetch";
 import {
   AppShell,
   NavLink,
@@ -4821,7 +4822,7 @@ export default function Home() {
   const avatarSrc = auth?.avatar || undefined;
 
   const checkAuth = useCallback(() => {
-    fetch("/api/auth/me")
+    earlyOrFetch("/api/auth/me")
       .then((r) => r.json())
       .then((d) => {
         if (d.authenticated)
@@ -5890,7 +5891,7 @@ export default function Home() {
     const s = search?.trim();
     const c = clubFilterRef.current;
     const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}${c ? `&club=${encodeURIComponent(c)}` : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
-    return fetch(`/api/posts${q}`, { cache: "no-store" })
+    return earlyOrFetch(`/api/posts${q}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
         const posts = d.posts ?? [];
