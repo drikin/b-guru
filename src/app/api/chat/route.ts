@@ -45,7 +45,9 @@ export async function GET(req: NextRequest) {
   const beforeRaw = url.searchParams.get("before");
   const limitRaw = url.searchParams.get("limit");
   const before = beforeRaw ? Number(beforeRaw) : undefined;
-  const limit = limitRaw ? Number(limitRaw) : CHAT_PAGE_SIZE;
+  // Non-integers (limit=abc → NaN) used to reach SQL as `LIMIT NaN` → 500.
+  const limitNum = limitRaw ? Number(limitRaw) : CHAT_PAGE_SIZE;
+  const limit = Number.isInteger(limitNum) && limitNum > 0 ? limitNum : CHAT_PAGE_SIZE;
   const [messages, unreadCount, latestId] = await Promise.all([
     listChatMessages({ before, limit, viewerEmail: email }),
     getUnreadCount(email),

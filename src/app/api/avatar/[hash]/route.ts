@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { mkdir, readFile, writeFile, stat } from "fs/promises";
 import path from "path";
+import { DEFAULT_AVATAR_SIZE, pickAvatarSize } from "@/lib/avatar-size";
 
 // GET /api/avatar/[hash] — proxy + disk-cache Gravatar images.
 //
@@ -26,6 +27,7 @@ const MAX_CACHE_BYTES = 200 * 1024 * 1024; // 200MB hard cap (disk is at 82%)
 // Gravatar identifiers are md5 hex. Anything else is rejected before we build a
 // URL, so this route can never be used as an open proxy.
 const HASH_RE = /^[a-f0-9]{32}$/;
+// `?s=` picks an allow-listed pixel size (see lib/avatar-size.ts).
 
 async function dirSize(dir: string): Promise<number> {
   try {
@@ -47,7 +49,7 @@ async function dirSize(dir: string): Promise<number> {
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ hash: string }> }
 ) {
   const { hash } = await params;
@@ -57,8 +59,11 @@ export async function GET(
     return NextResponse.json({ error: "invalid hash" }, { status: 400 });
   }
 
-  const cachePath = path.join(CACHE_DIR, `${key}.img`);
-  const metaPath = path.join(CACHE_DIR, `${key}.meta`);
+  const size = pickAvatarSize(req.nextUrl.searchParams.get("s"));
+  // 250 keeps the original file names so the existing disk cache stays valid.
+  const base = size === DEFAULT_AVATAR_SIZE ? key : `${key}-${size}`;
+  const cachePath = path.join(CACHE_DIR, `${base}.img`);
+  const metaPath = path.join(CACHE_DIR, `${base}.meta`);
 
   // ---- cache hit ----
   try {
@@ -89,7 +94,7 @@ export async function GET(
   }
 
   // ---- fetch upstream ----
-  const upstream = `https://www.gravatar.com/avatar/${key}?s=250&r=g&d=404`;
+  const upstream = `https://www.gravatar.com/avatar/${key}?s=${size}&r=g&d=404`;
   let res: Response;
   try {
     res = await fetch(upstream, {

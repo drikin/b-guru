@@ -17,9 +17,37 @@ marked.setOptions({
  * bundle. See sanitize-lite.ts for the security model.
  */
 export function mdToHtml(md: string): string {
-  const raw = marked.parse(md || "") as string;
-  return sanitizeHtmlLite(raw);
+  const key = md || "";
+  const hit = htmlCache.get(key);
+  if (hit !== undefined) {
+    // Refresh recency (Map keeps insertion order → oldest first).
+    htmlCache.delete(key);
+    htmlCache.set(key, hit);
+    return hit;
+  }
+  const html = sanitizeHtmlLite(marked.parse(key) as string);
+  htmlCache.set(key, html);
+  if (htmlCache.size > HTML_CACHE_MAX) {
+    htmlCache.delete(htmlCache.keys().next().value as string);
+  }
+  return html;
 }
+
+/**
+ * Memo for mdToHtml. It is a pure function of `md` (marked options are fixed at
+ * module load above), and the timeline calls it for every visible post on every
+ * Home re-render — chat SSE, presence polls, badge updates — re-parsing the same
+ * text each time. Bounded LRU so a long-lived tab / server process can't grow it
+ * without limit. Exported for tests only.
+ */
+const HTML_CACHE_MAX = 1000;
+const htmlCache = new Map<string, string>();
+export const __mdCacheForTests = {
+  size: () => htmlCache.size,
+  has: (md: string) => htmlCache.has(md),
+  clear: () => htmlCache.clear(),
+  max: HTML_CACHE_MAX,
+};
 
 /** Decode the entities sanitize-lite emits, for plaintext output. */
 function decodeEntities(s: string): string {

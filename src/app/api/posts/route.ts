@@ -28,7 +28,10 @@ export async function GET(req: NextRequest) {
     | "episodes"
     | null;
   const before = req.nextUrl.searchParams.get("before") ?? undefined;
-  const limit = Number(req.nextUrl.searchParams.get("limit")) || 100;
+  // Clamp like api/user/[id]/posts: an unbounded `limit` (e.g. 100000) returned
+  // every post + reply in one response. The client pages by 50 (FEED_PAGE).
+  const rawLimit = Number(req.nextUrl.searchParams.get("limit") ?? "100");
+  const limit = Number.isInteger(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 100;
   const club = req.nextUrl.searchParams.get("club") ?? undefined;
 
   try {

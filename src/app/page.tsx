@@ -2,6 +2,7 @@
 
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { buildReadPayload, mergeReadState, normalizeReadIds, PG_INT_MAX } from "@/lib/read-state";
+import { sizedAvatarSrc } from "@/lib/avatar-size";
 import {
   AppShell,
   NavLink,
@@ -270,7 +271,7 @@ function SafeAvatar({
   const showImg = !!src && !failed;
   return (
     <Avatar
-      src={showImg ? src : undefined}
+      src={showImg ? sizedAvatarSrc(src, size) : undefined}
       radius={radius}
       color={color}
       size={size}
@@ -6269,15 +6270,46 @@ export default function Home() {
   // event or onopen callback was missed (e.g. iOS Safari dropping the stream).
   // 併せて部活アクティビティ（直近7日）も60秒ごとに再取得して、SSE流出時でも
   // サイドバーの活性度・並び順を最新に保つ。
+  //
+  // Only while the tab is visible: a backgrounded tab kept polling both every
+  // 60s for nothing (nobody sees the sidebar). On return we refresh at once so
+  // the panel is never up to 60s stale. The presence *ping* below is separate
+  // and keeps running while hidden — stopping it would evict a backgrounded
+  // member instead of dimming them (drikin 2026-09-23).
+  //
+  // No initial loadClubCounts() here: the mount effect already loads it, and
+  // SSE onopen loads it again — calling it a third time was a measured
+  // duplicate request. loadOnline() stays: it is not in the mount effect, and
+  // this is the path that still fills the panel if SSE never connects.
   useEffect(() => {
     if (!auth) return;
-    loadOnline();
-    loadClubCounts();
-    const t = window.setInterval(loadOnline, 60000);
-    const t2 = window.setInterval(loadClubCounts, 60000);
-    return () => {
+    let t: number | undefined;
+    let t2: number | undefined;
+    const start = () => {
+      if (t !== undefined) return;
+      t = window.setInterval(loadOnline, 60000);
+      t2 = window.setInterval(loadClubCounts, 60000);
+    };
+    const stop = () => {
       window.clearInterval(t);
       window.clearInterval(t2);
+      t = t2 = undefined;
+    };
+    const onVis = () => {
+      if (document.visibilityState === "visible") {
+        loadOnline();
+        loadClubCounts();
+        start();
+      } else {
+        stop();
+      }
+    };
+    loadOnline();
+    if (document.visibilityState === "visible") start();
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, [auth, loadOnline, loadClubCounts]);
 
@@ -6307,7 +6339,7 @@ export default function Home() {
     const onVis = () => {
       // Report the new state either way — going hidden must dim us right away.
       ping();
-      if (document.visibilityState === "visible") loadOnline();
+      // The online-panel refresh on return lives in the polling effect above.
     };
     ping();
     const t = window.setInterval(ping, 30000);
@@ -6316,7 +6348,7 @@ export default function Home() {
       window.clearInterval(t);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [auth, loadOnline]);
+  }, [auth]);
 
   const loadNotifications = useCallback(() => {
     if (!auth) return;

@@ -64,6 +64,10 @@ export async function initSchema() {
       END IF;
     END $$;
     CREATE INDEX IF NOT EXISTS idx_posts_created ON posts(created_at DESC);
+    -- Per-author lookups (display-name resolution in notifications / presence /
+    -- chat, profile timelines) walked idx_posts_created backwards scanning for
+    -- the author: measured 17,766 buffers for 30 names on 2026-09-28.
+    CREATE INDEX IF NOT EXISTS idx_posts_author_created ON posts(author_email, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_posts_parent ON posts(parent_id, created_at ASC) WHERE parent_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_ghost ON posts(source_ghost_id) WHERE source_ghost_id IS NOT NULL;
     -- Dori News auto-post: which drinews article spawned this feed post

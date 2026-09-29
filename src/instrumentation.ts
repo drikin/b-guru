@@ -8,6 +8,8 @@ export async function register() {
       const { ensureClubsSeeded } = await import("@/lib/club-store");
       await ensureClubsSeeded();
       console.log("[bsm] DB schema initialized + clubs seeded");
+      const { ensureHousekeeping } = await import("@/lib/housekeeping");
+      ensureHousekeeping();
     } catch (e) {
       console.error("[bsm] initSchema failed:", e);
     }
