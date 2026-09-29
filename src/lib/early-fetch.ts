@@ -26,7 +26,8 @@ export const EARLY_TTL_MS = 15_000;
  * so the request starts as soon as the HTML is parsed; the script's fetch()
  * then picks up the preloaded response. For that match the fetch must use the
  * same mode/credentials (crossorigin="anonymous" ≙ fetch's defaults) and no
- * `cache: "no-store"` — the API already answers with no-store headers.
+ * `cache: "no-store"` — both routes answer with Cache-Control: no-store instead
+ * (api/posts and api/auth/me; locked by early-fetch.test.ts).
  * The feed preload is skipped for ?club= links by the script, but a <link> is
  * static; that case costs one unused preload, same as before this change.
  */

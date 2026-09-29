@@ -74,6 +74,6 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   return NextResponse.json(
     { error: "POST は非対応です" },
-    { status: 405 }
+    { status: 405, headers: NO_CACHE }
   );
 }

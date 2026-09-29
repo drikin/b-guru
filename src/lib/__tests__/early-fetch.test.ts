@@ -64,6 +64,18 @@ describe("preload match", () => {
   });
 });
 
+describe("early URLs are never HTTP-cached", () => {
+  it("both routes send Cache-Control: no-store on every response", () => {
+    for (const f of ["src/app/api/auth/me/route.ts", "src/app/api/posts/route.ts"]) {
+      const src = readFileSync(path.join(process.cwd(), f), "utf8");
+      expect(src).toMatch(/Cache-Control": "no-store/);
+      const jsonCalls = src.match(/NextResponse\.json\(/g)?.length ?? 0;
+      const withHeader = src.match(/headers: NO_CACHE/g)?.length ?? 0;
+      expect(withHeader, f).toBeGreaterThanOrEqual(jsonCalls);
+    }
+  });
+});
+
 describe("EARLY_FEED_URL matches loadFeed()'s default request", () => {
   it("uses the same page size as FEED_PAGE in page.tsx", () => {
     const src = readFileSync(path.join(process.cwd(), "src/app/page.tsx"), "utf8");

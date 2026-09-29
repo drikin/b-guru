@@ -6,6 +6,10 @@ import { gravatarUrl } from "@/lib/posts";
 import { ensureUserId } from "@/lib/user";
 import { isAdmin } from "@/lib/admin";
 
+// Per-user auth state: never cache (the early <link rel=preload> fetch in
+// lib/early-fetch.ts carries no cache:no-store, so the header is what applies).
+const NO_CACHE = { "Cache-Control": "no-store, no-cache, must-revalidate" };
+
 export const dynamic = "force-dynamic";
 
 /** Ghost returns `avatar_image` as a full https://www.gravatar.com/avatar/<md5>
@@ -22,7 +26,7 @@ function toProxiedAvatar(avatar: string | null | undefined): string | null {
 export async function GET() {
   const email = await getSessionEmail();
   if (!email) {
-    return NextResponse.json({ authenticated: false }, { status: 200 });
+    return NextResponse.json({ authenticated: false }, { status: 200, headers: NO_CACHE });
   }
 
   // Resolve the display name from B-guru's own profile (user_profiles), so the
@@ -70,5 +74,5 @@ export async function GET() {
     email,
     name,
     avatar,
-  });
+  }, { headers: NO_CACHE });
 }
