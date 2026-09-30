@@ -6809,9 +6809,8 @@ export default function Home() {
   };
 
   // ---- Image upload ----
-  // Resize/compress an image client-side via Canvas so files stay under the
-  // 10MB-per-image limit and are lighter to serve. Returns the original File
-  // unchanged if it's already small/likely to fit.
+  // Resize/compress an image client-side via Canvas so files are lighter to
+  // serve. Returns the original File unchanged if it's already small enough.
   const resizeImage = (file: File, maxW = 2560, quality = 0.85): Promise<Blob> =>
     new Promise((resolve, reject) => {
       const url = URL.createObjectURL(file);
@@ -6871,7 +6870,7 @@ export default function Home() {
     try {
       const fd = new FormData();
       for (const f of usable) {
-        // Downscale when a single file could exceed the 10MB server limit.
+        // Downscale very large images for faster serving (server limit is 100MB).
         if (f.size > 10 * 1024 * 1024) {
           const resized = await resizeImage(f);
           const name = f.name.replace(/\.[^.]+$/, "") + ".jpg";
@@ -6891,7 +6890,7 @@ export default function Home() {
     }
   };
 
-  // Upload a single video file (at most 20MB) to /api/upload and set the
+  // Upload a single video file (at most 100MB) to /api/upload and set the
   // attachment URL. `clearPrev` (optional) runs right before the URL is set so
   // a replaced attachment drops its old selection.
   const uploadVideo = async (
@@ -6903,8 +6902,8 @@ export default function Home() {
   ) => {
     if (!files || files.length === 0) return;
     const f = files[0];
-    if (f.size > 20 * 1024 * 1024) {
-      setErr("動画は20MBまでです");
+    if (f.size > 100 * 1024 * 1024) {
+      setErr("動画は100MBまでです");
       return;
     }
     if (!["video/mp4", "video/webm", "video/quicktime"].includes(f.type)) {
@@ -6928,7 +6927,7 @@ export default function Home() {
     }
   };
 
-  // Upload a single audio file (at most 15MB) to /api/upload and set the
+  // Upload a single audio file (at most 100MB) to /api/upload and set the
   // attachment URL. Mirrors uploadVideo exactly (same clearPrev contract).
   const uploadAudio = async (
     files: FileList | null,
@@ -6939,8 +6938,8 @@ export default function Home() {
   ) => {
     if (!files || files.length === 0) return;
     const f = files[0];
-    if (f.size > 15 * 1024 * 1024) {
-      setErr("音声は15MBまでです");
+    if (f.size > 100 * 1024 * 1024) {
+      setErr("音声は100MBまでです");
       return;
     }
     if (!isAudioFile(f)) {
@@ -7935,12 +7934,12 @@ export default function Home() {
       .catch(() => setActionError("アップロードに失敗しました"));
   };
 
-  // Upload a single audio file (at most 15MB) for the edit modal.
+  // Upload a single audio file (at most 100MB) for the edit modal.
   const onEditPickAudio = (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const f = files[0];
-    if (f.size > 15 * 1024 * 1024) {
-      setActionError("音声は15MBまでです");
+    if (f.size > 100 * 1024 * 1024) {
+      setActionError("音声は100MBまでです");
       return;
     }
     if (!isAudioFile(f)) {
