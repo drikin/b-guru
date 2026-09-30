@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { writeFile, mkdir } from "fs/promises";
+import { rm, mkdir } from "fs/promises";
+import { createWriteStream } from "node:fs";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import path from "path";
 import crypto from "crypto";
 import { getSessionEmail } from "@/lib/session";
@@ -8,17 +11,17 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const MAX_IMAGES = 5;
-const MAX_BYTES = 10 * 1024 * 1024; // 10MB per image
+const MAX_BYTES = 100 * 1024 * 1024; // 100MB per image
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
-const MAX_VIDEO_BYTES = 20 * 1024 * 1024; // 20MB per video (server capacity)
+const MAX_VIDEO_BYTES = 100 * 1024 * 1024; // 100MB per video (server capacity)
 const ALLOWED_VIDEO = new Set([
   "video/mp4",
   "video/webm",
   "video/quicktime", // .mov
 ]);
 
-const MAX_AUDIO_BYTES = 15 * 1024 * 1024; // 15MB per audio
+const MAX_AUDIO_BYTES = 100 * 1024 * 1024; // 100MB per audio
 const ALLOWED_AUDIO = new Set([
   "audio/mpeg", // .mp3
   "audio/mp4", // .m4a
@@ -69,6 +72,51 @@ export async function POST(req: NextRequest) {
   const videoFile = toFile(form.get("video"));
   const audioFile = toFile(form.get("audio"));
 
+  const uploadDir = path.join(process.cwd(), "public", "uploads");
+  await mkdir(uploadDir, { recursive: true });
+
+  // Save one file, mapping a size-limit hit to a 400. Oversize files are
+  // rejected from file.size BEFORE any bytes hit disk (defense against
+  // repeated oversized uploads exhausting disk space). The stream-side LIMIT
+  // guard is belt-and-braces in case size and actual bytes ever diverge.
+  // Any other error rethrows (the caller cleans up already-written files).
+  const saveOrReject = async (
+    file: File,
+    label: string,
+    maxBytes: number,
+    makeFilename: () => string
+  ): Promise<NextResponse | null> => {
+    if (file.size > maxBytes) {
+      return NextResponse.json({ error: `${label}は100MBまでです` }, { status: 400 });
+    }
+    const filename = makeFilename();
+    let written = 0;
+    const limit = new Transform({
+      transform(chunk, _enc, cb) {
+        written += chunk.length;
+        if (written > maxBytes) {
+          cb(new Error(`LIMIT:${maxBytes}`));
+          return;
+        }
+        cb(null, chunk);
+      },
+    });
+    const src = Readable.fromWeb(file.stream() as Parameters<typeof Readable.fromWeb>[0]);
+    try {
+      await pipeline(src, limit, createWriteStream(path.join(uploadDir, filename)));
+    } catch (err) {
+      // A rejected upload must never leave a partial file on disk.
+      await rm(path.join(uploadDir, filename), { force: true });
+      if (err instanceof Error && err.message.startsWith("LIMIT:")) {
+        return NextResponse.json({ error: `${label}は100MBまでです` }, { status: 400 });
+      }
+      throw err;
+    }
+    lastSavedName = filename;
+    return null;
+  };
+
+  let lastSavedName = "";
   // If an audio field is present, treat this as a single-audio upload.
   if (audioFile) {
     // Some browsers report an empty type for .m4a/.flac — fall back to the
@@ -83,26 +131,21 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (audioFile.size > MAX_AUDIO_BYTES) {
-      return NextResponse.json(
-        { error: "音声は15MBまでです" },
-        { status: 400 }
-      );
-    }
-
-    const uploadDir = path.join(process.cwd(), "public", "uploads");
-    await mkdir(uploadDir, { recursive: true });
 
     // .webm is shared by the video and audio containers, so an audio upload is
     // stored as .weba — that keeps the media route's ext→MIME mapping
     // unambiguous (.webm = video, .weba = audio).
     const safeExt = ext === ".webm" ? ".weba" : AUDIO_EXTS.has(ext) ? ext : ".mp3";
-    const filename = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${safeExt}`;
-    const buf = Buffer.from(await audioFile.arrayBuffer());
-    await writeFile(path.join(uploadDir, filename), buf);
+    const reject = await saveOrReject(
+      audioFile,
+      "音声",
+      MAX_AUDIO_BYTES,
+      () => `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${safeExt}`
+    );
+    if (reject) return reject;
 
     return NextResponse.json(
-      { audioUrl: `/api/media/${filename}` },
+      { audioUrl: `/api/media/${lastSavedName}` },
       { status: 201 }
     );
   }
@@ -115,24 +158,19 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (videoFile.size > MAX_VIDEO_BYTES) {
-      return NextResponse.json(
-        { error: "動画は20MBまでです" },
-        { status: 400 }
-      );
-    }
-
-    const uploadDir = path.join(process.cwd(), "public", "uploads");
-    await mkdir(uploadDir, { recursive: true });
 
     const ext = path.extname(videoFile.name) || ".mp4";
     const safeExt = [".mp4", ".webm", ".mov"].includes(ext) ? ext : ".mp4";
-    const filename = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${safeExt}`;
-    const buf = Buffer.from(await videoFile.arrayBuffer());
-    await writeFile(path.join(uploadDir, filename), buf);
+    const reject = await saveOrReject(
+      videoFile,
+      "動画",
+      MAX_VIDEO_BYTES,
+      () => `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${safeExt}`
+    );
+    if (reject) return reject;
 
     return NextResponse.json(
-      { videoUrl: `/api/media/${filename}` },
+      { videoUrl: `/api/media/${lastSavedName}` },
       { status: 201 }
     );
   }
@@ -148,7 +186,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `画像は最大${MAX_IMAGES}枚までです` }, { status: 400 });
   }
 
-  const urls: string[] = [];
   for (const file of files) {
     if (!ALLOWED.has(file.type)) {
       return NextResponse.json(
@@ -156,23 +193,31 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (file.size > MAX_BYTES) {
-      return NextResponse.json(
-        { error: "画像は1枚あたり10MBまでです" },
-        { status: 400 }
-      );
-    }
   }
 
-  const uploadDir = path.join(process.cwd(), "public", "uploads");
-  await mkdir(uploadDir, { recursive: true });
-
+  const urls: string[] = [];
+  const written: string[] = [];
   for (const file of files) {
     const ext = path.extname(file.name) || ".jpg";
     const safeExt = [".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext) ? ext : ".jpg";
     const filename = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${safeExt}`;
-    const buf = Buffer.from(await file.arrayBuffer());
-    await writeFile(path.join(uploadDir, filename), buf);
+    try {
+      const reject = await saveOrReject(file, "画像", MAX_BYTES, () => filename);
+      if (reject) {
+        await Promise.all(
+          written.map((n) => rm(path.join(uploadDir, n), { force: true }))
+        );
+        return reject;
+      }
+    } catch (err) {
+      // Non-LIMIT write failure (ENOSPC etc.): roll back everything written
+      // for this request so no orphan files remain, then rethrow (→ 500).
+      await Promise.all(
+        [...written, filename].map((n) => rm(path.join(uploadDir, n), { force: true }))
+      );
+      throw err;
+    }
+    written.push(filename);
     urls.push(`/api/media/${filename}`);
   }
 
