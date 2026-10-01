@@ -6750,6 +6750,20 @@ export default function Home() {
     }
     const q = searchQueryRef.current.trim();
     if (q) {
+      // 検索は全タイムライン対象（tochi 2026-10-01）。トレンド等からの検索時に
+      // 部活フィルタが残っていると件数が過剰に絞られる（0件になりうる）ので、
+      // 検索開始時に部活を「すべて」へリセットする（URL の ?club= も外す）。
+      if (clubFilterRef.current) {
+        clubFilterRef.current = null;
+        setClubFilter(null);
+        try {
+          const u = new URL(window.location.href);
+          u.searchParams.delete("club");
+          window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash);
+        } catch {
+          // ignore — URL sync is best-effort
+        }
+      }
       loadFeed(undefined, q);
     } else if (searchActive) {
       // Search was cleared — reload normal feed
