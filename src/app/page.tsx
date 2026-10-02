@@ -7857,7 +7857,22 @@ export default function Home() {
       setScrollingPostId(null);
       el.classList.add("pin-target-flash");
       window.setTimeout(() => el.classList.remove("pin-target-flash"), 2400);
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      // 即時ジャンプ（リューー 2026-10-02 の報告）。behavior:"smooth" の遠距離
+      // スクロールは途中のレイアウト変化（画像読み込み等）で中断され目標に
+      // 届かない＝通知を何度もクリックする羽目になる。絶対位置を計算して
+      // 一発で移動し、遅れて伸びる要素（画像/アバター）のために少し待って
+      // から位置を再補正する。
+      const jumpTo = () => {
+        const y =
+          el.getBoundingClientRect().top +
+          window.scrollY -
+          window.innerHeight / 2 +
+          el.getBoundingClientRect().height / 2;
+        window.scrollTo({ top: Math.max(0, y), behavior: "auto" });
+      };
+      jumpTo();
+      window.setTimeout(jumpTo, 150);
+      window.setTimeout(jumpTo, 400);
     };
 
     // 1) Fast path — the post is already rendered in the loaded feed.
