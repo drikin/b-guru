@@ -263,17 +263,17 @@ export function ReactionBar({
             style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: 4,
-              padding: compact ? "1px 6px" : "2px 8px",
+              gap: 5,
+              padding: compact ? "4px 9px" : "5px 11px",
               borderRadius: 999,
-              fontSize: 12,
+              fontSize: 13,
               lineHeight: 1.4,
               border: `1px solid ${r.mine ? "var(--text-green)" : "var(--border-default)"}`,
               background: r.mine ? "var(--bg-tinted)" : "transparent",
               color: "var(--text-primary)",
             }}
           >
-            <ReactionGlyph emoji={r.emoji} customEmojis={customEmojis} size={compact ? 14 : 15} />
+            <ReactionGlyph emoji={r.emoji} customEmojis={customEmojis} size={compact ? 18 : 20} />
             <span style={{ fontVariantNumeric: "tabular-nums", opacity: 0.85 }}>{r.count}</span>
           </UnstyledButton>
         </Tooltip>
@@ -305,15 +305,15 @@ export function ReactionBar({
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              width: compact ? 24 : 26,
-              height: compact ? 24 : 26,
+              width: compact ? 30 : 34,
+              height: compact ? 30 : 34,
               borderRadius: 999,
               border: "1px solid var(--border-default)",
               color: "var(--text-secondary)",
               lineHeight: 0,
             }}
           >
-            <AddReactionIcon size={compact ? 15 : 16} />
+            <AddReactionIcon size={compact ? 18 : 20} />
           </UnstyledButton>
         </Popover.Target>
         <Popover.Dropdown p="xs">
@@ -326,7 +326,7 @@ export function ReactionBar({
                 key={`q-${e}`}
                 onClick={() => pick(e)}
                 aria-label={`${e} でリアクション`}
-                style={{ fontSize: 20, padding: 4, borderRadius: 6, lineHeight: 1 }}
+                style={{ fontSize: 24, padding: 5, borderRadius: 6, lineHeight: 1 }}
               >
                 {e}
               </UnstyledButton>
@@ -345,9 +345,9 @@ export function ReactionBar({
                     onClick={() => pick(`:${c.name}:`)}
                     aria-label={`:${c.name}: でリアクション`}
                     title={`:${c.name}:`}
-                    style={{ padding: 4, borderRadius: 6, lineHeight: 0 }}
+                    style={{ padding: 5, borderRadius: 6, lineHeight: 0 }}
                   >
-                    <ReactionGlyph emoji={`:${c.name}:`} customEmojis={customEmojis} size={20} />
+                    <ReactionGlyph emoji={`:${c.name}:`} customEmojis={customEmojis} size={24} />
                   </UnstyledButton>
                 ))}
               </Group>
@@ -371,7 +371,7 @@ export function ReactionBar({
                 key={`p-${e}`}
                 onClick={() => pick(e)}
                 aria-label={`${e} でリアクション`}
-                style={{ fontSize: 18, padding: 3, borderRadius: 6, lineHeight: 1 }}
+                style={{ fontSize: 22, padding: 4, borderRadius: 6, lineHeight: 1 }}
               >
                 {e}
               </UnstyledButton>

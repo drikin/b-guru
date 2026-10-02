@@ -86,7 +86,7 @@ export async function GET(req: NextRequest) {
     .split(",")
     .map((s) => Number(s.trim()))
     .filter(isValidTargetId)
-    .slice(0, 200); // cap: the feed never shows more than a few pages at once
+    .slice(0, 400); // cap: roots + inline replies + profile posts stay in one batch
 
   if (ids.length === 0) {
     return NextResponse.json({ reactions: {} });

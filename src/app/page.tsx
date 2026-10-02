@@ -7682,9 +7682,20 @@ export default function Home() {
     const ids = feedPosts.map((p) => p.id);
     // スレッド表示中の返信も対象にする（重複は Set で潰す）
     for (const r of threadReplies) ids.push(r.id);
+    // ★ タイムラインのインライン返信（post.replies = CollapsibleReplies で描画
+    //   される返信）も対象にする。含めないと返信のリアクションがスレッドを開いた
+    //   時しか取得されず、閉じた途端に useReactions の map 全置換で消える
+    //   （takuto 2026-09-26「出たり出なかったり」の再発）。
+    for (const p of feedPosts) for (const r of p.replies ?? []) ids.push(r.id);
+    // ★ プロフィールTLの投稿も対象（ProfileView も renderReactionBar を使う）。
+    //   そのインライン返信（post.replies）も同様に含める（レビュー F1）。
+    for (const p of profilePosts) {
+      ids.push(p.id);
+      for (const r of p.replies ?? []) ids.push(r.id);
+    }
     // tempId（int32 を超える楽観 ID）を落とす。上限は read-state.ts が正本。
     return Array.from(new Set(ids)).filter((id) => id > 0 && id <= PG_INT_MAX);
-  }, [feedPosts, threadReplies]);
+  }, [feedPosts, threadReplies, profilePosts]);
   const { reactions: postReactions, setFor: setPostReactions } = useReactions(
     "post",
     feedPostIds
