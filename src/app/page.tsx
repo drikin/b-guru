@@ -5953,6 +5953,60 @@ export default function Home() {
     [clubCatalogState, clubActivity],
   );
 
+  // ---- Per-user club visibility (drikin 2026-10-02) ----
+  // 目玉トグルで隠した部活は、サーバー（club_visibility テーブル）に保存され
+  // どの端末でも同期される。state は Set<string>、ログイン後に取得。
+  const [hiddenClubs, setHiddenClubs] = useState<Set<string>>(new Set());
+  const hiddenClubsRef = useRef<Set<string>>(new Set());
+  hiddenClubsRef.current = hiddenClubs;
+  const loadHiddenClubs = useCallback(() => {
+    fetch("/api/clubs/visibility", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { hidden: [] }))
+      .then((d) => setHiddenClubs(new Set(d.hidden ?? [])))
+      .catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (!auth) return;
+    loadHiddenClubs();
+  }, [auth, loadHiddenClubs]);
+  const toggleClubHidden = useCallback(
+    (key: string) => {
+      const nextHidden = !hiddenClubsRef.current.has(key);
+      // 楽観更新 → PUT → 失敗時は戻す。タイムラインは即再読込で反映。
+      setHiddenClubs((prev) => {
+        const next = new Set(prev);
+        if (nextHidden) next.add(key);
+        else next.delete(key);
+        return next;
+      });
+      fetch("/api/clubs/visibility", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ club: key, hidden: nextHidden }),
+      })
+        .then(async (r) => {
+          if (!r.ok) throw new Error((await r.json()).error || "保存に失敗しました");
+        })
+        .catch(() => {
+          setHiddenClubs((prev) => {
+            const next = new Set(prev);
+            if (nextHidden) next.delete(key);
+            else next.add(key);
+            return next;
+          });
+          setActionError("部活の表示設定を保存できませんでした");
+          // Roll the feed back too — it was already reloaded with the
+          // optimistic hidden state, so it now disagrees with the restored
+          // visibility (review low #3).
+          loadFeed(undefined, searchQueryRef.current.trim() || undefined);
+        });
+      // 「未設定」もトグル対象（サーバー側 SQL が __unset__ を処理する）。
+      // フィルタがその部活を選択中なら、意図的に見ているので再読込しない。
+      if (clubFilterRef.current !== key) loadFeed(undefined, searchQueryRef.current.trim() || undefined);
+    },
+    [loadFeed]
+  );
+
   // 部活を選択/解除（左サイドバー「部活」）。選択でタイムラインを club フィルタで読み直す。
   // ?club=<key> を URL へ同期し、リロード・共有でも同じフィルターのタイムラインが開く。
   const selectClub = useCallback((key: string | null) => {
@@ -9221,9 +9275,9 @@ export default function Home() {
             </Group>
             <ClubNavRow label="すべて" activity={clubActivityTotal} trend={clubTrendTotal} active={clubFilter === null} onClick={() => selectClub(null)} />
             {orderedClubKeys.map((k) => (
-              <ClubNavRow key={k} label={clubLabel(k) ?? k} activity={clubActivity[k] ?? 0} trend={clubTrend[k] ?? "flat"} active={clubFilter === k} onClick={() => selectClub(k)} />
+              <ClubNavRow key={k} label={clubLabel(k) ?? k} activity={clubActivity[k] ?? 0} trend={clubTrend[k] ?? "flat"} active={clubFilter === k} onClick={() => selectClub(k)} hidden={hiddenClubs.has(k)} onToggleHidden={() => toggleClubHidden(k)} />
             ))}
-            <ClubNavRow label="未設定" activity={clubActivityUnset} trend={clubTrendUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} />
+            <ClubNavRow label="未設定" activity={clubActivityUnset} trend={clubTrendUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} hidden={hiddenClubs.has(CLUB_UNSET)} onToggleHidden={() => toggleClubHidden(CLUB_UNSET)} />
 
             {/* Admin-managed external-link bookmarks */}
             {menuLinks.map((lk) => (
@@ -12418,6 +12472,8 @@ function ClubNavRow({
   active,
   dashed,
   onClick,
+  hidden,
+  onToggleHidden,
 }: {
   label: string;
   activity?: number;
@@ -12425,6 +12481,10 @@ function ClubNavRow({
   active: boolean;
   dashed?: boolean;
   onClick: () => void;
+  /** Per-user visibility toggle (drikin 2026-10-02). Undefined = don't render
+   *  the eye (「すべて」/「未設定」 don't get one). */
+  hidden?: boolean;
+  onToggleHidden?: () => void;
 }) {
   const activityCount = activity ?? 0;
   return (
@@ -12444,6 +12504,7 @@ function ClubNavRow({
         fontWeight: active ? 600 : 500,
         marginTop: 2,
         marginBottom: 2,
+        opacity: hidden ? 0.45 : undefined,
         ...(dashed ? { border: "1px dashed var(--border-default)", borderLeft: "3px solid var(--border-default)" } : {}),
       }}
     >
@@ -12458,6 +12519,35 @@ function ClubNavRow({
       >
         {label}
       </span>
+      {onToggleHidden && (
+        <Box
+          component="button"
+          aria-label={hidden ? `${label} を表示` : `${label} を非表示`}
+          aria-pressed={!!hidden}
+          title={hidden ? `${label} の投稿をタイムラインに表示する` : `${label} の投稿をタイムラインから隠す`}
+          onClick={(e: React.MouseEvent) => {
+            e.stopPropagation(); // 行クリック（部活選択）と競合させない
+            onToggleHidden();
+          }}
+          style={{
+            background: "none",
+            border: "none",
+            padding: 2,
+            cursor: "pointer",
+            color: hidden ? "var(--text-secondary)" : "var(--text-primary)",
+            display: "inline-flex",
+            flexShrink: 0,
+          }}
+        >
+          {/* 単色インラインSVG目玉（drikin嗜好: 絵文字ではなくモノクロアイコン）。
+              hidden は目玉に斜線を引いた closed-eye。 */}
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
+            {hidden && <line x1="3" y1="3" x2="21" y2="21" />}
+          </svg>
+        </Box>
+      )}
       {(trend === "up" || trend === "down") && (
         <span
           aria-hidden

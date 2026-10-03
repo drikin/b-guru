@@ -342,6 +342,9 @@ export async function listPosts(options?: {
   author?: string;
   /** Restrict to root posts carrying this 部活動 key (club timeline). */
   club?: string;
+  /** Hide root posts whose club is in this set (per-user club visibility,
+   *  drikin 2026-10-02). Empty/absent = show everything. */
+  excludeClubs?: string[];
 }): Promise<FeedPost[]> {
   const limit = options?.limit ?? 100;
   const viewerEmail = options?.viewerEmail ?? "";
@@ -386,6 +389,31 @@ export async function listPosts(options?: {
     searchParams.push(club);
     const pat = `$${searchParams.length}`;
     clubSql = ` AND p.club = ${pat}`;
+  }
+  // Per-user hidden clubs (drikin 2026-10-02). "未設定" (__unset__) is the
+  // pseudo-label for posts with club IS NOT NULL but a key absent from the
+  // clubs table — matched by key existence only, so inactive (deleted) clubs
+  // keep their label and are hidden under their own key, not as 未設定
+  // (clubLabel resolves labels for all clubs incl. inactive ones; the UI
+  // label and the hide target must agree).
+  // ⚠️ NULL-protection is REQUIRED: `NOT (NULL = ANY(...))` evaluates to NULL
+  // → the row is filtered out, which would hide every club=NULL post the
+  // moment any real club is hidden (review critical #2). Guard with
+  // `p.club IS NULL OR` so unclassified posts are never affected.
+  const excluded = (options?.excludeClubs ?? []).filter((k) => k && k.length > 0);
+  if (excluded.length > 0) {
+    const keys = excluded.filter((k) => k !== "__unset__");
+    let hideSql = "";
+    if (keys.length > 0) {
+      searchParams.push(keys);
+      hideSql = `p.club = ANY($${searchParams.length}::text[])`;
+    }
+    if (excluded.includes("__unset__")) {
+      hideSql = hideSql
+        ? `(${hideSql} OR (p.club IS NOT NULL AND NOT EXISTS (SELECT 1 FROM clubs c WHERE c.key = p.club)))`
+        : `(p.club IS NOT NULL AND NOT EXISTS (SELECT 1 FROM clubs c WHERE c.key = p.club))`;
+    }
+    if (hideSql) clubSql += ` AND (p.club IS NULL OR NOT (${hideSql}))`;
   }
 
   // last_activity = max(post.created_at, newest reply.created_at). Repeated from

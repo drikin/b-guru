@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listPosts, listHotTopics } from "@/lib/posts";
+import { getHiddenClubs } from "@/lib/club-visibility";
 import { getReadIdsForPosts } from "@/lib/read-state-server";
 import { findMemberByEmail } from "@/lib/ghost";
 import { getSessionEmail } from "@/lib/session";
@@ -33,18 +34,24 @@ export async function GET(req: NextRequest) {
   const rawLimit = Number(req.nextUrl.searchParams.get("limit") ?? "100");
   const limit = Number.isInteger(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 100;
   const club = req.nextUrl.searchParams.get("club") ?? undefined;
-
   try {
     if (hot) {
       // Hot topics: top N most-commented root posts in the last 7 days.
       const posts = await listHotTopics(email, Math.min(limit, 5));
       return NextResponse.json({ posts }, { headers: NO_CACHE });
     }
+    // Per-user hidden clubs (drikin 2026-10-02): always resolved SERVER-side
+    // from the user's saved setting — the client never sends the list (an
+    // exclude query parameter could be spoofed and would desync). When the
+    // request targets a specific club, an explicit club tap wins (you asked
+    // to see that club).
+    const hiddenSet = !club ? await getHiddenClubs(email) : new Set<string>();
     const posts = await listPosts({
       pinnedOnly: pinned || undefined,
       filter: filter ?? undefined,
       search: search ?? undefined,
       club: club ?? undefined,
+      excludeClubs: Array.from(hiddenSet),
       viewerEmail: email,
       before,
       limit,

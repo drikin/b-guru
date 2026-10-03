@@ -78,6 +78,7 @@ describe("mdToHtml memo", () => {
 // ---- /api/posts limit clamp (real handler) ----
 const listPosts = vi.fn(async (_o: { limit: number }) => []);
 vi.mock("@/lib/session", () => ({ getSessionEmail: async () => "someone@example.com" }));
+vi.mock("@/lib/club-visibility", () => ({ getHiddenClubs: async () => new Set<string>() }));
 vi.mock("@/lib/posts", async (orig) => ({
   ...(await orig<typeof import("../posts")>()),
   listPosts: (o: { limit: number }) => listPosts(o),

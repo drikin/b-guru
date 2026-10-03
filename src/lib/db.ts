@@ -376,6 +376,18 @@ export async function initSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_user_profiles_updated ON user_profiles(updated_at DESC);
 
+    -- Per-user club visibility (drikin 2026-10-02): eye toggle in the left
+    -- sidebar hides a club's content from the timeline for THIS user only.
+    -- Server-persisted so the setting syncs across devices. One row per
+    -- (email, club) only when hidden — absence means visible.
+    CREATE TABLE IF NOT EXISTS club_visibility (
+      email TEXT NOT NULL,
+      club_key TEXT NOT NULL,
+      hidden BOOLEAN NOT NULL DEFAULT TRUE,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (email, club_key)
+    );
+
     -- User identity mapping: opaque public user_id <-> internal email.
     -- Canonical public profile URL is #/user/<user_id> (no email exposure).
     -- email is still the internal key everywhere; this table lets any email
