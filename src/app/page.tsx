@@ -12508,17 +12508,6 @@ function ClubNavRow({
         ...(dashed ? { border: "1px dashed var(--border-default)", borderLeft: "3px solid var(--border-default)" } : {}),
       }}
     >
-      <span
-        style={{
-          flex: 1,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          color: active ? "var(--text-green)" : undefined,
-        }}
-      >
-        {label}
-      </span>
       {onToggleHidden && (
         <Box
           component="button"
@@ -12532,11 +12521,15 @@ function ClubNavRow({
           style={{
             background: "none",
             border: "none",
-            padding: 2,
+            padding: 0,
             cursor: "pointer",
             color: hidden ? "var(--text-secondary)" : "var(--text-primary)",
             display: "inline-flex",
             flexShrink: 0,
+            // 固定幅で目玉をラベルの左に揃える（drikin 2026-10-03「部活ラベルの
+            // 左側に置く」）。ラベル長が違っても目玉が縦に並ぶ。
+            width: 17,
+            justifyContent: "center",
           }}
         >
           {/* 単色インラインSVG目玉（drikin嗜好: 絵文字ではなくモノクロアイコン）。
@@ -12548,6 +12541,17 @@ function ClubNavRow({
           </svg>
         </Box>
       )}
+      <span
+        style={{
+          flex: 1,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          color: active ? "var(--text-green)" : undefined,
+        }}
+      >
+        {label}
+      </span>
       {(trend === "up" || trend === "down") && (
         <span
           aria-hidden
