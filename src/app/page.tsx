@@ -8534,6 +8534,17 @@ export default function Home() {
       const j = dir === 1 ? Math.min(from + 1, keys.length - 1) : Math.max(from - 1, 0);
       if (j === from) return;
       selectClub(keys[j]);
+      // 選択行をサイドバーの表示範囲へスクロールする。サイドバーは30部活で
+      // ScrollArea が溢れており、ハイライトは正しく当たっても行が画面外の
+      // ままだと「選択が同期しない」に見える（drikin 2026-10-07 報告・実測:
+      // 未設定行は viewport 下端より 1,200px 以上下にあった）。
+      // selectClub 直後は React 再レンダー前なので、描画後に解決する。
+      requestAnimationFrame(() => {
+        document
+          .querySelector<HTMLElement>('[data-cx="navbar"]')
+          ?.querySelector<HTMLElement>('button[aria-pressed="true"]:not([aria-label])')
+          ?.scrollIntoView({ block: "nearest" });
+      });
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey) return;
