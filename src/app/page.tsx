@@ -8512,7 +8512,40 @@ export default function Home() {
       if (ensureShow(next)) focusAfterExpand(next);
       else setRing(next);
     };
+    // Shift+Option+↑↓ = 部活間移動（tochi 2026-10-07 フィードバック）。
+    // 左サイドバー「部活」と同じ順（すべて → 部活各種（activity順・非表示スキップ）
+    // → 未設定（未設定も隠せるので hidden は同様に適用））を移動し selectClub で
+    // 切替える。selectClub が負荷（URL 同期 + loadFeed）を一括処理するので、
+    // ここは順序解決だけを担う。
+    const clubNavKeys = (): (string | null)[] => {
+      const hidden = hiddenClubsRef.current;
+      return [
+        null,
+        ...orderedClubKeys.filter((k) => !hidden.has(k)),
+        ...(hidden.has(CLUB_UNSET) ? [] : [CLUB_UNSET as string]),
+      ];
+    };
+    const moveClub = (dir: 1 | -1) => {
+      const keys = clubNavKeys();
+      const i = keys.indexOf(clubFilterRef.current);
+      // 現在が一覧に無い（非表示部活など）→ 方向に応じた端から開始。
+      const from = i < 0 ? (dir === 1 ? -1 : keys.length) : i;
+      // 端でクランプ（ラップしない、J/K と同一規則）。
+      const j = dir === 1 ? Math.min(from + 1, keys.length - 1) : Math.max(from - 1, 0);
+      if (j === from) return;
+      selectClub(keys[j]);
+    };
     const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey) return;
+      // Shift+Option+↑↓ はここで先に処理する（altKey 全排除より前へ）。
+      // ただし入力欄内では macOS のテキスト選択拡張（Shift+Option+Arrow）を
+      // 潰さないため editable ガードを先に通す。
+      if (e.shiftKey && e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        if (isEditable(e.target)) return;
+        e.preventDefault();
+        moveClub(e.key === "ArrowDown" ? 1 : -1);
+        return;
+      }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isEditable(e.target)) return;
       switch (e.key) {
@@ -8575,7 +8608,9 @@ export default function Home() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [kbdCursorId]);
+  // 部活ナビの現在値は ref 経由で読むため effect 依存に不要（クラブ一覧が
+  // 更新されても最新値を毎回 clubNavKeys() が再構築する）。
+  }, [kbdCursorId, orderedClubKeys, selectClub]);
 
   // Tab bar (タイムライン / チャット) is only rendered on the home feed root.
   const showNavTabs =
