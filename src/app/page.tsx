@@ -5959,6 +5959,17 @@ export default function Home() {
   const [hiddenClubs, setHiddenClubs] = useState<Set<string>>(new Set());
   const hiddenClubsRef = useRef<Set<string>>(new Set());
   hiddenClubsRef.current = hiddenClubs;
+  // 部活選択が変わったら、サイドバーの選択行を表示範囲へスクロールする。
+  // 30部活で ScrollArea が溢れており、下の方の部活はハイライトが当たっても
+  // 画面外のままだと「選択が同期しない」に見える（drikin 2026-10-07 報告・実測:
+  // 未設定行は viewport 下端より 1,200px+ 下にハイライトされたままだった）。
+  // React コミット後に走る useEffect で解決する（rAF はコミット前に発火し得る）。
+  useEffect(() => {
+    document
+      .querySelector<HTMLElement>('[data-cx="navbar"]')
+      ?.querySelector<HTMLElement>('button[aria-pressed="true"]:not([aria-label])')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [clubFilter]);
   const loadHiddenClubs = useCallback(() => {
     fetch("/api/clubs/visibility", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : { hidden: [] }))
@@ -8534,17 +8545,6 @@ export default function Home() {
       const j = dir === 1 ? Math.min(from + 1, keys.length - 1) : Math.max(from - 1, 0);
       if (j === from) return;
       selectClub(keys[j]);
-      // 選択行をサイドバーの表示範囲へスクロールする。サイドバーは30部活で
-      // ScrollArea が溢れており、ハイライトは正しく当たっても行が画面外の
-      // ままだと「選択が同期しない」に見える（drikin 2026-10-07 報告・実測:
-      // 未設定行は viewport 下端より 1,200px 以上下にあった）。
-      // selectClub 直後は React 再レンダー前なので、描画後に解決する。
-      requestAnimationFrame(() => {
-        document
-          .querySelector<HTMLElement>('[data-cx="navbar"]')
-          ?.querySelector<HTMLElement>('button[aria-pressed="true"]:not([aria-label])')
-          ?.scrollIntoView({ block: "nearest" });
-      });
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey) return;
