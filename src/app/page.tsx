@@ -6216,8 +6216,15 @@ export default function Home() {
       if (!d || d.type !== "chat" || !authRef.current) return;
       if (d.action === "create" && d.message?.id) {
         const msg = d.message as ChatMessage;
+        // SSE ブロードキャストは isAuthor を剥がして配信する（per-receiver
+        // flag なので）。自分のメッセージは authorId 比較でローカル補正する。
+        // これを怠ると、SSE が POST 応答より先着したとき isAuthor 無し
+        // （=他人扱い・左寄せ）で追加され、後発の POST 応答は id 重複ガードで
+        // 上書きされない → 自分のメッセージが左に表示され続ける
+        // （drikin 2026-10-08 報告「しばらく放置して送信すると左に出る」）。
+        const isMine = !!authRef.current?.userId && msg.authorId === authRef.current.userId;
         setChatMessages((prev) =>
-          prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
+          prev.some((m) => m.id === msg.id) ? prev : [...prev, { ...msg, isAuthor: isMine }]
         );
         if (chatViewRef.current) {
           setChatUnread(0);
