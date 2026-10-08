@@ -2675,7 +2675,7 @@ console.log("\n6m. Duplicate-post warning");
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         phase: 'ai',
-        text: 'セルシスの「クリスタ」素材が大量に非公開へ、ユーザーが混乱　誤判定もあったと説明 https://www.gigazine.net/news/20260924-clip-studio-paint/',
+        text: 'セルシスの「クリスタ」素材が大量に非公開へ、ユーザーが混乱　誤判定もあったと説明 https://www.itmedia.co.jp/news/article/2609/24/2000001689/',
       }),
     });
     if (!r.ok) return { status: r.status, origId: origPost.id };
