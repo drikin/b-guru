@@ -10776,7 +10776,16 @@ export default function Home() {
                           // Hidden until hover so the chat stays clean, but always
                           // shown when the message already has reactions — those are
                           // content, not chrome, and must not disappear.
+                          // ★ モバイルでは常時表示（hover が使えず出現条件が不明瞭という
+                          //   フィードバック 2026-10-11）。hover 有無の media query は
+                          //   iPhone Safari で不安定なので、JS でタッチ対応を検出して
+                          //   CSS の hover 非表示ルールが適用されないようにクラスを外す。
                           const hasReactions = (chatReactions[m.id]?.length ?? 0) > 0;
+                          // タッチデバイス判定: maxTouchPoints > 0（実機 Mac は 0）。
+                          //   SSR 中は window が無いので false（デスクトップ扱い → hover 挙動）。
+                          const touchDevice =
+                            typeof window !== "undefined" &&
+                            (navigator.maxTouchPoints > 0 || matchMedia("(hover: none)").matches);
                           const chatActions = (
                             <Box
                               data-cx="chat-actions"
@@ -10787,7 +10796,7 @@ export default function Home() {
                                 opacity: hasReactions ? 1 : 0,
                                 transition: "opacity 0.12s ease",
                               }}
-                              className="bguru-chat-actions"
+                              className={touchDevice ? undefined : "bguru-chat-actions"}
                             >
                               {renderChatReactionBar(m.id)}
                               {mine && (
