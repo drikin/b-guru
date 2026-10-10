@@ -37,6 +37,7 @@ import {
   Collapse,
   useMantineColorScheme,
 } from "@mantine/core";
+import { notifications as mantineNotifications } from "@mantine/notifications";
 import { mdToHtml } from "@/lib/md";
 import { computeNextKbdId } from "@/lib/kbd-nav";
 import {
@@ -1404,6 +1405,7 @@ function PostCard({
   onEditPoll,
   onSetClub,
   onOpenClub,
+  onToggleFavorite,
   reactionBar,
 }: {
   post: FeedPost;
@@ -1427,6 +1429,8 @@ function PostCard({
   onEditPoll?: (post: FeedPost) => void;
   onSetClub?: (post: FeedPost, club: string | null) => void;
   onOpenClub?: (club: string) => void;
+  /** お気に入りトグル（投稿者単位）。未ログイン/自分の投稿では渡さない。 */
+  onToggleFavorite?: (post: FeedPost) => void;
   /** Reaction row, injected by the parent so the card stays presentational and
    *  the reaction state lives in one place (the feed), not per card. */
   reactionBar?: React.ReactNode;
@@ -1564,7 +1568,7 @@ function PostCard({
         )}
       </Group>
 
-      <Group gap="sm" mb={6}>
+      <Group gap="sm" mb={6} wrap="nowrap">
         <UnstyledButton
           onClick={(e) => {
             e.stopPropagation();
@@ -1586,7 +1590,7 @@ function PostCard({
             initial={(post.authorName || "?")}
           />
           <div style={{ minWidth: 0 }}>
-            <Text size="sm" fw={600} c="inherit">
+            <Text size="sm" fw={600} c="inherit" truncate>
               {post.authorName}
             </Text>
             <Text size="xs" c="dimmed">
@@ -1594,6 +1598,31 @@ function PostCard({
             </Text>
           </div>
         </UnstyledButton>
+        {/* お気に入りトグル（自分の投稿以外・onToggleFavorite がある時のみ）。
+            Instagram の「お気に入り」と同じ概念: この人が書いた投稿だけの
+            タイムラインに追加/解除する。タップで即反映（楽観更新）+ トースト。
+            タップ領域は ActionIcon 実寸(26px)より広い 36px を padding で担保
+            （iPhone Safari 主要環境・Apple HIG 44px 推奨に近づける）。
+            見た目のアイコンサイズは既存アクションと同一（size=sm・15px SVG）。 */}
+        {onToggleFavorite && !post.isAuthor && (
+          <ActionIcon
+            variant={post.favoriteByMe ? "light" : "subtle"}
+            color={post.favoriteByMe ? "yellow" : "gray"}
+            size="sm"
+            aria-label={post.favoriteByMe ? `${post.authorName} をお気に入りから外す` : `${post.authorName} をお気に入りに追加`}
+            data-cx="fav-toggle"
+            data-fav-author={post.authorId}
+            style={{ width: 36, height: 36, alignSelf: "center", marginRight: -6 }}
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              onToggleFavorite(post);
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill={post.favoriteByMe ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+            </svg>
+          </ActionIcon>
+        )}
       </Group>
 
       {/* 部活動ラベル（ルート投稿のみ）。投稿者/admin はクリックで手動付け替え可。 */}
@@ -3251,10 +3280,12 @@ const SearchBox = memo(function SearchBox({
   value,
   onCommit,
   onClear,
+  placeholder = "タイムラインを検索",
 }: {
   value: string;
   onCommit: (q: string) => void;
   onClear: () => void;
+  placeholder?: string;
 }) {
   const [text, setText] = useState(value);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3282,7 +3313,7 @@ const SearchBox = memo(function SearchBox({
   };
   return (
     <TextInput
-      placeholder="タイムラインを検索"
+      placeholder={placeholder}
       value={text}
       onChange={(e) => handleChange(e.currentTarget.value)}
       size="sm"
@@ -3331,6 +3362,7 @@ function TimelineFeed({
   onEditPoll,
   onSetClub,
   onOpenClub,
+  onToggleFavorite,
   skipFirstDate,
 }: {
   groups: FeedGroup[];
@@ -3383,6 +3415,7 @@ function TimelineFeed({
   onEditPoll?: (post: FeedPost) => void;
   onSetClub?: (post: FeedPost, club: string | null) => void;
   onOpenClub?: (club: string) => void;
+  onToggleFavorite?: (post: FeedPost) => void;
   skipFirstDate?: boolean;
   renderReactionBar?: (postId: number, compact?: boolean) => React.ReactNode;
 }) {
@@ -3466,6 +3499,7 @@ function TimelineFeed({
               onEditPoll={onEditPoll}
               onSetClub={onSetClub}
               onOpenClub={onOpenClub}
+              onToggleFavorite={onToggleFavorite}
             />
             {/* Interleaved comments = replies to this card, rendered right after
              * it so the position (between which cards) is preserved.
@@ -4893,6 +4927,11 @@ export default function Home() {
     loadClubCatalog();
     loadNotifications();
     loadMenuLinks();
+    // お気に入り一覧（viewer 個人状態）。ログイン済みなら必ず 1 往復。
+    earlyOrFetch("/api/favorites", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { userIds: [] }))
+      .then((d) => setFavoriteIdsBoth(new Set(d.userIds ?? [])))
+      .catch(() => {});
     // Deep-link from the drinews email CTA: /?drinews=<id>
     const params = new URLSearchParams(window.location.search);
     const deepId = Number(params.get("drinews"));
@@ -5109,6 +5148,24 @@ export default function Home() {
   // replaces the old "wave" (👋) feature: the bubble sits where the wave
   // animation used to float, and clicking an online member opens the chat.
   const [chatView, setChatView] = useState(false);
+  // ---- お気に入り (Instagram-style favorite authors) ----
+  //   viewer 個人の状態。Set<authorId(user_id)>。SSE ブロードキャスト対象外
+  //   （他ユーザーに影響しない）なので取得は初回 + トグル後のサーバー同期のみ。
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
+  const favoriteIdsRef = useRef<Set<string>>(new Set());
+  const setFavoriteIdsBoth = useCallback((next: Set<string>) => {
+    favoriteIdsRef.current = next;
+    setFavoriteIds(next);
+  }, []);
+  // お気に入りタブ表示中かどうか。chatView と同じ「上位ビュー」階層ではなく、
+  //   タイムラインのフィルタ変種（club filter と同列）として実装する。
+  const [favView, setFavView] = useState(false);
+  const favViewRef = useRef(false);
+  favViewRef.current = favView;
+  // Undo 用: トーストの「取り消す」から呼ぶ（直前の状態に戻す）。
+  const favUndoRef = useRef<(() => void) | null>(null);
+  // 現在表示中のお気に入りトースト id（単一化のため）。
+  const favToastIdRef = useRef<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatUnread, setChatUnread] = useState(0);
   // True while the first chat fetch of a given open is in flight. Without this
@@ -5254,6 +5311,12 @@ export default function Home() {
     chatViewRef.current = false;
     setChatView(false);
     setChatMention(null);
+    // 部活選択等でタイムライン系ビューへ飛ぶときはお気に入りフィルタを解除
+    //   （プロフィール/検索/部活ナビの導線は通常タイムラインを意図する）。
+    if (favViewRef.current) {
+      favViewRef.current = false;
+      setFavView(false);
+    }
   }, []);
 
   // Send a chat message (callback memo ties to current input text).
@@ -5870,7 +5933,8 @@ export default function Home() {
     feedCursorRef.current = null;
     const s = search?.trim();
     const c = clubFilterRef.current;
-    const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}${c ? `&club=${encodeURIComponent(c)}` : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
+    const fv = favViewRef.current;
+    const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}${c ? `&club=${encodeURIComponent(c)}` : ""}${fv ? "&fav=1" : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
     return earlyOrFetch(`/api/posts${q}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
@@ -5917,9 +5981,10 @@ export default function Home() {
     const filter = activeNav === "gallery" ? "images" : activeNav === "news" ? "links" : activeNav === "episodes" ? "episodes" : undefined;
     const s = searchQueryRef.current.trim();
     const c = clubFilterRef.current;
+    const fv = favViewRef.current;
     const q = `?limit=${FEED_PAGE}&before=${encodeURIComponent(feedCursorRef.current)}${
       filter ? `&filter=${filter}` : ""
-    }${c ? `&club=${encodeURIComponent(c)}` : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
+    }${c ? `&club=${encodeURIComponent(c)}` : ""}${fv ? "&fav=1" : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
     fetch(`/api/posts${q}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
@@ -6097,7 +6162,11 @@ export default function Home() {
       silentRefreshAbortRef.current = ac;
 
       const filter = nav === "gallery" ? "images" : nav === "news" ? "links" : nav === "episodes" ? "episodes" : undefined;
-      const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}`;
+      // お気に入りタブ表示中は fav=1 を付けた同じクエリで差分更新する。
+      //   付けないと SSE 更新のたびにお気に入り外の投稿が混入する（stale closure 防止のため ref 経由）。
+      const fv = favViewRef.current;
+      const c = clubFilterRef.current;
+      const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}${c ? `&club=${encodeURIComponent(c)}` : ""}${fv ? "&fav=1" : ""}`;
       fetch(`/api/posts${q}`, { signal: ac.signal, cache: "no-store" })
         .then((r) => r.json())
         .then((d) => {
@@ -7734,6 +7803,151 @@ export default function Home() {
     toggleLikeLocal(postId);
     toggleLikeRequest(postId);
   };
+
+  // ---- お気に入りトグル（投稿者単位・楽観更新 + Undo トースト） ----
+  //   連打/Undo/サーバー応答の競合を防ぐ: in-flight 中は新規トグルを無視
+  //   （reviews deleg_ff5980c7 issue#2）。トグルは 1 投稿者につき直列化。
+  const favInFlightRef = useRef<Set<string>>(new Set());
+  const toggleFavoriteFor = useCallback((post: FeedPost) => {
+    const authorId = post.authorId;
+    const name = post.authorName ?? "このユーザー";
+    if (!auth || !authorId || post.isAuthor) return;
+    // in-flight 中の同一投稿者へのトグルは無視（サーバー応答が確定するまで次の操作を待つ）。
+    //   Undo は in-flight 解消後に効くので誤った undo 発火も起きない。
+    if (favInFlightRef.current.has(authorId)) return;
+    const wasFav = favoriteIdsRef.current.has(authorId);
+    favInFlightRef.current.add(authorId);
+    // 楽観更新: feed + thread の全カードの favoriteByMe を一括反転
+    //   （いいね toggleLikeLocal と同型。同じ投稿者の全カードが一斉に変わる）。
+    //   お気に入りタブ表示中に解除した場合は、その投稿者のカードをフィードから
+    //   即座に除く（Instagram と同じ挙動 — 解除したら即フィードから消える）。
+    const flip = (p: any) => {
+      if (p.authorId === authorId && !p.isAuthor) {
+        return { ...p, favoriteByMe: !wasFav };
+      }
+      if (p.replies?.length) {
+        return { ...p, replies: p.replies.map(flip) };
+      }
+      return p;
+    };
+    if (favViewRef.current && wasFav) {
+      // 解除 → お気に入りタブからは消す（返信込みで一括除去）
+      const drop = (list: any[]) => {
+        const out: any[] = [];
+        for (const p of list) {
+          if (p.authorId === authorId) continue;
+          if (p.replies?.length) out.push({ ...p, replies: p.replies.filter((r: any) => r.authorId !== authorId) });
+          else out.push(p);
+        }
+        return out;
+      };
+      setFeedPosts((prev) => drop(prev));
+      setThreadReplies((prev) => prev.filter((r: any) => r.authorId !== authorId));
+    } else {
+      setFeedPosts((prev) => prev.map(flip));
+      setThreadPost((prev) => (prev ? flip(prev) : prev));
+      setThreadReplies((prev) => prev.map(flip));
+    }
+    // favorites Set も即時反映（タブ表示の即時性）
+    const nextSet = new Set(favoriteIdsRef.current);
+    if (wasFav) nextSet.delete(authorId);
+    else nextSet.add(authorId);
+    setFavoriteIdsBoth(nextSet);
+    // Undo 用クロージャ（トーストの「取り消す」から呼ぶ）。Undo 実行時に
+    //   in-flight チェックを通すため favUndoRef 経由でのみ発火する。
+    favUndoRef.current = () => {
+      // Undo の対象は「直前に確定した状態」— in-flight 中は呼ばない
+      //   （フェーズ管理は リクエスト完了時の favUndoRef.current = null で担保）。
+      const target = wasFav ? false : true;
+      const revertSet = new Set(favoriteIdsRef.current);
+      if (target) revertSet.add(authorId);
+      else revertSet.delete(authorId);
+      setFavoriteIdsBoth(revertSet);
+      const revert = (p: any) => {
+        if (p.authorId === authorId && !p.isAuthor) {
+          return { ...p, favoriteByMe: target };
+        }
+        if (p.replies?.length) {
+          return { ...p, replies: p.replies.map(revert) };
+        }
+        return p;
+      };
+      setFeedPosts((prev) => prev.map(revert));
+      setThreadPost((prev) => (prev ? revert(prev) : prev));
+      setThreadReplies((prev) => prev.map(revert));
+      favUndoRef.current = null;
+    };
+    // サーバー同期: 冪等 API。失敗時は楽観状態をロールバック。
+    fetch("/api/favorites", {
+      method: wasFav ? "DELETE" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: authorId }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error || typeof d.favorited !== "boolean") {
+          favUndoRef.current?.();
+          return;
+        }
+        // サーバー応答と楽観状態の最終同期（二重タップ対策）。
+        //   Undo ボタンはこの応答まで非活性なので、ここで undo を上書きする競合は起きない。
+        const sync = (p: any) => {
+          if (p.authorId === authorId && !p.isAuthor) {
+            return { ...p, favoriteByMe: d.favorited };
+          }
+          if (p.replies?.length) {
+            return { ...p, replies: p.replies.map(sync) };
+          }
+          return p;
+        };
+        setFeedPosts((prev) => prev.map(sync));
+        setThreadPost((prev) => (prev ? sync(prev) : prev));
+        setThreadReplies((prev) => prev.map(sync));
+        const syncedSet = new Set(favoriteIdsRef.current);
+        if (d.favorited) syncedSet.add(authorId);
+        else syncedSet.delete(authorId);
+        setFavoriteIdsBoth(syncedSet);
+        favUndoRef.current = null; // 確定したので Undo は無効化
+      })
+      .catch(() => {
+        favUndoRef.current?.();
+      })
+      .finally(() => {
+        // in-flight 解放: どのパス（成功/失敗/Undo rollback）でも必ず通る
+        favInFlightRef.current.delete(authorId);
+      });
+    // トースト（取り消しボタン付き、5秒）。Undo は in-flight 解決後に有効。
+    //   トーストは常に最新 1 枚に保つ（投稿者A のトースト表示中に B をトグルしたら
+    //   A のトーストを消す — 古い onClick が最新の Undo を壊すのを防ぐ）。
+    //   hide() は自分の id だけを消す（clean() は他トーストも消すので使わない）。
+    if (favToastIdRef.current) {
+      try { mantineNotifications.hide(favToastIdRef.current); } catch { /* already gone */ }
+    }
+    const toastId = `fav-${authorId}-${Date.now()}`;
+    favToastIdRef.current = toastId;
+    mantineNotifications.show({
+      id: toastId,
+      message: wasFav ? `${name} をお気に入りから外しました（タップで取り消し）` : `${name} をお気に入りに追加しました（タップで取り消し）`,
+      color: wasFav ? "gray" : "yellow",
+      autoClose: 5000,
+      withCloseButton: true,
+      onClick: () => {
+        // トースト自体をタップ = 取り消す（誤爆防止の二重安全装置の2つ目）。
+        //   トグル再タップと併用できる。Undo 済みなら no-op。
+        if (favUndoRef.current) favUndoRef.current();
+        if (favToastIdRef.current) {
+          try { mantineNotifications.hide(favToastIdRef.current); } catch { /* gone */ }
+          favToastIdRef.current = null;
+        }
+      },
+      onClose: () => {
+        if (favToastIdRef.current === toastId) favToastIdRef.current = null;
+      },
+    });
+  }, [auth]);
+
+  // ---- お気に入りタブ切替: SegmentedControl の onChange が直接 favView を
+  //   切り替えるので、別の切り替え関数は不要（重複実装の排除）。 ----
 
   // ---- Reactions (posts) -------------------------------------------------
   // The ids are derived from what is on screen so the batched fetch only asks
@@ -9668,6 +9882,7 @@ export default function Home() {
               value={searchQuery}
               onCommit={(q) => setSearchQuery(q)}
               onClear={() => setSearchQuery("")}
+              placeholder={favView ? "お気に入りから検索" : "タイムラインを検索"}
             />
             {searchActive && (
               <Text size="xs" c="green" mt={6}>
@@ -9956,12 +10171,12 @@ export default function Home() {
                   >
                     <Group gap="xs" align="flex-start" wrap="nowrap">
                       <Text size="lg" style={{ lineHeight: 1 }}>
-                        {n.type === "reply" ? "💬" : n.type === "mention" ? "📢" : "❤️"}
+                        {n.type === "reply" ? "💬" : n.type === "mention" ? "📢" : n.type === "favorite" ? "⭐" : "❤️"}
                       </Text>
                       <div style={{ minWidth: 0 }}>
                         <Text size="sm" c="inherit" style={{ wordBreak: "break-word" }}>
                           <b>{n.actorName}</b>
-                          {n.type === "reply" ? " があなたの投稿に返信しました" : n.type === "mention" ? " があなたをメンションしました" : " があなたの投稿にいいねしました"}
+                          {n.type === "reply" ? " があなたの投稿に返信しました" : n.type === "mention" ? " があなたをメンションしました" : n.type === "favorite" ? " があなたをお気に入りに追加しました" : " があなたの投稿にいいねしました"}
                         </Text>
                         {n.text ? (
                           <Text size="xs" c="dimmed" lineClamp={2}>
@@ -10364,16 +10579,35 @@ export default function Home() {
                   <SegmentedControl
                     size="sm"
                     fullWidth={false}
-                    value={chatView ? "chat" : "timeline"}
+                    value={chatView ? "chat" : favView ? "fav" : "timeline"}
                     onChange={(v) => {
                       const toChat = v === "chat";
+                      const toFav = v === "fav";
                       chatViewRef.current = toChat;
                       setChatView(toChat);
-                      if (toChat) loadChat(true);
-                      else setChatMention(null);
+                      if (toChat) { loadChat(true); favViewRef.current = false; setFavView(false); setChatMention(null); return; }
+                      setChatMention(null);
+                      if (toFav !== favViewRef.current) {
+                        favViewRef.current = toFav;
+                        setFavView(toFav);
+                        loadFeed();
+                      }
                     }}
                     data={[
                       { label: "タイムライン", value: "timeline" },
+                      {
+                        label: (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            お気に入り
+                            {favoriteIds.size > 0 && (
+                              <span style={{ opacity: 0.6, fontSize: 11, fontWeight: 500 }}>
+                                {favoriteIds.size}人
+                              </span>
+                            )}
+                          </span>
+                        ),
+                        value: "fav",
+                      },
                       {
                         label: (
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -10887,6 +11121,31 @@ export default function Home() {
               ) : feedLoading ? (
                 <Text c="dimmed">読み込み中…</Text>
               ) : feedPosts.length === 0 ? (
+                favView ? (
+                  /* お気に入りタブの空状態: 機能の発見導線（どのタブから付けるか伝える） */
+                  <Stack gap="sm" align="center" py="xl">
+                    <Text c="dimmed" size="sm">
+                      まだお気に入りがいません。
+                    </Text>
+                    <Text c="dimmed" size="xs">
+                      タイムラインで気になる人を見つけたら、名前の横の ☆ をタップすると
+                      その人だけの投稿がここに集まります。
+                    </Text>
+                    <Button
+                      variant="light"
+                      color="yellow"
+                      size="xs"
+                      onClick={() => {
+                        // SegmentedControl の onChange と同じ処理を直接実行
+                        favViewRef.current = false;
+                        setFavView(false);
+                        loadFeed();
+                      }}
+                    >
+                      タイムラインへ
+                    </Button>
+                  </Stack>
+                ) : (
                 <Text c="dimmed">
                   {searchActive
                     ? `「${searchQuery}」に一致する投稿は見つかりませんでした`
@@ -10898,6 +11157,7 @@ export default function Home() {
                     ? "エピソードの投稿がまだありません"
                     : "投稿がまだありません。最初の投稿をしてみましょう！"}
                 </Text>
+                )
               ) : threadPost ? (
                 /* ---- Thread view: timeline filtered to one post + replies ---- */
                 <Stack gap="md">
@@ -10939,6 +11199,7 @@ export default function Home() {
                           onEditPoll={handleEditPoll}
                           onSetClub={handleSetClub}
                           onOpenClub={selectClub}
+                          onToggleFavorite={auth ? toggleFavoriteFor : undefined}
                         />
                       )}
 
@@ -10962,6 +11223,7 @@ export default function Home() {
                           onPin={handlePin}
                           onPreview={openPreview}
                           onOpenProfile={openProfile}
+                          onToggleFavorite={auth ? toggleFavoriteFor : undefined}
                         />
                         </Box>
                       ))}
@@ -11219,6 +11481,7 @@ export default function Home() {
                   onPin={handlePin}
                   onPreview={openPreview}
                   onOpenProfile={openProfile}
+                  onToggleFavorite={auth ? toggleFavoriteFor : undefined}
                   onVotePoll={handleVotePoll}
                   onEditPoll={handleEditPoll}
                   onSetClub={handleSetClub}

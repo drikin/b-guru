@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { MantineProvider, createTheme } from "@mantine/core";
+import { Notifications } from "@mantine/notifications";
 import "@mantine/core/styles.css";
+import "@mantine/notifications/styles.css";
 import "./globals.css";
 import { EARLY_PRELOADS, EARLY_SCRIPT } from "@/lib/early-fetch";
 import { preload } from "react-dom";
@@ -107,6 +109,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col">
         <MantineProvider theme={theme} defaultColorScheme="auto">
+          <Notifications position="bottom-center" />
           {children}
         </MantineProvider>
       </body>

@@ -4,6 +4,7 @@ import { getHiddenClubs } from "@/lib/club-visibility";
 import { getReadIdsForPosts } from "@/lib/read-state-server";
 import { findMemberByEmail } from "@/lib/ghost";
 import { getSessionEmail } from "@/lib/session";
+import { getFavoriteEmails } from "@/lib/favorites";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,10 @@ export async function GET(req: NextRequest) {
   const rawLimit = Number(req.nextUrl.searchParams.get("limit") ?? "100");
   const limit = Number.isInteger(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 100;
   const club = req.nextUrl.searchParams.get("club") ?? undefined;
+  // お気に入りタイムライン (fav=1): restrict to the viewer's favorited authors.
+  //   The favorite set is resolved SERVER-side (like hiddenSet) — the client
+  //   never sends the list (a spoofable parameter would desync devices).
+  const fav = req.nextUrl.searchParams.get("fav") === "1";
   try {
     if (hot) {
       // Hot topics: top N most-commented root posts in the last 7 days.
@@ -46,12 +51,15 @@ export async function GET(req: NextRequest) {
     // request targets a specific club, an explicit club tap wins (you asked
     // to see that club).
     const hiddenSet = !club ? await getHiddenClubs(email) : new Set<string>();
+    // お気に入り: viewer's favorited author emails (server-side resolved).
+    const favoriteAuthors = fav ? Array.from(await getFavoriteEmails(email)) : undefined;
     const posts = await listPosts({
       pinnedOnly: pinned || undefined,
       filter: filter ?? undefined,
       search: search ?? undefined,
       club: club ?? undefined,
       excludeClubs: Array.from(hiddenSet),
+      favoriteAuthors,
       viewerEmail: email,
       before,
       limit,

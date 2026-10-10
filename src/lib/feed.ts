@@ -40,6 +40,9 @@ export interface FeedPost {
   urlPreview: UrlPreview | null;
   likeCount: number;
   likedByMe: boolean;
+  /** True when the VIEWER has this post's author in their favorites
+   *  (お気に入り). Viewer-personal state — never broadcast via SSE. */
+  favoriteByMe?: boolean;
   createdAt: string;
   /** 投稿に付いたアンケート（投票）。返信には常に null。 */
   poll?: PostPoll | null;

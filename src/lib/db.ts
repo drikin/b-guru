@@ -437,5 +437,19 @@ export async function initSchema() {
       UNIQUE(post_id, email)
     );
     CREATE INDEX IF NOT EXISTS idx_post_poll_votes_post ON post_poll_votes(post_id);
+
+    -- お気に入り（viewer が特定の投稿者を追跡）。Instagram の「お気に入り」と同様、
+    --   viewer 個人の状態で他ユーザーには影響しない（SSE ブロードキャスト対象外）。
+    --   Server-persisted でデバイス間同期。club_visibility / post_read_state と同じ
+    --   email 基準の per-user テーブル（FK は張らない — 匿名メンバー・退会後も行保持）。
+    --   投稿者側の email は posts.author_email と同一規約（trim + lowercase）。
+    CREATE TABLE IF NOT EXISTS user_favorite_authors (
+      viewer_email TEXT NOT NULL,
+      author_email TEXT NOT NULL,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (viewer_email, author_email),
+      CHECK (viewer_email <> author_email)
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_favorite_authors_viewer ON user_favorite_authors(viewer_email);
   `);
 }

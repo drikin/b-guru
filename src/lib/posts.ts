@@ -41,6 +41,9 @@ export interface FeedPost {
   urlPreview: UrlPreview | null;
   likeCount: number;
   likedByMe: boolean;
+  /** True when the VIEWER has this post's author in their favorites
+   *  (お気に入り). Viewer-personal state — never broadcast via SSE. */
+  favoriteByMe: boolean;
   createdAt: string;
   /** 投稿に付いたアンケート（投票）。 */
   poll?: PostPoll | null;
@@ -209,6 +212,7 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
     urlPreview: null, // link preview arrives via the async update above
     likeCount: 0,
     likedByMe: false,
+    favoriteByMe: false, // the caller just authored this post — self-favorite not applicable
     createdAt: isoCreated,
     lastActivityAt: isoCreated, // New post has no replies yet → activity = creation time
     pinnedAt: null,
@@ -256,6 +260,7 @@ const POST_SELECT = `
     p.club_manual AS club_manual,
     COUNT(DISTINCT l.user_email) AS like_count,
     BOOL_OR(l.user_email = $1) AS liked_by_me,
+    EXISTS (SELECT 1 FROM user_favorite_authors f WHERE f.viewer_email = $1 AND f.author_email = p.author_email) AS favorited_by_me,
     (SELECT COUNT(*) FROM posts c WHERE c.parent_id = p.id) AS reply_count,
     -- アンケート（投票）。あれば生データを JSON で返し、mapRow が buildPostPoll で
     -- UI 用モデルに組み立てる。GROUP BY p.id を壊さない相関サブクエリ。
@@ -296,6 +301,7 @@ function mapRow(r: any): FeedPost {
     urlPreview: r.url_preview,
     likeCount: Number(r.like_count) || 0,
     likedByMe: !!r.liked_by_me,
+    favoriteByMe: !!r.favorited_by_me,
     createdAt: new Date(r.created_at).toISOString(),
     lastActivityAt: new Date(r.last_activity).toISOString(),
     pinnedAt: r.pinned_at ? new Date(r.pinned_at).toISOString() : null,
@@ -345,6 +351,9 @@ export async function listPosts(options?: {
   /** Hide root posts whose club is in this set (per-user club visibility,
    *  drikin 2026-10-02). Empty/absent = show everything. */
   excludeClubs?: string[];
+  /** Restrict root posts to authors in this set (お気に入り timeline).
+   *  Empty/absent = no restriction. Combined with club/search/cursor. */
+  favoriteAuthors?: string[];
 }): Promise<FeedPost[]> {
   const limit = options?.limit ?? 100;
   const viewerEmail = options?.viewerEmail ?? "";
@@ -378,6 +387,7 @@ export async function listPosts(options?: {
     authorSql = ` AND p.author_email = ${pat}`;
   }
   let searchSql = "";
+  let favSql = "";
   if (search && search.length > 0) {
     searchParams.push(`%${search}%`);
     const pat = `$${searchParams.length}`;
@@ -389,6 +399,16 @@ export async function listPosts(options?: {
     searchParams.push(club);
     const pat = `$${searchParams.length}`;
     clubSql = ` AND p.club = ${pat}`;
+  }
+  // お気に入り (favoriteAuthors): author_email IN (viewer's favorite set).
+  //   Empty array (fav=1 but no favorites) must yield ZERO rows, not "no filter".
+  const favAuthors = (options?.favoriteAuthors ?? []).filter((e) => e && e.length > 0);
+  if (favAuthors.length > 0) {
+    searchParams.push(favAuthors);
+    favSql = ` AND p.author_email = ANY($${searchParams.length}::text[])`;
+  } else if (options?.favoriteAuthors) {
+    // Explicit favorites-only request with an empty set → force empty result.
+    favSql = ` AND FALSE`;
   }
   // Per-user hidden clubs (drikin 2026-10-02). "未設定" (__unset__) is the
   // pseudo-label for posts with club IS NOT NULL but a key absent from the
@@ -444,7 +464,7 @@ export async function listPosts(options?: {
 
   const res = await pool.query(
     `${POST_SELECT}
-     WHERE ${where}${authorSql}${searchSql}${clubSql}${cursorSql}
+     WHERE ${where}${authorSql}${searchSql}${favSql}${clubSql}${cursorSql}
      GROUP BY p.id
      ORDER BY ${orderBy}
      LIMIT $2`,
