@@ -522,9 +522,15 @@ await page.waitForTimeout(300);
 // elements are <label class="mantine-SegmentedControl-label">, and they are NOT
 // siblings of the same element type, so :nth-of-type() does not select them —
 // index into the NodeList instead.
+// ★ お気に入りタブ追加後は3タブ構成（timeline/fav/chat）なので、ラベルテキストで
+//   「チャット」を探す（index 1 は「お気に入り」になり、固定 index は壊れる）。
 const tabLabels = await page.$$('[data-cx="navtabs"] label.mantine-SegmentedControl-label');
-if (tabLabels.length >= 2) {
-  await tabLabels[1].click();
+let chatClicked = false;
+for (const lbl of tabLabels) {
+  const t = (await lbl.textContent()) ?? "";
+  if (t.includes("チャット")) { await lbl.click(); chatClicked = true; break; }
+}
+if (chatClicked) {
   await page.waitForTimeout(2500);
 }
 const ptrInfo = await page.evaluate(`(() => {
