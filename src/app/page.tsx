@@ -1519,6 +1519,24 @@ function PostCard({
         wrap="nowrap"
         style={{ position: "absolute", top: 6, right: 6, zIndex: 2 }}
       >
+        {onToggleFavorite && !post.isAuthor && (
+          <ActionIcon
+            variant={post.favoriteByMe ? "light" : "subtle"}
+            color={post.favoriteByMe ? "yellow" : "gray"}
+            size="sm"
+            aria-label={post.favoriteByMe ? `${post.authorName} をお気に入りから外す` : `${post.authorName} をお気に入りに追加`}
+            data-cx="fav-toggle"
+            data-fav-author={post.authorId}
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              onToggleFavorite(post);
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill={post.favoriteByMe ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+            </svg>
+          </ActionIcon>
+        )}
         {reactionBar}
         {post.isAuthor && (
           <>
@@ -1598,31 +1616,6 @@ function PostCard({
             </Text>
           </div>
         </UnstyledButton>
-        {/* お気に入りトグル（自分の投稿以外・onToggleFavorite がある時のみ）。
-            Instagram の「お気に入り」と同じ概念: この人が書いた投稿だけの
-            タイムラインに追加/解除する。タップで即反映（楽観更新）+ トースト。
-            タップ領域は ActionIcon 実寸(26px)より広い 36px を padding で担保
-            （iPhone Safari 主要環境・Apple HIG 44px 推奨に近づける）。
-            見た目のアイコンサイズは既存アクションと同一（size=sm・15px SVG）。 */}
-        {onToggleFavorite && !post.isAuthor && (
-          <ActionIcon
-            variant={post.favoriteByMe ? "light" : "subtle"}
-            color={post.favoriteByMe ? "yellow" : "gray"}
-            size="sm"
-            aria-label={post.favoriteByMe ? `${post.authorName} をお気に入りから外す` : `${post.authorName} をお気に入りに追加`}
-            data-cx="fav-toggle"
-            data-fav-author={post.authorId}
-            style={{ width: 36, height: 36, alignSelf: "center", marginRight: -6 }}
-            onClick={(e: React.MouseEvent) => {
-              e.stopPropagation();
-              onToggleFavorite(post);
-            }}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill={post.favoriteByMe ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
-            </svg>
-          </ActionIcon>
-        )}
       </Group>
 
       {/* 部活動ラベル（ルート投稿のみ）。投稿者/admin はクリックで手動付け替え可。 */}
