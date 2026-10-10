@@ -104,7 +104,26 @@ export async function getProfile(email: string): Promise<Profile | null> {
   ]);
   const r: ProfileRow | null = rowRes.rows[0] ?? null;
   const a = aggRes.rows[0] ?? null;
-  if (!r && !a) return null;
+  // ★ 投稿が一度も無い会員でもプロフィールを返す（投稿なし会員が自分の
+  //   プロフィールを開いても 404 になり編集できない問題・2026-10-08 フィード
+  //   バック）。呼び出し時点で users テーブルに存在する email（resolveEmail
+  //   Segment が解決済み）なので「ユーザーが存在しない」ではなく「何も
+  //   書いていない」であり、空プロフィールを合成するのが正しい。
+  //   ensureUserId は idempotent なのでここで呼んでも user_id は安定。
+  if (!r && !a) {
+    return {
+      userId: await ensureUserId(email),
+      email,
+      displayNameSet: false,
+      name: email.split("@")[0],
+      avatar: gravatarUrl(email),
+      bio: "",
+      headerImage: null,
+      links: [],
+      postCount: 0,
+      firstPostAt: null,
+    };
+  }
 
   const rawLinks: ProfileLink[] = r ? (validateLinks(r.links).ok ? (r.links as ProfileLink[]) : []) : [];
   const safeLinks: ProfileLink[] = rawLinks
