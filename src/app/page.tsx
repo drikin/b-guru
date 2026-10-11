@@ -1545,20 +1545,22 @@ function PostCard({
             initial={(post.authorName || "?")}
           />
           <div style={{ minWidth: 0 }}>
-            <Text size="sm" fw={600} c="inherit" truncate>
-              {post.authorName}
-            </Text>
-            {post.via === "agent" && (
-              <Text
-                size="xs"
-                c="dimmed"
-                span
-                title="AI エージェント経由の投稿"
-                style={{ flexShrink: 0, lineHeight: 1 }}
-              >
-                🤖
+            <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+              <Text size="sm" fw={600} c="inherit" truncate>
+                {post.authorName}
               </Text>
-            )}
+              {post.via === "agent" && (
+                <Text
+                  size="xs"
+                  c="dimmed"
+                  span
+                  title="AI エージェント経由の投稿"
+                  style={{ flexShrink: 0, lineHeight: 1 }}
+                >
+                  🤖
+                </Text>
+              )}
+            </div>
             <Text size="xs" c="dimmed" truncate>
               {formatJSTPDT(post.createdAt)}
             </Text>
