@@ -8007,19 +8007,30 @@ export default function Home() {
       if (p.replies?.length) return { ...p, replies: p.replies.map(flip) };
       return p;
     };
+    // bm タブ中の解除で drop したカードを保持（Undo 復元用）。
+    const droppedRoots: any[] = [];
+    const droppedReplies: any[] = [];
     if (bmViewRef.current && wasBm) {
-      // 解除 → ブックマークタブからは消す
+      // 解除 → ブックマークタブからは消す。Undo 復元用に droppedRoots/Replies に保持。
       const drop = (list: any[]) => {
         const out: any[] = [];
         for (const p of list) {
-          if (p.id === postId) continue;
-          if (p.replies?.length) out.push({ ...p, replies: p.replies.filter((r: any) => r.id !== postId) });
-          else out.push(p);
+          if (p.id === postId) { droppedRoots.push(p); continue; }
+          if (p.replies?.length) {
+            const kept = p.replies.filter((r: any) => r.id !== postId);
+            if (kept.length !== p.replies.length) {
+              droppedReplies.push(...p.replies.filter((r: any) => r.id === postId));
+              out.push({ ...p, replies: kept });
+            } else out.push(p);
+          } else out.push(p);
         }
         return out;
       };
       setFeedPosts((prev) => drop(prev));
-      setThreadReplies((prev) => prev.filter((r: any) => r.id !== postId));
+      setThreadReplies((prev) => {
+        droppedReplies.push(...prev.filter((r: any) => r.id === postId));
+        return prev.filter((r: any) => r.id !== postId);
+      });
     } else {
       setFeedPosts((prev) => prev.map(flip));
       setThreadPost((prev) => (prev ? flip(prev) : prev));
@@ -8040,9 +8051,26 @@ export default function Home() {
         if (p.replies?.length) return { ...p, replies: p.replies.map(revert) };
         return p;
       };
-      setFeedPosts((prev) => prev.map(revert));
-      setThreadPost((prev) => (prev ? revert(prev) : prev));
-      setThreadReplies((prev) => prev.map(revert));
+      // bm タブ中の解除で drop() したカードは、Undo 時に先頭へ復元する
+      //   （元位置は last_activity 順の再構築コストに見合わないため先頭で十分 —
+      //    次回 loadFeed で本来の順序に戻る）。
+      if (bmViewRef.current && wasBm) {
+        setFeedPosts((prev) => {
+          const restored = droppedRoots.map((p) => ({ ...p, bookmarkedByMe: false }));
+          const others = prev.map(revert);
+          return restored.length > 0 ? [...restored, ...others] : others;
+        });
+        if (droppedReplies.length > 0) {
+          setThreadReplies((prev) => [
+            ...prev,
+            ...droppedReplies.map((r) => ({ ...r, bookmarkedByMe: false })),
+          ]);
+        }
+      } else {
+        setFeedPosts((prev) => prev.map(revert));
+        setThreadPost((prev) => (prev ? revert(prev) : prev));
+        setThreadReplies((prev) => prev.map(revert));
+      }
       bmUndoRef.current = null;
     };
     fetch("/api/bookmarks", {
