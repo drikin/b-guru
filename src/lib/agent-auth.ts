@@ -34,7 +34,8 @@ export type AgentErrorCode =
   | "membership_ended"
   | "rate_limited"
   | "not_found"
-  | "forbidden";
+  | "forbidden"
+  | "server_error";
 
 export interface AgentErrorBody {
   error: string;
@@ -82,12 +83,23 @@ export async function issueAgentToken(input: {
   const email = input.email.trim().toLowerCase();
   const scopes = normalizeScopes(input.scopes);
   const token = `bga_${crypto.randomBytes(32).toString("hex")}`;
+  // トークン上限の TOCTOU 対策: 発行 INSERT を条件付きにし、
+  //   同時発行でも MAX_TOKENS_PER_EMAIL を超えられない（1 クエリでアトミック）。
   const res = await pool.query(
     `INSERT INTO agent_tokens (token_hash, email, scopes, device_name, expires_at, last_membership_check)
-     VALUES ($1, $2, $3, $4, now() + make_interval(days => $5), now())
+     SELECT $1, $2, $3, $4, now() + make_interval(days => $5), now()
+     WHERE (SELECT COUNT(*) FROM agent_tokens
+            WHERE email = $2 AND revoked_at IS NULL AND expires_at > now()) < $6
      RETURNING id, expires_at`,
-    [hashToken(token), email, scopes, input.deviceName.trim() || "unknown device", AGENT_TOKEN_TTL_DAYS]
+    [hashToken(token), email, scopes, input.deviceName.trim() || "unknown device", AGENT_TOKEN_TTL_DAYS, MAX_TOKENS_PER_EMAIL]
   );
+  if (res.rowCount === 0) {
+    throw new AgentAuthError(400, {
+      error: `発行できるトークンは ${MAX_TOKENS_PER_EMAIL} 本までです`,
+      code: "forbidden",
+      hint: "不要なデバイスを失効してから再試行してください",
+    });
+  }
   const r = res.rows[0];
   return {
     token,
@@ -183,7 +195,12 @@ export async function verifyAgentToken(
   const raw = (authHeader ?? "").trim();
   const m = /^Bearer\s+(\S+)$/i.exec(raw);
   if (!m) {
-    throw err(401, "unauthorized", "認証が必要です", "Authorization: Bearer <token> を付けてください");
+    throw err(401, "unauthorized", "認証が必要です", "Authorization: Bearer *** を付けてください");
+  }
+  // 認証前レート制限: 未知/無効トークンによる総当たり・DB lookup 濫用を抑える。
+  //   成功時はリセットしない（連続成功も一応カウントするが上限 150/h は通常利用に十分）。
+  if (opts.ip && !(await checkPreAuthLimit(opts.ip))) {
+    throw err(429, "rate_limited", "リクエストが多すぎます", "しばらくしてから再試行してください");
   }
   const res = await pool.query(
     `SELECT id, token_hash, email, scopes, device_name, expires_at, last_membership_check
@@ -302,15 +319,52 @@ export async function checkRateLimit(tokenId: number, scope: AgentScope): Promis
 }
 
 /** 監査ログ（ベストエフォート — 記録失敗でリクエストを落とさない）。 */
-export async function recordAudit(tokenId: number | null, endpoint: string, status: number): Promise<void> {
+export async function recordAudit(
+  tokenId: number | null,
+  endpoint: string,
+  status: number,
+  ip?: string | null
+): Promise<void> {
   try {
     await pool.query(
-      `INSERT INTO agent_audit_log (token_id, endpoint, status) VALUES ($1, $2, $3)`,
-      [tokenId, endpoint, status]
+      `INSERT INTO agent_audit_log (token_id, endpoint, status, ip) VALUES ($1, $2, $3, $4)`,
+      [tokenId, endpoint, status, ip ?? null]
     );
   } catch {
     /* ignore */
   }
+}
+
+/**
+ * 認証前レート制限（無効トークンのブルートフォース/DoS 対策）。
+ * IP 単位で失敗検証を 30 回/5分 に制限。成功した検証はカウントしない。
+ */
+export async function checkPreAuthLimit(ip: string | null): Promise<boolean> {
+  if (!ip) return true; // IP が取れない場合は制限できない（監査ログで追跡）
+  try {
+    const res = await pool.query(
+      `INSERT INTO rate_limits (key, window_start, count)
+       VALUES ($1, date_trunc('hour', now()), 1)
+       ON CONFLICT (key, window_start)
+       DO UPDATE SET count = rate_limits.count + 1
+       RETURNING count`,
+      [`preauth:${ip}`]
+    );
+    return Number(res.rows[0]?.count ?? 1) <= 150;
+  } catch {
+    return true; // 制限機構自体の故障でユーザーを締め出さない
+  }
+}
+
+/**
+ * LIKE ワイルドカード（% _）をエスケープし、パターン長も制限する。
+ * listPosts の ILIKE に渡す前の資源枯渇（'%%%%%' 等の広範走査）防止。
+ */
+export function sanitizeLikePattern(input: string | undefined): string | undefined {
+  const s = input?.trim();
+  if (!s) return undefined;
+  const escaped = s.replace(/[\\%_]/g, (ch) => `\\${ch}`).slice(0, 100);
+  return escaped;
 }
 
 /**
@@ -324,8 +378,9 @@ export async function withAgent(
   handler: (ctx: AgentContext) => Promise<{ status: number; body: unknown; headers?: Record<string, string> }>
 ): Promise<{ status: number; body: unknown; headers?: Record<string, string> }> {
   let ctx: AgentContext | null = null;
+  let ip: string | null = null;
   try {
-    const ip =
+    ip =
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
       req.headers.get("x-real-ip");
     ctx = await verifyAgentToken(req.headers.get("authorization"), { ip });
@@ -337,19 +392,19 @@ export async function withAgent(
       }
     }
     const out = await handler(ctx);
-    await recordAudit(ctx.tokenId, endpoint, out.status);
+    await recordAudit(ctx.tokenId, endpoint, out.status, ip);
     return out;
   } catch (e) {
     const status = e instanceof AgentAuthError ? e.status : 500;
     const body =
       e instanceof AgentAuthError
         ? e.body
-        : { error: "サーバーエラー", code: "unauthorized" as AgentErrorCode };
+        : { error: "サーバーエラー", code: "server_error" as AgentErrorCode };
     if (status >= 500 && !(e instanceof AgentAuthError)) {
       console.error(`[agent:${endpoint}]`, (e as Error)?.message);
     }
-    if (ctx) await recordAudit(ctx.tokenId, endpoint, status);
-    else await recordAudit(null, endpoint, status);
+    if (ctx) await recordAudit(ctx.tokenId, endpoint, status, ip);
+    else await recordAudit(null, endpoint, status, ip);
     return { status, body };
   }
 }

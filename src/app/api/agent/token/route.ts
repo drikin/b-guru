@@ -18,6 +18,26 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
+  // CSRF 対策: SameSite=lax の Cookie を使う state-changing ルートのため
+  //   同一オリジン（または API クライアントの直接呼び出し=Origin なし）のみ許可。
+  //   cross-site の form POST（text/plain で JSON を偽装する手口含む）を遮断する。
+  const origin = req.headers.get("origin");
+  const site = req.headers.get("sec-fetch-site");
+  if (origin) {
+    const originHost = new URL(origin).host;
+    if (originHost !== req.headers.get("host")) {
+      return NextResponse.json(
+        { error: "オリジンが不正です", code: "forbidden" },
+        { status: 403, headers: NO_CACHE }
+      );
+    }
+  } else if (site && site !== "same-origin" && site !== "none") {
+    return NextResponse.json(
+      { error: "オリジンが不正です", code: "forbidden" },
+      { status: 403, headers: NO_CACHE }
+    );
+  }
+
   const email = await getSessionEmail();
   if (!email) {
     return NextResponse.json(

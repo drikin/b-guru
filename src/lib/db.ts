@@ -490,6 +490,7 @@ export async function initSchema() {
       token_id INTEGER,
       endpoint TEXT NOT NULL,
       status INTEGER NOT NULL,
+      ip TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_agent_audit_created ON agent_audit_log(created_at);

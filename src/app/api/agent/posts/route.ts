@@ -9,7 +9,7 @@ import { getHiddenClubs } from "@/lib/club-visibility";
 import { getFavoriteEmails } from "@/lib/favorites";
 import { getBookmarkedPostIds } from "@/lib/bookmarks";
 import { userIdToEmail } from "@/lib/user";
-import { withAgent } from "@/lib/agent-auth";
+import { withAgent, sanitizeLikePattern } from "@/lib/agent-auth";
 import { NO_CACHE } from "../_lib";
 
 export const dynamic = "force-dynamic";
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
     const limit = Number.isInteger(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 50;
     const cursor = sp.get("cursor") ?? undefined;
     const club = sp.get("club") ?? undefined;
-    const search = sp.get("search") ?? undefined;
+    const search = sanitizeLikePattern(sp.get("search") ?? undefined);
     const sinceIdRaw = Number(sp.get("since_id") ?? "");
     const fav = sp.get("fav") === "1";
     const bm = sp.get("bm") === "1";

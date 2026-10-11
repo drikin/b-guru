@@ -2,7 +2,7 @@
 import { NextRequest } from "next/server";
 import { listPosts } from "@/lib/posts";
 import { getHiddenClubs } from "@/lib/club-visibility";
-import { withAgent } from "@/lib/agent-auth";
+import { withAgent, sanitizeLikePattern } from "@/lib/agent-auth";
 import { NO_CACHE } from "../_lib";
 import { agentPostDto } from "../posts/route";
 
@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
   const out = await withAgent(req, "GET /api/agent/search", "read", async (ctx) => {
-    const q = (req.nextUrl.searchParams.get("q") ?? "").trim();
+    const q = sanitizeLikePattern(req.nextUrl.searchParams.get("q") ?? undefined);
     if (!q) {
       return {
         status: 400,
