@@ -17,6 +17,8 @@ import { z } from "zod";
 import {
   verifyAgentToken,
   requireScope,
+  checkRateLimit,
+  recordAudit,
   AgentAuthError,
   sanitizeLikePattern,
   type AgentContext,
@@ -44,34 +46,49 @@ export const dynamic = "force-dynamic";
 
 const MEMBERSHIP_HINT = "BSM 会員資格を確認できません。backspace.fm でご確認ください";
 
-/** AgentAuthError / 書き込みエラーをツールレスポンス用の {error, code, hint} へ。 */
+/** AgentAuthError / 書き込みエラーをツールレスポンス用の {error, code, hint} へ。
+ *  内部エラー（pg ドライバ等）の message は流出させない（REST と同一の規約）。 */
 function errorBody(e: unknown): { error: string; code: string; hint?: string } {
   if (e instanceof AgentAuthError) {
     const b = { ...e.body };
     if (b.code === "membership_ended") b.hint = MEMBERSHIP_HINT;
     return b;
   }
-  const anyE = e as { code?: string; status?: number; message?: string };
-  const code = typeof anyE?.code === "string" ? anyE.code : "server_error";
-  return {
-    error: typeof anyE?.message === "string" && anyE.message ? anyE.message : "サーバーエラー",
-    code,
-    ...(code === "membership_ended" ? { hint: MEMBERSHIP_HINT } : {}),
-  };
+  // AgentAuthError 以外は詳細を返さない（内部メッセージ/SQL エラーの漏洩防止）。
+  return { error: "サーバーエラー", code: "server_error" };
 }
 
-/** スコープ必須のツール実行。認証/スコープ/レート制限の漏れを型で防ぐ。 */
+/** スコープ必須のツール実行。認証/スコープ/レート制限/監査の漏れを型で防ぐ。 */
 async function withTool<T>(
   req: Request,
   scope: AgentScope | null,
+  endpoint: string,
   fn: (ctx: AgentContext) => Promise<T>
 ): Promise<T | { __error: ReturnType<typeof errorBody> }> {
+  let ctx: AgentContext | null = null;
   try {
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip");
-    const ctx = await verifyAgentToken(req.headers.get("authorization"), { ip });
+    ctx = await verifyAgentToken(req.headers.get("authorization"), { ip });
     if (scope) requireScope(ctx, scope);
-    return await fn(ctx);
+    if (scope) {
+      // REST /api/agent/* と同一の per-scope レート制限（MCP 経由でも write 10/h 等を強制）。
+      const rate = await checkRateLimit(ctx.tokenId, scope);
+      if (!rate.allowed) {
+        throw new AgentAuthError(429, {
+          error: "レート制限に達しました",
+          code: "rate_limited",
+          hint: `${rate.retryAfter} 秒後に再試行してください`,
+        });
+      }
+    }
+    const out = await fn(ctx);
+    await recordAudit(ctx.tokenId, `mcp:${endpoint}`, 200, ip);
+    return out;
   } catch (e) {
+    const status = e instanceof AgentAuthError ? e.status : 500;
+    try {
+      await recordAudit(ctx?.tokenId ?? null, `mcp:${endpoint}`, status, null);
+    } catch { /* best effort */ }
     return { __error: errorBody(e) };
   }
 }
@@ -120,7 +137,7 @@ function buildServer(ctx: AgentContext) {
       },
     },
     async (args) => {
-      const out = await withTool(req_of(ctx), "read", async (c) => {
+      const out = await withTool(req_of(ctx), "read", "get_posts", async (c) => {
         const limit = Math.min(Math.max(args.limit ?? 50, 1), 100);
         const search = sanitizeLikePattern(args.search);
         const rawSince = typeof args.since_id === "number" ? args.since_id : NaN;
@@ -190,7 +207,7 @@ function buildServer(ctx: AgentContext) {
       inputSchema: { post_id: z.number().int().positive().describe("投稿 ID") },
     },
     async (args) => {
-      const out = await withTool(req_of(ctx), "read", async (c) => {
+      const out = await withTool(req_of(ctx), "read", "get_thread", async (c) => {
         const { post, replies } = await getPostThread(args.post_id, c.email);
         if (!post) return { error: "投稿が見つかりません", code: "not_found" };
         return { apiVersion: 1, post: agentPostDto(post), replies: replies.map(agentPostDto) };
@@ -211,7 +228,7 @@ function buildServer(ctx: AgentContext) {
       },
     },
     async (args) => {
-      const out = await withTool(req_of(ctx), "read", async (c) => {
+      const out = await withTool(req_of(ctx), "read", "search_posts", async (c) => {
         const q = sanitizeLikePattern(args.q);
         if (!q) return { error: "q パラメータが必要です", code: "invalid_request" };
         const limit = Math.min(Math.max(args.limit ?? 50, 1), 100);
@@ -243,7 +260,7 @@ function buildServer(ctx: AgentContext) {
       inputSchema: {},
     },
     async () => {
-      const out = await withTool(req_of(ctx), "read", async () => {
+      const out = await withTool(req_of(ctx), "read", "get_clubs", async () => {
         const clubs = await listClubs({ activeOnly: true });
         return {
           apiVersion: 1,
@@ -262,7 +279,7 @@ function buildServer(ctx: AgentContext) {
       inputSchema: {},
     },
     async () => {
-      const out = await withTool(req_of(ctx), "read", async (c) => {
+      const out = await withTool(req_of(ctx), "read", "get_notifications", async (c) => {
         const list = await listNotifications(c.email);
         return { apiVersion: 1, notifications: list };
       });
@@ -281,7 +298,7 @@ function buildServer(ctx: AgentContext) {
       },
     },
     async (args) => {
-      const out = await withTool(req_of(ctx), "read", async (c) => {
+      const out = await withTool(req_of(ctx), "read", "get_chat", async (c) => {
         const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
         const messages = await listChatMessages({ limit, before: args.before, viewerEmail: c.email });
         return {
@@ -316,7 +333,7 @@ function buildServer(ctx: AgentContext) {
       },
     },
     async (args) => {
-      const out = await withTool(req_of(ctx), "write", async (c) => {
+      const out = await withTool(req_of(ctx), "write", "post_message", async (c) => {
         const post = await agentCreatePost(c, {
           text: args.text,
           parent_id: args.parent_id ?? null,
@@ -339,7 +356,7 @@ function buildServer(ctx: AgentContext) {
       },
     },
     async (args) => {
-      const out = await withTool(req_of(ctx), "write", async (c) => {
+      const out = await withTool(req_of(ctx), "write", "add_reaction", async (c) => {
         return { apiVersion: 1, ...(await agentToggleReaction(c, args.post_id, args.emoji)) };
       });
       return wrap(out);
@@ -354,7 +371,7 @@ function buildServer(ctx: AgentContext) {
       inputSchema: { post_id: z.number().int().positive().describe("投稿 ID") },
     },
     async (args) => {
-      const out = await withTool(req_of(ctx), "read_state", async (c) => {
+      const out = await withTool(req_of(ctx), "read_state", "mark_read", async (c) => {
         return { apiVersion: 1, ...(await agentMarkRead(c, args.post_id)) };
       });
       return wrap(out);
@@ -369,7 +386,7 @@ function buildServer(ctx: AgentContext) {
       inputSchema: { post_id: z.number().int().positive().describe("投稿 ID") },
     },
     async (args) => {
-      const out = await withTool(req_of(ctx), "write", async (c) => {
+      const out = await withTool(req_of(ctx), "write", "toggle_bookmark", async (c) => {
         return { apiVersion: 1, ...(await agentToggleBookmark(c, args.post_id)) };
       });
       return wrap(out);
