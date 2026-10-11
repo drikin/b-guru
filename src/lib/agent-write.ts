@@ -82,9 +82,19 @@ export async function agentCreatePost(
     via: "agent",
   });
 
-  // 部活ラベルの明示指定（任意）。有効キーのみ受け付ける（無効値は黙って捨てる）。
+  // 部活ラベルの明示指定（任意）。指定があれば必ず検証し、無効キーは
+  //   invalid_request を返す（黙って捨てると agent 側で検知できない）。
   const club = typeof input.club === "string" ? input.club.trim() : "";
-  if (club && !parentId && (await isActiveClubKey(club))) {
+  if (club && !parentId && !(await isActiveClubKey(club))) {
+    const e = new Error(`無効な部活キーです: ${club}`) as Error & {
+      code: string;
+      status: number;
+    };
+    e.code = "invalid_request";
+    e.status = 400;
+    throw e;
+  }
+  if (club && !parentId) {
     await pool.query(`UPDATE posts SET club = $2, club_manual = TRUE WHERE id = $1`, [
       post.id,
       club,

@@ -14,6 +14,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
+import { listPostsSince } from "@/lib/agent-posts-since";
 import {
   verifyAgentToken,
   requireScope,
@@ -141,34 +142,9 @@ function buildServer(ctx: AgentContext) {
         const limit = Math.min(Math.max(args.limit ?? 50, 1), 100);
         const search = sanitizeLikePattern(args.search);
         const rawSince = typeof args.since_id === "number" ? args.since_id : NaN;
-        // since_id ポーリング: /api/agent/posts と同一の cursor 優先ロジック。
-        if (!args.cursor && Number.isInteger(rawSince) && rawSince > 0) {
+        if (Number.isInteger(rawSince) && rawSince > 0) {
           const hiddenArr = Array.from(await getHiddenClubs(c.email));
-          const { pool } = await import("@/lib/db");
-          const { POST_SELECT, mapRow } = await import("@/lib/posts");
-          const params: unknown[] = [rawSince, c.email, limit];
-          const laExpr = `GREATEST(p.created_at, COALESCE((SELECT MAX(r.created_at) FROM posts r WHERE r.parent_id = p.id AND r.is_whisper IS NOT TRUE), p.created_at))`;
-          const hiddenSql =
-            hiddenArr.length > 0
-              ? ` AND (p.club IS NULL OR p.club NOT IN (${hiddenArr.map((_, i) => `$${params.length + 1 + i}`).join(",")}))`
-              : "";
-          if (hiddenArr.length > 0) params.push(...hiddenArr);
-          const r = await pool.query(
-            `SELECT ${POST_SELECT}
-               WHERE p.parent_id IS NULL AND p.is_whisper IS NOT TRUE
-                 AND ${laExpr} > (SELECT ${laExpr} FROM posts p2 WHERE p2.id = $1)
-                 ${hiddenSql}
-               ORDER BY ${laExpr} DESC
-               LIMIT $3`,
-            params
-          );
-          const posts = r.rows.map(mapRow);
-          return {
-            apiVersion: 1,
-            posts: posts.map(agentPostDto),
-            next_cursor: null,
-            has_more: posts.length === limit,
-          };
+          return { apiVersion: 1, posts: (await listPostsSince(c, rawSince, limit, hiddenArr)).map(asAgentPostDto), next_cursor: null, has_more: true };
         }
         const authorEmail = args.author_user_id ? await userIdToEmail(args.author_user_id) : undefined;
         if (args.author_user_id && !authorEmail) {

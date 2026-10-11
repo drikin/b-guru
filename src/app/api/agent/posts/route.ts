@@ -3,7 +3,8 @@
  * フィルタ: club / search / since_id / fav / bookmark。author_user_id は
  * 不透明 user_id で指定（内部で email に解決・レスポンスには email を含めない）。 */
 import { NextRequest } from "next/server";
-import { listPosts, POST_SELECT, mapRow } from "@/lib/posts";
+import { listPosts } from "@/lib/posts";
+import { listPostsSince } from "@/lib/agent-posts-since";
 import { pool } from "@/lib/db";
 import { getHiddenClubs } from "@/lib/club-visibility";
 import { getFavoriteEmails } from "@/lib/favorites";
@@ -52,38 +53,17 @@ export async function GET(req: NextRequest) {
     const bm = sp.get("bm") === "1";
     const authorUserId = sp.get("author_user_id") ?? undefined;
 
-    // since_id: cursor が優先。無ければ「その投稿より last_activity が新しい
-    //   投稿を新しい順に返す」ポーリング用クエリ（openapi.json の契約どおり）。
-    //   listPosts は after カーソルを持たないため、ここで直接 SQL を発行する
-    //   （last_activity 定義は POST_SELECT と同一式）。
-    let before: string | undefined;
+    // since_id: cursor が優先。「その投稿より新しい投稿を新しい順」で返す
+    //   （共通 helper・MCP get_posts と単一正本）。
     if (!cursor && Number.isInteger(sinceIdRaw) && sinceIdRaw > 0) {
-      const hiddenClubsAll = await getHiddenClubs(ctx.email);
-      const hiddenArr = Array.from(hiddenClubsAll);
-      const params: unknown[] = [sinceIdRaw, ctx.email, limit];
-      const laExpr = `GREATEST(p.created_at, COALESCE((SELECT MAX(r.created_at) FROM posts r WHERE r.parent_id = p.id AND r.is_whisper IS NOT TRUE), p.created_at))`;
-      const hiddenSql = hiddenArr.length > 0
-        ? ` AND (p.club IS NULL OR p.club NOT IN (${hiddenArr.map((_, i) => `$${params.length + 1 + i}`).join(",")}))`
-        : "";
-      if (hiddenArr.length > 0) params.push(...hiddenArr);
-      const r = await pool.query(
-        `SELECT ${POST_SELECT}
-           WHERE p.parent_id IS NULL AND p.is_whisper IS NOT TRUE
-             AND ${laExpr} > (SELECT ${laExpr} FROM posts p2 WHERE p2.id = $1)
-             ${hiddenSql}
-           ORDER BY ${laExpr} DESC
-           LIMIT $3`,
-        params
-      );
-      const posts = r.rows.map(mapRow);
-      const dtos = posts.map(agentPostDto);
-      const last = posts[posts.length - 1];
+      const hiddenArr = Array.from(await getHiddenClubs(ctx.email));
+      const posts = await listPostsSince(ctx, sinceIdRaw, limit, hiddenArr);
       return {
         status: 200,
         body: {
           apiVersion: 1,
-          posts: dtos,
-          next_cursor: null, // since_id ポーリングは 1 ページで十分（継続は cursor モードで）
+          posts: posts.map(agentPostDto),
+          next_cursor: null,
           has_more: posts.length === limit,
         },
         headers: NO_CACHE,
@@ -108,7 +88,7 @@ export async function GET(req: NextRequest) {
       favoriteAuthors,
       bookmarkedIds,
       viewerEmail: ctx.email,
-      before: (cursor ?? before) || undefined,
+      before: cursor || undefined,
       limit,
       author: authorEmail || undefined,
     });
