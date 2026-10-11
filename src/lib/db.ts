@@ -63,6 +63,13 @@ export async function initSchema() {
         ALTER TABLE posts ADD COLUMN is_whisper BOOLEAN NOT NULL DEFAULT FALSE;
       END IF;
     END $$;
+    -- エージェント由来マーク（"agent"）。書き込み系 agent API / MCP が
+    -- 投稿を UI 上で区別できるようにするための透過性フィールド。
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='via') THEN
+        ALTER TABLE posts ADD COLUMN IF NOT EXISTS via TEXT;
+      END IF;
+    END $$;
     CREATE INDEX IF NOT EXISTS idx_posts_created ON posts(created_at DESC);
     -- Per-author lookups (display-name resolution in notifications / presence /
     -- chat, profile timelines) walked idx_posts_created backwards scanning for

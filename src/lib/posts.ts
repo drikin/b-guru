@@ -79,6 +79,8 @@ export interface NewPostInput {
   sourceDrinewsCommentId?: number | null;
   /** 任意のアンケート（投票）。ルート投稿のみ（返信では無視）。 */
   poll?: { question: string; options: string[]; durationHours: number } | null;
+  /** エージェント由来マーク（"agent"）。DB の posts.via に保存される。 */
+  via?: string | null;
 }
 
 /**
@@ -111,9 +113,9 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
   try {
     await client.query("BEGIN");
     const ins = await client.query(
-      `INSERT INTO posts (author_email, author_name, text, url_preview, parent_id, is_whisper, source_drinews_comment_id, video_url, audio_url)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at`,
-      [input.authorEmail, input.authorName, input.text, null, input.parentId ?? null, !!input.isWhisper, input.sourceDrinewsCommentId ?? null, input.videoUrl ?? null, input.audioUrl ?? null]
+      `INSERT INTO posts (author_email, author_name, text, url_preview, parent_id, is_whisper, source_drinews_comment_id, video_url, audio_url, via)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, created_at`,
+      [input.authorEmail, input.authorName, input.text, null, input.parentId ?? null, !!input.isWhisper, input.sourceDrinewsCommentId ?? null, input.videoUrl ?? null, input.audioUrl ?? null, input.via ?? null]
     );
     postId = ins.rows[0].id;
     createdAt = ins.rows[0].created_at;

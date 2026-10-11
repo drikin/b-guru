@@ -2,7 +2,7 @@
  * cursor ページング（last_activity ベース・既存 before と同型）、limit 上限 100。
  * フィルタ: club / search / since_id / fav / bookmark。author_user_id は
  * 不透明 user_id で指定（内部で email に解決・レスポンスには email を含めない）。 */
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { listPosts, POST_SELECT, mapRow } from "@/lib/posts";
 import { pool } from "@/lib/db";
 import { getHiddenClubs } from "@/lib/club-visibility";
@@ -10,6 +10,7 @@ import { getFavoriteEmails } from "@/lib/favorites";
 import { getBookmarkedPostIds } from "@/lib/bookmarks";
 import { userIdToEmail } from "@/lib/user";
 import { withAgent, sanitizeLikePattern } from "@/lib/agent-auth";
+import { agentCreatePost, asAgentPostDto } from "@/lib/agent-write";
 import { NO_CACHE } from "../_lib";
 
 export const dynamic = "force-dynamic";
@@ -125,6 +126,47 @@ export async function GET(req: NextRequest) {
       },
       headers: {} as Record<string, string>,
     };
+  });
+  return new Response(JSON.stringify(out.body), {
+    status: out.status,
+    headers: { "Content-Type": "application/json", ...NO_CACHE },
+  });
+}
+
+/* POST /api/agent/posts — 新規投稿・返信（スコープ write）。自分名義のみ・
+ * via: "agent" を自動付与。ロジックは src/lib/agent-write.ts が正本で、
+ * MCP ツールと同一の薄い HTTP ビュー。 */
+export async function POST(req: NextRequest) {
+  const out = await withAgent(req, "POST /api/agent/posts", "write", async (ctx) => {
+    let body: { text?: unknown; parent_id?: unknown; club?: unknown };
+    try {
+      body = await req.json();
+    } catch {
+      return {
+        status: 400,
+        body: { error: "JSON ボディが必要です", code: "invalid_request" },
+        headers: {} as Record<string, string>,
+      };
+    }
+    try {
+      const post = await agentCreatePost(ctx, {
+        text: typeof body.text === "string" ? body.text : "",
+        parent_id: typeof body.parent_id === "number" ? body.parent_id : null,
+        club: typeof body.club === "string" ? body.club : null,
+      });
+      return { status: 201, body: { apiVersion: 1, post: asAgentPostDto(post) }, headers: {} };
+    } catch (e) {
+      const err = e as { code?: string; status?: number; message?: string };
+      const status = Number(err?.status) > 0 ? Number(err.status) : 400;
+      return {
+        status,
+        body: {
+          error: String(err?.message ?? "投稿に失敗しました"),
+          code: err?.code ?? "invalid_request",
+        },
+        headers: {},
+      };
+    }
   });
   return new Response(JSON.stringify(out.body), {
     status: out.status,
