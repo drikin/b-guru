@@ -80,15 +80,20 @@ export async function agentCreatePost(
   // ロジックが無いため、ここで parent_id を辿るのが正本）。
   // 返信でない post（parent_id IS NULL）しか親として受理しないので、
   // 存在しない ID は invalid_request（孤児投稿を防ぐ）。
+  // 深さ上限 64 を超えた / 循環している場合も invalid_request（フォール
+  // スルーしてルート投稿を作ると事故になるため）。author_email は club の
+  // 権限判定（下記）で使うので同時に取る。
   let parentId: number | null = null;
+  let rootAuthorEmail: string | null = null;
   if (rawParentId !== null) {
     let cursor: number | null = rawParentId;
     for (let depth = 0; cursor !== null && depth < 64; depth++) {
-      const r: { rows: { parent_id: number | null }[] } = await pool.query(
-        `SELECT parent_id FROM posts WHERE id = $1 LIMIT 1`,
-        [cursor]
-      );
-      const row: { parent_id: number | null } | undefined = r.rows[0];
+      const r: { rows: { parent_id: number | null; author_email: string | null }[] } =
+        await pool.query(`SELECT parent_id, author_email FROM posts WHERE id = $1 LIMIT 1`, [
+          cursor,
+        ]);
+      const row: { parent_id: number | null; author_email: string | null } | undefined =
+        r.rows[0];
       if (!row) {
         const e = new Error(`返信先の投稿が見つかりません: ${rawParentId}`) as Error & {
           code: string;
@@ -100,9 +105,18 @@ export async function agentCreatePost(
       }
       if (row.parent_id === null) {
         parentId = cursor;
+        rootAuthorEmail = row.author_email;
         break;
       }
       cursor = row.parent_id;
+    }
+    if (parentId === null) {
+      const e = new Error(
+        `返信先のスレッドを辿れませんでした（深さ上限超過または循環）: ${rawParentId}`
+      ) as Error & { code: string; status: number };
+      e.code = "invalid_request";
+      e.status = 400;
+      throw e;
     }
   }
 
@@ -118,10 +132,15 @@ export async function agentCreatePost(
   // 部活ラベルの明示指定（任意）。指定があれば必ず検証し、無効キーは
   //   invalid_request を返す（黙って捨てると agent 側で検知できない）。
   // 返信（parent_id あり）でも適用する: 返信の club は親スレッドのルート投稿の
-  //   club を上書きする（= スレッドの部活ラベルの付け替え。返信自体は UI の
+  //   club を上書きする（= スレッドの部活ラベルの付け替え）。返信自体は UI の
   //   タイムラインには出ないため、返信の club を黙って捨てると agent から
   //   見えないバグになった（id 8113/8115/8116/8130 実測）。無指定なら
   //   触らない（自動分類・親スレッドの既存ラベルを壊さない）。
+  // 権限: UI の setPostClub（posts.ts / PATCH /api/posts/[id]/club）と同一の
+  //   「投稿者本人のみ」に合わせる。返信で club を渡してもルート投稿の投稿者
+  //   が自分でなければ黙って無視する（返信自体は成立させる。4xx で返すと
+  //   返信本文が失われる。無効キーのみ invalid_request）。他人が club_manual
+  //   = TRUE で付けたラベルを agent が勝手に付け替えないためのガード。
   const club = typeof input.club === "string" ? input.club.trim() : "";
   if (club && !(await isActiveClubKey(club))) {
     const e = new Error(`無効な部活キーです: ${club}`) as Error & {
@@ -132,12 +151,19 @@ export async function agentCreatePost(
     e.status = 400;
     throw e;
   }
+  let relabeledPostId: number | null = null;
   if (club) {
     const target = parentId ?? post.id;
-    await pool.query(`UPDATE posts SET club = $2, club_manual = TRUE WHERE id = $1`, [
-      target,
-      club,
-    ]);
+    // 返信経路ではルート投稿の投稿者本人（rootAuthorEmail === ctx.email）のとき
+    // のみ UPDATE する → 他人の club_manual = TRUE ラベルは絶対に上書きしない
+    // （UI の setPostClub と同じ権限。本人の投稿なら手動ラベルも付け替え可）。
+    if (parentId === null || rootAuthorEmail === ctx.email) {
+      await pool.query(
+        `UPDATE posts SET club = $2, club_manual = TRUE, classified_at = now() WHERE id = $1`,
+        [target, club]
+      );
+      relabeledPostId = target;
+    }
   }
 
   // 返信なら親投稿者へ通知（/api/publish と同一・自己返信は除外）。
@@ -161,6 +187,16 @@ export async function agentCreatePost(
       }
     } catch {
       /* 通知はベストエフォート */
+    }
+  }
+
+  // club を付け替えたら setPostClub（posts.ts / PATCH /api/posts/[id]/club）と
+  // 同じ club イベントを SSE へ流す（Live クライアントのラベル表示を即時更新）。
+  if (relabeledPostId !== null) {
+    try {
+      emitLive({ type: "club", postId: relabeledPostId, club });
+    } catch {
+      /* ignore */
     }
   }
 

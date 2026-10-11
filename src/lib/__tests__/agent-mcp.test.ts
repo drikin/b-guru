@@ -94,6 +94,7 @@ vi.mock("@/lib/bookmarks", async (orig) => {
 });
 
 import { POST as mcpPOST } from "@/app/mcp/route";
+import { emitLive } from "@/lib/live";
 import { POST as postsPOST, GET as postsGET } from "@/app/api/agent/posts/route";
 import { GET as postGET, PATCH as postPATCH, DELETE as postDELETE } from "@/app/api/agent/posts/[id]/route";
 import { POST as reactionsPOST } from "@/app/api/agent/reactions/route";
@@ -384,9 +385,9 @@ describe("バグ修正: club 引数・parent_id ルート正規化", () => {
       if (s.includes("INSERT INTO rate_limits")) return { rows: [{ count: 1, window_start: new Date() }] };
       if (s.includes("UPDATE agent_tokens SET last_used_at")) return { rowCount: 1 };
       if (s.includes("INSERT INTO posts")) return { rows: [{ id: 9, created_at: new Date() }], rowCount: 1 };
-      if (s.includes("SELECT parent_id FROM posts WHERE id")) {
+      if (s.includes("SELECT parent_id, author_email FROM posts WHERE id")) {
         const pid = params?.[0];
-        return pid === 8115 ? { rows: [{ parent_id: 8108 }] } : { rows: [{ parent_id: null }] };
+        return pid === 8115 ? { rows: [{ parent_id: 8108, author_email: "me@example.com" }] } : { rows: [{ parent_id: null, author_email: "me@example.com" }] };
       }
       return { rows: [], rowCount: 0 };
     });
@@ -438,10 +439,10 @@ describe("バグ修正: club 引数・parent_id ルート正規化", () => {
       if (s.includes("INSERT INTO rate_limits")) return { rows: [{ count: 1, window_start: new Date() }] };
       if (s.includes("UPDATE agent_tokens SET last_used_at")) return { rowCount: 1 };
       if (s.includes("INSERT INTO posts")) return { rows: [{ id: 10, created_at: new Date() }], rowCount: 1 };
-      if (s.includes("SELECT parent_id FROM posts WHERE id")) {
-        // 8115 → parent 8108, 8108 → parent null
+      if (s.includes("SELECT parent_id, author_email FROM posts WHERE id")) {
+        // 8115 → parent 8108, 8108 → parent null（自分の投稿）
         const pid = params?.[0];
-        return pid === 8115 ? { rows: [{ parent_id: 8108 }] } : { rows: [{ parent_id: null }] };
+        return pid === 8115 ? { rows: [{ parent_id: 8108, author_email: "me@example.com" }] } : { rows: [{ parent_id: null, author_email: "me@example.com" }] };
       }
       return { rows: [], rowCount: 0 };
     });
@@ -464,6 +465,92 @@ describe("バグ修正: club 引数・parent_id ルート正規化", () => {
     });
     expect(r.json.result.isError).toBe(true);
     expect(toolResult(r.json).code).toBe("invalid_request");
+  });
+
+  it("他人のルート投稿への返信で club を指定しても UPDATE posts SET club は走らない（cross-user relabel 防止・返信自体は成立）", async () => {
+    await initWrite();
+    const captured: { sql: string; params: unknown[] }[] = [];
+    query.mockImplementation(async (sql: unknown, params: unknown[]) => {
+      const s = String(sql);
+      captured.push({ sql: s, params: params ?? [] });
+      if (s.includes("SELECT id, token_hash")) return { rows: [TOKEN_ROW(["write"])] };
+      if (s.includes("INSERT INTO rate_limits")) return { rows: [{ count: 1, window_start: new Date() }] };
+      if (s.includes("UPDATE agent_tokens SET last_used_at")) return { rowCount: 1 };
+      if (s.includes("INSERT INTO posts")) return { rows: [{ id: 11, created_at: new Date() }], rowCount: 1 };
+      if (s.includes("SELECT parent_id, author_email FROM posts WHERE id")) {
+        // ルート 8108 は他人（author@example.com）の投稿
+        return { rows: [{ parent_id: null, author_email: "author@example.com" }] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const r = await callMcp({
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "post_message", arguments: { text: "他人スレッドへの返信", parent_id: 8108, club: "photo" } },
+    });
+    // 返信自体は invalid_request にしない（club だけ黙って無視）
+    expect(r.json.result.isError).toBeUndefined();
+    expect(captured.some((c) => c.sql.includes("UPDATE posts SET club"))).toBe(false);
+    expect(captured.some((c) => c.sql.includes("INSERT INTO posts"))).toBe(true);
+  });
+
+  it("parent チェーンが 64 深さで尽きる（循環含む）と invalid_request・INSERT は走らない", async () => {
+    await initWrite();
+    const captured: string[] = [];
+    query.mockImplementation(async (sql: unknown) => {
+      const s = String(sql);
+      captured.push(s);
+      if (s.includes("SELECT id, token_hash")) return { rows: [TOKEN_ROW(["write"])] };
+      if (s.includes("INSERT INTO rate_limits")) return { rows: [{ count: 1, window_start: new Date() }] };
+      if (s.includes("UPDATE agent_tokens SET last_used_at")) return { rowCount: 1 };
+      // 循環: どの ID も parent_id を持つ → 64 ステップで打ち切り
+      if (s.includes("SELECT parent_id, author_email FROM posts WHERE id")) {
+        return { rows: [{ parent_id: 999999, author_email: "me@example.com" }] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const r = await callMcp({
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "post_message", arguments: { text: "x", parent_id: 700 } },
+    });
+    expect(r.json.result.isError).toBe(true);
+    expect(toolResult(r.json).code).toBe("invalid_request");
+    expect(captured.some((s) => s.includes("INSERT INTO posts"))).toBe(false);
+  });
+
+  it("返信への返信（parent_id=8115・返信）に club を指定すると UPDATE posts SET club はルート投稿 8108 を対象にする（実事故 8115→8108）", async () => {
+    await initWrite();
+    const captured: { sql: string; params: unknown[] }[] = [];
+    query.mockImplementation(async (sql: unknown, params: unknown[]) => {
+      const s = String(sql);
+      captured.push({ sql: s, params: params ?? [] });
+      if (s.includes("SELECT id, token_hash")) return { rows: [TOKEN_ROW(["write"])] };
+      if (s.includes("INSERT INTO rate_limits")) return { rows: [{ count: 1, window_start: new Date() }] };
+      if (s.includes("UPDATE agent_tokens SET last_used_at")) return { rowCount: 1 };
+      if (s.includes("INSERT INTO posts")) return { rows: [{ id: 12, created_at: new Date() }], rowCount: 1 };
+      if (s.includes("SELECT parent_id, author_email FROM posts WHERE id")) {
+        // 8115 は 8108 への返信・ルート 8108 は自分の投稿
+        const pid = params?.[0];
+        return pid === 8115
+          ? { rows: [{ parent_id: 8108, author_email: "me@example.com" }] }
+          : { rows: [{ parent_id: null, author_email: "me@example.com" }] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const r = await callMcp({
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "post_message", arguments: { text: "返信への返信", parent_id: 8115, club: "photo" } },
+    });
+    expect(r.json.result.isError).toBeUndefined();
+    const upd = captured.find((c) => c.sql.includes("UPDATE posts SET club"));
+    expect(upd).toBeDefined();
+    // UPDATE の対象は返信 8115 ではなくルート投稿 8108
+    expect(upd!.params[0]).toBe(8108);
+    expect(upd!.params[1]).toBe("photo");
+    // INSERT の parent_id もルートに正規化されている
+    const ins = captured.find((c) => c.sql.includes("INSERT INTO posts"));
+    expect(ins!.params[4]).toBe(8108);
+    // setPostClub と同一 shape の club イベントが SSE へ流れる
+    expect(emitLive).toHaveBeenCalledWith({ type: "club", postId: 8108, club: "photo" });
   });
 });
 

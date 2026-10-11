@@ -314,7 +314,7 @@ function buildServer(ctx: AgentContext) {
       inputSchema: {
         text: z.string().min(1).max(5000).describe("投稿本文（最大5000文字）"),
         parent_id: z.number().int().positive().optional().describe("返信先の投稿 ID（ルート投稿でも返信でも渡してよい・内部でスレッドのルート投稿に正規化される）"),
-        club: z.string().optional().describe("部活キー（ルート投稿のみ）"),
+        club: z.string().optional().describe("部活キー（ルート投稿でも返信でも渡してよい。返信の場合は親スレッドのルート投稿のラベルに反映される・ルート投稿の投稿者が自分でない場合は無視される）"),
       },
     },
     async (args) => {
