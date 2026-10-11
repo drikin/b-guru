@@ -451,5 +451,19 @@ export async function initSchema() {
       CHECK (viewer_email <> author_email)
     );
     CREATE INDEX IF NOT EXISTS idx_user_favorite_authors_viewer ON user_favorite_authors(viewer_email);
+
+    -- ブックマーク（viewer が気になった投稿を保存）。Instagram の「保存」と同じ
+    --   概念: 投稿単位・viewer 個人の状態で他ユーザーには影響しない（SSE 対象外）。
+    --   ☆お気に入り（人を追跡）と 🔖ブックマーク（投稿を保存）は別概念。
+    --   post_id に FK ON DELETE CASCADE を張る — 投稿の物理削除（posts.ts deletePost）
+    --   でブックマーク行も自動消滅し、bm=1 一覧に壊れた投稿が現れない。
+    --   bookmark_count は表示しない（Instagram 同様、他人の保存数は見せない）。
+    CREATE TABLE IF NOT EXISTS user_post_bookmarks (
+      viewer_email TEXT NOT NULL,
+      post_id      BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (viewer_email, post_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_post_bookmarks_viewer ON user_post_bookmarks(viewer_email, created_at DESC);
   `);
 }

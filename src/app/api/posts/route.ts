@@ -5,6 +5,7 @@ import { getReadIdsForPosts } from "@/lib/read-state-server";
 import { findMemberByEmail } from "@/lib/ghost";
 import { getSessionEmail } from "@/lib/session";
 import { getFavoriteEmails } from "@/lib/favorites";
+import { getBookmarkedPostIds } from "@/lib/bookmarks";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +40,9 @@ export async function GET(req: NextRequest) {
   //   The favorite set is resolved SERVER-side (like hiddenSet) — the client
   //   never sends the list (a spoofable parameter would desync devices).
   const fav = req.nextUrl.searchParams.get("fav") === "1";
+  // ブックマークタイムライン (bm=1): viewer が保存した投稿だけ。
+  //   保存済み id セットはサーバー側で解決（クライアントは送らない — spoof 防止）。
+  const bm = req.nextUrl.searchParams.get("bm") === "1";
   try {
     if (hot) {
       // Hot topics: top N most-commented root posts in the last 7 days.
@@ -53,6 +57,7 @@ export async function GET(req: NextRequest) {
     const hiddenSet = !club ? await getHiddenClubs(email) : new Set<string>();
     // お気に入り: viewer's favorited author emails (server-side resolved).
     const favoriteAuthors = fav ? Array.from(await getFavoriteEmails(email)) : undefined;
+    const bookmarkedIds = bm ? await getBookmarkedPostIds(email) : undefined;
     const posts = await listPosts({
       pinnedOnly: pinned || undefined,
       filter: filter ?? undefined,
@@ -60,6 +65,7 @@ export async function GET(req: NextRequest) {
       club: club ?? undefined,
       excludeClubs: Array.from(hiddenSet),
       favoriteAuthors,
+      bookmarkedIds,
       viewerEmail: email,
       before,
       limit,

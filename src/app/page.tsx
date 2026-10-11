@@ -1406,6 +1406,7 @@ function PostCard({
   onSetClub,
   onOpenClub,
   onToggleFavorite,
+  onToggleBookmark,
   reactionBar,
 }: {
   post: FeedPost;
@@ -1431,6 +1432,8 @@ function PostCard({
   onOpenClub?: (club: string) => void;
   /** お気に入りトグル（投稿者単位）。未ログイン/自分の投稿では渡さない。 */
   onToggleFavorite?: (post: FeedPost) => void;
+  /** ブックマークトグル（投稿単位）。未ログインでは渡さない。自分の投稿にも使える。 */
+  onToggleBookmark?: (post: FeedPost) => void;
   /** Reaction row, injected by the parent so the card stays presentational and
    *  the reaction state lives in one place (the feed), not per card. */
   reactionBar?: React.ReactNode;
@@ -1519,6 +1522,24 @@ function PostCard({
         wrap="nowrap"
         style={{ position: "absolute", top: 6, right: 6, zIndex: 2 }}
       >
+        {onToggleBookmark && (
+          <ActionIcon
+            variant={post.bookmarkedByMe ? "light" : "subtle"}
+            color={post.bookmarkedByMe ? "blue" : "gray"}
+            size="sm"
+            aria-label={post.bookmarkedByMe ? "ブックマークから外す" : "ブックマークに保存"}
+            data-cx="bm-toggle"
+            data-bm-post={post.id}
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              onToggleBookmark(post);
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill={post.bookmarkedByMe ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+            </svg>
+          </ActionIcon>
+        )}
         {onToggleFavorite && !post.isAuthor && (
           <ActionIcon
             variant={post.favoriteByMe ? "light" : "subtle"}
@@ -3356,6 +3377,7 @@ function TimelineFeed({
   onSetClub,
   onOpenClub,
   onToggleFavorite,
+  onToggleBookmark,
   skipFirstDate,
 }: {
   groups: FeedGroup[];
@@ -3409,6 +3431,7 @@ function TimelineFeed({
   onSetClub?: (post: FeedPost, club: string | null) => void;
   onOpenClub?: (club: string) => void;
   onToggleFavorite?: (post: FeedPost) => void;
+  onToggleBookmark?: (post: FeedPost) => void;
   skipFirstDate?: boolean;
   renderReactionBar?: (postId: number, compact?: boolean) => React.ReactNode;
 }) {
@@ -3493,6 +3516,7 @@ function TimelineFeed({
               onSetClub={onSetClub}
               onOpenClub={onOpenClub}
               onToggleFavorite={onToggleFavorite}
+              onToggleBookmark={onToggleBookmark}
             />
             {/* Interleaved comments = replies to this card, rendered right after
              * it so the position (between which cards) is preserved.
@@ -4925,6 +4949,11 @@ export default function Home() {
       .then((r) => (r.ok ? r.json() : { userIds: [] }))
       .then((d) => setFavoriteIdsBoth(new Set(d.userIds ?? [])))
       .catch(() => {});
+    // ブックマーク一覧（viewer 個人状態）。
+    earlyOrFetch("/api/bookmarks", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { postIds: [] }))
+      .then((d) => setBookmarkIdsBoth(new Set((d.postIds ?? []).map(Number))))
+      .catch(() => {});
     // Deep-link from the drinews email CTA: /?drinews=<id>
     const params = new URLSearchParams(window.location.search);
     const deepId = Number(params.get("drinews"));
@@ -5159,6 +5188,21 @@ export default function Home() {
   const favUndoRef = useRef<(() => void) | null>(null);
   // 現在表示中のお気に入りトースト id（単一化のため）。
   const favToastIdRef = useRef<string | null>(null);
+  // ---- ブックマーク (🔖 Instagram-style saved posts) ----
+  //   viewer 個人の状態。Set<postId>。☆お気に入り（人追跡）とは別概念。
+  const [bookmarkIds, setBookmarkIds] = useState<Set<number>>(new Set());
+  const bookmarkIdsRef = useRef<Set<number>>(new Set());
+  const setBookmarkIdsBoth = useCallback((next: Set<number>) => {
+    bookmarkIdsRef.current = next;
+    setBookmarkIds(next);
+  }, []);
+  // ブックマークタブ表示中かどうか（favView と同列のフィルタ変種）。
+  const [bmView, setBmView] = useState(false);
+  const bmViewRef = useRef(false);
+  bmViewRef.current = bmView;
+  const bmUndoRef = useRef<(() => void) | null>(null);
+  const bmToastIdRef = useRef<string | null>(null);
+  const bmInFlightRef = useRef<Set<number>>(new Set());
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatUnread, setChatUnread] = useState(0);
   // True while the first chat fetch of a given open is in flight. Without this
@@ -5309,6 +5353,10 @@ export default function Home() {
     if (favViewRef.current) {
       favViewRef.current = false;
       setFavView(false);
+    }
+    if (bmViewRef.current) {
+      bmViewRef.current = false;
+      setBmView(false);
     }
   }, []);
 
@@ -5927,7 +5975,8 @@ export default function Home() {
     const s = search?.trim();
     const c = clubFilterRef.current;
     const fv = favViewRef.current;
-    const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}${c ? `&club=${encodeURIComponent(c)}` : ""}${fv ? "&fav=1" : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
+    const bv = bmViewRef.current;
+    const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}${c ? `&club=${encodeURIComponent(c)}` : ""}${fv ? "&fav=1" : ""}${bv ? "&bm=1" : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
     return earlyOrFetch(`/api/posts${q}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
@@ -5975,9 +6024,10 @@ export default function Home() {
     const s = searchQueryRef.current.trim();
     const c = clubFilterRef.current;
     const fv = favViewRef.current;
+    const bv = bmViewRef.current;
     const q = `?limit=${FEED_PAGE}&before=${encodeURIComponent(feedCursorRef.current)}${
       filter ? `&filter=${filter}` : ""
-    }${c ? `&club=${encodeURIComponent(c)}` : ""}${fv ? "&fav=1" : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
+    }${c ? `&club=${encodeURIComponent(c)}` : ""}${fv ? "&fav=1" : ""}${bv ? "&bm=1" : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
     fetch(`/api/posts${q}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
@@ -6159,7 +6209,8 @@ export default function Home() {
       //   付けないと SSE 更新のたびにお気に入り外の投稿が混入する（stale closure 防止のため ref 経由）。
       const fv = favViewRef.current;
       const c = clubFilterRef.current;
-      const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}${c ? `&club=${encodeURIComponent(c)}` : ""}${fv ? "&fav=1" : ""}`;
+      const bv = bmViewRef.current;
+      const q = `?limit=${FEED_PAGE}${filter ? `&filter=${filter}` : ""}${c ? `&club=${encodeURIComponent(c)}` : ""}${fv ? "&fav=1" : ""}${bv ? "&bm=1" : ""}`;
       fetch(`/api/posts${q}`, { signal: ac.signal, cache: "no-store" })
         .then((r) => r.json())
         .then((d) => {
@@ -7941,6 +7992,114 @@ export default function Home() {
 
   // ---- お気に入りタブ切替: SegmentedControl の onChange が直接 favView を
   //   切り替えるので、別の切り替え関数は不要（重複実装の排除）。 ----
+
+  // ---- ブックマークトグル（投稿単位・楽観更新 + Undo トースト） ----
+  //   お気に入り toggleFavoriteFor と同型。post 単位なので authorId の代わりに
+  //   postId を使い、bmView 中の解除ではそのカードを即フィードから外す。
+  const toggleBookmarkFor = useCallback((post: FeedPost) => {
+    const postId = post.id;
+    if (!auth) return;
+    if (bmInFlightRef.current.has(postId)) return;
+    const wasBm = bookmarkIdsRef.current.has(postId);
+    bmInFlightRef.current.add(postId);
+    const flip = (p: any) => {
+      if (p.id === postId) return { ...p, bookmarkedByMe: !wasBm };
+      if (p.replies?.length) return { ...p, replies: p.replies.map(flip) };
+      return p;
+    };
+    if (bmViewRef.current && wasBm) {
+      // 解除 → ブックマークタブからは消す
+      const drop = (list: any[]) => {
+        const out: any[] = [];
+        for (const p of list) {
+          if (p.id === postId) continue;
+          if (p.replies?.length) out.push({ ...p, replies: p.replies.filter((r: any) => r.id !== postId) });
+          else out.push(p);
+        }
+        return out;
+      };
+      setFeedPosts((prev) => drop(prev));
+      setThreadReplies((prev) => prev.filter((r: any) => r.id !== postId));
+    } else {
+      setFeedPosts((prev) => prev.map(flip));
+      setThreadPost((prev) => (prev ? flip(prev) : prev));
+      setThreadReplies((prev) => prev.map(flip));
+    }
+    const nextSet = new Set(bookmarkIdsRef.current);
+    if (wasBm) nextSet.delete(postId);
+    else nextSet.add(postId);
+    setBookmarkIdsBoth(nextSet);
+    bmUndoRef.current = () => {
+      const target = wasBm ? false : true;
+      const revertSet = new Set(bookmarkIdsRef.current);
+      if (target) revertSet.add(postId);
+      else revertSet.delete(postId);
+      setBookmarkIdsBoth(revertSet);
+      const revert = (p: any) => {
+        if (p.id === postId) return { ...p, bookmarkedByMe: target };
+        if (p.replies?.length) return { ...p, replies: p.replies.map(revert) };
+        return p;
+      };
+      setFeedPosts((prev) => prev.map(revert));
+      setThreadPost((prev) => (prev ? revert(prev) : prev));
+      setThreadReplies((prev) => prev.map(revert));
+      bmUndoRef.current = null;
+    };
+    fetch("/api/bookmarks", {
+      method: wasBm ? "DELETE" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ postId }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error || typeof d.bookmarked !== "boolean") {
+          bmUndoRef.current?.();
+          return;
+        }
+        const sync = (p: any) => {
+          if (p.id === postId) return { ...p, bookmarkedByMe: d.bookmarked };
+          if (p.replies?.length) return { ...p, replies: p.replies.map(sync) };
+          return p;
+        };
+        setFeedPosts((prev) => prev.map(sync));
+        setThreadPost((prev) => (prev ? sync(prev) : prev));
+        setThreadReplies((prev) => prev.map(sync));
+        const syncedSet = new Set(bookmarkIdsRef.current);
+        if (d.bookmarked) syncedSet.add(postId);
+        else syncedSet.delete(postId);
+        setBookmarkIdsBoth(syncedSet);
+        bmUndoRef.current = null;
+      })
+      .catch(() => {
+        bmUndoRef.current?.();
+      })
+      .finally(() => {
+        bmInFlightRef.current.delete(postId);
+      });
+    // トースト（タップで取り消し・5秒・単一化）。お気に入りと同型。
+    if (bmToastIdRef.current) {
+      try { mantineNotifications.hide(bmToastIdRef.current); } catch { /* gone */ }
+    }
+    const toastId = `bm-${postId}-${Date.now()}`;
+    bmToastIdRef.current = toastId;
+    mantineNotifications.show({
+      id: toastId,
+      message: wasBm ? "ブックマークから外しました（タップで取り消し）" : "ブックマークに保存しました（タップで取り消し）",
+      color: wasBm ? "gray" : "blue",
+      autoClose: 5000,
+      withCloseButton: true,
+      onClick: () => {
+        if (bmUndoRef.current) bmUndoRef.current();
+        if (bmToastIdRef.current) {
+          try { mantineNotifications.hide(bmToastIdRef.current); } catch { /* gone */ }
+          bmToastIdRef.current = null;
+        }
+      },
+      onClose: () => {
+        if (bmToastIdRef.current === toastId) bmToastIdRef.current = null;
+      },
+    });
+  }, [auth]);
 
   // ---- Reactions (posts) -------------------------------------------------
   // The ids are derived from what is on screen so the batched fetch only asks
@@ -9875,7 +10034,7 @@ export default function Home() {
               value={searchQuery}
               onCommit={(q) => setSearchQuery(q)}
               onClear={() => setSearchQuery("")}
-              placeholder={favView ? "お気に入りから検索" : "タイムラインを検索"}
+              placeholder={favView ? "お気に入りから検索" : bmView ? "ブックマークから検索" : "タイムラインを検索"}
             />
             {searchActive && (
               <Text size="xs" c="green" mt={6}>
@@ -10572,17 +10731,20 @@ export default function Home() {
                   <SegmentedControl
                     size="sm"
                     fullWidth={false}
-                    value={chatView ? "chat" : favView ? "fav" : "timeline"}
+                    value={chatView ? "chat" : bmView ? "bm" : favView ? "fav" : "timeline"}
                     onChange={(v) => {
                       const toChat = v === "chat";
-                      const toFav = v === "fav";
                       chatViewRef.current = toChat;
                       setChatView(toChat);
-                      if (toChat) { loadChat(true); favViewRef.current = false; setFavView(false); setChatMention(null); return; }
+                      if (toChat) { loadChat(true); favViewRef.current = false; setFavView(false); bmViewRef.current = false; setBmView(false); setChatMention(null); return; }
                       setChatMention(null);
-                      if (toFav !== favViewRef.current) {
+                      const toFav = v === "fav";
+                      const toBm = v === "bm";
+                      if (toFav !== favViewRef.current || toBm !== bmViewRef.current) {
                         favViewRef.current = toFav;
                         setFavView(toFav);
+                        bmViewRef.current = toBm;
+                        setBmView(toBm);
                         loadFeed();
                       }
                     }}
@@ -10590,16 +10752,33 @@ export default function Home() {
                       { label: "タイムライン", value: "timeline" },
                       {
                         label: (
-                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                            お気に入り
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }} title="お気に入り">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="お気に入り">
+                              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                            </svg>
                             {favoriteIds.size > 0 && (
                               <span style={{ opacity: 0.6, fontSize: 11, fontWeight: 500 }}>
-                                {favoriteIds.size}人
+                                {favoriteIds.size}
                               </span>
                             )}
                           </span>
                         ),
                         value: "fav",
+                      },
+                      {
+                        label: (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }} title="ブックマーク">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="ブックマーク">
+                              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+                            </svg>
+                            {bookmarkIds.size > 0 && (
+                              <span style={{ opacity: 0.6, fontSize: 11, fontWeight: 500 }}>
+                                {bookmarkIds.size}
+                              </span>
+                            )}
+                          </span>
+                        ),
+                        value: "bm",
                       },
                       {
                         label: (
@@ -11150,6 +11329,29 @@ export default function Home() {
                       タイムラインへ
                     </Button>
                   </Stack>
+                ) : bmView ? (
+                  /* ブックマークタブの空状態 */
+                  <Stack gap="sm" align="center" py="xl">
+                    <Text c="dimmed" size="sm">
+                      ブックマークはまだありません。
+                    </Text>
+                    <Text c="dimmed" size="xs">
+                      気になった投稿の右上の 🔖 をタップすると保存でき、
+                      あとでここから見返せます。
+                    </Text>
+                    <Button
+                      variant="light"
+                      color="blue"
+                      size="xs"
+                      onClick={() => {
+                        bmViewRef.current = false;
+                        setBmView(false);
+                        loadFeed();
+                      }}
+                    >
+                      タイムラインへ
+                    </Button>
+                  </Stack>
                 ) : (
                 <Text c="dimmed">
                   {searchActive
@@ -11205,6 +11407,7 @@ export default function Home() {
                           onSetClub={handleSetClub}
                           onOpenClub={selectClub}
                           onToggleFavorite={auth ? toggleFavoriteFor : undefined}
+                          onToggleBookmark={auth ? toggleBookmarkFor : undefined}
                         />
                       )}
 
@@ -11229,6 +11432,7 @@ export default function Home() {
                           onPreview={openPreview}
                           onOpenProfile={openProfile}
                           onToggleFavorite={auth ? toggleFavoriteFor : undefined}
+                          onToggleBookmark={auth ? toggleBookmarkFor : undefined}
                         />
                         </Box>
                       ))}
@@ -11487,6 +11691,7 @@ export default function Home() {
                   onPreview={openPreview}
                   onOpenProfile={openProfile}
                   onToggleFavorite={auth ? toggleFavoriteFor : undefined}
+                  onToggleBookmark={auth ? toggleBookmarkFor : undefined}
                   onVotePoll={handleVotePoll}
                   onEditPoll={handleEditPoll}
                   onSetClub={handleSetClub}

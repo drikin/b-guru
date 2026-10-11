@@ -43,6 +43,9 @@ export interface FeedPost {
   /** True when the VIEWER has this post's author in their favorites
    *  (お気に入り). Viewer-personal state — never broadcast via SSE. */
   favoriteByMe?: boolean;
+  /** True when the VIEWER has bookmarked this post (ブックマーク).
+   *  Viewer-personal state — never broadcast via SSE. */
+  bookmarkedByMe?: boolean;
   createdAt: string;
   /** 投稿に付いたアンケート（投票）。返信には常に null。 */
   poll?: PostPoll | null;
