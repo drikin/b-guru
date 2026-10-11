@@ -374,6 +374,99 @@ describe("/mcp スコープ強制", () => {
   });
 });
 
+describe("バグ修正: club 引数・parent_id ルート正規化", () => {
+  function writeQuery() {
+    const captured: { sql: string; params: unknown[] }[] = [];
+    query.mockImplementation(async (sql: unknown, params: unknown[]) => {
+      const s = String(sql);
+      captured.push({ sql: s, params: params ?? [] });
+      if (s.includes("SELECT id, token_hash")) return { rows: [TOKEN_ROW(["write"])] };
+      if (s.includes("INSERT INTO rate_limits")) return { rows: [{ count: 1, window_start: new Date() }] };
+      if (s.includes("UPDATE agent_tokens SET last_used_at")) return { rowCount: 1 };
+      if (s.includes("INSERT INTO posts")) return { rows: [{ id: 9, created_at: new Date() }], rowCount: 1 };
+      if (s.includes("SELECT parent_id FROM posts WHERE id")) {
+        const pid = params?.[0];
+        return pid === 8115 ? { rows: [{ parent_id: 8108 }] } : { rows: [{ parent_id: null }] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    return captured;
+  }
+
+  async function initWrite() {
+    seedValidToken(["write"]);
+    await callMcp({
+      jsonrpc: "2.0", id: 1, method: "initialize",
+      params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "t", version: "0" } },
+    });
+  }
+
+  it("返信（parent_id あり）でも club を指定すると posts.club へ反映される（club 無視バグ）", async () => {
+    await initWrite();
+    const captured = writeQuery();
+    const r = await callMcp({
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "post_message", arguments: { text: "返信だよ", parent_id: 8108, club: "photo" } },
+    });
+    expect(r.json.result.isError).toBeUndefined();
+    const upd = captured.find((c) => c.sql.includes("UPDATE posts SET club"));
+    expect(upd).toBeDefined();
+    expect(upd!.params).toContain("photo");
+    // 返信の club は親スレッドのルート投稿（ここでは parent_id=8108）へ反映される
+    expect(upd!.params).toContain(8108);
+  });
+
+  it("無効な club キーは返信でも invalid_request（黙って捨てない）", async () => {
+    writeQuery();
+    await initWrite();
+    const r = await callMcp({
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "post_message", arguments: { text: "x", parent_id: 8108, club: "not-a-club" } },
+    });
+    expect(r.json.result.isError).toBe(true);
+    expect(toolResult(r.json).code).toBe("invalid_request");
+  });
+
+  it("parent_id が返信を指すとき、INSERT の parent_id はルート投稿に正規化される（孫化バグ）", async () => {
+    const captured = writeQuery();
+    await initWrite();
+    // 8115 は 8108 への返信。8115 を parent_id に渡す → ルート 8108 に正規化されるべき
+    query.mockImplementation(async (sql: unknown, params: unknown[]) => {
+      const s = String(sql);
+      captured.push({ sql: s, params: params ?? [] });
+      if (s.includes("SELECT id, token_hash")) return { rows: [TOKEN_ROW(["write"])] };
+      if (s.includes("INSERT INTO rate_limits")) return { rows: [{ count: 1, window_start: new Date() }] };
+      if (s.includes("UPDATE agent_tokens SET last_used_at")) return { rowCount: 1 };
+      if (s.includes("INSERT INTO posts")) return { rows: [{ id: 10, created_at: new Date() }], rowCount: 1 };
+      if (s.includes("SELECT parent_id FROM posts WHERE id")) {
+        // 8115 → parent 8108, 8108 → parent null
+        const pid = params?.[0];
+        return pid === 8115 ? { rows: [{ parent_id: 8108 }] } : { rows: [{ parent_id: null }] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    const r = await callMcp({
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "post_message", arguments: { text: "返信への返信", parent_id: 8115 } },
+    });
+    expect(r.json.result.isError).toBeUndefined();
+    const ins = captured.find((c) => c.sql.includes("INSERT INTO posts"));
+    expect(ins).toBeDefined();
+    expect(ins!.params[4]).toBe(8108); // parent_id プレースホルダは正規化済みルート
+  });
+
+  it("存在しない parent_id は invalid_request（孤児投稿を作らない）", async () => {
+    writeQuery();
+    await initWrite();
+    const r = await callMcp({
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "post_message", arguments: { text: "x", parent_id: 999999 } },
+    });
+    expect(r.json.result.isError).toBe(true);
+    expect(toolResult(r.json).code).toBe("invalid_request");
+  });
+});
+
 describe("書き込み系 /api/agent/* ルート", () => {
   it("POST /api/agent/posts — write スコープで 201・via 列を含む INSERT", async () => {
     seedValidToken(["write"]);

@@ -57,7 +57,14 @@ function errorBody(e: unknown): { error: string; code: string; hint?: string } {
     if (b.code === "membership_ended") b.hint = MEMBERSHIP_HINT;
     return b;
   }
-  // AgentAuthError 以外は詳細を返さない（内部メッセージ/SQL エラーの漏洩防止）。
+  // agent-write が投げる {code, status} 付きエラー（invalid_request 等）は
+  // REST /api/agent/* と同じ契約で透過する（メッセージは lib 側で
+  // ユーザー向け文言にしてあるため安全）。それ以外は詳細を返さない。
+  const err = e as { code?: unknown; status?: unknown; message?: unknown };
+  if (typeof err?.code === "string" && Number(err?.status) > 0) {
+    return { error: String(err?.message ?? "リクエストが不正です"), code: err.code };
+  }
+  // 内部エラー（pg ドライバ等）の message は流出させない（REST と同一の規約）。
   return { error: "サーバーエラー", code: "server_error" };
 }
 
@@ -303,10 +310,10 @@ function buildServer(ctx: AgentContext) {
     {
       title: "投稿・返信",
       description:
-        "自分名義で新規投稿する。parent_id を付けると返信になる。club は部活キー（get_clubs で取得・ルート投稿のみ）。投稿には via: agent のマークが付く",
+        "自分名義で新規投稿する。parent_id を付けると返信になる（ルート投稿でも返信でも渡してよい・内部でルートに正規化）。club は部活キー（get_clubs で取得・ルート投稿のラベルに反映）。投稿には via: agent のマークが付く",
       inputSchema: {
         text: z.string().min(1).max(5000).describe("投稿本文（最大5000文字）"),
-        parent_id: z.number().int().positive().optional().describe("返信先の投稿 ID"),
+        parent_id: z.number().int().positive().optional().describe("返信先の投稿 ID（ルート投稿でも返信でも渡してよい・内部でスレッドのルート投稿に正規化される）"),
         club: z.string().optional().describe("部活キー（ルート投稿のみ）"),
       },
     },

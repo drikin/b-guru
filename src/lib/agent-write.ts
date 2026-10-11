@@ -69,10 +69,43 @@ export async function agentCreatePost(
     e.status = 400;
     throw e;
   }
-  const parentId =
+  const rawParentId =
     Number.isInteger(input.parent_id) && (input.parent_id as number) > 0
       ? (input.parent_id as number)
       : null;
+
+  // parent_id はルート投稿でも返信でも渡してよい。返信を指すときはそのルート
+  // 投稿に正規化する（UI は常に 1 階層フラットのため、返信の返信= 孫は
+  // スレッド一覧に現れず孤児になる。posts.ts / feed.ts に共有の root 解決
+  // ロジックが無いため、ここで parent_id を辿るのが正本）。
+  // 返信でない post（parent_id IS NULL）しか親として受理しないので、
+  // 存在しない ID は invalid_request（孤児投稿を防ぐ）。
+  let parentId: number | null = null;
+  if (rawParentId !== null) {
+    let cursor: number | null = rawParentId;
+    for (let depth = 0; cursor !== null && depth < 64; depth++) {
+      const r: { rows: { parent_id: number | null }[] } = await pool.query(
+        `SELECT parent_id FROM posts WHERE id = $1 LIMIT 1`,
+        [cursor]
+      );
+      const row: { parent_id: number | null } | undefined = r.rows[0];
+      if (!row) {
+        const e = new Error(`返信先の投稿が見つかりません: ${rawParentId}`) as Error & {
+          code: string;
+          status: number;
+        };
+        e.code = "invalid_request";
+        e.status = 400;
+        throw e;
+      }
+      if (row.parent_id === null) {
+        parentId = cursor;
+        break;
+      }
+      cursor = row.parent_id;
+    }
+  }
+
   const authorName = await resolveAuthorName(ctx.email);
   const post = await createPost({
     authorEmail: ctx.email,
@@ -84,8 +117,13 @@ export async function agentCreatePost(
 
   // 部活ラベルの明示指定（任意）。指定があれば必ず検証し、無効キーは
   //   invalid_request を返す（黙って捨てると agent 側で検知できない）。
+  // 返信（parent_id あり）でも適用する: 返信の club は親スレッドのルート投稿の
+  //   club を上書きする（= スレッドの部活ラベルの付け替え。返信自体は UI の
+  //   タイムラインには出ないため、返信の club を黙って捨てると agent から
+  //   見えないバグになった（id 8113/8115/8116/8130 実測）。無指定なら
+  //   触らない（自動分類・親スレッドの既存ラベルを壊さない）。
   const club = typeof input.club === "string" ? input.club.trim() : "";
-  if (club && !parentId && !(await isActiveClubKey(club))) {
+  if (club && !(await isActiveClubKey(club))) {
     const e = new Error(`無効な部活キーです: ${club}`) as Error & {
       code: string;
       status: number;
@@ -94,9 +132,10 @@ export async function agentCreatePost(
     e.status = 400;
     throw e;
   }
-  if (club && !parentId) {
+  if (club) {
+    const target = parentId ?? post.id;
     await pool.query(`UPDATE posts SET club = $2, club_manual = TRUE WHERE id = $1`, [
-      post.id,
+      target,
       club,
     ]);
   }
