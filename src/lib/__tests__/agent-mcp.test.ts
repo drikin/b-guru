@@ -95,6 +95,7 @@ vi.mock("@/lib/bookmarks", async (orig) => {
 
 import { POST as mcpPOST } from "@/app/mcp/route";
 import { POST as postsPOST, GET as postsGET } from "@/app/api/agent/posts/route";
+import { GET as postGET, PATCH as postPATCH, DELETE as postDELETE } from "@/app/api/agent/posts/[id]/route";
 import { POST as reactionsPOST } from "@/app/api/agent/reactions/route";
 import { POST as readPOST } from "@/app/api/agent/read/route";
 import { POST as bookmarksPOST } from "@/app/api/agent/bookmarks/route";
@@ -286,6 +287,91 @@ describe("/mcp スコープ強制", () => {
     const d = toolResult(r.json);
     expect(d.code).toBe("forbidden");
   });
+
+  it("edit_post / delete_post が tools/list に含まれる", async () => {
+    seedValidToken(["write"]);
+    await callMcp({
+      jsonrpc: "2.0", id: 1, method: "initialize",
+      params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "t", version: "0" } },
+    });
+    const list = await callMcp({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+    expect(list.json.result.tools.map((t: { name: string }) => t.name)).toContain("edit_post");
+    expect(list.json.result.tools.map((t: { name: string }) => t.name)).toContain("delete_post");
+  });
+
+  it("edit_post — write スコープで UPDATE posts SET text が走る", async () => {
+    seedValidToken(["write"]);
+    const captured: { sql: string; params: unknown[] }[] = [];
+    query.mockImplementation(async (sql: unknown, params: unknown[]) => {
+      const s = String(sql);
+      captured.push({ sql: s, params: params ?? [] });
+      if (s.includes("SELECT id, token_hash")) return { rows: [TOKEN_ROW(["write"])] };
+      if (s.includes("INSERT INTO rate_limits")) return { rows: [{ count: 1, window_start: new Date() }] };
+      if (s.includes("UPDATE agent_tokens SET last_used_at")) return { rowCount: 1 };
+      // getPostAuthor / source_ghost_id
+      if (s.includes("SELECT author_email FROM posts WHERE id = $1")) return { rows: [{ author_email: "me@example.com" }] };
+      if (s.includes("SELECT source_ghost_id")) return { rows: [] };
+      return { rows: [], rowCount: 0 };
+    });
+    await callMcp({
+      jsonrpc: "2.0", id: 1, method: "initialize",
+      params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "t", version: "0" } },
+    });
+    const r = await callMcp({
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "edit_post", arguments: { post_id: 5, text: "edited text" } },
+    });
+    expect(r.json.result.isError).toBeUndefined();
+    const d = toolResult(r.json);
+    expect(d.updated).toBe(true);
+    const upd = captured.find((c) => c.sql.includes("UPDATE posts SET text"));
+    expect(upd).toBeDefined();
+    expect(upd!.params).toContain("edited text");
+  });
+
+  it("delete_post — write スコープで DELETE FROM posts が走る", async () => {
+    seedValidToken(["write"]);
+    const captured: string[] = [];
+    query.mockImplementation(async (sql: unknown) => {
+      const s = String(sql);
+      captured.push(s);
+      if (s.includes("SELECT id, token_hash")) return { rows: [TOKEN_ROW(["write"])] };
+      if (s.includes("INSERT INTO rate_limits")) return { rows: [{ count: 1, window_start: new Date() }] };
+      if (s.includes("UPDATE agent_tokens SET last_used_at")) return { rowCount: 1 };
+      if (s.includes("SELECT author_email FROM posts WHERE id = $1")) return { rows: [{ author_email: "me@example.com" }] };
+      if (s.includes("SELECT source_ghost_id")) return { rows: [] };
+      return { rows: [], rowCount: 0 };
+    });
+    await callMcp({
+      jsonrpc: "2.0", id: 1, method: "initialize",
+      params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "t", version: "0" } },
+    });
+    const r = await callMcp({
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "delete_post", arguments: { post_id: 5 } },
+    });
+    const d = toolResult(r.json);
+    expect(d.deleted).toBe(true);
+    expect(captured.some((s) => s.includes("DELETE FROM posts WHERE id"))).toBe(true);
+  });
+
+  it("read のみのトークンで edit_post / delete_post は forbidden", async () => {
+    seedValidToken(["read"]);
+    await callMcp({
+      jsonrpc: "2.0", id: 1, method: "initialize",
+      params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "t", version: "0" } },
+    });
+    const e1 = await callMcp({
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "edit_post", arguments: { post_id: 5, text: "x" } },
+    });
+    expect(toolResult(e1.json).code).toBe("forbidden");
+    const e2 = await callMcp({
+      jsonrpc: "2.0", id: 3, method: "tools/call",
+      params: { name: "delete_post", arguments: { post_id: 5 } },
+    });
+    expect(toolResult(e2.json).code).toBe("forbidden");
+  });
 });
 
 describe("書き込み系 /api/agent/* ルート", () => {
@@ -423,6 +509,121 @@ describe("書き込み系 /api/agent/* ルート", () => {
       expect(res.status).toBe(401);
       expect((await res.json()).code).toBe("unauthorized");
     }
+  });
+});
+
+describe("PATCH / DELETE /api/agent/posts/[id]", () => {
+  function routeParams() {
+    return { params: Promise.resolve({ id: "7" }) };
+  }
+
+  function postRouteReq(method: string, body?: unknown, auth = "Bearer bga_test") {
+    return req(`http://x/api/agent/posts/7`, {
+      method,
+      headers: { Authorization: auth, "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  }
+
+  function authorQuery(authorEmail: string | null) {
+    query.mockImplementation(async (sql: unknown) => {
+      const s = String(sql);
+      if (s.includes("SELECT id, token_hash")) return { rows: [TOKEN_ROW(["write"])] };
+      if (s.includes("INSERT INTO rate_limits")) return { rows: [{ count: 1, window_start: new Date() }] };
+      if (s.includes("UPDATE agent_tokens SET last_used_at")) return { rowCount: 1 };
+      if (s.includes("SELECT author_email FROM posts WHERE id = $1"))
+        return authorEmail ? { rows: [{ author_email: authorEmail }] } : { rows: [] };
+      if (s.includes("SELECT source_ghost_id")) return { rows: [] };
+      return { rows: [], rowCount: 0 };
+    });
+  }
+
+  it("PATCH — 自分の投稿は text のみ UPDATE・メディア系 UPDATE は走らない", async () => {
+    seedValidToken(["write"]);
+    authorQuery("me@example.com");
+    const captured: string[] = [];
+    const prev = query.getMockImplementation()!;
+    query.mockImplementation(async (sql: unknown, ...rest: unknown[]) => {
+      captured.push(String(sql));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (prev as any)(sql, ...rest);
+    });
+    const res = await postPATCH(postRouteReq("PATCH", { text: "new text" }), routeParams());
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.updated).toBe(true);
+    expect(captured.some((s) => s.includes("UPDATE posts SET text"))).toBe(true);
+    expect(captured.some((s) => s.includes("post_images"))).toBe(false);
+    expect(captured.some((s) => s.includes("video_url") && s.includes("UPDATE"))).toBe(false);
+    expect(captured.some((s) => s.includes("audio_url") && s.includes("UPDATE"))).toBe(false);
+  });
+
+  it("PATCH — 他人の投稿は 403 forbidden", async () => {
+    seedValidToken(["write"]);
+    authorQuery("author@example.com");
+    const res = await postPATCH(postRouteReq("PATCH", { text: "x" }), routeParams());
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("forbidden");
+  });
+
+  it("PATCH — 存在しない投稿は 404 not_found", async () => {
+    seedValidToken(["write"]);
+    authorQuery(null);
+    const res = await postPATCH(postRouteReq("PATCH", { text: "x" }), routeParams());
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe("not_found");
+  });
+
+  it("PATCH — read スコープでは 403", async () => {
+    seedValidToken(["read"]);
+    const res = await postPATCH(postRouteReq("PATCH", { text: "x" }), routeParams());
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("forbidden");
+  });
+
+  it("DELETE — 自分の投稿は 200・DELETE FROM posts が走る", async () => {
+    seedValidToken(["write"]);
+    authorQuery("me@example.com");
+    const captured: string[] = [];
+    const prev = query.getMockImplementation()!;
+    query.mockImplementation(async (sql: unknown, ...rest: unknown[]) => {
+      captured.push(String(sql));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (prev as any)(sql, ...rest);
+    });
+    const res = await postDELETE(postRouteReq("DELETE"), routeParams());
+    expect(res.status).toBe(200);
+    expect((await res.json()).deleted).toBe(true);
+    expect(captured.some((s) => s.includes("DELETE FROM posts WHERE id"))).toBe(true);
+  });
+
+  it("DELETE — 他人の投稿は 403", async () => {
+    seedValidToken(["write"]);
+    authorQuery("author@example.com");
+    const res = await postDELETE(postRouteReq("DELETE"), routeParams());
+    expect(res.status).toBe(403);
+    expect((await res.json()).code).toBe("forbidden");
+  });
+
+  it("DELETE — 存在しない投稿は 404", async () => {
+    seedValidToken(["write"]);
+    authorQuery(null);
+    const res = await postDELETE(postRouteReq("DELETE"), routeParams());
+    expect(res.status).toBe(404);
+  });
+
+  it("PATCH / DELETE — Bearer 無しは 401", async () => {
+    const p = await postPATCH(postRouteReq("PATCH", { text: "x" }, ""), routeParams());
+    expect(p.status).toBe(401);
+    expect((await p.json()).code).toBe("unauthorized");
+    const d = await postDELETE(postRouteReq("DELETE", undefined, ""), routeParams());
+    expect(d.status).toBe(401);
+  });
+
+  it("GET /api/agent/posts/[id] — 既存 GET は従来どおり 404（投稿なし）", async () => {
+    seedValidToken(["read"]);
+    const res = await postGET(req("http://x/api/agent/posts/7", { headers: { Authorization: "Bearer bga_test" } }), routeParams());
+    expect(res.status).toBe(404);
   });
 });
 

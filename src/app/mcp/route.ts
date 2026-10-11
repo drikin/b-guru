@@ -35,6 +35,8 @@ import { listClubs } from "@/lib/club-store";
 import { listNotifications } from "@/lib/notifications";
 import {
   agentCreatePost,
+  agentUpdatePost,
+  agentDeletePost,
   agentToggleReaction,
   agentMarkRead,
   agentToggleBookmark,
@@ -316,6 +318,41 @@ function buildServer(ctx: AgentContext) {
           club: args.club ?? null,
         });
         return { apiVersion: 1, post: asAgentPostDto(post) };
+      });
+      return wrap(out);
+    }
+  );
+
+  server.registerTool(
+    "edit_post",
+    {
+      title: "投稿編集",
+      description: "自分の投稿の本文を編集する（text のみ・メディアの付け替えは不可）",
+      inputSchema: {
+        post_id: z.number().int().positive().describe("投稿 ID（自分の投稿のみ）"),
+        text: z.string().min(1).max(5000).describe("新しい本文（最大5000文字）"),
+      },
+    },
+    async (args) => {
+      const out = await withTool(req_of(ctx), "write", "edit_post", async (c) => {
+        return { apiVersion: 1, ...(await agentUpdatePost(c, args.post_id, { text: args.text })) };
+      });
+      return wrap(out);
+    }
+  );
+
+  server.registerTool(
+    "delete_post",
+    {
+      title: "投稿削除",
+      description: "自分の投稿を削除する",
+      inputSchema: {
+        post_id: z.number().int().positive().describe("投稿 ID（自分の投稿のみ）"),
+      },
+    },
+    async (args) => {
+      const out = await withTool(req_of(ctx), "write", "delete_post", async (c) => {
+        return { apiVersion: 1, ...(await agentDeletePost(c, args.post_id)) };
       });
       return wrap(out);
     }

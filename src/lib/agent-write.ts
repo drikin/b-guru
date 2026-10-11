@@ -4,7 +4,7 @@
  * bookmarks / notifications / club-store）を 1:1 で包むだけ。
  * 原則: 自分名義のみ（ctx.email を使う・body の author 系は信用しない）、
  * 投稿には via: "agent" を自動付与（UI にエージェント由来マークを出せる）。 */
-import { createPost, mapRow, POST_SELECT } from "./posts";
+import { createPost, mapRow, POST_SELECT, updatePost, deletePost } from "./posts";
 import { pool } from "./db";
 import { toggleReaction } from "./reactions";
 import { markPostsRead } from "./read-state-server";
@@ -136,6 +136,86 @@ export async function agentCreatePost(
     /* ignore */
   }
   return post;
+}
+
+/** 投稿本文編集（自分の投稿のみ・text のみ・メディアは触らない）。
+ *  既存 updatePost（posts.ts・UI と同一正本）を再利用。権限判定は lib 側
+ *  （not_found / 自分以外）に任せ、HTTP ステータスへ正規化する。 */
+export async function agentUpdatePost(
+  ctx: AgentContext,
+  postId: number,
+  input: { text: string }
+): Promise<{ updated: true }> {
+  if (!Number.isInteger(postId) || postId <= 0) {
+    const e = new Error("post_id が不正です") as Error & { code: string; status: number };
+    e.code = "invalid_request";
+    e.status = 400;
+    throw e;
+  }
+  const text = String(input.text ?? "").trim();
+  if (!text) {
+    const e = new Error("text が必要です") as Error & { code: string; status: number };
+    e.code = "invalid_request";
+    e.status = 400;
+    throw e;
+  }
+  if (text.length > AGENT_POST_MAX_TEXT) {
+    const e = new Error(`本文は ${AGENT_POST_MAX_TEXT} 文字までです`) as Error & {
+      code: string;
+      status: number;
+    };
+    e.code = "invalid_request";
+    e.status = 400;
+    throw e;
+  }
+  const r = await updatePost(postId, ctx.email, { text });
+  if (!r.ok) {
+    // not_found（存在しない）/ 自分以外の投稿 / エピソード投稿 → 404 or 403
+    const status = r.error === "not_found" ? 404 : 403;
+    const code = r.error === "not_found" ? "not_found" : "forbidden";
+    const e = new Error(
+      r.error === "not_found" ? "投稿が見つかりません" : r.error || "編集できません"
+    ) as Error & { code: string; status: number };
+    e.code = code;
+    e.status = status;
+    throw e;
+  }
+  try {
+    emitLive({ type: "post", postId, action: "update", authorId: ctx.userId });
+  } catch {
+    /* ignore */
+  }
+  return { updated: true };
+}
+
+/** 投稿削除（自分の投稿のみ）。既存 deletePost（posts.ts・UI と同一正本）を再利用。 */
+export async function agentDeletePost(
+  ctx: AgentContext,
+  postId: number
+): Promise<{ deleted: true }> {
+  if (!Number.isInteger(postId) || postId <= 0) {
+    const e = new Error("post_id が不正です") as Error & { code: string; status: number };
+    e.code = "invalid_request";
+    e.status = 400;
+    throw e;
+  }
+  const r = await deletePost(postId, ctx.email);
+  if (!r.ok) {
+    const status = r.error === "not_found" ? 404 : 403;
+    const code = r.error === "not_found" ? "not_found" : "forbidden";
+    const e = new Error(
+      r.error === "not_found" ? "投稿が見つかりません" : r.error || "削除できません"
+    ) as Error & { code: string; status: number };
+    e.code = code;
+    e.status = status;
+    throw e;
+  }
+  try {
+    emitLive({ type: "post", postId, action: "delete", authorId: ctx.userId });
+  } catch {
+    /* ignore */
+  }
+  return { deleted: true };
 }
 
 /** リアクショントグル（投稿のみ・chat は対象外）。 */

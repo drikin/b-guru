@@ -2,6 +2,7 @@
 import { NextRequest } from "next/server";
 import { getPostThread } from "@/lib/posts";
 import { withAgent } from "@/lib/agent-auth";
+import { agentUpdatePost, agentDeletePost } from "@/lib/agent-write";
 import { NO_CACHE } from "../../_lib";
 import { agentPostDto } from "../route";
 export const dynamic = "force-dynamic";
@@ -24,6 +25,65 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       body: { apiVersion: 1, post: agentPostDto(post), replies: replies.map(agentPostDto) },
       headers: {},
     };
+  });
+  return new Response(JSON.stringify(out.body), {
+    status: out.status,
+    headers: { "Content-Type": "application/json", ...NO_CACHE },
+  });
+}
+
+/* PATCH /api/agent/posts/:id — 自分の投稿の本文編集（スコープ write）。
+ * text のみ・画像/動画/音声の付け替えは不可。ロジックは agent-write.ts。 */
+export async function PATCH(req: NextRequest, { params }: Ctx) {
+  const out = await withAgent(req, "PATCH /api/agent/posts/:id", "write", async (ctx) => {
+    const id = Number((await params).id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return { status: 404, body: { error: "投稿が見つかりません", code: "not_found" }, headers: {} };
+    }
+    let body: { text?: unknown };
+    try {
+      body = await req.json();
+    } catch {
+      return { status: 400, body: { error: "JSON ボディが必要です", code: "invalid_request" }, headers: {} };
+    }
+    try {
+      await agentUpdatePost(ctx, id, { text: typeof body.text === "string" ? body.text : "" });
+      return { status: 200, body: { apiVersion: 1, updated: true }, headers: {} };
+    } catch (e) {
+      const err = e as { code?: string; status?: number; message?: string };
+      const status = Number(err?.status) > 0 ? Number(err.status) : 400;
+      return {
+        status,
+        body: { error: String(err?.message ?? "編集に失敗しました"), code: err?.code ?? "invalid_request" },
+        headers: {},
+      };
+    }
+  });
+  return new Response(JSON.stringify(out.body), {
+    status: out.status,
+    headers: { "Content-Type": "application/json", ...NO_CACHE },
+  });
+}
+
+/* DELETE /api/agent/posts/:id — 自分の投稿の削除（スコープ write）。 */
+export async function DELETE(req: NextRequest, { params }: Ctx) {
+  const out = await withAgent(req, "DELETE /api/agent/posts/:id", "write", async (ctx) => {
+    const id = Number((await params).id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return { status: 404, body: { error: "投稿が見つかりません", code: "not_found" }, headers: {} };
+    }
+    try {
+      await agentDeletePost(ctx, id);
+      return { status: 200, body: { apiVersion: 1, deleted: true }, headers: {} };
+    } catch (e) {
+      const err = e as { code?: string; status?: number; message?: string };
+      const status = Number(err?.status) > 0 ? Number(err.status) : 400;
+      return {
+        status,
+        body: { error: String(err?.message ?? "削除に失敗しました"), code: err?.code ?? "invalid_request" },
+        headers: {},
+      };
+    }
   });
   return new Response(JSON.stringify(out.body), {
     status: out.status,

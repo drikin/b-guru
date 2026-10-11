@@ -189,6 +189,36 @@ const spec = {
           "404": { description: "見つからない", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
         },
       },
+      patch: {
+        summary: "自分の投稿の本文編集（text のみ・メディア不可）・スコープ write",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["text"],
+                properties: { text: { type: "string", maxLength: 5000 } },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": { description: "編集済み" },
+          "403": { description: "自分の投稿のみ", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "404": { description: "見つからない", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+        },
+      },
+      delete: {
+        summary: "自分の投稿の削除・スコープ write",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+        responses: {
+          "200": { description: "削除済み" },
+          "403": { description: "自分の投稿のみ", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+          "404": { description: "見つからない", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
+        },
+      },
     },
     "/api/agent/search": {
       get: {
