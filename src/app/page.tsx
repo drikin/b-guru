@@ -1548,7 +1548,7 @@ function PostCard({
             <Text size="sm" fw={600} c="inherit" truncate>
               {post.authorName}
             </Text>
-            <Text size="xs" c="dimmed">
+            <Text size="xs" c="dimmed" truncate>
               {formatJSTPDT(post.createdAt)}
             </Text>
           </div>
