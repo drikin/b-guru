@@ -6,9 +6,6 @@ import {
   listFavoriteIds,
   favoriteAuthorEmailFromUserId,
 } from "@/lib/favorites";
-import { pool } from "@/lib/db";
-import { cleanDisplayName } from "@/lib/display-name";
-import { createNotification } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 const NO_CACHE = { "Cache-Control": "no-store, no-cache, must-revalidate" };
@@ -56,27 +53,9 @@ async function toggle(req: NextRequest, mode: "add" | "remove") {
     }
     const favorited =
       mode === "add" ? await addFavorite(email, authorEmail) : await removeFavorite(email, authorEmail);
-    // 通知: 追加時のみ（削除は通知しない）。既存 notifications と同型
-    //   （type='favorite'、postId/replyId なし、未読重複は createNotification 内で排除）。
-    //   通知の失敗がトグル自体を壊してはいけないので catch で握りつぶす。
-    if (mode === "add") {
-      try {
-        const actorName = await pool
-          .query(`SELECT display_name FROM user_profiles WHERE email = $1`, [email])
-          .then((r) => r.rows[0]?.display_name ?? null);
-        createNotification({
-          userEmail: authorEmail,
-          type: "favorite",
-          actorEmail: email,
-          actorName: cleanDisplayName(actorName),
-          postId: null,
-          replyId: null,
-          text: "あなたがお気に入りに追加されました",
-        }).catch(() => {});
-      } catch {
-        /* notification failure must never break the toggle */
-      }
-    }
+    // お気に入り追加の通知は廃止（どりきん 2026-10-11「お気に入りの追加を通知に
+    //   するのはやめましょう」）。通知 UI 側の type='favorite' 分岐は既存データ
+    //   表示用に残す（削除しない — 過去に作られた通知が壊れないように）。
     return NextResponse.json({ favorited }, { headers: NO_CACHE });
   } catch (e: any) {
     console.error("favorites toggle error:", e.message);
