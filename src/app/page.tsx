@@ -1548,9 +1548,6 @@ function PostCard({
             <Text size="sm" fw={600} c="inherit" truncate>
               {post.authorName}
             </Text>
-            <Text size="xs" c="dimmed" truncate>
-              {formatJSTPDT(post.createdAt)}
-            </Text>
             {post.via === "agent" && (
               <Text
                 size="xs"
@@ -1562,6 +1559,9 @@ function PostCard({
                 🤖
               </Text>
             )}
+            <Text size="xs" c="dimmed" truncate>
+              {formatJSTPDT(post.createdAt)}
+            </Text>
           </div>
         </UnstyledButton>
         {/* アクション帯は absolute ではなく header flex 内に置く —
