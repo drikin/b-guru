@@ -1520,8 +1520,42 @@ function PostCard({
       <Group
         gap={2}
         wrap="nowrap"
-        style={{ position: "absolute", top: 6, right: 6, zIndex: 2 }}
-      >
+        style={{ flexShrink: 0, alignSelf: "flex-start" }}
+      >      </Group>
+
+      <Group gap="sm" mb={6} wrap="nowrap" align="flex-start">
+        <UnstyledButton
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenProfile?.(post.authorId);
+          }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flex: "1 1 auto",
+            minWidth: 0,
+            textAlign: "left",
+            color: "inherit",
+          }}
+          aria-label={`${post.authorName} のプロフィールを見る`}
+        >
+          <SafeAvatar
+            src={post.isAuthor ? avatarSrc : post.authorAvatar || undefined}
+            initial={(post.authorName || "?")}
+          />
+          <div style={{ minWidth: 0 }}>
+            <Text size="sm" fw={600} c="inherit" truncate>
+              {post.authorName}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {formatJSTPDT(post.createdAt)}
+            </Text>
+          </div>
+        </UnstyledButton>
+        {/* アクション帯は absolute ではなく header flex 内に置く —
+            狭幅で名前と重なるのを防ぎ、名前側が truncate して譲る。 */}
+        <Group gap={2} wrap="nowrap" style={{ flexShrink: 0, marginLeft: "auto" }}>
         {onToggleBookmark && (
           <ActionIcon
             variant={post.bookmarkedByMe ? "light" : "subtle"}
@@ -1561,7 +1595,6 @@ function PostCard({
         {reactionBar}
         {post.isAuthor && (
           <>
-            {/* Pin is only for the ROOT (parent) post, not replies. */}
             {!post.parentId && (
               <ActionIcon
                 variant={post.pinnedAt ? "light" : "subtle"}
@@ -1576,25 +1609,13 @@ function PostCard({
                 </svg>
               </ActionIcon>
             )}
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              size="sm"
-              aria-label="編集"
-              onClick={() => onEdit(post)}
-            >
+            <ActionIcon variant="subtle" color="gray" size="sm" aria-label="編集" onClick={() => onEdit(post)}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 20h9" />
                 <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
               </svg>
             </ActionIcon>
-            <ActionIcon
-              variant="subtle"
-              color="red"
-              size="sm"
-              aria-label="削除"
-              onClick={() => onDelete(post)}
-            >
+            <ActionIcon variant="subtle" color="red" size="sm" aria-label="削除" onClick={() => onDelete(post)}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M3 6h18" />
                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
@@ -1605,38 +1626,7 @@ function PostCard({
             </ActionIcon>
           </>
         )}
-      </Group>
-
-      <Group gap="sm" mb={6} wrap="nowrap">
-        <UnstyledButton
-          onClick={(e) => {
-            e.stopPropagation();
-            onOpenProfile?.(post.authorId);
-          }}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            flex: "1 1 auto",
-            minWidth: 0,
-            textAlign: "left",
-            color: "inherit",
-          }}
-          aria-label={`${post.authorName} のプロフィールを見る`}
-        >
-          <SafeAvatar
-            src={post.isAuthor ? avatarSrc : post.authorAvatar || undefined}
-            initial={(post.authorName || "?")}
-          />
-          <div style={{ minWidth: 0 }}>
-            <Text size="sm" fw={600} c="inherit" truncate>
-              {post.authorName}
-            </Text>
-            <Text size="xs" c="dimmed">
-              {formatJSTPDT(post.createdAt)}
-            </Text>
-          </div>
-        </UnstyledButton>
+        </Group>
       </Group>
 
       {/* 部活動ラベル（ルート投稿のみ）。投稿者/admin はクリックで手動付け替え可。 */}
