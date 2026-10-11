@@ -56,6 +56,8 @@ export interface FeedPost {
   club?: string | null;
   /** この投稿の部活ラベルが手動（投稿者/admin）で付け替えられたか。 */
   clubManual?: boolean;
+  /** エージェント由来マーク（"agent"）。DB の posts.via から。UI でさりげなく表示。 */
+  via?: string | null;
 }
 
 export interface NewPostInput {
@@ -251,7 +253,7 @@ export const POST_SELECT = `
       THEN split_part(COALESCE((SELECT up.display_name FROM user_profiles up WHERE up.email = p.author_email), p.author_name), '@', 1)
       ELSE COALESCE((SELECT up.display_name FROM user_profiles up WHERE up.email = p.author_email), p.author_name)
     END AS author_name,
-    p.parent_id, p.text, p.url_preview, p.created_at,
+    p.parent_id, p.text, p.url_preview, p.created_at, p.via,
     GREATEST(p.created_at,
       COALESCE((SELECT MAX(r.created_at) FROM posts r WHERE r.parent_id = p.id AND r.is_whisper IS NOT TRUE), p.created_at)
     ) AS last_activity,
@@ -312,6 +314,7 @@ export function mapRow(r: any): FeedPost {
     favoriteByMe: !!r.favorited_by_me,
     bookmarkedByMe: !!r.bookmarked_by_me,
     createdAt: new Date(r.created_at).toISOString(),
+    via: r.via ?? null,
     lastActivityAt: new Date(r.last_activity).toISOString(),
     pinnedAt: r.pinned_at ? new Date(r.pinned_at).toISOString() : null,
     poll: rebuildPoll(r.poll_json),

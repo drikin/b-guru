@@ -1551,6 +1551,17 @@ function PostCard({
             <Text size="xs" c="dimmed" truncate>
               {formatJSTPDT(post.createdAt)}
             </Text>
+            {post.via === "agent" && (
+              <Text
+                size="xs"
+                c="dimmed"
+                span
+                title="AI エージェント経由の投稿"
+                style={{ flexShrink: 0, lineHeight: 1 }}
+              >
+                🤖
+              </Text>
+            )}
           </div>
         </UnstyledButton>
         {/* アクション帯は absolute ではなく header flex 内に置く —
