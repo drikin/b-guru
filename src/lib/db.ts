@@ -465,5 +465,40 @@ export async function initSchema() {
       PRIMARY KEY (viewer_email, post_id)
     );
     CREATE INDEX IF NOT EXISTS idx_user_post_bookmarks_viewer ON user_post_bookmarks(viewer_email, created_at DESC);
+
+    -- ===== AI エージェント API（フェーズ1: 読み取り+トークン発行） =====
+    -- docs/agent-backend-design.md / docs/beagle-agent-auth-design.md。
+    -- token_hash = SHA-256(トークン) のみ保存（平文は発行時 1 回だけ表示）。
+    CREATE TABLE IF NOT EXISTS agent_tokens (
+      id SERIAL PRIMARY KEY,
+      token_hash TEXT UNIQUE NOT NULL,
+      email TEXT NOT NULL,
+      scopes TEXT[] NOT NULL DEFAULT '{read}',
+      device_name TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      last_used_at TIMESTAMPTZ,
+      last_membership_check TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ,
+      last_ip INET
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_tokens_email ON agent_tokens(email);
+
+    -- エージェント API の監査ログ（housekeeping で 90 日で掃除）。
+    CREATE TABLE IF NOT EXISTS agent_audit_log (
+      id SERIAL PRIMARY KEY,
+      token_id INTEGER,
+      endpoint TEXT NOT NULL,
+      status INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_audit_created ON agent_audit_log(created_at);
+
+    -- エージェント API のレート制限カウンタ（固定窓・key=token_id:scope）。
+    CREATE TABLE IF NOT EXISTS rate_limits (
+      key TEXT PRIMARY KEY,
+      window_start TIMESTAMPTZ NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0
+    );
   `);
 }

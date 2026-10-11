@@ -114,7 +114,7 @@ vi.mock("@/lib/db", () => ({ pool: { query: (s: string) => poolQuery(s) } }));
 vi.mock("../db", () => ({ pool: { query: (s: string) => poolQuery(s) } }));
 
 describe("housekeeping", () => {
-  it("only deletes EXPIRED sessions / otp codes", async () => {
+  it("only deletes EXPIRED sessions / otp codes, expired agent tokens, 90d-old audit", async () => {
     const { purgeExpiredAuthRows } = await import("../housekeeping");
     poolQuery.mockClear();
     const r = await purgeExpiredAuthRows();
@@ -122,7 +122,9 @@ describe("housekeeping", () => {
     expect(sqls).toEqual([
       "DELETE FROM sessions WHERE expires_at < now()",
       "DELETE FROM otp_codes WHERE expires_at < now()",
+      "DELETE FROM agent_tokens WHERE expires_at < now() OR (revoked_at IS NOT NULL AND revoked_at < now() - interval '90 days')",
+      "DELETE FROM agent_audit_log WHERE created_at < now() - interval '90 days'",
     ]);
-    expect(r).toEqual({ sessions: 3, otp: 3 });
+    expect(r).toEqual({ sessions: 3, otp: 3, agentTokens: 3, agentAudit: 3 });
   });
 });
