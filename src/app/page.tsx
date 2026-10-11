@@ -10793,7 +10793,10 @@ export default function Home() {
                                 display: "flex",
                                 alignItems: "center",
                                 gap: 2,
-                                opacity: hasReactions ? 1 : 0,
+                                // タッチデバイスでは常時表示（hover が使えないため）。
+                                //   デスクトップは inline opacity を使わず CSS の hover
+                                //   ルールに任せる（inline が勝つと hover 表示が壊れる）。
+                                opacity: touchDevice ? 1 : hasReactions ? 1 : undefined,
                                 transition: "opacity 0.12s ease",
                               }}
                               className={touchDevice ? undefined : "bguru-chat-actions"}
