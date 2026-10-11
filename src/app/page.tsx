@@ -2727,6 +2727,8 @@ function ProfileView({
   onEditPoll,
   onSetClub,
   onOpenClub,
+  onToggleFavorite,
+  onToggleBookmark,
 }: {
   profile: ProfileData | null;
   posts: FeedPost[];
@@ -2754,6 +2756,8 @@ function ProfileView({
   onEditPoll?: (post: FeedPost) => void;
   onSetClub?: (post: FeedPost, club: string | null) => void;
   onOpenClub?: (club: string) => void;
+  onToggleFavorite?: (post: FeedPost) => void;
+  onToggleBookmark?: (post: FeedPost) => void;
   renderReactionBar?: (postId: number, compact?: boolean) => React.ReactNode;
 }) {
   return (
@@ -2911,6 +2915,8 @@ function ProfileView({
                   onEditPoll={onEditPoll}
                   onSetClub={onSetClub}
                   onOpenClub={onOpenClub}
+                  onToggleFavorite={onToggleFavorite}
+                  onToggleBookmark={onToggleBookmark}
                 />
                 <CollapsibleReplies
                   parentId={post.id}
@@ -11319,6 +11325,8 @@ export default function Home() {
                   onEditPoll={handleEditPoll}
                   onSetClub={handleSetClub}
                   onOpenClub={selectClub}
+                  onToggleFavorite={auth ? toggleFavoriteFor : undefined}
+                  onToggleBookmark={auth ? toggleBookmarkFor : undefined}
                 />
               ) : feedLoading ? (
                 <Text c="dimmed">読み込み中…</Text>
