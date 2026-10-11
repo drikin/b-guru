@@ -50,6 +50,7 @@ ssh "$VPS" "cd $APP_DIR && \
   git pull origin main && \
   git stash pop >/dev/null 2>&1 || true && \
   echo 'session.ts md5:' && md5sum src/lib/session.ts && \
+  npm ci --no-audit --no-fund >/dev/null 2>&1 && \
   npm run build 2>&1 | tail -2 && \
   pm2 restart bsm-portal >/dev/null && \
   sleep 6 && \
