@@ -3,7 +3,7 @@
  * フィルタ: club / search / since_id / fav / bookmark。author_user_id は
  * 不透明 user_id で指定（内部で email に解決・レスポンスには email を含めない）。 */
 import { NextRequest, NextResponse } from "next/server";
-import { listPosts } from "@/lib/posts";
+import { listPosts, POST_SELECT, mapRow } from "@/lib/posts";
 import { pool } from "@/lib/db";
 import { getHiddenClubs } from "@/lib/club-visibility";
 import { getFavoriteEmails } from "@/lib/favorites";
@@ -51,21 +51,42 @@ export async function GET(req: NextRequest) {
     const bm = sp.get("bm") === "1";
     const authorUserId = sp.get("author_user_id") ?? undefined;
 
-    // since_id: cursor が優先。無ければ「last_activity > since_id の投稿の最終活動時刻」
-    // を既存 before カーソルに変換してページング（ポーリング用途）。
+    // since_id: cursor が優先。無ければ「その投稿より last_activity が新しい
+    //   投稿を新しい順に返す」ポーリング用クエリ（openapi.json の契約どおり）。
+    //   listPosts は after カーソルを持たないため、ここで直接 SQL を発行する
+    //   （last_activity 定義は POST_SELECT と同一式）。
     let before: string | undefined;
     if (!cursor && Number.isInteger(sinceIdRaw) && sinceIdRaw > 0) {
+      const hiddenClubsAll = await getHiddenClubs(ctx.email);
+      const hiddenArr = Array.from(hiddenClubsAll);
+      const params: unknown[] = [sinceIdRaw, ctx.email, limit];
+      const laExpr = `GREATEST(p.created_at, COALESCE((SELECT MAX(r.created_at) FROM posts r WHERE r.parent_id = p.id AND r.is_whisper IS NOT TRUE), p.created_at))`;
+      const hiddenSql = hiddenArr.length > 0
+        ? ` AND (p.club IS NULL OR p.club NOT IN (${hiddenArr.map((_, i) => `$${params.length + 1 + i}`).join(",")}))`
+        : "";
+      if (hiddenArr.length > 0) params.push(...hiddenArr);
       const r = await pool.query(
-        `SELECT GREATEST(p.created_at,
-            COALESCE((SELECT MAX(r2.created_at) FROM posts r2 WHERE r2.parent_id = p.id AND r2.is_whisper IS NOT TRUE), p.created_at)
-          ) AS la
-           FROM posts p WHERE p.id = $1 AND p.parent_id IS NULL`,
-        [sinceIdRaw]
+        `SELECT ${POST_SELECT}
+           WHERE p.parent_id IS NULL AND p.is_whisper IS NOT TRUE
+             AND ${laExpr} > (SELECT ${laExpr} FROM posts p2 WHERE p2.id = $1)
+             ${hiddenSql}
+           ORDER BY ${laExpr} DESC
+           LIMIT $3`,
+        params
       );
-      if (r.rows.length === 0) {
-        return { status: 404, body: { error: "since_id の投稿が見つかりません", code: "not_found" } };
-      }
-      before = new Date(r.rows[0].la).toISOString();
+      const posts = r.rows.map(mapRow);
+      const dtos = posts.map(agentPostDto);
+      const last = posts[posts.length - 1];
+      return {
+        status: 200,
+        body: {
+          apiVersion: 1,
+          posts: dtos,
+          next_cursor: null, // since_id ポーリングは 1 ページで十分（継続は cursor モードで）
+          has_more: posts.length === limit,
+        },
+        headers: NO_CACHE,
+      };
     }
 
     const authorEmail = authorUserId ? await userIdToEmail(authorUserId) : undefined;
@@ -73,7 +94,9 @@ export async function GET(req: NextRequest) {
       return { status: 404, body: { error: "ユーザーが見つかりません", code: "not_found" } };
     }
 
-    const hiddenSet = !club ? await getHiddenClubs(ctx.email) : new Set<string>();
+    // hidden club は club フィルタ有無に関係なく常に適用
+    //   （UI で非表示にした部活を agent が読めるのは意図しない挙動）。
+    const hiddenSet = await getHiddenClubs(ctx.email);
     const favoriteAuthors = fav ? Array.from(await getFavoriteEmails(ctx.email)) : undefined;
     const bookmarkedIds = bm ? await getBookmarkedPostIds(ctx.email) : undefined;
 

@@ -261,3 +261,26 @@ describe("checkRateLimit (SQL 形状)", () => {
     expect(RATE_RULES.chat).toEqual({ limit: 30, window: "1 hour" });
   });
 });
+
+// レビュー指摘対応: モックが実 SQL の欠落を隠すため、verifyAgentToken の
+// SELECT が revoked_at を含むことを文字列レベルで担保する（CRITICAL 再発防止）。
+import * as fs from "fs";
+import * as path from "path";
+
+describe("agent-auth SQL shape guard", () => {
+  it("verifyAgentToken の SELECT は revoked_at を含む（失効検出は実 SQL に依存）", () => {
+    const src = fs.readFileSync(path.join(__dirname, "../agent-auth.ts"), "utf8");
+    const m = src.match(/SELECT ([^`]+?)FROM agent_tokens WHERE token_hash/);
+    expect(m).toBeTruthy();
+    expect(m![1]).toContain("revoked_at");
+    // 失効チェックが実装に存在すること
+    expect(src).toContain("row.revoked_at");
+  });
+
+  it("検索パターンは LIKE ワイルドカードをエスケープする", async () => {
+    const { sanitizeLikePattern } = await import("../agent-auth");
+    expect(sanitizeLikePattern("50%off_test")).toBe("50\\%off\\_test");
+    expect(sanitizeLikePattern("%%%")).toBe("\\%\\%\\%");
+    expect(sanitizeLikePattern(undefined)).toBeUndefined();
+  });
+});

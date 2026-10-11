@@ -229,7 +229,7 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
 }
 
 /** Shared SELECT fragment and row→FeedPost mapper used by listPosts / getPostThread. */
-const POST_SELECT = `
+export const POST_SELECT = `
   SELECT p.id, p.author_email,
     -- Public author id: the opaque users.user_id, resolved from the author's
     -- email. LEFT JOIN (not INNER) so a post whose author has no users row yet
@@ -291,7 +291,7 @@ const POST_SELECT = `
   LEFT JOIN users u ON u.email = p.author_email
 `;
 
-function mapRow(r: any): FeedPost {
+export function mapRow(r: any): FeedPost {
   return {
     id: r.id,
     authorId: r.author_id ?? "",

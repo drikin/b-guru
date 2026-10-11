@@ -16,7 +16,7 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   }
   const id = Number((await params).id);
   if (!Number.isInteger(id) || id <= 0) {
-    return NextResponse.json({ error: "不正な ID", code: "unauthorized" }, { status: 400, headers: NO_CACHE });
+    return NextResponse.json({ error: "不正な ID", code: "invalid_request" }, { status: 400, headers: NO_CACHE });
   }
   const ok = await revokeAgentToken(id, email);
   if (!ok) {

@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
     body = await req.json();
   } catch {
     return NextResponse.json(
-      { error: "JSON ボディが必要です", code: "unauthorized" },
+      { error: "JSON ボディが必要です", code: "invalid_request" },
       { status: 400, headers: NO_CACHE }
     );
   }
@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
   const deviceName = typeof body?.device_name === "string" ? body.device_name.trim() : "";
   if (!deviceName || deviceName.length > 100) {
     return NextResponse.json(
-      { error: "デバイス名を指定してください（100文字以内）", code: "unauthorized" },
+      { error: "デバイス名を指定してください（100文字以内）", code: "invalid_request" },
       { status: 400, headers: NO_CACHE }
     );
   }
@@ -92,6 +92,13 @@ export async function POST(req: NextRequest) {
 
     const issued = await issueAgentToken({ email, deviceName, scopes });
     const userId = await ensureUserId(email);
+    // 発行も監査対象（token_id は未発行なので null + endpoint で記録）。
+    try {
+      const { pool } = await import("@/lib/db");
+      await pool.query(
+        `INSERT INTO agent_audit_log (token_id, endpoint, status) VALUES (NULL, 'POST /api/agent/token', 201)`
+      );
+    } catch { /* best effort */ }
     return NextResponse.json(
       { token: issued.token, expiresAt: issued.expiresAt, userId, scopes: issued.scopes },
       { status: 201, headers: NO_CACHE }
@@ -102,7 +109,7 @@ export async function POST(req: NextRequest) {
     }
     console.error("[agent:token] issue failed:", e?.message);
     return NextResponse.json(
-      { error: "トークン発行に失敗しました", code: "unauthorized" },
+      { error: "トークン発行に失敗しました", code: "server_error" },
       { status: 500, headers: NO_CACHE }
     );
   }

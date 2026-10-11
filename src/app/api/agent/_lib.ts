@@ -11,7 +11,7 @@ export function agentErrorResponse(e: unknown): NextResponse {
   }
   console.error("[agent]", (e as Error)?.message);
   return NextResponse.json(
-    { error: "サーバーエラー", code: "unauthorized" },
+    { error: "サーバーエラー", code: "server_error" },
     { status: 500, headers: NO_CACHE }
   );
 }

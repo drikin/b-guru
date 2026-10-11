@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
     if (!q) {
       return {
         status: 400,
-        body: { error: "q パラメータが必要です", code: "unauthorized", hint: "?q=<検索語>" },
+        body: { error: "q パラメータが必要です", code: "invalid_request", hint: "?q=<検索語>" },
         headers: {},
       };
     }

@@ -35,6 +35,7 @@ export type AgentErrorCode =
   | "rate_limited"
   | "not_found"
   | "forbidden"
+  | "invalid_request"
   | "server_error";
 
 export interface AgentErrorBody {
@@ -203,7 +204,7 @@ export async function verifyAgentToken(
     throw err(429, "rate_limited", "リクエストが多すぎます", "しばらくしてから再試行してください");
   }
   const res = await pool.query(
-    `SELECT id, token_hash, email, scopes, device_name, expires_at, last_membership_check
+    `SELECT id, token_hash, email, scopes, device_name, expires_at, revoked_at, last_membership_check
        FROM agent_tokens WHERE token_hash = $1`,
     [hashToken(m[1])]
   );
