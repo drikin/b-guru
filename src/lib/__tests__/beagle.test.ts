@@ -29,6 +29,8 @@ vi.mock("../db", () => ({
       if (/SELECT 1 FROM posts WHERE id/.test(sql)) return { rows: [{ ok: 1 }] };
       if (/SELECT author_email FROM posts/.test(sql))
         return { rows: [{ author_email: "someone@example.com" }] };
+      // resolveRoot 用: どの投稿もルートは #5 ということにする（スレッド内返信の除外判定テスト用）
+      if (/SELECT parent_id FROM posts/.test(sql)) return { rows: [{ parent_id: 5 }] };
       return { rows: [] };
     },
   },
@@ -318,5 +320,119 @@ describe("applyActions — Beagle replies are whispers + notify", () => {
     expect(createPostCalls.length).toBe(1);
     expect(createPostCalls[0].isWhisper).toBeFalsy();
     expect(createPostCalls[0].parentId ?? null).toBeNull();
+  });
+});
+
+// ★ 自発的返信（proactive = 明示 @ビーグル メンション以外への全返信）は JST 1日1回の
+//   「レア枠」。孤立ポスト・ホットスレッドへのコメントが量産されて「当たり」が薄まるのを防ぐ
+//   （drikin 2026-10: 投稿数が増えてきたため）。メンション返信・introduce は対象外。
+describe("applyActions — proactive reply daily rare slot", () => {
+  it("1st proactive reply succeeds, 2nd is skipped (proactive_daily_cap) — the root post still goes through", async () => {
+    const { applyActions } = await import("../beagle/act");
+    createPostCalls.length = 0;
+    notifyCalls.length = 0;
+    const res = await applyActions(
+      {
+        actions: [
+          { type: "post", text: "ニュースだわん https://example.com/n1" },
+          { type: "reply", parentId: 41, text: "1件目の自発コメントだわん" },
+          { type: "reply", parentId: 42, text: "2件目の自発コメントだわん" },
+        ],
+      } as any,
+      false,
+      new Set<number>(), // responded
+      3, // replyLimit
+      new Set<number>(), // mentionParents（空 = 全部自発的返信）
+      0 // 本日のレア枠使用数
+    );
+    // 原投稿（ルート）は成立し、返信はレア枠の1件だけ（postedIds = ルート + 返信1件）
+    expect(res.postedIds.length).toBe(2);
+    expect(res.repliedTo).toEqual([41]);
+    expect(createPostCalls.length).toBe(2);
+    expect(createPostCalls[0].parentId ?? null).toBeNull(); // ルート投稿
+    expect(createPostCalls[1].parentId).toBe(41); // レア枠の1件目
+    const capped = res.skipped.filter((s) => s.reason === "proactive_daily_cap");
+    expect(capped).toHaveLength(1);
+    expect(capped[0].type).toBe("reply");
+    expect(res.proactiveReplied).toBe(1);
+  });
+
+  it("explicit mention replies bypass the cap even after it is used up", async () => {
+    const { applyActions } = await import("../beagle/act");
+    createPostCalls.length = 0;
+    notifyCalls.length = 0;
+    const res = await applyActions(
+      {
+        actions: [
+          { type: "reply", parentId: 42, text: "メンション返信1だわん" },
+          { type: "reply", parentId: 43, text: "メンション返信2だわん" },
+        ],
+      } as any,
+      false,
+      new Set<number>(),
+      3,
+      new Set([42, 43]), // 両方とも明示メンション投稿そのもの
+      1 // レア枠は既に使用済み
+    );
+    expect(res.repliedTo).toEqual([42, 43]);
+    expect(res.skipped.filter((s) => s.reason === "proactive_daily_cap")).toHaveLength(0);
+    expect(createPostCalls.length).toBe(2);
+    expect(res.proactiveReplied).toBe(0); // メンション返信はレア枠を消費しない
+  });
+
+  it("a reply whose ROOT is an explicit mention bypasses the cap", async () => {
+    const { applyActions } = await import("../beagle/act");
+    createPostCalls.length = 0;
+    notifyCalls.length = 0;
+    const res = await applyActions(
+      { actions: [{ type: "reply", parentId: 42, text: "スレッド内返信だわん" }] } as any,
+      false,
+      new Set<number>(),
+      3,
+      new Set([5]), // メンション投稿は #5。db モックにより #42 のルートは #5
+      1 // レア枠は既に使用済み
+    );
+    expect(res.repliedTo).toEqual([42]);
+    expect(res.skipped.filter((s) => s.reason === "proactive_daily_cap")).toHaveLength(0);
+    expect(res.proactiveReplied).toBe(0);
+  });
+
+  it("when the rare slot is free, a mention-thread reply does NOT consume it", async () => {
+    const { applyActions } = await import("../beagle/act");
+    createPostCalls.length = 0;
+    notifyCalls.length = 0;
+    const res = await applyActions(
+      { actions: [{ type: "reply", parentId: 42, text: "メンスレ返信だわん" }] } as any,
+      false,
+      new Set<number>(),
+      3,
+      new Set([5]),
+      0 // レア枠は空いている
+    );
+    expect(res.repliedTo).toEqual([42]);
+    expect(res.proactiveReplied).toBe(0); // メンション経由なので消費しない
+  });
+});
+
+describe("resolveProactiveCount — proactive rare slot resets on JST date change", () => {
+  it("resets to 0 when the saved date is not today (JST)", async () => {
+    const { resolveProactiveCount, todayJst } = await import("../beagle/store");
+    // 2026-10-14T15:30:00Z = 2026-10-15 00:30 JST（日付をまたいだ直後）
+    const now = new Date("2026-10-14T15:30:00Z");
+    expect(todayJst(now)).toBe("2026-10-15");
+    expect(resolveProactiveCount("2026-10-14", 1, now)).toEqual({
+      date: "2026-10-15",
+      count: 0,
+    });
+  });
+
+  it("keeps the saved count when the saved date is today (JST)", async () => {
+    const { resolveProactiveCount } = await import("../beagle/store");
+    const now = new Date("2026-10-14T15:30:00Z"); // 2026-10-15 JST
+    expect(resolveProactiveCount("2026-10-15", 1, now)).toEqual({
+      date: "2026-10-15",
+      count: 1,
+    });
+    expect(resolveProactiveCount(null, 0, now)).toEqual({ date: "2026-10-15", count: 0 });
   });
 });

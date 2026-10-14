@@ -70,6 +70,10 @@ export interface BeagleState {
   postedNews: string[];
   /** ビーグルが既に返信/反応した投稿ID（重複返信防止）。 */
   respondedPosts: number[];
+  /** 自発的返信（proactive）レア枠の JST 日付文字列（YYYY-MM-DD）。日付が違えば枠はリセット扱い。 */
+  proactiveReplyDate: string | null;
+  /** 自発的返信レア枠の当日使用数（proactiveReplyDate が今日 JST のときのみ有効）。 */
+  proactiveReplyCount: number;
 }
 
 /** runBeagleTick の結果。 */

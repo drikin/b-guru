@@ -19,6 +19,8 @@ function rowToState(r: any): BeagleState {
     memoryBytes: Number(r.memory_bytes) || 0,
     postedNews: posted,
     respondedPosts: responded,
+    proactiveReplyDate: typeof r.proactive_reply_date === "string" ? r.proactive_reply_date : null,
+    proactiveReplyCount: Number(r.proactive_reply_count) || 0,
   };
 }
 
@@ -47,6 +49,9 @@ export async function updateState(
   if (typeof patch.memoryBytes === "number") add("memory_bytes", patch.memoryBytes);
   if (patch.postedNews) add("posted_news", JSON.stringify(patch.postedNews));
   if (patch.respondedPosts) add("responded_posts", JSON.stringify(patch.respondedPosts));
+  if (patch.proactiveReplyDate) add("proactive_reply_date", patch.proactiveReplyDate);
+  if (typeof patch.proactiveReplyCount === "number")
+    add("proactive_reply_count", patch.proactiveReplyCount);
   if (sets.length === 0) return;
   await pool.query(`UPDATE beagle_state SET ${sets.join(", ")} WHERE id = 1`, vals);
 }
@@ -72,6 +77,40 @@ export async function resolveRoot(postId: number): Promise<number> {
     cur = (res.rows[0].parent_id as number) ?? cur;
   }
   return cur;
+}
+
+/** 現在時刻の JST 日付文字列（YYYY-MM-DD）。
+ *  countBeagleRootPostsToday の date_trunc('day', now() AT TIME ZONE 'Asia/Tokyo')
+ *  と同じ「日替わりは JST」規約に揃える（JST に DST は無いので +9h 固定で正しい）。 */
+export function todayJst(now: Date): string {
+  return new Date(now.getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/** 自発的返信レア枠の当日使用数を決定する（純関数・テスト対象）。
+ *  保存日付が今日(JST)と違えば日替わり → 0 にリセット。 */
+export function resolveProactiveCount(
+  savedDate: string | null,
+  savedCount: number,
+  now: Date
+): { date: string; count: number } {
+  const date = todayJst(now);
+  const count = savedDate === date ? savedCount : 0;
+  return { date, count };
+}
+
+/** 本日の自発的返信（proactive）レア枠の使用数を取得。日付が変わっていれば 0。 */
+export async function getProactiveReplyUsed(
+  now: Date
+): Promise<{ date: string; count: number }> {
+  const state = await getState();
+  return resolveProactiveCount(state.proactiveReplyDate, state.proactiveReplyCount, now);
+}
+
+/** 自発的返信レア枠のカウンタを進める（実際に投稿された proactive 返信数だけ呼ぶ）。 */
+export async function incrementProactiveReplies(now: Date, by: number): Promise<void> {
+  if (!(by > 0)) return;
+  const used = await getProactiveReplyUsed(now);
+  await updateState({ proactiveReplyDate: used.date, proactiveReplyCount: used.count + by });
 }
 
 /** ログに1行追記。 */

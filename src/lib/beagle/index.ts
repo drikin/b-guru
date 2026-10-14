@@ -4,12 +4,14 @@ import { collectNewNews } from "./sources";
 import { buildTimelineSignal, getRecentTimeline } from "./observe";
 import { normalizeNextActivityAt } from "./schedule";
 import { decide } from "./decide";
-import { applyActions, newsUrlFromText, replyBudget } from "./act";
+import { PROACTIVE_DAILY_CAP, applyActions, newsUrlFromText, replyBudget } from "./act";
 import { applyLearnings, extractLearningRequests } from "./learn";
 import {
   appendBeagleLog,
   countBeaglePostsToday,
+  getProactiveReplyUsed,
   getState,
+  incrementProactiveReplies,
   lastBeaglePostAgoMs,
   markResponded,
   resolveRoot,
@@ -48,6 +50,8 @@ export async function runBeagleTick(opts: {
   const overCap = postsToday >= DAILY_POST_CAP;
   // 明示的 @ビーグル メンションの有無（日次cap到達時でも返信を許可する対象）
   const hasExplicitMention = signal.mentions.some((m) => m.explicit);
+  // 自発的返信レア枠: 本日(JST)の使用数（保存日付が今日と違えば 0 にリセットされる）
+  const proactiveUsed = await getProactiveReplyUsed(now);
 
   // 頻度抑制: 直近15分以内に投稿済みなら、新しい言及への返信以外は控える
   const agoMin = Math.round((await lastBeaglePostAgoMs()) / 60000);
@@ -78,6 +82,13 @@ export async function runBeagleTick(opts: {
         `${allowed.join("、")}のみを行い、ニュース投稿・孤立/ホットスレッドへの新規コメントは行わない。`;
     }
   }
+  // 自発的コメントのレア枠が既に使用済み → 孤立/ホットスレッドへの新規コメントは禁止
+  if (proactiveUsed.count >= PROACTIVE_DAILY_CAP) {
+    guidance =
+      (guidance ? guidance + "\n" : "") +
+      `本日の自発的コメントのレア枠は使用済み。孤立ポスト・ホットスレッドへの新規コメントは禁止。` +
+      `明示的 @ビーグル メンションへの返信のみを行うこと。`;
+  }
 
   let decision: BeagleDecision;
   // 上限到達・明示メンションなし・紹介対象なし のときだけ完全停止（紹介漏れを防ぐため紹介対象があれば必ず decide する）
@@ -102,11 +113,23 @@ export async function runBeagleTick(opts: {
 
   // 実行（dry なら投稿しない）
   const execute = !opts.dry;
-  const { postedIds, repliedTo } = await applyActions(
+  // 明示 @ビーグル メンション投稿IDとそのルート → 返信が「メンション返信」かの判定用。
+  // 返信先そのもの or 返信先のルートがこの集合に含まれるなら、自発的返信レア枠の対象外。
+  const explicitMentions = signal.mentions.filter((m) => m.explicit);
+  const mentionParentIds = new Set<number>();
+  await Promise.all(
+    explicitMentions.map(async (m) => {
+      mentionParentIds.add(m.id);
+      mentionParentIds.add(await resolveRoot(m.id));
+    })
+  );
+  const { postedIds, repliedTo, proactiveReplied } = await applyActions(
     decision,
     !execute,
     respondedSet,
-    budget
+    budget,
+    mentionParentIds,
+    proactiveUsed.count
   );
 
   // ニュース重複防止: 投稿しようとしたニュースURLを applyActions 直後に即座に記録する。
@@ -125,6 +148,12 @@ export async function runBeagleTick(opts: {
   if (execute && repliedTo.length > 0) {
     const roots = await Promise.all(repliedTo.map(resolveRoot));
     await markResponded([...repliedTo, ...roots]);
+  }
+
+  // 自発的返信レア枠カウンタを進める（実際に投稿された proactive 返信のみ・dry では更新しない）。
+  // メンション返信は act.ts 側で proactiveReplied に数えないので、ここには自発分だけ届く。
+  if (execute && proactiveReplied > 0) {
+    await incrementProactiveReplies(now, proactiveReplied);
   }
 
   // 学習（dry ならメモリ書き込みはしない）。LLM の空応答等で失敗しても、投稿済み状態・重複防止を破棄しない。

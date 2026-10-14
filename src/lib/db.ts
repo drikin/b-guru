@@ -354,6 +354,12 @@ export async function initSchema() {
       END IF;
     END $$;
 
+    -- 自発的返信（proactive reply）の日次レア枠カウンタ（JST 1日1回）。
+    --   proactive_reply_date = JST 日付文字列（YYYY-MM-DD）、proactive_reply_count = その日の使用数。
+    --   日付が変わったら読み出し側で 0 にリセット（行は UPDATE で上書き）。
+    ALTER TABLE beagle_state ADD COLUMN IF NOT EXISTS proactive_reply_date TEXT;
+    ALTER TABLE beagle_state ADD COLUMN IF NOT EXISTS proactive_reply_count INT NOT NULL DEFAULT 0;
+
     -- ビーグルエージェント: 監査ログ（全決定・実行を記録）
     CREATE TABLE IF NOT EXISTS beagle_log (
       id SERIAL PRIMARY KEY,

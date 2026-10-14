@@ -2,7 +2,7 @@
 import { createPost } from "../posts";
 import { createNotification } from "../notifications";
 import { pool } from "../db";
-import { SYSTEM_EMAIL, SYSTEM_NAME } from "./store";
+import { SYSTEM_EMAIL, SYSTEM_NAME, resolveRoot } from "./store";
 import { PROFILE_INTRO_GRACE } from "./types";
 import { ensureUserId } from "../user";
 import type { BeagleAction, BeagleDecision } from "./types";
@@ -11,6 +11,10 @@ const MAX_TEXT = 1500;
 const MAX_POSTS = 1; // 1 tick でルート投稿は最大1本（proactive を抑制）
 const MAX_REPLIES = 3; // 1 tick で返信は最大3件（言及は優先）
 const MAX_REPLIES_HARD = 8; // 明示 @ビーグル 多数時も暴走させない絶対上限
+
+/** 自発的返信（proactive = 明示 @ビーグル メンション以外への全返信）の JST 1日あたり上限。
+ *  孤立ポスト・ホットスレッドへのコメントはこの「レア枠」で1日1回だけ。 */
+export const PROACTIVE_DAILY_CAP = 1;
 
 /** 返信予算: 明示メンション数 + 余裕を下限に（同一スレッド内の複数コメントにも必ず反応）。
  *  暴走防止のため絶対上限でクランプ。 */
@@ -35,18 +39,30 @@ function sanitizeText(text: string): string | null {
  *  dry: 実際には投稿しない。
  *  responded: 既に反応済みの投稿ID（同一投稿への再返信をハードにスキップ）。
  *  replyLimit: この tick で実行する返信の上限（明示メンション数に応じて拡張）。
- *  返り値 repliedTo: 実際に（または dry でなら想定して）返信した親投稿ID（記録用）。 */
+ *  mentionParents: 明示 @ビーグル メンション投稿IDとそのルートの集合。返信先が
+ *    この集合（または返信先のルート）に含まれる = メンション返信 → 日次レア枠の対象外。
+ *  proactiveUsed: 本日(JST)既に使用した自発的返信レア枠数。
+ *  返り値 repliedTo: 実際に（または dry でなら想定して）返信した親投稿ID（記録用）。
+ *  返り値 proactiveReplied: 実行した（または dry でなら想定して）自発的返信の数（カウンタ更新用）。 */
 export async function applyActions(
   decision: BeagleDecision,
   dry: boolean,
   responded?: Set<number>,
-  replyLimit: number = MAX_REPLIES
-): Promise<{ postedIds: number[]; skipped: { type: string; reason: string }[]; repliedTo: number[] }> {
+  replyLimit: number = MAX_REPLIES,
+  mentionParents?: Set<number>,
+  proactiveUsed: number = 0
+): Promise<{
+  postedIds: number[];
+  skipped: { type: string; reason: string }[];
+  repliedTo: number[];
+  proactiveReplied: number;
+}> {
   const postedIds: number[] = [];
   const skipped: { type: string; reason: string }[] = [];
   const repliedTo: number[] = [];
+  let proactivePlanned = 0; // この tick で消費する自発的返信レア枠
   if (!Array.isArray(decision.actions) || decision.actions.length === 0) {
-    return { postedIds, skipped, repliedTo };
+    return { postedIds, skipped, repliedTo, proactiveReplied: 0 };
   }
 
   // 種別ごとのキャップ（introduce は post と同枠で root 投稿扱い）
@@ -70,6 +86,22 @@ export async function applyActions(
       if (responded && responded.has(a.parentId)) {
         skipped.push({ type: "reply", reason: `already_responded ${a.parentId}` });
         continue;
+      }
+      // 自発的返信レア枠（JST 1日1回）: 明示メンションへの返信（返信先 or そのルートが
+      // mentionParents に含まれる）は対象外。それ以外はカウンタを消費し、上限超過分はスキップ。
+      if (proactiveUsed + proactivePlanned >= PROACTIVE_DAILY_CAP) {
+        const viaMention = mentionParents
+          ? mentionParents.has(a.parentId) ||
+            mentionParents.has(await resolveRoot(a.parentId))
+          : false;
+        if (!viaMention) {
+          skipped.push({ type: "reply", reason: "proactive_daily_cap" });
+          continue;
+        }
+      }
+      if (!mentionParents || !mentionParents.has(a.parentId)) {
+        const rootId = await resolveRoot(a.parentId);
+        if (!mentionParents || !mentionParents.has(rootId)) proactivePlanned++;
       }
       repliedTo.push(a.parentId);
       if (dry) continue;
@@ -166,7 +198,7 @@ export async function applyActions(
       postedIds.push(p.id);
     }
   }
-  return { postedIds, skipped, repliedTo };
+  return { postedIds, skipped, repliedTo, proactiveReplied: proactivePlanned };
 }
 
 /** ニュース投稿済みURLを memory 形式で返す（dedup 用に直接 call されることは少ない）。 */
