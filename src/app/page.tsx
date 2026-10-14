@@ -6541,20 +6541,23 @@ export default function Home() {
   // on the main timeline. The timeline only shows root groups; commenting
   // there is a normal top-level reply everyone can see, instead of the hidden
   // "grandchild" that opening the reply's thread view used to create.
-  const resolveRootId = async (id: number): Promise<number> => {
+  // Returns null when the post no longer exists (e.g. the replier deleted it),
+  // so the caller can fall back instead of paging the feed for a ghost id.
+  const resolveRootId = async (id: number): Promise<number | null> => {
     let cur = id;
     const seen = new Set<number>();
     while (!seen.has(cur)) {
       seen.add(cur);
       try {
-        const d = await fetch(`/api/posts/${cur}`, { cache: "no-store" }).then(
-          (r) => r.json()
-        );
+        const r = await fetch(`/api/posts/${cur}`, { cache: "no-store" });
+        if (r.status === 404) return null;
+        const d = await r.json();
         const p = d?.post;
-        if (!p || p.parentId == null) break; // not found, or this is the root
+        if (!p) return null;
+        if (p.parentId == null) break; // this is the root
         cur = p.parentId;
       } catch {
-        break;
+        break; // network error: keep the best id so far
       }
     }
     return cur;
@@ -6574,7 +6577,20 @@ export default function Home() {
     if (targetId) {
       // Link to the card on the MAIN timeline (not the reply's thread view),
       // so a follow-up comment is a normal top-level reply that stays visible.
-      const rootId = await resolveRootId(targetId);
+      // If the reply was deleted, fall back to the parent post the
+      // notification carries; if that is gone too, say so instead of paging
+      // through up to 80 feed pages (which froze the browser).
+      let rootId = await resolveRootId(targetId);
+      if (rootId == null && n.postId && n.postId !== targetId) {
+        rootId = await resolveRootId(n.postId);
+      }
+      if (rootId == null) {
+        mantineNotifications.show({
+          message: "この通知の投稿は削除されています",
+          color: "gray",
+        });
+        return;
+      }
       scrollToPinnedPost(rootId);
     }
   };

@@ -837,5 +837,11 @@ export async function deletePost(
 
   // post_images / post_likes are ON DELETE CASCADE
   await pool.query(`DELETE FROM posts WHERE id = $1`, [postId]);
+  // notifications has no FK: drop the ones pointing at this post so clicking
+  // them can't chase a deleted id.
+  await pool.query(
+    `DELETE FROM notifications WHERE reply_id = $1 OR (post_id = $1 AND reply_id IS NULL)`,
+    [postId]
+  );
   return { ok: true };
 }
