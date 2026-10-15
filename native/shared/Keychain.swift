@@ -7,14 +7,28 @@ enum Keychain {
     private static let service = "fm.backspace.bguru.chat"
     private static let account = "agent-token"
 
-    static func load() -> String? {
-        let q: [String: Any] = [
+    /// iOS: shared with the Notification Service Extension (it fetches the
+    /// real text of a push with this token). macOS keeps the app-only item.
+    #if os(iOS)
+    static let accessGroup: String? = "F9349EVF2K.fm.backspace.bguru.chat.shared"
+    #else
+    static let accessGroup: String? = nil
+    #endif
+
+    private static func base() -> [String: Any] {
+        var q: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
         ]
+        if let g = accessGroup { q[kSecAttrAccessGroup as String] = g }
+        return q
+    }
+
+    static func load() -> String? {
+        var q = base()
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: AnyObject?
         guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
               let data = out as? Data else { return nil }
@@ -24,22 +38,13 @@ enum Keychain {
     @discardableResult
     static func save(_ token: String) -> Bool {
         delete()
-        let q: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-            kSecValueData as String: Data(token.utf8),
-        ]
+        var q = base()
+        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        q[kSecValueData as String] = Data(token.utf8)
         return SecItemAdd(q as CFDictionary, nil) == errSecSuccess
     }
 
     static func delete() {
-        let q: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        SecItemDelete(q as CFDictionary)
+        SecItemDelete(base() as CFDictionary)
     }
 }

@@ -4,6 +4,7 @@ import SwiftUI
 /// agent API, live stream, optimistic send, Keychain token.
 @main
 struct BguruChatApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var session = Session()
 
     var body: some Scene {
@@ -29,11 +30,13 @@ struct BguruChatApp: App {
 @Observable
 final class Session {
     private(set) var store: ChatStore?
+    private(set) var api: APIClient?
 
     init() {
         #if DEBUG
         // Dev only: SIMCTL_CHILD_BGURU_DEV_TOKEN=bga_… runs without the Keychain.
         if let dev = ProcessInfo.processInfo.environment["BGURU_DEV_TOKEN"], !dev.isEmpty {
+            Keychain.save(dev) // so the Notification Service Extension can fill pushes in the simulator
             start(token: dev)
             return
         }
@@ -47,18 +50,29 @@ final class Session {
     }
 
     func signOut() {
-        let token = store?.token
+        let api = self.api
         store?.stop()
         store = nil
+        self.api = nil
+        PushCenter.shared.session = nil
         Keychain.delete()
-        if let token { Task { await APIClient(token: token).revokeSelf() } }
+        if let api {
+            Task {
+                await PushCenter.shared.disable(api: api)
+                await api.revokeSelf()
+            }
+        }
     }
 
     private func start(token: String) {
-        let s = ChatStore(api: APIClient(token: token))
+        let api = APIClient(token: token)
+        let s = ChatStore(api: api)
+        self.api = api
         store = s
         s.start()
         observeSignOut(s)
+        PushCenter.shared.session = self
+        PushCenter.shared.enable()
     }
 
     /// The server revoked the token / membership ended → back to login.

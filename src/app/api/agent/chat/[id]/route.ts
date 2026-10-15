@@ -2,13 +2,27 @@
  * Web の PATCH /api/chat/[id] と同じ lib を通る（本人のみ・24時間以内）。
  * 削除はモデレーション（管理者）なので Web のみ。 */
 import { NextRequest } from "next/server";
-import { editChatMessageAndBroadcast, normalizeChatBody } from "@/lib/chat";
+import { editChatMessageAndBroadcast, getChatMessage, normalizeChatBody } from "@/lib/chat";
 import { withAgent } from "@/lib/agent-auth";
-import { AGENT_API_VERSION, toAgentChatDto } from "@/lib/agent-chat";
+import { AGENT_API_VERSION, chatViewerFor, toAgentChatDto } from "@/lib/agent-chat";
 import { agentJson, parsePositiveId } from "../../_lib";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+/* GET /api/agent/chat/:id — 1 件だけ（スコープ read）。通知の本文差し替え（iOS の
+ * Notification Service Extension）が使う。24 時間で消えたものは 404。 */
+export async function GET(req: NextRequest, rc: { params: Promise<{ id: string }> }) {
+  const out = await withAgent(req, "GET /api/agent/chat/:id", "read", async (ctx) => {
+    const id = parsePositiveId((await rc.params).id);
+    if (!id) return { status: 400, body: { error: "不正な ID です", code: "invalid_request" }, headers: {} };
+    const m = await getChatMessage(id, ctx.email);
+    if (!m) return { status: 404, body: { error: "メッセージが見つかりません", code: "not_found" }, headers: {} };
+    const viewer = await chatViewerFor(ctx.email, ctx.userId);
+    return { status: 200, body: { apiVersion: AGENT_API_VERSION, message: toAgentChatDto(m, viewer) }, headers: {} };
+  });
+  return agentJson(out);
+}
 
 export async function PATCH(req: NextRequest, rc: { params: Promise<{ id: string }> }) {
   const out = await withAgent(req, "PATCH /api/agent/chat/:id", "chat", async (ctx) => {

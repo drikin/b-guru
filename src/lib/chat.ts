@@ -12,6 +12,7 @@ import { resolveDisplayNames } from "./display-name";
 import { emailToUserId, emailToUserIds } from "./user";
 import { emitLive } from "./live";
 import { CHAT_BODY_LIMIT } from "./chat-optimistic";
+import { pushChatMessage } from "./push-notify";
 
 /**
  * A chat message as serialized to the client.
@@ -264,6 +265,8 @@ async function insertAndBroadcast(
   void markChatRead(email, message.id).catch((e) =>
     console.error("chat markRead after send:", (e as Error)?.message)
   );
+  // APNs for @mentioned members on iPhone/iPad (no-op until APNs is configured).
+  void pushChatMessage(message, email).catch((e) => console.error("chat push:", (e as Error)?.message));
   return message;
 }
 
@@ -301,6 +304,22 @@ export async function editChatMessageAndBroadcast(
   const { isAuthor: _perReceiver, ...broadcast } = updated;
   emitLive({ type: "chat", action: "edit", message: broadcast });
   return updated;
+}
+
+/** One message (within the TTL), as seen by `viewerEmail`. */
+export async function getChatMessage(id: number, viewerEmail: string | null): Promise<ChatMessage | null> {
+  const res = await pool.query(
+    `SELECT id, author_email, author_name, body, edited, edited_at, created_at FROM chat_messages
+     WHERE id = $1 AND created_at >= now() - ($2::text)::interval`,
+    [id, CHAT_TTL]
+  );
+  const row = res.rows[0];
+  if (!row) return null;
+  const m = await mapRow(row, viewerEmail, await emailToUserId(row.author_email));
+  const names = await resolveDisplayNames([row.author_email]);
+  const name = names.get(row.author_email);
+  if (name) m.authorName = name;
+  return m;
 }
 
 /** Delete a chat message (admin moderation). */

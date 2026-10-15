@@ -16,6 +16,7 @@ import type { Notification } from "./notifications";
 import type { ReactionSummary } from "./reactions";
 import type { AgentScope } from "./agent-auth";
 import { isMentionedIn, mentionNamesFor } from "./chat-mention";
+import { apnsEnabled } from "./apns";
 import { resolveDisplayName } from "./display-name";
 
 export const AGENT_API_VERSION = 1;
@@ -131,6 +132,8 @@ export function agentCapabilities(scopes: AgentScope[]) {
         affects_presence: false,
       },
       notifications: { read: can("read"), stream: true },
+      // APNs (iPhone/iPad): register with POST /api/agent/devices/push.
+      push: { apns: apnsEnabled(), register: "/api/agent/devices/push", kinds: ["chat_mention", "reply"] },
       summary: { path: "/api/agent/summary" },
     },
   };

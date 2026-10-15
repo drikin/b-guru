@@ -3,6 +3,7 @@ import { pool } from "./db";
 import { resolveDisplayNames, cleanDisplayName } from "./display-name";
 import { emailToUserId, emailToUserIds } from "./user";
 import { emitPersonal } from "./personal-live";
+import { pushPersonalNotification } from "./push-notify";
 
 /**
  * A notification as serialized to the client.
@@ -98,6 +99,10 @@ export async function createNotification(input: {
   };
   // Personal stream (native clients): only the recipient's listeners get it.
   emitPersonal(input.userEmail, { type: "notification", notification: created });
+  // APNs (iPhone/iPad): replies to your posts. No-op until APNs is configured.
+  void pushPersonalNotification(input.userEmail, created).catch((e) =>
+    console.error("notification push:", (e as Error)?.message)
+  );
   return created;
 }
 

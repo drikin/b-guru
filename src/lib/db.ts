@@ -508,6 +508,21 @@ export async function initSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_agent_audit_created ON agent_audit_log(created_at);
 
+    -- ネイティブアプリ（iPhone/iPad）の APNs 端末トークン。agent token に紐付け、
+    -- トークン失効・ログアウト・APNs の 410 で消える。apns_token は端末ごとに一意。
+    CREATE TABLE IF NOT EXISTS push_devices (
+      id SERIAL PRIMARY KEY,
+      email TEXT NOT NULL,
+      agent_token_id INTEGER NOT NULL REFERENCES agent_tokens(id) ON DELETE CASCADE,
+      apns_token TEXT UNIQUE NOT NULL,
+      environment TEXT NOT NULL DEFAULT 'production',
+      platform TEXT NOT NULL DEFAULT 'ios',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_sent_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_devices_email ON push_devices(email);
+
     -- エージェント API のレート制限カウンタ（固定窓・key=token_id:scope）。
     CREATE TABLE IF NOT EXISTS rate_limits (
       key TEXT PRIMARY KEY,

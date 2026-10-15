@@ -112,6 +112,22 @@ final class APIClient: Sendable {
         try await send(request("GET", "/api/agent/summary"))
     }
 
+    /// APNs device token for this iPhone/iPad (hex). environment: "sandbox" | "production".
+    func registerPush(deviceToken: String, environment: String, platform: String) async throws {
+        struct OK: Decodable { var ok: Bool }
+        let _: OK = try await send(request("POST", "/api/agent/devices/push",
+                                           json: ["token": deviceToken, "environment": environment, "platform": platform]))
+    }
+
+    func unregisterPush(deviceToken: String) async {
+        _ = try? await session.data(for: request("DELETE", "/api/agent/devices/push", json: ["token": deviceToken]))
+    }
+
+    func chatMessage(id: Int) async throws -> ChatMessage {
+        let r: ChatSendResponse = try await send(request("GET", "/api/agent/chat/\(id)"))
+        return r.message
+    }
+
     func revokeSelf() async {
         _ = try? await session.data(for: request("DELETE", "/api/agent/token/self"))
     }
