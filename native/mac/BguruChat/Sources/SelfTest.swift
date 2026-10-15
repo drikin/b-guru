@@ -59,6 +59,12 @@ enum SelfTest {
             win.contentView = host
             win.orderFrontRegardless()
             try? await Task.sleep(for: .milliseconds(900))
+            if CommandLine.arguments.contains("-reactLast") {
+                // Local-only, AFTER the list is on screen: react to the last
+                // message, as a user would, and see whether the chips stay visible.
+                store.debugAddReactionToLast()
+                try? await Task.sleep(for: .milliseconds(600))
+            }
             host.layoutSubtreeIfNeeded()
             if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
                 host.cacheDisplay(in: host.bounds, to: rep)

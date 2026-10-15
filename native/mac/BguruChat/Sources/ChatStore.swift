@@ -303,6 +303,14 @@ final class ChatStore {
         }
     }
 
+    #if DEBUG
+    func debugAddReactionToLast() {
+        guard let i = rows.indices.last else { return }
+        rows[i].message.reactions = [Reaction(emoji: "❤️", count: 2, mine: true, reactors: []),
+                                     Reaction(emoji: "😂", count: 1, mine: false, reactors: [])]
+    }
+    #endif
+
     static func toggled(_ list: [Reaction], emoji: String) -> [Reaction] {
         var next = list
         if let i = next.firstIndex(where: { $0.emoji == emoji }) {

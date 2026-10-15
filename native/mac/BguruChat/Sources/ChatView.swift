@@ -111,6 +111,14 @@ struct ChatView: View {
                 .padding(.vertical, 8)
             }
             .defaultScrollAnchor(.bottom)
+            .keepsBottomOnResize()
+            // Reacting to / editing the LAST message makes its row taller (chips
+            // appear under the bubble). Without this the new chips land below the
+            // viewport and the list looks like it jumped (drikin 2026-10-15).
+            .onChange(of: lastRowSignature) { _, _ in
+                guard store.scrollTarget == nil else { return }
+                proxy.scrollTo("bottom", anchor: .bottom)
+            }
             .onChange(of: store.rows.last?.id) { _, _ in
                 guard store.scrollTarget == nil else { return }
                 withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
@@ -124,6 +132,13 @@ struct ChatView: View {
                 }
             }
         }
+    }
+
+    /// Changes whenever the last row's height may change (reactions, edits).
+    private var lastRowSignature: String {
+        guard let m = store.rows.last?.message else { return "" }
+        let r = (m.reactions ?? []).map { "\($0.emoji)\($0.count)" }.joined()
+        return "\(m.id)|\(m.body.count)|\(m.edited)|\(r)"
     }
 
     // MARK: Composer
@@ -214,4 +229,17 @@ private struct OnlineLabelStyle: LabelStyle {
 
 extension Color {
     static let accentGreen = Color(red: 0.086, green: 0.639, blue: 0.290) // B-guru #16a34a
+}
+
+private extension View {
+    /// macOS 15+: when content height changes, keep the bottom edge fixed (the
+    /// chat reads bottom-up), so a row growing never pushes the latest messages
+    /// out of view.
+    @ViewBuilder func keepsBottomOnResize() -> some View {
+        if #available(macOS 15.0, *) {
+            self.defaultScrollAnchor(.bottom, for: .sizeChanges)
+        } else {
+            self
+        }
+    }
 }
