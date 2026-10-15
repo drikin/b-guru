@@ -79,3 +79,10 @@ TestFlight の外部テスト: 公開リンクで最大 10,000 人。そのバ�
    `APNS_SANDBOX_KEY_ID` を設定（.p8 はリポジトリ外、権限 600）し、pm2 を再起動。
    Debug ビルド・シミュレーターは開発用（sandbox）、TestFlight / App Store は本番用（production）の鍵で届く。
 3. Identifiers で fm.backspace.bguru.chat の Push Notifications を有効化（Xcode の自動署名でも可）。
+
+### 本番での確認（2026-10-16）
+- 鍵を配置（~/bsm-secrets、権限 600。開発用 549NKBTAPG / 本番用 5H74A43YFH）し、.env.production に設定してデプロイ。
+  capabilities で `push.apns: true` を確認。
+- シミュレーター（Debug = sandbox）が端末登録 → サーバーから開発用 APNs 経由で本物のプッシュ → NSE が本文を取得して
+  「送信者（B-guru チャット）／本文」に差し替えて表示、まで確認。
+- 本番用の鍵（production）は TestFlight / App Store のビルドで使われる（実機での確認は TestFlight 配布時）。
