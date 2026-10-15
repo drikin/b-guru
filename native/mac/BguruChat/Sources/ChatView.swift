@@ -1,0 +1,194 @@
+import AppKit
+import SwiftUI
+
+struct ChatView: View {
+    @Bindable var store: ChatStore
+    @Bindable var pin: PinState
+    let onClose: () -> Void
+    let onSignOut: () -> Void
+
+    @State private var draft = ""
+    @State private var editingId: Int?
+    @FocusState private var composerFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            messages
+            Divider()
+            composer
+        }
+        .background(.regularMaterial)
+        .onAppear { composerFocused = true }
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: store.unreadCount > 0 ? "dog.fill" : "dog")
+                .foregroundStyle(Color.accentGreen)
+            Text("B-guru チャット").font(.headline)
+            if store.connection != .live {
+                Text(store.connection == .offline ? "オフライン" : "接続中…")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if store.onlineCount > 0 {
+                Label("\(store.onlineCount)", systemImage: "circle.fill")
+                    .labelStyle(OnlineLabelStyle())
+                    .help("いま B-guru を開いている人")
+                    .accessibilityLabel("オンライン \(store.onlineCount) 人")
+            }
+            Button {
+                pin.pinned.toggle()
+            } label: {
+                Image(systemName: pin.pinned ? "pin.fill" : "pin")
+            }
+            .buttonStyle(.borderless)
+            .help(pin.pinned ? "固定を解除（他をクリックすると隠れる）" : "最前面に固定（配信中に横に置いておく）")
+            .accessibilityLabel(pin.pinned ? "固定を解除" : "最前面に固定")
+            Menu {
+                Button("B-guru をブラウザで開く") { NSWorkspace.shared.open(APIClient.baseURL) }
+                Divider()
+                Button("ログアウト", action: onSignOut)
+                Button("終了") { NSApp.terminate(nil) }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+    }
+
+    // MARK: Messages
+
+    private var messages: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 6) {
+                    if store.rows.isEmpty {
+                        Text(store.connection == .live ? "今日はまだ静かだわん" : "読み込み中…")
+                            .font(.callout).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity).padding(.top, 40)
+                    }
+                    ForEach(Array(store.rows.enumerated()), id: \.element.id) { idx, row in
+                        let prev = idx > 0 ? store.rows[idx - 1].message : nil
+                        MessageRow(
+                            row: row,
+                            showHeader: prev == nil || prev?.authorId != row.message.authorId || row.message.isAuthor != prev?.isAuthor,
+                            canReact: store.capabilities?.canReact ?? false,
+                            canEdit: store.capabilities?.canEdit ?? false,
+                            onReact: { store.toggleReaction(row.message.id, emoji: $0) },
+                            onEdit: { beginEdit(row.message) },
+                            onRetry: { store.retry(row) },
+                            onDiscard: { store.discard(row) }
+                        )
+                        .id(row.id)
+                    }
+                    Color.clear.frame(height: 1).id("bottom")
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+            }
+            .defaultScrollAnchor(.bottom)
+            .onChange(of: store.rows.last?.id) { _, _ in
+                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+        }
+    }
+
+    // MARK: Composer
+
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if editingId != nil {
+                HStack {
+                    Text("メッセージを編集中").font(.caption).foregroundStyle(Color.accentGreen)
+                    Spacer()
+                    Button("キャンセル  Esc") { cancelEdit() }.buttonStyle(.borderless).font(.caption)
+                }
+            }
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField(editingId == nil ? "メッセージ（Enter 送信・⇧Enter 改行）" : "編集内容（Enter 保存）",
+                          text: $draft, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...6)
+                    .focused($composerFocused)
+                    .onSubmit(submit)
+                    .onKeyPress(.upArrow) {
+                        // Slack-style: ↑ in an empty composer edits your last message.
+                        guard draft.isEmpty, editingId == nil, let m = store.lastOwnMessage,
+                              store.capabilities?.canEdit ?? false else { return .ignored }
+                        beginEdit(m)
+                        return .handled
+                    }
+                    .onKeyPress(.escape) {
+                        if editingId != nil { cancelEdit(); return .handled }
+                        onClose()
+                        return .handled
+                    }
+                    .onChange(of: draft) { _, v in
+                        let limit = store.capabilities?.maxBody ?? 1000
+                        if v.count > limit { draft = String(v.prefix(limit)) }
+                    }
+                    .padding(.vertical, 7)
+                    .padding(.horizontal, 10)
+                    .background(RoundedRectangle(cornerRadius: 9).fill(Color(nsColor: .textBackgroundColor)))
+                    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.12)))
+                Button(action: submit) {
+                    Image(systemName: editingId == nil ? "paperplane.fill" : "checkmark")
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.accentGreen)
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(store.capabilities?.canSend ?? true))
+                .accessibilityLabel(editingId == nil ? "送信" : "保存")
+            }
+        }
+        .padding(10)
+    }
+
+    private func submit() {
+        let text = draft
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if let id = editingId {
+            editingId = nil
+            draft = ""
+            Task { _ = await store.edit(id, body: text) }
+        } else {
+            draft = "" // the bubble is already on screen; clear at once
+            store.send(text, restore: { body in if draft.isEmpty { draft = body } })
+        }
+        composerFocused = true
+    }
+
+    private func beginEdit(_ m: ChatMessage) {
+        editingId = m.id
+        draft = m.body
+        composerFocused = true
+    }
+
+    private func cancelEdit() {
+        editingId = nil
+        draft = ""
+    }
+}
+
+private struct OnlineLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 3) {
+            configuration.icon.font(.system(size: 6)).foregroundStyle(.green)
+            configuration.title.font(.caption).foregroundStyle(.secondary).monospacedDigit()
+        }
+    }
+}
+
+extension Color {
+    static let accentGreen = Color(red: 0.086, green: 0.639, blue: 0.290) // B-guru #16a34a
+}
