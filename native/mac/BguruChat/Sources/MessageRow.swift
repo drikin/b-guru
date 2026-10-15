@@ -11,6 +11,11 @@ struct MessageRow: View {
     let onRetry: () -> Void
     let onDiscard: () -> Void
     var highlighted = false
+    /// This message is open in the composer for editing.
+    var editing = false
+
+    @State private var hovering = false
+    @State private var pickerOpen = false
 
     static let quick = ["❤️", "👍", "😂", "🎉", "🙏", "👀"]
 
@@ -53,8 +58,12 @@ struct MessageRow: View {
         )
         .opacity(row.state == .pending ? 0.6 : 1)
         .animation(.easeOut(duration: 0.15), value: row.state)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
         .contextMenu { menu }
         .accessibilityElement(children: .combine)
+        .accessibilityAction(named: "❤️ を付ける") { if canReact && m.id > 0 { onReact("❤️") } }
+        .accessibilityAction(named: "編集") { if mine && canEdit && m.id > 0 { onEdit() } }
         .accessibilityLabel("\(mine ? "自分" : (m.authorName ?? ""))、\(m.body)\(m.mentionsMe ? "、あなたへのメンション" : "")\(row.state == .failed ? "、送信失敗" : "")")
     }
 
@@ -70,7 +79,56 @@ struct MessageRow: View {
                     .fill(emojiOnly ? Color.clear : (mine ? Color.accentGreen.opacity(0.14)
                         : (m.mentionsMe ? Color.yellow.opacity(0.22) : Color.primary.opacity(0.06))))
             )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.accentGreen, lineWidth: editing ? 1.5 : 0)
+            )
             .onTapGesture(count: 2) { if canReact && m.id > 0 { onReact("❤️") } }
+            // Actions hang off the bubble's outer top corner on hover: ❤️ in one
+            // click, 😊 for the picker, ✏️ for your own. An overlay takes no
+            // space, so bubbles keep their full width and nothing jumps.
+            .overlay(alignment: mine ? .topLeading : .topTrailing) {
+                actionBar
+                    .fixedSize()
+                    .alignmentGuide(mine ? .leading : .trailing) { d in
+                        mine ? d[.trailing] - 14 : d[.leading] + 14
+                    }
+                    .offset(y: -12)
+            }
+    }
+
+    private var showActions: Bool { (hovering || pickerOpen || Self.debugForceActions) && m.id > 0 && row.state == .sent }
+
+    #if DEBUG
+    static let debugForceActions = CommandLine.arguments.contains("-forceActions")
+    #else
+    static let debugForceActions = false
+    #endif
+
+    @ViewBuilder private var actionBar: some View {
+        if canReact || (mine && canEdit) {
+            HStack(spacing: 0) {
+                if canReact {
+                    ActionButton(systemImage: nil, text: "❤️", help: "❤️ を付ける（ダブルクリックでも）") { onReact("❤️") }
+                    ActionButton(systemImage: "face.smiling", text: nil, help: "リアクションを選ぶ") { pickerOpen = true }
+                        .popover(isPresented: $pickerOpen, arrowEdge: .bottom) {
+                            ReactionPicker { emoji in
+                                pickerOpen = false
+                                onReact(emoji)
+                            }
+                        }
+                }
+                if mine && canEdit {
+                    ActionButton(systemImage: "pencil", text: nil, help: "編集（入力欄が空のとき ↑ でも）", action: onEdit)
+                }
+            }
+            .padding(2)
+            .background(Capsule().fill(.background).shadow(color: .black.opacity(0.12), radius: 2, y: 1))
+            .opacity(showActions ? 1 : 0)
+            .animation(.easeOut(duration: 0.12), value: showActions)
+            .allowsHitTesting(showActions)
+            .accessibilityHidden(true) // exposed as accessibility actions on the row instead
+        }
     }
 
     @ViewBuilder private var menu: some View {
@@ -131,6 +189,65 @@ struct MessageRow: View {
     }
 }
 
+private struct ActionButton: View {
+    let systemImage: String?
+    let text: String?
+    let help: String
+    let action: () -> Void
+    @State private var over = false
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if let systemImage { Image(systemName: systemImage).font(.system(size: 12, weight: .medium)) }
+                if let text { Text(text).font(.system(size: 13)) }
+            }
+            .frame(width: 24, height: 22)
+            .background(Circle().fill(Color.primary.opacity(over ? 0.10 : 0)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help(help)
+        .onHover { over = $0 }
+    }
+}
+
+/// Quick emoji + the community's custom emoji.
+struct ReactionPicker: View {
+    let onPick: (String) -> Void
+    static let unicode = ["❤️", "👍", "😂", "🎉", "🙏", "👀", "😮", "😢", "🔥", "💯", "👏", "🤔"]
+    private let cols = Array(repeating: GridItem(.fixed(30), spacing: 4), count: 6)
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                LazyVGrid(columns: cols, spacing: 4) {
+                    ForEach(Self.unicode, id: \.self) { e in
+                        Button { onPick(e) } label: { Text(e).font(.system(size: 20)).frame(width: 30, height: 30) }
+                            .buttonStyle(.plain)
+                    }
+                }
+                let custom = EmojiCatalog.shared.names
+                if !custom.isEmpty {
+                    Text("カスタム絵文字").font(.caption).foregroundStyle(.secondary)
+                    LazyVGrid(columns: cols, spacing: 4) {
+                        ForEach(custom, id: \.self) { name in
+                            Button { onPick(":\(name):") } label: {
+                                ReactionGlyph(emoji: ":\(name):").frame(width: 24, height: 24).frame(width: 30, height: 30)
+                            }
+                            .buttonStyle(.plain)
+                            .help(":\(name):")
+                        }
+                    }
+                }
+            }
+            .padding(10)
+        }
+        .frame(width: 230, height: EmojiCatalog.shared.names.isEmpty ? 90 : 260)
+    }
+}
+
 struct ReactionChips: View {
     let reactions: [Reaction]
     let enabled: Bool
@@ -182,6 +299,7 @@ final class EmojiCatalog {
     private var loaded = false
 
     func url(for name: String) -> URL? { urls[name] }
+    var names: [String] { urls.keys.sorted() }
 
     func load() async {
         guard !loaded else { return }

@@ -100,7 +100,8 @@ struct ChatView: View {
                             onEdit: { beginEdit(row.message) },
                             onRetry: { store.retry(row) },
                             onDiscard: { store.discard(row) },
-                            highlighted: store.highlightId == row.message.id
+                            highlighted: store.highlightId == row.message.id,
+                            editing: editingId == row.message.id
                         )
                         .id(row.id)
                     }

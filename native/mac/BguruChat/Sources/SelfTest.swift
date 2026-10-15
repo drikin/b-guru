@@ -67,6 +67,18 @@ enum SelfTest {
                     report["snapshot"] = "chat.png"
                 }
             }
+            // The reaction picker on its own.
+            let pickerHost = NSHostingView(rootView: ReactionPicker { _ in })
+            let pwin = NSWindow(contentRect: NSRect(x: -4000, y: -3000, width: 230, height: 260),
+                                styleMask: [.borderless], backing: .buffered, defer: false)
+            pwin.contentView = pickerHost
+            pwin.orderFrontRegardless()
+            try? await Task.sleep(for: .milliseconds(1200))
+            if let rep = pickerHost.bitmapImageRepForCachingDisplay(in: pickerHost.bounds) {
+                pickerHost.cacheDisplay(in: pickerHost.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?
+                    .write(to: URL(fileURLWithPath: outDir).appendingPathComponent("picker.png"))
+            }
             let json = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
             try? json?.write(to: URL(fileURLWithPath: outDir).appendingPathComponent("selftest.json"))
             NSApp.terminate(nil)
