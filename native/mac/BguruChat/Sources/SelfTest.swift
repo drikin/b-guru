@@ -44,6 +44,11 @@ enum SelfTest {
             }
 
             store.isVisible = true
+            if CommandLine.arguments.contains("-reveal"), store.rows.count > 6 {
+                let target = store.rows[store.rows.count - 7].message.id
+                report["revealed_id"] = target
+                store.reveal(target)
+            }
             // Render through a real (off-screen) window so AppKit-backed views
             // — ScrollView, TextField — draw too; ImageRenderer cannot.
             let pin = PinState()

@@ -9,7 +9,11 @@ B-guru のチャットだけを切り出したメニューバー常駐アプリ�
 - 📌 で固定（他をクリックしても隠れない・全 Space・配信中に横に置く用途。位置を記憶）
 - Enter 送信 / ⇧Enter 改行 / 空欄で ↑ = 自分の直前の発言を編集
 - 右クリックでリアクション・編集・コピー、ダブルクリックで ❤️
-- @メンションは通知（通知から返信・❤️ 可、吠える音つき）。メニューバーの犬が塗りつぶし = 未読あり
+- メニューバー: 未読があると犬が塗りつぶし＋件数、自分へのメンションがあると「@件数」
+- 通知: @メンションは個別に（返信・❤️ 可、吠える音つき）。その他の新着は1つの通知にまとめて更新
+  （「…（ほか 3 件の新着）」）。クリックでその位置へ移動してハイライト。チャットを開くと消える
+- ⋯ メニューで設定: 通知（新着すべて / メンションだけ）、静かな時間（0:00〜7:00 は新着を通知せず、
+  メンションは音なし）、Dock にも表示（未読バッジ）
 
 ## 設計の約束
 - 依存するのは `/api/agent/*` の契約だけ（`src/lib/agent-chat.ts` が正本）。
@@ -25,4 +29,5 @@ cd native/mac && xcodegen generate && xcodebuild -project BguruChat.xcodeproj -s
 開発時のみ: `BGURU_DEV_TOKEN=bga_… "build/dd/Build/Products/Debug/B-guru Chat.app/Contents/MacOS/B-guru Chat" -showPanel`
 UI 自動操作でアプリを見つけさせるとき（開発のみ）: `-regular` で Dock に表示。
 開閉ごとのフォーカス確認（開発のみ）: `-showPanel -reopenTest -logFocus` → stderr に `[focus] … editing=1`。
+通知のまとめ確認（開発のみ）: `-notifyTest` → stderr に `[notify] …`。ハイライト: `-selftest DIR -reveal`。
 画面録画なしの自己診断: `… -selftest <アプリのコンテナ内のディレクトリ> [-selftest-send] [-dark]`（接続時間・送信遅延・画面 PNG）

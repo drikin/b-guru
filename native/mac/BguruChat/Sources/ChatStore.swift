@@ -13,6 +13,12 @@ final class ChatStore {
 
     private(set) var rows: [ChatRow] = []
     private(set) var unreadCount = 0
+    /// Unread messages that @mention me (subset of unreadCount).
+    private(set) var mentionCount = 0
+    /// Set by a notification click: the list scrolls to this message and
+    /// briefly highlights it.
+    var scrollTarget: Int?
+    private(set) var highlightId: Int?
     private(set) var onlineCount = 0
     private(set) var connection: Connection = .connecting
     private(set) var capabilities: Capabilities?
@@ -23,10 +29,18 @@ final class ChatStore {
     /// True while the panel is on screen; drives read marking and whether a
     /// mention becomes a system notification.
     var isVisible = false {
-        didSet { if isVisible { markReadSoon() } }
+        didSet {
+            if isVisible {
+                markReadSoon()
+                if !oldValue { onBecameVisible?() }
+            }
+        }
     }
 
     var onMention: ((ChatMessage) -> Void)?
+    /// A message from someone else arrived while the panel was hidden.
+    var onNewMessage: ((ChatMessage) -> Void)?
+    var onBecameVisible: (() -> Void)?
 
     private let api: APIClient
     private var streamTask: Task<Void, Never>?
@@ -138,7 +152,12 @@ final class ChatStore {
             markReadSoon()
         } else {
             unreadCount += 1
-            if m.mentionsMe { onMention?(m) }
+            if m.mentionsMe {
+                mentionCount += 1
+                onMention?(m)
+            } else {
+                onNewMessage?(m)
+            }
         }
     }
 
@@ -147,6 +166,7 @@ final class ChatStore {
             let r = try await api.chat()
             latestId = max(latestId, r.latestId)
             unreadCount = isVisible ? 0 : r.unreadCount
+            if isVisible { mentionCount = 0 }
             if let mine = r.messages.first(where: { $0.isAuthor }) { myUserId = mine.authorId }
             // Keep rows still sending / failed; reconcile cleans up any that
             // the server list already contains.
@@ -211,6 +231,7 @@ final class ChatStore {
         )
         rows.append(ChatRow(pending, state: .pending))
         unreadCount = 0
+        mentionCount = 0
         post(body: body, clientId: clientId, restore: restore)
     }
 
@@ -305,8 +326,19 @@ final class ChatStore {
 
     // MARK: - Read state
 
+    /// Jump to a message (from a notification click) and highlight it briefly.
+    func reveal(_ id: Int) {
+        highlightId = id
+        scrollTarget = id
+        Task {
+            try? await Task.sleep(for: .seconds(1.6))
+            if highlightId == id { highlightId = nil }
+        }
+    }
+
     private func markReadSoon() {
         unreadCount = 0
+        mentionCount = 0
         guard capabilities?.canMarkRead ?? true, latestId > 0 else { return }
         readTask?.cancel()
         let upTo = latestId

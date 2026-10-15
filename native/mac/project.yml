@@ -38,4 +38,4 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fm.backspace.bguru.chat
         PRODUCT_NAME: B-guru Chat
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

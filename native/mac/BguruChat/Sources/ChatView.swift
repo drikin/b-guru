@@ -7,6 +7,7 @@ struct ChatView: View {
     let onClose: () -> Void
     let onSignOut: () -> Void
 
+    @Bindable private var settings = AppSettings.shared
     @State private var draft = ""
     @State private var editingId: Int?
     @FocusState private var composerFocused: Bool
@@ -55,6 +56,12 @@ struct ChatView: View {
             .help(pin.pinned ? "固定を解除（他をクリックすると隠れる）" : "最前面に固定（配信中に横に置いておく）")
             .accessibilityLabel(pin.pinned ? "固定を解除" : "最前面に固定")
             Menu {
+                Picker("通知", selection: $settings.notifyMode) {
+                    ForEach(AppSettings.NotifyMode.allCases) { Text($0.label).tag($0) }
+                }
+                Toggle("静かな時間（0:00〜7:00）は新着を通知しない", isOn: $settings.quietHours)
+                Toggle("Dock にも表示（未読バッジ）", isOn: $settings.showInDock)
+                Divider()
                 Button("B-guru をブラウザで開く") { NSWorkspace.shared.open(APIClient.baseURL) }
                 Divider()
                 Button("ログアウト", action: onSignOut)
@@ -92,7 +99,8 @@ struct ChatView: View {
                             onReact: { store.toggleReaction(row.message.id, emoji: $0) },
                             onEdit: { beginEdit(row.message) },
                             onRetry: { store.retry(row) },
-                            onDiscard: { store.discard(row) }
+                            onDiscard: { store.discard(row) },
+                            highlighted: store.highlightId == row.message.id
                         )
                         .id(row.id)
                     }
@@ -103,7 +111,16 @@ struct ChatView: View {
             }
             .defaultScrollAnchor(.bottom)
             .onChange(of: store.rows.last?.id) { _, _ in
+                guard store.scrollTarget == nil else { return }
                 withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+            .onChange(of: store.scrollTarget) { _, target in
+                guard let target, let row = store.rows.first(where: { $0.message.id == target }) else { return }
+                // Wait one runloop so a freshly opened panel has laid out its rows.
+                DispatchQueue.main.async {
+                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(row.id, anchor: .center) }
+                    store.scrollTarget = nil
+                }
             }
         }
     }

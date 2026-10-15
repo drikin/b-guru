@@ -10,6 +10,7 @@ struct MessageRow: View {
     let onEdit: () -> Void
     let onRetry: () -> Void
     let onDiscard: () -> Void
+    var highlighted = false
 
     static let quick = ["❤️", "👍", "😂", "🎉", "🙏", "👀"]
 
@@ -44,6 +45,12 @@ struct MessageRow: View {
             }
             if !mine { Spacer(minLength: 40) }
         }
+        .padding(.vertical, highlighted ? 2 : 0)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.accentGreen.opacity(highlighted ? 0.16 : 0))
+                .animation(.easeOut(duration: 0.6), value: highlighted)
+        )
         .opacity(row.state == .pending ? 0.6 : 1)
         .animation(.easeOut(duration: 0.15), value: row.state)
         .contextMenu { menu }

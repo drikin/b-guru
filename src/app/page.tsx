@@ -1157,8 +1157,30 @@ function clearPendingNew() {
 // so the tab itself also signals arrivals while the page is open. The favicon
 // reverts to the plain beagle logo when both counters are clear.
 let favChatUnread = 0;
+// Unread notifications (replies / likes for me) — only on the app-icon badge.
+let favNotifUnread = 0;
+
+// ---- App icon badge (Badging API, drikin 2026-10-15) ----
+// For the installed web app (Safari / Chrome "Add to Dock", iPhone home
+// screen): the same attention count as the tab favicon plus unread
+// notifications, shown on the Dock / home-screen icon. Browsers without the
+// API (or a plain tab) simply ignore it.
+function updateAppBadge(count: number) {
+  const nav = navigator as Navigator & {
+    setAppBadge?: (n?: number) => Promise<void>;
+    clearAppBadge?: () => Promise<void>;
+  };
+  try {
+    if (count > 0) void nav.setAppBadge?.(count)?.catch(() => {});
+    else void nav.clearAppBadge?.()?.catch(() => {});
+  } catch {
+    /* unsupported */
+  }
+}
+
 function refreshTabFavicon() {
   const total = getPendingSnap() + favChatUnread;
+  updateAppBadge(total + favNotifUnread);
   const img = document.createElement("img");
   img.src = "/icon-192.png";
   img.onload = () => {
@@ -5210,6 +5232,10 @@ export default function Home() {
     favChatUnread = chatUnread;
     refreshTabFavicon();
   }, [chatUnread]);
+  useEffect(() => {
+    favNotifUnread = notifUnread;
+    refreshTabFavicon();
+  }, [notifUnread]);
   useEffect(() => {
     const unsub = subscribePending(() => refreshTabFavicon());
     refreshTabFavicon(); // initial paint (clears any stale badge)
