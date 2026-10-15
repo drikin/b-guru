@@ -15,6 +15,21 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     /// (which first takes focus away and starts a fade-out) would reopen the
     /// panel and then have the stale fade-out hide it again.
     private var generation = 0
+    /// True between dismiss() and the end of its fade-out.
+    private(set) var isDismissing = false
+    /// When the panel last lost keyboard focus. Clicking the menu bar icon can
+    /// itself take focus away a moment before the click action runs; a toggle
+    /// must still see that as "the panel was in front" and close it.
+    private var lastResignKeyAt: Date?
+
+    /// Open and in front as far as a toggle is concerned.
+    var isFrontForToggle: Bool {
+        if isDismissing { return true } // already closing because of this very click
+        guard isVisible else { return false }
+        if isKeyWindow { return true }
+        if let t = lastResignKeyAt, Date().timeIntervalSince(t) < 0.35 { return true }
+        return false
+    }
 
     init(store: ChatStore, onSignOut: @escaping () -> Void) {
         self.store = store
@@ -53,6 +68,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
             setFrameOrigin(origin)
         }
         generation += 1
+        isDismissing = false
         let fadeIn = !isVisible || alphaValue < 1
         if fadeIn { alphaValue = 0 }
         orderFrontRegardless()
@@ -105,6 +121,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
 
     func dismiss() {
         generation += 1
+        isDismissing = true
         let mine = generation
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.12
@@ -112,6 +129,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         }, completionHandler: { [weak self] in
             Task { @MainActor in
                 guard let self, self.generation == mine else { return } // reopened meanwhile
+                self.isDismissing = false
                 self.orderOut(nil)
                 self.alphaValue = 1
                 self.store.isVisible = false
@@ -131,6 +149,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     override func cancelOperation(_ sender: Any?) { dismiss() }
 
     func windowDidResignKey(_ notification: Notification) {
+        lastResignKeyAt = Date()
         // Peek mode: click elsewhere and it gets out of the way.
         if !pin.pinned { dismiss() }
     }

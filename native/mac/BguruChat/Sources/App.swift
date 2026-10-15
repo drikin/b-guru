@@ -71,9 +71,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.runNotifyTest() }
             }
             if CommandLine.arguments.contains("-reopenTest") {
-                // open → close → open via the hotkey path, to check the caret lands in the box each time
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.togglePanel() }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { self.togglePanel() }
+                // open → toggle (close) → toggle (open) → focus lost right before a toggle (must stay closed)
+                let state = { (tag: String) in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        NSLog("[toggle] %@ visible=%d", tag, (self.panel?.isVisible ?? false) ? 1 : 0)
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.togglePanel(); state("close") }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { self.togglePanel(); state("open") }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                    self.panel?.resignKey() // what a click on the menu bar icon can do first
+                    self.togglePanel()
+                    state("race-close")
+                }
             }
             return
         }
@@ -156,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if NSApp.currentEvent?.type == .rightMouseUp {
             showMenu()
         } else {
-            openPanelFromStatusItem()
+            togglePanel()
         }
     }
 
@@ -178,17 +188,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc private func signOutAction() { signOut() }
     @objc private func openWeb() { NSWorkspace.shared.open(APIClient.baseURL) }
 
-    /// Menu bar click: always bring the chat to the front (never toggles it
-    /// away — close with Esc, or by clicking elsewhere when not pinned).
-    private func openPanelFromStatusItem() {
-        guard panel != nil else { showLogin(); return }
-        showPanel()
-    }
-
-    /// ⌃⌥B: toggle — open in front, or put it away if it is already in front.
+    /// Menu bar click and ⌃⌥B both toggle: if the chat is in front, put it
+    /// away; otherwise bring it to the front with the caret in the message box.
+    /// (A pinned panel sitting behind your work is brought forward, not closed.)
     private func togglePanel() {
         guard let panel else { showLogin(); return }
-        if panel.isVisible && panel.isKeyWindow && panel.alphaValue > 0.9 { panel.dismiss() } else { showPanel() }
+        if panel.isFrontForToggle {
+            if !panel.isDismissing { panel.dismiss() }
+        } else {
+            showPanel()
+        }
     }
 
     private func showPanel() {
