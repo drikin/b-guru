@@ -113,6 +113,6 @@ final class APIClient: Sendable {
     }
 
     func revokeSelf() async {
-        _ = try? await session.data(for: request("DELETE", "/api/agent/token"))
+        _ = try? await session.data(for: request("DELETE", "/api/agent/token/self"))
     }
 }

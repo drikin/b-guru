@@ -10,6 +10,7 @@ import WebKit
 struct LoginView: View {
     let onToken: (String) -> Void
     @State private var status: String?
+    @State private var showDevices = false
     @State private var working = false
     @State private var web = LoginWeb()
 
@@ -18,10 +19,19 @@ struct LoginView: View {
             WebViewRepresentable(web: web)
             Divider()
             HStack(spacing: 10) {
-                Text(status ?? "B-guru にログインしてから「このアプリを接続」を押してください")
-                    .font(.callout)
-                    .foregroundStyle(status == nil ? .secondary : .primary)
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(status ?? "B-guru にログインしてから「このアプリを接続」を押してください")
+                        .font(.callout)
+                        .foregroundStyle(status == nil ? .secondary : .primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if showDevices {
+                        Button("デバイスの管理を開く") {
+                            web.view.load(URLRequest(url: APIClient.baseURL.appendingPathComponent("/settings/agent")))
+                        }
+                        .buttonStyle(.link)
+                        .font(.callout)
+                    }
+                }
                 Spacer()
                 Button(working ? "接続中…" : "このアプリを接続") { connect() }
                     .keyboardShortcut(.defaultAction)
@@ -40,8 +50,12 @@ struct LoginView: View {
             do {
                 let token = try await web.issueToken()
                 onToken(token)
+            } catch let e as LoginWeb.IssueError {
+                status = e.message
+                showDevices = e.isLimit
             } catch {
                 status = "接続できませんでした。ログインしているか確認してください"
+                showDevices = false
             }
         }
     }
@@ -60,24 +74,49 @@ final class LoginWeb: NSObject, WKNavigationDelegate {
         view.load(URLRequest(url: APIClient.baseURL))
     }
 
+    struct IssueError: Error {
+        var message: String
+        var isLimit = false
+    }
+
+    /// Issues this Mac's token from the signed-in page. `replace_same_device`
+    /// revokes the previous token of this same Mac first, so reinstalling or
+    /// signing in again never fills up the 5-token limit. On failure the
+    /// server's own reason is shown (e.g. the limit, with a link to the
+    /// device list) instead of a generic message.
     func issueToken() async throws -> String {
         let device = "B-guru Chat (Mac) \(Host.current().localizedName ?? "")".trimmingCharacters(in: .whitespaces)
         let js = """
         const r = await fetch('/api/agent/token', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ device_name: device, scopes: ['read', 'read_state', 'chat'] }),
+          body: JSON.stringify({ device_name: device, scopes: ['read', 'read_state', 'chat'], replace_same_device: true }),
           credentials: 'same-origin'
         });
-        if (!r.ok) return null;
-        const d = await r.json();
-        return d.token || null;
+        let d = null;
+        try { d = await r.json(); } catch (e) {}
+        return { status: r.status, token: (d && d.token) || '', error: (d && d.error) || '', hint: (d && d.hint) || '' };
         """
-        guard view.url?.host == APIClient.baseURL.host else { throw APIError.unauthorized(code: nil) }
-        let result = try await view.callAsyncJavaScript(js, arguments: ["device": String(device.prefix(100))],
-                                                        contentWorld: .defaultClient)
-        guard let token = result as? String, !token.isEmpty else { throw APIError.unauthorized(code: nil) }
-        return token
+        guard view.url?.host == APIClient.baseURL.host else {
+            throw IssueError(message: "B-guru のページを開いてから接続してください")
+        }
+        let raw = try await view.callAsyncJavaScript(js, arguments: ["device": String(device.prefix(100))],
+                                                     contentWorld: .defaultClient)
+        let r = raw as? [String: Any] ?? [:]
+        let status = (r["status"] as? NSNumber)?.intValue ?? 0
+        if let token = r["token"] as? String, !token.isEmpty, status == 201 { return token }
+        let error = (r["error"] as? String) ?? ""
+        let hint = (r["hint"] as? String) ?? ""
+        switch status {
+        case 401:
+            throw IssueError(message: "まだログインしていません。上の画面で B-guru にログインしてください")
+        case 403:
+            throw IssueError(message: error.isEmpty ? "会員資格が確認できませんでした" : error)
+        default:
+            let isLimit = error.contains("本まで")
+            let text = [error, hint].filter { !$0.isEmpty }.joined(separator: "。")
+            throw IssueError(message: text.isEmpty ? "接続できませんでした（\(status)）" : text, isLimit: isLimit)
+        }
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {

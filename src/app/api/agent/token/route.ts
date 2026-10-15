@@ -7,6 +7,7 @@ import { ensureUserId } from "@/lib/user";
 import {
   issueAgentToken,
   countActiveTokens,
+  revokeTokensByDeviceName,
   MAX_TOKENS_PER_EMAIL,
   AGENT_SCOPES,
   AgentScope,
@@ -77,6 +78,12 @@ export async function POST(req: NextRequest) {
         code: "membership_ended",
         hint: "backspace.fm で会員状況をご確認ください",
       });
+    }
+
+    // ネイティブアプリの再ログイン: 同じデバイス名の古いトークンを先に失効させ、
+    //   入れ直し・ログインし直しで枠（5 本）が埋まっていかないようにする。
+    if (body?.replace_same_device === true) {
+      await revokeTokensByDeviceName(email, deviceName);
     }
 
     if ((await countActiveTokens(email)) >= MAX_TOKENS_PER_EMAIL) {

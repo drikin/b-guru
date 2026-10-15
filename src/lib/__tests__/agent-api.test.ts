@@ -263,6 +263,41 @@ describe("POST /api/agent/token", () => {
     expect(String(sql)).toContain("token_hash");
   });
 
+  it("replace_same_device: 同じデバイス名の古いトークンを失効させてから上限を数える", async () => {
+    sessionEmail.mockResolvedValue("me@example.com");
+    findMemberByEmail.mockResolvedValue({ email: "me@example.com", status: "paid" });
+    query.mockResolvedValue({ rows: [{ id: 8, c: 0, expires_at: new Date(Date.now() + 86400_000) }], rowCount: 1 });
+    const res = await tokenPOST(
+      req("http://x/api/agent/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_name: "B-guru Chat (Mac) MBP", scopes: ["read", "chat"], replace_same_device: true }),
+      })
+    );
+    expect(res.status).toBe(201);
+    const sqls = query.mock.calls.map((c) => String(c[0]));
+    const revokeAt = sqls.findIndex((q) => q.includes("UPDATE agent_tokens SET revoked_at") && q.includes("device_name"));
+    const countAt = sqls.findIndex((q) => q.includes("COUNT(*)::int AS c FROM agent_tokens"));
+    expect(revokeAt).toBeGreaterThanOrEqual(0);
+    expect(revokeAt).toBeLessThan(countAt);
+    // 本人の・完全一致の名前だけ
+    expect(query.mock.calls[revokeAt][1]).toEqual(["me@example.com", "B-guru Chat (Mac) MBP"]);
+  });
+
+  it("replace_same_device が無ければ何も失効させない", async () => {
+    sessionEmail.mockResolvedValue("me@example.com");
+    findMemberByEmail.mockResolvedValue({ email: "me@example.com", status: "paid" });
+    query.mockResolvedValue({ rows: [{ id: 9, c: 0, expires_at: new Date(Date.now() + 86400_000) }], rowCount: 1 });
+    await tokenPOST(
+      req("http://x/api/agent/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_name: "Hermes", scopes: ["read"] }),
+      })
+    );
+    expect(query.mock.calls.some((c) => String(c[0]).includes("device_name = $2"))).toBe(false);
+  });
+
   it("非会員は 403 membership_ended", async () => {
     sessionEmail.mockResolvedValue("me@example.com");
     findMemberByEmail.mockResolvedValue(null);

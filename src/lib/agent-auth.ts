@@ -173,6 +173,21 @@ export async function revokeAgentToken(tokenId: number, email: string): Promise<
   return (res.rowCount ?? 0) > 0;
 }
 
+/**
+ * 同じデバイス名の有効なトークンを失効させる（ネイティブアプリの再ログイン用）。
+ * アプリを入れ直したりログインし直したりすると、手元から消えた古いトークンが
+ * 有効なまま 5 本の枠を占め続ける。発行時に `replace_same_device: true` が来たときだけ、
+ * 本人の・完全一致の名前のものに限って片付ける。返り値は失効させた本数。
+ */
+export async function revokeTokensByDeviceName(email: string, deviceName: string): Promise<number> {
+  const res = await pool.query(
+    `UPDATE agent_tokens SET revoked_at = now()
+      WHERE email = $1 AND device_name = $2 AND revoked_at IS NULL AND expires_at > now()`,
+    [email.trim().toLowerCase(), deviceName.trim()]
+  );
+  return res.rowCount ?? 0;
+}
+
 /** 検証済みトークンが運べるコンテキスト。レスポンスには email を出さない。 */
 export interface AgentContext {
   tokenId: number;
