@@ -35,7 +35,7 @@ export const APNS_TOKEN_RE = /^[0-9a-f]{64,200}$/i;
 
 let cachedConfig: ApnsConfig | null | undefined;
 
-export function apnsConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ApnsConfig | null {
+export function apnsConfigFromEnv(env: Record<string, string | undefined> = process.env): ApnsConfig | null {
   let keyPem = env.APNS_KEY ?? "";
   if (!keyPem && env.APNS_KEY_PATH) {
     try {
