@@ -6,13 +6,22 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
 const query = vi.fn();
+// "@/lib/db" と "../db" は同じファイルに解決される。2 つのモックの中身が違うと、
+// どちらが効くかが実行ごとに変わり、トランザクション（pool.connect）を使う
+// 投稿編集系のテストが 1/10 ほどの確率で落ちていた。中身を揃える。
+// （vi.mock は巻き上げられるので、共通関数にせず両方に同じ中身を書く）
 vi.mock("@/lib/db", () => ({
   pool: {
     query: (...a: unknown[]) => query(...a),
     connect: async () => ({ query: (...a: unknown[]) => query(...a), release: () => {} }),
   },
 }));
-vi.mock("../db", () => ({ pool: { query: (...a: unknown[]) => query(...a) } }));
+vi.mock("../db", () => ({
+  pool: {
+    query: (...a: unknown[]) => query(...a),
+    connect: async () => ({ query: (...a: unknown[]) => query(...a), release: () => {} }),
+  },
+}));
 
 vi.mock("@/lib/user", async (orig) => {
   const actual = await (orig as () => Promise<Record<string, unknown>>)();
