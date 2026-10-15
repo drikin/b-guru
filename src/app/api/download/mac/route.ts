@@ -18,7 +18,7 @@ export async function GET() {
   if (!rel) {
     return NextResponse.json({ error: "配布中のバージョンがありません" }, { status: 404 });
   }
-  const body = Readable.toWeb(createReadStream(rel.path)) as ReadableStream;
+  const body = Readable.toWeb(createReadStream(/*turbopackIgnore: true*/ rel.path)) as ReadableStream;
   return new Response(body, {
     status: 200,
     headers: {

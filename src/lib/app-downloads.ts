@@ -43,11 +43,12 @@ export function parseMacManifest(raw: unknown): MacRelease | null {
 /** Current Mac release, or null when none is published / the file is missing. */
 export async function getMacRelease(): Promise<(MacRelease & { path: string }) | null> {
   try {
-    const raw = JSON.parse(await readFile(path.join(DOWNLOADS_DIR, "mac.json"), "utf8"));
+    // turbopackIgnore: a runtime directory outside the project — don't trace it into the build.
+    const raw = JSON.parse(await readFile(/*turbopackIgnore: true*/ path.join(DOWNLOADS_DIR, "mac.json"), "utf8"));
     const rel = parseMacManifest(raw);
     if (!rel) return null;
-    const p = path.join(DOWNLOADS_DIR, rel.file);
-    const s = await stat(p);
+    const p = path.join(/*turbopackIgnore: true*/ DOWNLOADS_DIR, rel.file);
+    const s = await stat(/*turbopackIgnore: true*/ p);
     if (!s.isFile()) return null;
     return { ...rel, size: s.size, path: p };
   } catch {
