@@ -10,6 +10,11 @@ import SwiftUI
 final class ChatPanel: NSPanel, NSWindowDelegate {
     private let store: ChatStore
     let pin = PinState()
+    /// Bumped on every present/dismiss. A fade-out only hides the panel if no
+    /// present() happened meanwhile — otherwise clicking the menu bar icon
+    /// (which first takes focus away and starts a fade-out) would reopen the
+    /// panel and then have the stale fade-out hide it again.
+    private var generation = 0
 
     init(store: ChatStore, onSignOut: @escaping () -> Void) {
         self.store = store
@@ -23,6 +28,8 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         hidesOnDeactivate = false
         becomesKeyOnlyIfNeeded = false
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        // Always above other apps' windows (drikin 2026-10-15「常に前面に」).
+        level = .floating
         minSize = NSSize(width: 300, height: 320)
         standardWindowButton(.miniaturizeButton)?.isHidden = true
         standardWindowButton(.zoomButton)?.isHidden = true
@@ -45,31 +52,38 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
             }
             setFrameOrigin(origin)
         }
-        alphaValue = 0
-        makeKeyAndOrderFront(nil)
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.16
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            animator().alphaValue = 1
+        generation += 1
+        let fadeIn = !isVisible || alphaValue < 1
+        if fadeIn { alphaValue = 0 }
+        orderFrontRegardless()
+        makeKey()
+        if fadeIn {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.16
+                ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                animator().alphaValue = 1
+            }
         }
         store.isVisible = true
     }
 
     func dismiss() {
+        generation += 1
+        let mine = generation
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.12
             animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             Task { @MainActor in
-                self?.orderOut(nil)
-                self?.alphaValue = 1
-                self?.store.isVisible = false
+                guard let self, self.generation == mine else { return } // reopened meanwhile
+                self.orderOut(nil)
+                self.alphaValue = 1
+                self.store.isVisible = false
             }
         })
     }
 
     private func applyPin(_ pinned: Bool) {
-        level = pinned ? .floating : .normal
         UserDefaults.standard.set(pinned, forKey: "pinned")
         if pinned {
             setFrameAutosaveName("BguruChatPinned")

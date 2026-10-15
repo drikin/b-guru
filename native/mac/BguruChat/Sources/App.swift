@@ -21,6 +21,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var observeTask: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        // Dev only: show in the Dock so UI automation can find the app.
+        if CommandLine.arguments.contains("-regular") { NSApp.setActivationPolicy(.regular) }
+        #endif
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.target = self
@@ -131,7 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if NSApp.currentEvent?.type == .rightMouseUp {
             showMenu()
         } else {
-            togglePanel()
+            openPanelFromStatusItem()
         }
     }
 
@@ -153,9 +157,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc private func signOutAction() { signOut() }
     @objc private func openWeb() { NSWorkspace.shared.open(APIClient.baseURL) }
 
+    /// Menu bar click: always bring the chat to the front (never toggles it
+    /// away — close with Esc, or by clicking elsewhere when not pinned).
+    private func openPanelFromStatusItem() {
+        guard panel != nil else { showLogin(); return }
+        showPanel()
+    }
+
+    /// ⌃⌥B: toggle — open in front, or put it away if it is already in front.
     private func togglePanel() {
         guard let panel else { showLogin(); return }
-        if panel.isVisible && panel.isKeyWindow { panel.dismiss() } else { showPanel() }
+        if panel.isVisible && panel.isKeyWindow && panel.alphaValue > 0.9 { panel.dismiss() } else { showPanel() }
     }
 
     private func showPanel() {

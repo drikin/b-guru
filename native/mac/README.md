@@ -4,8 +4,9 @@ B-guru のチャットだけを切り出したメニューバー常駐アプリ�
 検討の経緯は `docs/mac-native-app-study.html`。
 
 ## 使い方
-- メニューバーのビーグルをクリック、または **⌃⌥B** でチャットが開く。Esc / 他をクリックで隠れる
-- 📌 で最前面に固定（全 Space・配信中に横に置く用途。位置を記憶）
+- メニューバーのビーグルをクリックすると、チャットが**常に最前面に**開く（開いていても閉じずに前に出る）
+- **⌃⌥B** は開閉の切り替え。Esc で閉じる。固定していなければ他をクリックで隠れる
+- 📌 で固定（他をクリックしても隠れない・全 Space・配信中に横に置く用途。位置を記憶）
 - Enter 送信 / ⇧Enter 改行 / 空欄で ↑ = 自分の直前の発言を編集
 - 右クリックでリアクション・編集・コピー、ダブルクリックで ❤️
 - @メンションは通知（通知から返信・❤️ 可、吠える音つき）。メニューバーの犬が塗りつぶし = 未読あり
@@ -22,4 +23,5 @@ B-guru のチャットだけを切り出したメニューバー常駐アプリ�
 cd native/mac && xcodegen generate && xcodebuild -project BguruChat.xcodeproj -scheme BguruChat -configuration Debug -derivedDataPath build/dd build
 ```
 開発時のみ: `BGURU_DEV_TOKEN=bga_… "build/dd/Build/Products/Debug/B-guru Chat.app/Contents/MacOS/B-guru Chat" -showPanel`
+UI 自動操作でアプリを見つけさせるとき（開発のみ）: `-regular` で Dock に表示。
 画面録画なしの自己診断: `… -selftest <アプリのコンテナ内のディレクトリ> [-selftest-send] [-dark]`（接続時間・送信遅延・画面 PNG）
