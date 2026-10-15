@@ -199,7 +199,7 @@ export async function verifyAgentToken(
     throw err(401, "unauthorized", "認証が必要です", "Authorization: Bearer *** を付けてください");
   }
   // 認証前レート制限: 未知/無効トークンによる総当たり・DB lookup 濫用を抑える。
-  //   成功時はリセットしない（連続成功も一応カウントするが上限 150/h は通常利用に十分）。
+  //   数えるのは失敗した検証だけ（成功は数えない — 正規エージェントの read 120/分を妨げない）。
   if (opts.ip && !(await checkPreAuthLimit(opts.ip))) {
     throw err(429, "rate_limited", "リクエストが多すぎます", "しばらくしてから再試行してください");
   }
@@ -210,12 +210,15 @@ export async function verifyAgentToken(
   );
   const row = res.rows[0];
   if (!row) {
+    await recordPreAuthFailure(opts.ip);
     throw err(401, "unauthorized", "トークンが無効です");
   }
   if (row.revoked_at) {
+    await recordPreAuthFailure(opts.ip);
     throw err(401, "unauthorized", "トークンは失効済みです", "設定ページで再発行してください");
   }
   if (new Date(row.expires_at).getTime() <= Date.now()) {
+    await recordPreAuthFailure(opts.ip);
     throw err(401, "token_expired", "トークンの有効期限が切れています", "再発行してください");
   }
 
@@ -336,24 +339,45 @@ export async function recordAudit(
   }
 }
 
+/** 認証前レート制限: IP 単位で失敗した検証を 150 回/1時間まで。 */
+const PREAUTH_LIMIT = 150;
+const PREAUTH_WINDOW = "1 hour";
+
 /**
  * 認証前レート制限（無効トークンのブルートフォース/DoS 対策）。
- * IP 単位で失敗検証を 30 回/5分 に制限。成功した検証はカウントしない。
+ * 窓内の失敗回数が上限に達した IP を拒否する。ここではカウントを進めない
+ * （成功した検証は数えない — 失敗時に recordPreAuthFailure で加算）。
  */
 export async function checkPreAuthLimit(ip: string | null): Promise<boolean> {
   if (!ip) return true; // IP が取れない場合は制限できない（監査ログで追跡）
   try {
     const res = await pool.query(
-      `INSERT INTO rate_limits (key, window_start, count)
-       VALUES ($1, date_trunc('hour', now()), 1)
-       ON CONFLICT (key, window_start)
-       DO UPDATE SET count = rate_limits.count + 1
-       RETURNING count`,
-      [`preauth:${ip}`]
+      `SELECT count FROM rate_limits
+        WHERE key = $1 AND window_start >= now() - ($2::text)::interval`,
+      [`preauth:${ip}`, PREAUTH_WINDOW]
     );
-    return Number(res.rows[0]?.count ?? 1) <= 150;
+    return Number(res.rows[0]?.count ?? 0) < PREAUTH_LIMIT;
   } catch {
     return true; // 制限機構自体の故障でユーザーを締め出さない
+  }
+}
+
+/** 失敗した検証を IP 単位で数える（checkRateLimit と同じ key 単位の固定窓）。 */
+export async function recordPreAuthFailure(ip: string | null | undefined): Promise<void> {
+  if (!ip) return;
+  try {
+    await pool.query(
+      `INSERT INTO rate_limits (key, window_start, count)
+       VALUES ($1, now(), 1)
+       ON CONFLICT (key) DO UPDATE SET
+         window_start = CASE WHEN rate_limits.window_start < now() - ($2::text)::interval
+                             THEN now() ELSE rate_limits.window_start END,
+         count = CASE WHEN rate_limits.window_start < now() - ($2::text)::interval
+                      THEN 1 ELSE rate_limits.count + 1 END`,
+      [`preauth:${ip}`, PREAUTH_WINDOW]
+    );
+  } catch {
+    /* ignore — 記録失敗でリクエストを落とさない */
   }
 }
 

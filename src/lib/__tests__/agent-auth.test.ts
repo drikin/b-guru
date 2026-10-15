@@ -284,3 +284,85 @@ describe("agent-auth SQL shape guard", () => {
     expect(sanitizeLikePattern(undefined)).toBeUndefined();
   });
 });
+
+// 認証前レート制限: 以前は ON CONFLICT (key, window_start) を使っていたが、
+// rate_limits の一意制約は key だけ（db.ts）。PostgreSQL は 42P10 を返し、
+// catch が true を返すため制限が素通りしていた。実 DB が無い環境でも検出できるよう、
+// 一意制約に合わない ON CONFLICT を拒否する簡易フェイクで振る舞いを確かめる。
+describe("認証前レート制限（IP 単位・失敗のみカウント）", () => {
+  function rateLimitsUniqueCols(): string {
+    const db = fs.readFileSync(path.join(__dirname, "../db.ts"), "utf8");
+    const m = db.match(/CREATE TABLE IF NOT EXISTS rate_limits \(([\s\S]+?)\);/);
+    expect(m).toBeTruthy();
+    const pk = m![1].match(/^\s*(\w+)\s+\w+\s+PRIMARY KEY/m);
+    expect(pk).toBeTruthy();
+    return `(${pk![1]})`;
+  }
+
+  /** rate_limits だけを持つ最小の PostgreSQL もどき。未知トークンは常に not found。 */
+  function installFakeDb(validHash?: string) {
+    const uniqueCols = rateLimitsUniqueCols();
+    const counters = new Map<string, number>();
+    query.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      const s = String(sql);
+      if (s.includes("INSERT INTO rate_limits")) {
+        const target = s.match(/ON CONFLICT (\([^)]*\))/)?.[1];
+        if (target !== uniqueCols) {
+          throw Object.assign(
+            new Error("there is no unique or exclusion constraint matching the ON CONFLICT specification"),
+            { code: "42P10" }
+          );
+        }
+        const key = String(params[0]);
+        const n = (counters.get(key) ?? 0) + 1;
+        counters.set(key, n);
+        return { rows: [{ count: n, window_start: new Date() }], rowCount: 1 };
+      }
+      if (s.includes("FROM rate_limits")) {
+        const n = counters.get(String(params[0]));
+        return { rows: n === undefined ? [] : [{ count: n }], rowCount: n === undefined ? 0 : 1 };
+      }
+      if (s.includes("FROM agent_tokens WHERE token_hash")) {
+        if (validHash && params[0] === validHash) {
+          return {
+            rows: [{
+              id: 7, token_hash: validHash, email: "a@b.c", scopes: ["read"], device_name: "d",
+              expires_at: new Date(Date.now() + 86400_000), revoked_at: null,
+              last_membership_check: new Date(),
+            }],
+            rowCount: 1,
+          };
+        }
+        return { rows: [], rowCount: 0 };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+    return counters;
+  }
+
+  it("rate_limits の UPSERT はすべて一意制約（key）を ON CONFLICT 対象にする", () => {
+    const src = fs.readFileSync(path.join(__dirname, "../agent-auth.ts"), "utf8");
+    const targets = [...src.matchAll(/ON CONFLICT (\([^)]*\))/g)].map((m) => m[1]);
+    expect(targets.length).toBeGreaterThan(0);
+    for (const t of targets) expect(t).toBe(rateLimitsUniqueCols());
+  });
+
+  it("同一 IP からの無効トークン 150 回で以降は 429", async () => {
+    installFakeDb();
+    for (let i = 0; i < 150; i++) {
+      await expect(verifyAgentToken(`Bearer bga_bad${i}`, { ip: "203.0.113.9" })).rejects.toMatchObject({ status: 401 });
+    }
+    await expect(verifyAgentToken("Bearer bga_bad", { ip: "203.0.113.9" })).rejects.toMatchObject({ status: 429 });
+    // 別 IP は影響を受けない
+    await expect(verifyAgentToken("Bearer bga_bad", { ip: "198.51.100.1" })).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("成功した検証はカウントしない（正規エージェントを締め出さない）", async () => {
+    const token = "bga_" + "a".repeat(64);
+    const counters = installFakeDb(hashToken(token));
+    for (let i = 0; i < 200; i++) {
+      await expect(verifyAgentToken(`Bearer ${token}`, { ip: "203.0.113.9" })).resolves.toMatchObject({ tokenId: 7 });
+    }
+    expect(counters.get("preauth:203.0.113.9")).toBeUndefined();
+  });
+});
