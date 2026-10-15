@@ -65,6 +65,42 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
             }
         }
         store.isVisible = true
+        focusComposer()
+    }
+
+    /// Every open puts the caret in the message box so you can type and hit
+    /// Enter immediately (drikin 2026-10-15). SwiftUI focus is asked first;
+    /// AppKit makes sure on the next runloop turn in case SwiftUI kept a stale
+    /// "already focused" state from the previous open.
+    private func focusComposer() {
+        pin.focusRequest += 1
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isKeyWindow else { return }
+            if !Self.isEditingText(self.firstResponder), let field = Self.firstEditableText(in: self.contentView) {
+                self.makeFirstResponder(field)
+            }
+            #if DEBUG
+            if CommandLine.arguments.contains("-logFocus") {
+                NSLog("[focus] key=%d responder=%@ editing=%d", self.isKeyWindow ? 1 : 0,
+                      String(describing: type(of: self.firstResponder as Any)), Self.isEditingText(self.firstResponder) ? 1 : 0)
+            }
+            #endif
+        }
+    }
+
+    private static func isEditingText(_ r: NSResponder?) -> Bool {
+        guard let tv = r as? NSTextView else { return false }
+        return tv.isEditable
+    }
+
+    private static func firstEditableText(in view: NSView?) -> NSView? {
+        guard let view else { return nil }
+        if let tf = view as? NSTextField, tf.isEditable { return tf }
+        if let tv = view as? NSTextView, tv.isEditable { return tv }
+        for sub in view.subviews {
+            if let hit = firstEditableText(in: sub) { return hit }
+        }
+        return nil
     }
 
     func dismiss() {
@@ -114,5 +150,8 @@ final class PinState {
     var pinned = false {
         didSet { onChange?(pinned) }
     }
+    /// Incremented each time the panel opens; the chat view moves the caret
+    /// into the message box when it changes.
+    var focusRequest = 0
     @ObservationIgnored var onChange: ((Bool) -> Void)?
 }

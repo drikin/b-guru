@@ -57,6 +57,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             if CommandLine.arguments.contains("-showPanel") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.showPanel() }
             }
+            if CommandLine.arguments.contains("-reopenTest") {
+                // open → close → open via the hotkey path, to check the caret lands in the box each time
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.togglePanel() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { self.togglePanel() }
+            }
             return
         }
         #endif

@@ -21,6 +21,11 @@ struct ChatView: View {
         }
         .background(.regularMaterial)
         .onAppear { composerFocused = true }
+        .onChange(of: pin.focusRequest) { _, _ in
+            // Re-assert even if SwiftUI believes it is already focused.
+            composerFocused = false
+            DispatchQueue.main.async { composerFocused = true }
+        }
     }
 
     // MARK: Header

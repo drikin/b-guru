@@ -5,7 +5,7 @@ B-guru のチャットだけを切り出したメニューバー常駐アプリ�
 
 ## 使い方
 - メニューバーのビーグルをクリックすると、チャットが**常に最前面に**開く（開いていても閉じずに前に出る）
-- **⌃⌥B** は開閉の切り替え。Esc で閉じる。固定していなければ他をクリックで隠れる
+- **⌃⌥B** は開閉の切り替え。開くと入力欄にカーソルが入っているので、そのまま打って Enter で送れる。Esc で閉じる。固定していなければ他をクリックで隠れる
 - 📌 で固定（他をクリックしても隠れない・全 Space・配信中に横に置く用途。位置を記憶）
 - Enter 送信 / ⇧Enter 改行 / 空欄で ↑ = 自分の直前の発言を編集
 - 右クリックでリアクション・編集・コピー、ダブルクリックで ❤️
@@ -24,4 +24,5 @@ cd native/mac && xcodegen generate && xcodebuild -project BguruChat.xcodeproj -s
 ```
 開発時のみ: `BGURU_DEV_TOKEN=bga_… "build/dd/Build/Products/Debug/B-guru Chat.app/Contents/MacOS/B-guru Chat" -showPanel`
 UI 自動操作でアプリを見つけさせるとき（開発のみ）: `-regular` で Dock に表示。
+開閉ごとのフォーカス確認（開発のみ）: `-showPanel -reopenTest -logFocus` → stderr に `[focus] … editing=1`。
 画面録画なしの自己診断: `… -selftest <アプリのコンテナ内のディレクトリ> [-selftest-send] [-dark]`（接続時間・送信遅延・画面 PNG）
