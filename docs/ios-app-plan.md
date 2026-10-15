@@ -75,6 +75,7 @@ TestFlight の外部テスト: 公開リンクで最大 10,000 人。そのバ�
 ### 本番で動かすのに必要なこと（ユーザーの作業）
 1. developer.apple.com → Certificates, Identifiers & Profiles → Keys → ＋ → Apple Push Notifications service (APNs)。
    環境は Sandbox と Production で 1 本ずつ（Team-scoped）。.p8 は一度しかダウンロードできない。
-2. 本番サーバーの .env.production に `APNS_KEY_PATH`（.p8 の置き場所、リポジトリ外）と `APNS_KEY_ID` を設定し、pm2 を再起動。
-   Debug ビルド（sandbox）で試すには sandbox 用の鍵、TestFlight / App Store には production 用の鍵。
+2. 本番サーバーの .env.production に、本番用 `APNS_KEY_PATH` / `APNS_KEY_ID`、開発用 `APNS_SANDBOX_KEY_PATH` /
+   `APNS_SANDBOX_KEY_ID` を設定（.p8 はリポジトリ外、権限 600）し、pm2 を再起動。
+   Debug ビルド・シミュレーターは開発用（sandbox）、TestFlight / App Store は本番用（production）の鍵で届く。
 3. Identifiers で fm.backspace.bguru.chat の Push Notifications を有効化（Xcode の自動署名でも可）。

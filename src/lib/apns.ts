@@ -1,9 +1,13 @@
 /* Apple Push Notification service (token-based auth, HTTP/2) — no dependencies,
  * just node:http2 + node:crypto.
  *
- * Config (production .env; the .p8 key never goes in the repo):
- *   APNS_KEY_PATH   path to the AuthKey_XXXXXXXXXX.p8 file   (or APNS_KEY = its PEM text)
- *   APNS_KEY_ID     10-char Key ID
+ * Config (production .env; the .p8 keys never go in the repo). Apple's current
+ * team keys are tied to ONE environment, so there are two sets:
+ *   APNS_KEY_PATH / APNS_KEY_ID                  production (TestFlight, App Store)
+ *   APNS_SANDBOX_KEY_PATH / APNS_SANDBOX_KEY_ID  sandbox (Xcode builds, simulator)
+ *     (…_KEY instead of …_KEY_PATH = the PEM text itself; a sandbox set is optional —
+ *      without it, sandbox devices use the production key, which works for older
+ *      keys valid in both environments)
  *   APNS_TEAM_ID    10-char Team ID (default F9349EVF2K)
  *   APNS_TOPIC      bundle id (default fm.backspace.bguru.chat)
  * Without a key, sending is disabled and every call is a no-op — so this code can
@@ -33,18 +37,23 @@ const HOSTS: Record<ApnsEnvironment, string> = {
 
 export const APNS_TOKEN_RE = /^[0-9a-f]{64,200}$/i;
 
-let cachedConfig: ApnsConfig | null | undefined;
+const cachedConfig = new Map<ApnsEnvironment, ApnsConfig | null>();
 
-export function apnsConfigFromEnv(env: Record<string, string | undefined> = process.env): ApnsConfig | null {
-  let keyPem = env.APNS_KEY ?? "";
-  if (!keyPem && env.APNS_KEY_PATH) {
+export function apnsConfigFromEnv(
+  env: Record<string, string | undefined> = process.env,
+  environment: ApnsEnvironment = "production"
+): ApnsConfig | null {
+  const p = environment === "sandbox" && (env.APNS_SANDBOX_KEY || env.APNS_SANDBOX_KEY_PATH) ? "APNS_SANDBOX_" : "APNS_";
+  let keyPem = env[`${p}KEY`] ?? "";
+  const keyPath = env[`${p}KEY_PATH`];
+  if (!keyPem && keyPath) {
     try {
-      keyPem = readFileSync(/*turbopackIgnore: true*/ env.APNS_KEY_PATH, "utf8");
+      keyPem = readFileSync(/*turbopackIgnore: true*/ keyPath, "utf8");
     } catch {
       keyPem = "";
     }
   }
-  const keyId = (env.APNS_KEY_ID ?? "").trim();
+  const keyId = (env[`${p}KEY_ID`] ?? "").trim();
   if (!keyPem.includes("PRIVATE KEY") || !/^[A-Z0-9]{10}$/.test(keyId)) return null;
   return {
     keyPem,
@@ -54,13 +63,14 @@ export function apnsConfigFromEnv(env: Record<string, string | undefined> = proc
   };
 }
 
-function config(): ApnsConfig | null {
-  if (cachedConfig === undefined) cachedConfig = apnsConfigFromEnv();
-  return cachedConfig;
+function config(environment: ApnsEnvironment): ApnsConfig | null {
+  if (!cachedConfig.has(environment)) cachedConfig.set(environment, apnsConfigFromEnv(process.env, environment));
+  return cachedConfig.get(environment) ?? null;
 }
 
+/** Any key configured (production or sandbox). */
 export function apnsEnabled(): boolean {
-  return config() !== null;
+  return config("production") !== null || config("sandbox") !== null;
 }
 
 const b64url = (b: Buffer | string) =>
@@ -76,11 +86,14 @@ export function makeProviderToken(cfg: ApnsConfig, iatSec: number): string {
   return `${data}.${b64url(sig)}`;
 }
 
-let jwt: { token: string; iat: number } | null = null;
+const jwts = new Map<string, { token: string; iat: number }>(); // per key id
 function providerToken(cfg: ApnsConfig): string {
   const now = Math.floor(Date.now() / 1000);
-  if (!jwt || now - jwt.iat > 50 * 60) jwt = { token: makeProviderToken(cfg, now), iat: now };
-  return jwt.token;
+  const j = jwts.get(cfg.keyId);
+  if (j && now - j.iat <= 50 * 60) return j.token;
+  const fresh = { token: makeProviderToken(cfg, now), iat: now };
+  jwts.set(cfg.keyId, fresh);
+  return fresh.token;
 }
 
 // One long-lived HTTP/2 connection per environment (Apple asks to reuse them).
@@ -108,7 +121,7 @@ export async function sendApns(
   payload: object,
   opts: { collapseId?: string; pushType?: "alert" | "background"; expirationSec?: number } = {}
 ): Promise<ApnsResult> {
-  const cfg = config();
+  const cfg = config(environment);
   if (!cfg) return { status: 0, reason: "disabled" };
   if (!APNS_TOKEN_RE.test(deviceToken)) return { status: 400, reason: "BadDeviceToken" };
   const body = JSON.stringify(payload);
@@ -172,8 +185,12 @@ export function isDeadToken(r: ApnsResult): boolean {
 
 /** Tests only. */
 export function __resetApnsForTests(cfg?: ApnsConfig | null) {
-  cachedConfig = cfg === undefined ? undefined : cfg;
-  jwt = null;
+  cachedConfig.clear();
+  if (cfg !== undefined) {
+    cachedConfig.set("production", cfg);
+    cachedConfig.set("sandbox", cfg);
+  }
+  jwts.clear();
   for (const s of sessions.values()) s.destroy();
   sessions.clear();
 }

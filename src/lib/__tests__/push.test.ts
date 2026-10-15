@@ -57,6 +57,14 @@ describe("provider token (JWT ES256)", () => {
     expect(apnsConfigFromEnv({ APNS_KEY: PEM, APNS_KEY_ID: "short" })).toBeNull();
     expect(apnsConfigFromEnv({ APNS_KEY: PEM, APNS_KEY_ID: "ABCDE12345" })).toMatchObject({ teamId: "F9349EVF2K" });
   });
+
+  it("開発用（sandbox）の鍵が別にあればそちらを使い、無ければ本番の鍵", () => {
+    const env = { APNS_KEY: PEM, APNS_KEY_ID: "PROD123456", APNS_SANDBOX_KEY: PEM, APNS_SANDBOX_KEY_ID: "SBOX123456" };
+    expect(apnsConfigFromEnv(env, "production")?.keyId).toBe("PROD123456");
+    expect(apnsConfigFromEnv(env, "sandbox")?.keyId).toBe("SBOX123456");
+    expect(apnsConfigFromEnv({ APNS_KEY: PEM, APNS_KEY_ID: "PROD123456" }, "sandbox")?.keyId).toBe("PROD123456");
+    expect(apnsConfigFromEnv({ APNS_SANDBOX_KEY: PEM, APNS_SANDBOX_KEY_ID: "SBOX123456" }, "production")).toBeNull();
+  });
 });
 
 describe("鍵が無い間は送らない", () => {
