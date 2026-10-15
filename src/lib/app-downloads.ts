@@ -13,6 +13,12 @@ export const DOWNLOADS_DIR = process.env.BGURU_DOWNLOADS_DIR || "/home/ubuntu/bs
 
 export interface MacRelease {
   version: string;
+  /** CFBundleVersion — what Sparkle compares (monotonic build number). */
+  build: string;
+  /** Sparkle EdDSA signature of the DMG (sign_update). Without it no update is offered. */
+  edSignature: string;
+  /** Short release notes shown in the update dialog (plain text). */
+  notes: string;
   file: string;
   size: number;
   sha256: string;
@@ -30,8 +36,14 @@ export function parseMacManifest(raw: unknown): MacRelease | null {
   const file = typeof m.file === "string" ? m.file : "";
   const version = typeof m.version === "string" ? m.version : "";
   if (!FILE_RE.test(file) || !VERSION_RE.test(version)) return null; // also blocks path traversal
+  const build = typeof m.build === "string" && /^\d{1,20}$/.test(m.build) ? m.build : "";
+  const edSignature =
+    typeof m.edSignature === "string" && /^[A-Za-z0-9+/]{40,200}={0,2}$/.test(m.edSignature) ? m.edSignature : "";
   return {
     version,
+    build,
+    edSignature,
+    notes: typeof m.notes === "string" ? m.notes.slice(0, 2000) : "",
     file,
     size: typeof m.size === "number" && m.size > 0 ? m.size : 0,
     sha256: typeof m.sha256 === "string" && /^[0-9a-f]{64}$/.test(m.sha256) ? m.sha256 : "",
@@ -54,4 +66,36 @@ export async function getMacRelease(): Promise<(MacRelease & { path: string }) |
   } catch {
     return null;
   }
+}
+
+const xmlEscape = (v: string) =>
+  v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/**
+ * Sparkle appcast for the current release. An item is offered only when the
+ * manifest carries a build number AND an EdDSA signature — Sparkle refuses
+ * unsigned updates anyway, and an item without them would only show an error.
+ */
+export function buildAppcast(rel: MacRelease | null, origin: string): string {
+  const item =
+    rel && rel.build && rel.edSignature
+      ? `
+    <item>
+      <title>${xmlEscape(`B-guru Chat ${rel.version}`)}</title>
+      <pubDate>${new Date(rel.publishedAt || Date.now()).toUTCString()}</pubDate>
+      <sparkle:version>${rel.build}</sparkle:version>
+      <sparkle:shortVersionString>${xmlEscape(rel.version)}</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>${xmlEscape(rel.minimumSystemVersion)}</sparkle:minimumSystemVersion>${
+        rel.notes ? `\n      <description>${xmlEscape(rel.notes).replace(/\n/g, "&lt;br&gt;")}</description>` : ""
+      }
+      <enclosure url="${xmlEscape(`${origin}/api/download/mac?v=${rel.version}`)}" length="${rel.size}" type="application/octet-stream" sparkle:edSignature="${rel.edSignature}"/>
+    </item>`
+      : "";
+  return `<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>B-guru Chat for Mac</title>${item}
+  </channel>
+</rss>
+`;
 }

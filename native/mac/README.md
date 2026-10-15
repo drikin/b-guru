@@ -45,10 +45,16 @@ native/mac/scripts/release.sh 0.1.0 --no-notarize  # 署名付き DMG だけ（�
 - スクリプトは、Developer ID 署名・Hardened Runtime・timestamp を確認し、開発用の仕組み
   （BGURU_DEV_TOKEN）がリリース版に入っていないことも確認する。成果物は `native/mac/dist/`（git 管理外）
 
-## 会員への配布（B-guru 右サイドバーのダウンロード）
+## 会員への配布（B-guru 右サイドバーのダウンロード）と自動アップデート
 ```bash
-native/mac/scripts/publish.sh 0.1.2
+native/mac/scripts/release.sh 0.1.5 && native/mac/scripts/publish.sh 0.1.5 "更新内容（アップデート画面に出る）"
 ```
+- 自動アップデートは Sparkle 2.9.6（固定）。0.1.4 以降を入れた Mac は 6 時間ごとに確認し、新しい版があれば
+  「アップデートがあります」と出る（右クリックメニュー / ⋯ の「アップデートを確認…」でも）
+- appcast: `/api/download/mac/appcast.xml`（会員 or アプリのトークン。Sparkle にトークンをヘッダで持たせる）
+- 更新ファイルは EdDSA 署名必須。秘密鍵はこの Mac のログインキーチェーン（Sparkle の generate_keys で作成）。
+  **失うと以後アップデートを出せない**ので `generate_keys -x 書き出し先` でバックアップしておくこと
+- release.sh は Sparkle の中身（XPC サービス・Autoupdate・Updater.app）を Developer ID で署名し直す
 公証済み・staple 済みかを確認してから、本番サーバーの `/home/ubuntu/bsm-downloads/` に DMG を置き、
 最後に `mac.json`（版・サイズ・SHA-256）を差し替える。サイトは `/api/download/mac`（会員のみ）で配り、
 右サイドバー最上部のカード（Mac のデスクトップでのみ表示）から落とせる。新しい版はデプロイ不要。

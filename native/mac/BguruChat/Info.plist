@@ -26,5 +26,15 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>backspace.fm</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://bsm.backspace.fm/api/download/mac/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>fcyKhDlgelqKcS38AIf0NHikBD46VtJHJxqgLNVDCNM=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>21600</integer>
 </dict>
 </plist>

@@ -28,6 +28,20 @@ xcodebuild -project BguruChat.xcodeproj -scheme BguruChat -configuration Release
   -derivedDataPath "$DD" MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
   clean build 2>&1 | grep -E " error:|BUILD (SUCCEEDED|FAILED)"
 
+echo "=== 1b/6 re-sign Sparkle (nested code must carry our Developer ID for notarization) ==="
+ID="Developer ID Application: Kohichi Aoki ($TEAM)"
+FW="$APP/Contents/Frameworks/Sparkle.framework"
+if [ -d "$FW" ]; then
+  V="$FW/Versions/B"
+  codesign -f -s "$ID" -o runtime --timestamp "$V/XPCServices/Installer.xpc"
+  codesign -f -s "$ID" -o runtime --timestamp --preserve-metadata=entitlements "$V/XPCServices/Downloader.xpc"
+  codesign -f -s "$ID" -o runtime --timestamp "$V/Autoupdate"
+  codesign -f -s "$ID" -o runtime --timestamp "$V/Updater.app"
+  codesign -f -s "$ID" -o runtime --timestamp "$FW"
+  codesign -f -s "$ID" -o runtime --timestamp --entitlements BguruChat/BguruChat.entitlements "$APP"
+  echo "Sparkle re-signed"
+fi
+
 echo "=== 2/6 verify signature ==="
 codesign --verify --deep --strict --verbose=2 "$APP"
 INFO="$(codesign -dvv "$APP" 2>&1)"

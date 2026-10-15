@@ -3,14 +3,14 @@
 import { NextResponse } from "next/server";
 import { createReadStream } from "fs";
 import { Readable } from "stream";
-import { getSessionEmail } from "@/lib/session";
+import { downloadAuthEmail } from "@/lib/download-auth";
 import { getMacRelease } from "@/lib/app-downloads";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function GET() {
-  const email = await getSessionEmail();
+export async function GET(req: Request) {
+  const email = await downloadAuthEmail(req);
   if (!email) {
     return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
   }

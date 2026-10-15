@@ -3,10 +3,15 @@
 # B-guru right sidebar (/api/download/mac). Writes the manifest LAST, so the
 # site switches to the new version only once the file is fully in place.
 #
-#   native/mac/scripts/publish.sh 0.1.2
+#   native/mac/scripts/publish.sh 0.1.4 "更新内容（任意・アップデート画面に出る）"
+#
+# Also signs the DMG for Sparkle (EdDSA key in the login keychain, created once
+# with Sparkle's generate_keys) and records the build number, so installed apps
+# update themselves from /api/download/mac/appcast.xml.
 set -euo pipefail
 
-VERSION="${1:?usage: publish.sh VERSION}"
+VERSION="${1:?usage: publish.sh VERSION [NOTES]}"
+NOTES="${2:-}"
 VPS="ubuntu@neta.backspace.fm"
 DIR="/home/ubuntu/bsm-downloads"
 cd "$(dirname "$0")/.."
@@ -20,10 +25,26 @@ spctl --assess --type open --context context:primary-signature "$DMG"
 SIZE=$(stat -f %z "$DMG")
 SHA=$(shasum -a 256 "$DMG" | awk '{print $1}')
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-MANIFEST=$(printf '{"version":"%s","file":"BguruChat-%s.dmg","size":%s,"sha256":"%s","minimumSystemVersion":"14.0","publishedAt":"%s"}' \
-  "$VERSION" "$VERSION" "$SIZE" "$SHA" "$NOW")
+
+# Build number (CFBundleVersion) of the app inside — what Sparkle compares.
+MNT="$(mktemp -d "${TMPDIR:-/tmp}/bguru-pub.XXXXXX")"
+hdiutil attach -nobrowse -readonly -mountpoint "$MNT" "$DMG" >/dev/null 2>&1
+BUILD=$(defaults read "$MNT/B-guru Chat.app/Contents/Info.plist" CFBundleVersion)
+SHORT=$(defaults read "$MNT/B-guru Chat.app/Contents/Info.plist" CFBundleShortVersionString)
+hdiutil detach "$MNT" -quiet
+[ "$SHORT" = "$VERSION" ] || { echo "DMG contains $SHORT, not $VERSION" >&2; exit 1; }
+
+# Sparkle EdDSA signature.
+SIGN_UPDATE="$(ls -d build/dd/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update build/release/SourcePackages/artifacts/sparkle/Sparkle/bin/sign_update 2>/dev/null | head -1)"
+[ -n "$SIGN_UPDATE" ] || { echo "sign_update not found (build once so SwiftPM fetches Sparkle)" >&2; exit 1; }
+EDSIG=$("$SIGN_UPDATE" "$DMG" | sed -E 's/.*sparkle:edSignature="([^"]+)".*/\1/')
+[ -n "$EDSIG" ] || { echo "Sparkle signing failed" >&2; exit 1; }
+
+MANIFEST=$(python3 -c 'import json,sys; print(json.dumps({"version":sys.argv[1],"build":sys.argv[2],"file":"BguruChat-%s.dmg"%sys.argv[1],"size":int(sys.argv[3]),"sha256":sys.argv[4],"edSignature":sys.argv[5],"notes":sys.argv[6],"minimumSystemVersion":"14.0","publishedAt":sys.argv[7]}, ensure_ascii=False))' \
+  "$VERSION" "$BUILD" "$SIZE" "$SHA" "$EDSIG" "$NOTES" "$NOW")
 
 ssh "$VPS" "mkdir -p $DIR"
 scp -q "$DMG" "$VPS:$DIR/BguruChat-$VERSION.dmg.part"
-ssh "$VPS" "cd $DIR && echo '$SHA  BguruChat-$VERSION.dmg.part' | sha256sum -c --quiet && mv BguruChat-$VERSION.dmg.part BguruChat-$VERSION.dmg && printf '%s' '$MANIFEST' > mac.json.tmp && mv mac.json.tmp mac.json && ls -la $DIR"
-echo "published $VERSION ($SIZE bytes, sha256 $SHA)"
+printf '%s' "$MANIFEST" | ssh "$VPS" "cat > $DIR/mac.json.next"
+ssh "$VPS" "cd $DIR && echo '$SHA  BguruChat-$VERSION.dmg.part' | sha256sum -c --quiet && mv BguruChat-$VERSION.dmg.part BguruChat-$VERSION.dmg && mv mac.json.next mac.json && ls -la $DIR"
+echo "published $VERSION (build $BUILD, $SIZE bytes, sha256 $SHA, Sparkle-signed)"

@@ -63,6 +63,8 @@ struct ChatView: View {
                 Toggle("Dock にも表示（未読バッジ）", isOn: $settings.showInDock)
                 Divider()
                 Button("B-guru をブラウザで開く") { NSWorkspace.shared.open(APIClient.baseURL) }
+                Button("アップデートを確認…") { Updater.shared.checkNow() }
+                    .disabled(!Updater.shared.canCheck)
                 Divider()
                 Button("ログアウト", action: onSignOut)
                 Button("終了") { NSApp.terminate(nil) }

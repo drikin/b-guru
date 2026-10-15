@@ -104,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         store.onBecameVisible = { [weak self] in self?.clearBundledNotification() }
         self.store = store
         store.start()
+        Updater.shared.start(token: token)
         panel = ChatPanel(store: store, onSignOut: { [weak self] in self?.signOut() })
         observeStore()
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
@@ -134,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         panel = nil
         store = nil
         Keychain.delete()
+        Updater.shared.stop()
         if revoke, let token { Task { await APIClient(token: token).revokeSelf() } }
         updateStatusIcon(unread: 0, mentions: 0, connection: .offline)
         showLogin()
@@ -174,6 +176,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let menu = NSMenu()
         menu.addItem(withTitle: "チャットを開く  ⌃⌥B", action: #selector(openPanelAction), keyEquivalent: "").target = self
         menu.addItem(withTitle: "B-guru をブラウザで開く", action: #selector(openWeb), keyEquivalent: "").target = self
+        let update = NSMenuItem(title: "アップデートを確認…", action: #selector(checkUpdates), keyEquivalent: "")
+        update.target = self
+        update.isEnabled = Updater.shared.canCheck
+        menu.addItem(update)
+        let ver = NSMenuItem(title: "バージョン \(Updater.shared.currentVersion)（ベータ）", action: nil, keyEquivalent: "")
+        ver.isEnabled = false
+        menu.addItem(ver)
         menu.addItem(.separator())
         if store != nil {
             menu.addItem(withTitle: "ログアウト", action: #selector(signOutAction), keyEquivalent: "").target = self
@@ -186,6 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @objc private func openPanelAction() { showPanel() }
     @objc private func signOutAction() { signOut() }
+    @objc private func checkUpdates() { Updater.shared.checkNow() }
     @objc private func openWeb() { NSWorkspace.shared.open(APIClient.baseURL) }
 
     /// Menu bar click and ⌃⌥B both toggle: if the chat is in front, put it
