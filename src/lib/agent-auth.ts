@@ -16,6 +16,7 @@ import crypto from "crypto";
 import { pool } from "./db";
 import { findMemberByEmail, isPaidMember } from "./ghost";
 import { ensureUserId } from "./user";
+import { clientIp } from "./client-ip";
 
 export type AgentScope = "read" | "read_state" | "write" | "chat";
 
@@ -405,9 +406,7 @@ export async function withAgent(
   let ctx: AgentContext | null = null;
   let ip: string | null = null;
   try {
-    ip =
-      req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-      req.headers.get("x-real-ip");
+    ip = clientIp(req);
     ctx = await verifyAgentToken(req.headers.get("authorization"), { ip });
     if (scope) requireScope(ctx, scope);
     if (scope) {

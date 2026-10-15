@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { findMemberByEmail, isPaidMember } from "@/lib/ghost";
 import { gravatarUrl } from "@/lib/posts";
+import { clientIp } from "@/lib/client-ip";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -83,7 +84,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "forbidden origin" }, { status: 403, headers: NO_CACHE });
   }
 
-  const ip = (req.headers.get("x-forwarded-for") || "unknown").split(",")[0].trim();
+  const ip = clientIp(req) ?? "unknown";
   if (!allow(ip)) {
     return NextResponse.json({ error: "too many requests" }, { status: 429, headers: NO_CACHE });
   }

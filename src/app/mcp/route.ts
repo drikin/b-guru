@@ -25,6 +25,7 @@ import {
   type AgentContext,
   type AgentScope,
 } from "@/lib/agent-auth";
+import { clientIp } from "@/lib/client-ip";
 import { listPosts, getPostThread } from "@/lib/posts";
 import { getHiddenClubs } from "@/lib/club-visibility";
 import { getFavoriteEmails } from "@/lib/favorites";
@@ -77,7 +78,7 @@ async function withTool<T>(
 ): Promise<T | { __error: ReturnType<typeof errorBody> }> {
   let ctx: AgentContext | null = null;
   try {
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip");
+    const ip = clientIp(req);
     ctx = await verifyAgentToken(req.headers.get("authorization"), { ip });
     if (scope) requireScope(ctx, scope);
     if (scope) {
@@ -439,7 +440,7 @@ export async function POST(req: Request) {
   try {
     // 認証はルート層で 1 回だけ実施。失敗時は MCP セッションを作らず
     // {error, code, hint} を 401/403 で返す（Claude は接続画面に表示する）。
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip");
+    const ip = clientIp(req);
     let ctx: AgentContext;
     try {
       ctx = await verifyAgentToken(req.headers.get("authorization"), { ip });

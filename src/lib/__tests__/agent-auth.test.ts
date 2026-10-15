@@ -366,3 +366,25 @@ describe("認証前レート制限（IP 単位・失敗のみカウント）", (
     expect(counters.get("preauth:203.0.113.9")).toBeUndefined();
   });
 });
+
+describe("withAgent のクライアント IP", () => {
+  it("XFF の先頭を詐称しても認証前レート制限・監査ログは X-Real-IP で数える", async () => {
+    const { withAgent } = await import("../agent-auth");
+    const make = (spoof: string) =>
+      new Request("https://bsm.backspace.fm/api/agent/me", {
+        headers: {
+          authorization: "Bearer bga_bad",
+          "x-forwarded-for": `${spoof}, 203.0.113.9`,
+          "x-real-ip": "203.0.113.9",
+        },
+      });
+    await withAgent(make("1.1.1.1"), "/api/agent/me", null, async () => ({ status: 200, body: {} }));
+    await withAgent(make("2.2.2.2"), "/api/agent/me", null, async () => ({ status: 200, body: {} }));
+    const calls = query.mock.calls.map(([sql, params]) => [String(sql), params as unknown[]] as const);
+    const preauthKeys = calls.filter(([s]) => s.includes("rate_limits")).map(([, p]) => p[0]);
+    expect(preauthKeys.length).toBeGreaterThan(0);
+    expect(new Set(preauthKeys)).toEqual(new Set(["preauth:203.0.113.9"]));
+    const auditIps = calls.filter(([s]) => s.includes("agent_audit_log")).map(([, p]) => p[3]);
+    expect(auditIps).toEqual(["203.0.113.9", "203.0.113.9"]);
+  });
+});
