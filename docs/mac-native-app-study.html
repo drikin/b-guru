@@ -1,0 +1,222 @@
+<title>B-guru for Mac 検討</title>
+<meta name="description" content="B-guru の Mac ネイティブ版は PWA を圧倒的に超えるか。結論は、本体は PWA のまま磨き、PWA にできない「覗く・横に置く」だけを担う小さなメニューバー相棒アプリを試作して判定する。">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@500;700&family=Noto+Sans+JP:wght@400;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Layout: 単一カラムの設計メモ。判定表と比較表を主役に、残りは読みやすい本文 */
+:root{
+  --bg:#f6f8f6; --surface:#ffffff; --fg:#1b241e; --muted:#5d6b62; --line:#dbe3dd;
+  --accent:#15803d; --accent-soft:#e3f2e8; --warn:#b45309; --warn-soft:#fdf0e1; --bad:#b91c1c; --bad-soft:#fbe7e7;
+  --display:"Zen Kaku Gothic New","Hiragino Sans","Noto Sans JP",sans-serif;
+  --body:"Noto Sans JP","Hiragino Sans",system-ui,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#111613; --surface:#18201b; --fg:#e4ebe6; --muted:#9aa89f; --line:#2a352e;
+  --accent:#4ade80; --accent-soft:#16301f; --warn:#f0a952; --warn-soft:#33260f; --bad:#f87171; --bad-soft:#3a1717; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#111613; --surface:#18201b; --fg:#e4ebe6; --muted:#9aa89f; --line:#2a352e;
+  --accent:#4ade80; --accent-soft:#16301f; --warn:#f0a952; --warn-soft:#33260f; --bad:#f87171; --bad-soft:#3a1717; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.75}
+.wrap{max-width:840px;margin:0 auto;padding-inline:20px;padding-block:40px 80px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;line-height:1.35}
+h1{font-size:2rem;margin:0 0 .3em}
+h2{font-size:1.35rem;margin:2.6em 0 .7em;padding-top:.8em;border-top:1px solid var(--line)}
+h3{font-size:1.05rem;margin:1.6em 0 .4em}
+p,li{max-width:70ch}
+.meta{color:var(--muted);font-size:.85rem}
+.eyebrow{font-size:.75rem;letter-spacing:.12em;color:var(--accent);font-weight:600}
+.verdict{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:6px;padding:18px 20px;margin:24px 0}
+.verdict p{margin:.45em 0}
+code{font-family:var(--mono);font-size:.85em;background:var(--accent-soft);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+.tbl{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;min-width:600px;font-size:.88rem;background:var(--surface)}
+th,td{border:1px solid var(--line);padding:8px 10px;vertical-align:top;text-align:left}
+th{background:var(--accent-soft);font-weight:600}
+tr.pick td{background:var(--accent-soft)}
+pre{font-family:var(--mono);font-size:.78rem;line-height:1.45;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px;overflow-x:auto}
+.pill{display:inline-block;font-size:.72rem;font-weight:600;padding:1px 8px;border-radius:99px;white-space:nowrap}
+.ok{background:var(--accent-soft);color:var(--accent)}
+.mid{background:var(--warn-soft);color:var(--warn)}
+.ng{background:var(--bad-soft);color:var(--bad)}
+.ask{background:var(--warn-soft);border-radius:6px;padding:14px 20px}
+.src{font-size:.8rem;color:var(--muted)}
+</style>
+
+<div class="wrap">
+<div class="eyebrow">B-GURU · 設計検討 · 2026-10-15</div>
+<h1>B-guru for Mac 検討</h1>
+<p class="meta">体制: architect／macOS UX デザイナー／security-reviewer／devils-advocate（Claude サブエージェント）、Safari Web アプリの仕様調査（Web 検索）、会員ペルソナ5名のパネル（自宅フリートのローカル GLM）。主要な事実は Claude がコードで確認しました。実装はまだしていません。</p>
+
+<div class="verdict">
+<p><b>問い: ネイティブ版は PWA を圧倒的に超えるか。</b></p>
+<p><b>答え: 本体ウィンドウでは超えません。超えるのは「作業を止めずに覗く」と「横に置いておく」の2場面だけです。</b>macOS の Safari「Dock に追加」した Web アプリは、Web Push、Dock バッジ、Dock の右クリックショートカット、集中モード、閉じているときの通知受信、外部アプリからのリンクを Web アプリで開く挙動まで、すでに備えています。本体を WKWebView で作り直しても、PWA とほぼ同じ体験になるうえに Web Push を失うので、むしろ損になります。</p>
+<p><b>推奨: 本体は PWA のまま磨き、ネイティブは「B-guru チャット専用アプリ」として切り出す。</b>チャットは1部屋だけで、メッセージは24時間で消え、機能の面も小さいので、フルネイティブで作っても追従しきれます。しかも PWA が苦手なこと（最前面の小窓、ホットキー、通知からの返信）が、ちょうどチャットで一番効きます。さらに現状、<b>チャットの @メンションはどこにも通知されていない</b>ので、PWA と重ならない穴を埋めることになります。まず運営者専用の試作を作って2週間使い、判定します。</p>
+</div>
+
+<h2>チャット専用アプリ案（推奨）</h2>
+<p>途中で出た「チャットだけを切り出したメッセージアプリ」案を、コードで確かめた事実と照らし合わせました。上の「相棒」案より筋が良い、というのが結論です。</p>
+<div class="tbl"><table>
+<tr><th>観点</th><th>事実（コードで確認）</th><th>評価</th></tr>
+<tr><td>機能の広さ</td><td>全員で1部屋。本文は最大1000字。編集、削除、リアクション（絵文字・カスタム絵文字）、@メンション（ビーグルが吠える）、ユーザーごとの既読カーソルと未読数（<code>src/lib/chat.ts</code>）</td><td><span class="pill ok">小さい</span> SwiftUI で全部作り切れる</td></tr>
+<tr><td>寿命</td><td>メッセージは 24時間で消える（<code>CHAT_TTL</code>）。履歴の検索や長いスクロールは要らない</td><td><span class="pill ok">ネイティブ向き</span> ラウンジのように常に開いておく使い方と合う</td></tr>
+<tr><td>通知</td><td>Web Push を送っているのは <code>/api/publish</code>（配信の公開）だけ。<b>チャットのメンションは通知されず、タブを開いているときに吠えるだけ</b></td><td><span class="pill ok">穴を埋める</span> 二重通知にならない</td></tr>
+<tr><td>変化の速さ</td><td>直近30日でチャット関連のコミットは約 40件（リアクション追加、表示修正など）。<code>chat.ts</code> 自体の変更は少なく、変化は主に Web 側の UI</td><td><span class="pill mid">中</span> API 契約と capabilities で吸収する</td></tr>
+<tr><td>API</td><td><code>/api/agent/chat</code> は今は GET のみ。<code>chat</code> スコープは定義済み</td><td><span class="pill mid">追加が必要</span> 送信・編集・リアクション・既読・ストリーム</td></tr>
+</table></div>
+
+<h3>チャットアプリで PWA を超えるところ</h3>
+<ul>
+<li><b>どこからでも話せる</b>: ⌃⌥B でチャットの小窓が開き、入力欄にすぐフォーカスが入る。⏎ で送信し、Esc で元の作業に戻る。</li>
+<li><b>横に置いておける</b>: 最前面に固定でき、全 Space に表示でき、非アクティブ時は少し透明にする。配信中に OBS の上に置いておける。</li>
+<li><b>メンションに気づける</b>: @メンションを通知し、通知の上でそのまま返信できる。吠える音はメンションのときだけ鳴らす。</li>
+<li><b>Mac らしい入力</b>: 日本語変換中の ⏎ を誤って送信しない。⌘↑ で自分の直前の発言を編集する。画像のドラッグ&ドロップ。リアクションはクリックで。どれもネイティブの入力欄なら素直に作れる。</li>
+<li><b>状態がすぐ見える</b>: メニューバーのビーグルの姿勢と Dock バッジでチャットの未読を表す。在席はウィンドウが見えているときだけにする。</li>
+</ul>
+
+<h3>進化に追従するための約束</h3>
+<ul>
+<li>チャットアプリが依存するのは <code>/api/agent/chat*</code> の契約だけ。サーバーは <code>apiVersion</code> と <code>capabilities</code>（例: <code>reactions</code>、<code>customEmoji</code>、<code>edit</code>、<code>images</code>）を返す。</li>
+<li>アプリが知らない種類のメッセージや機能は、「B-guru で開く」リンク付きの簡易表示にして壊さない。新機能は Web 版に先に出て、需要が見えてからアプリに入れる。</li>
+<li>Web 側では、チャット送信ロジックを route から <code>src/lib/chat.ts</code> に寄せ、Web 版とアプリの両方が同じ関数を通るようにする。契約テストを vitest に追加する。</li>
+<li>SwiftUI で書くので、需要があれば同じコードで iPhone 版のチャットにも広げられる。会員は iPhone 中心の可能性が高いので、将来の伸びしろになる。</li>
+</ul>
+
+<h3>本番の利用データ（2026-10-15 集計、読み取りのみ）</h3>
+<div class="tbl"><table>
+<tr><th>指標</th><th>値</th><th>読み方</th></tr>
+<tr><td>チャット発言（直近24時間）</td><td>15件・発言者 8人</td><td>メッセージは24時間で消えるため、残っているのはこの分だけ</td></tr>
+<tr><td>チャット発言（通算）</td><td>約 1,142件 ÷ 61日 ≒ <b>1日 19件</b></td><td>2026-08-15 の開始からの採番。削除分を含むので概算</td></tr>
+<tr><td>チャットを開いた人</td><td>1日 <b>46人</b> / 7日 76人 / 30日 122人</td><td>既読カーソルはチャットパネルを開いたときだけ進む。アクティブ会員 151人のうち約3割が毎日開いている</td></tr>
+<tr><td>比較: タイムライン投稿</td><td>7日で 839件・投稿者 49人（1日 約120件）</td><td>チャットの発言量はタイムラインの約6分の1</td></tr>
+<tr><td>Web Push 購読</td><td>20人（32端末）</td><td>購読しているのは会員の約13%だけ</td></tr>
+<tr><td>購読端末の内訳（人）</td><td>Mac Chrome 系 11、Mac Safari 4、iPhone 5、Windows 4、Android 3</td><td>購読者に限ると <b>Mac が 15人で最多</b>。Mac でも Chrome が主流で、Safari の Web アプリ利用は少数</td></tr>
+</table></div>
+<p><b>読み取り</b>: チャットは「よく覗かれるが、発言は少ないラウンジ」です。毎日 46人が開くのに、発言するのは 8人前後にとどまります。これは「覗く」「横に置く」需要がすでにあることを示しており、チャット専用アプリの狙いと一致します。一方で発言は1日 20件前後なので、アプリの価値は「会話を逃さない・すぐ反応できる」ことで発言を増やせるかにかかっています。</p>
+<p>注意点: Push 購読者は 20人と少なく、偏った標本です。iPhone は Push にホーム画面への追加が必要なので少なめに出ます。iPad のデスクトップ表示は Mac として数えています。Mac 会員の多くが Chrome を使っているので、上の比較表の「Safari Web アプリ」は Chrome のインストール型 PWA にも読み替えて考える必要があります（Chrome での通知ボタンなどの差は未確認）。</p>
+<p><b>試作の判定基準をこの数字で置き換えます</b>: 運営者が2週間使い、その後に希望者へ配布した段階で、チャットの1日の発言数（基準 約19件）と発言者数（基準 約8人）が目に見えて増えるか。増えなければ PWA 側でチャットの通知を整えるだけにとどめます。</p>
+
+<h3>リスク</h3>
+<ul>
+<li><b>発言の少なさ</b>: 1日 19件ほどなので、アプリだけで会話が増えるとは限らない。最初に効くのは、メンション通知と、すぐ返信できる手軽さ。</li>
+<li>チャットだけのアプリにすると、タイムラインから人が離れるおそれがある。アプリの上部に「自分宛ての返信 N件 ▸ B-guru で開く」の1行だけ残し、タイムラインは PWA に誘導する。</li>
+<li>相棒にメンション通知を持たせるなら、トークンの短命化と OTP は前提になる（下のセキュリティ節）。</li>
+</ul>
+
+<h2>PWA でどこまでできるか（macOS の Safari Web アプリ）</h2>
+<div class="tbl"><table>
+<tr><th>体験</th><th>Safari Web アプリ</th><th>ネイティブ</th><th>差</th></tr>
+<tr><td>独立ウィンドウ、Dock アイコン、ログイン時に起動</td><td><span class="pill ok">可</span></td><td>可</td><td>なし</td></tr>
+<tr><td>Web Push（アプリを閉じていても届く）、集中モード</td><td><span class="pill ok">可</span></td><td>可（APNs か常駐が必要）</td><td>なし。殻にするとむしろ失う</td></tr>
+<tr><td>Dock の未読バッジ</td><td><span class="pill ok">可</span> <code>setAppBadge</code>（B-guru は未実装）</td><td>可</td><td>なし</td></tr>
+<tr><td>Dock 右クリックのショートカット（新規投稿、チャットなど）</td><td><span class="pill ok">可</span> manifest <code>shortcuts</code>（未実装）</td><td>可</td><td>なし</td></tr>
+<tr><td>Slack やメールで開いたリンクが B-guru で開く</td><td><span class="pill ok">可</span>（Sequoia 以降）</td><td>可</td><td>なし</td></tr>
+<tr><td>ウィンドウサイズの保持</td><td><span class="pill mid">部分的</span>（サイズは保持、開くページは start_url）</td><td>可</td><td>小</td></tr>
+<tr><td>右クリックメニュー、ネイティブのメニューバー</td><td><span class="pill mid">部分的</span>（Web の既定メニュー）</td><td>可</td><td>中</td></tr>
+<tr><td><b>アプリを切り替えずに覗いて戻る</b>（メニューバー＋グローバルホットキー）</td><td><span class="pill ng">不可</span></td><td>可</td><td><b>決定的</b></td></tr>
+<tr><td><b>通知の上で返信・❤️</b></td><td><span class="pill ng">不可</span>（Safari は通知アクション非対応）</td><td>可</td><td><b>大</b></td></tr>
+<tr><td><b>常に最前面の小窓</b>（配信中のチャット）</td><td><span class="pill ng">不可</span></td><td>可</td><td><b>決定的</b></td></tr>
+<tr><td>ウィジェット（デスクトップ／通知センター）</td><td><span class="pill ng">不可</span></td><td>可</td><td>中</td></tr>
+</table></div>
+<p class="src">出典: WebKit ブログ（Safari 17.2、17.4、18、26）、WWDC23「What's new in web apps」、MDN の互換性データ。最前面・メニューバー・グローバルショートカット・ウィジェットの「不可」は該当する機能の記述が無いことからの判断です（反証は見つからず）。</p>
+
+<h3>場面ごとの判定</h3>
+<div class="tbl"><table>
+<tr><th>場面</th><th>誰に効くか</th><th>PWA で足りるか</th></tr>
+<tr><td>夜にじっくり読む・書く</td><td>全員</td><td><span class="pill ok">足りる</span> 本体はどちらで作っても同じ体験</td></tr>
+<tr><td>iPhone で通勤中に読む</td><td>iPhone 中心の会員</td><td><span class="pill ok">対象外</span> Mac アプリは関係しない。既読はサーバー同期済み（<code>src/lib/read-state-server.ts</code>）</td></tr>
+<tr><td>仕事中にチラ見して作業に戻る</td><td>Mac で一日中働く会員、運営者</td><td><span class="pill ng">足りない</span> Dock に戻ってウィンドウを探す手間が残る</td></tr>
+<tr><td>自分宛ての返信にすぐ反応する</td><td>投稿する会員</td><td><span class="pill mid">ほぼ足りる</span> 通知クリックで開ける。その場で返せないだけ</td></tr>
+<tr><td>配信中にコメントを拾う</td><td>ホスト、運営者</td><td><span class="pill ng">足りない</span> OBS などの上に置いておけない</td></tr>
+</table></div>
+<p>差が決定的なのは「チラ見」と「横に置く」です。どちらも主に運営者と、Mac で一日中働く会員に効く場面です。複数の端末から使っている会員は 54%（<code>docs/unread-sync-design.md</code> の本番実測）いますが、Mac と iPhone の比率はまだ測っていません。</p>
+
+<h2>比較した案: PWA 本体 ＋ メニューバー相棒</h2>
+<p>チャット専用アプリ案の一つ前に検討した構成です。考え方（本体は PWA、ネイティブは小さく）はそのまま引き継いでいます。チャットに絞った方が、作る理由も、触り心地を磨く対象もはっきりします。</p>
+<pre>
+ ┌──────────── PWA（Safari Web アプリ）── 本体。今まで通り毎日進化 ───────────┐
+ │ フィード / スレッド / 投稿 / 部活 / 設定 / ビーグル演出 / Web Push / バッジ │
+ └───────────────────────────────▲───────────────────────────────────┘
+                                 │ https://bsm.backspace.fm/#/post/123 を開く
+ ┌─────── メニューバー相棒（SwiftUI、小さく保つ）────────────────────────────┐
+ │ ① 覗く: ⌃⌥B でポップオーバー → 自分宛て・新着・チャット最新 → Esc で戻る   │
+ │ ② 横に置く: 最前面のチャット小窓（WKWebView で ?compact=1 を表示）          │
+ │ データ: /api/agent/summary と個人宛てストリーム（agent API・Keychain）      │
+ └──────────────────────────────────────────────────────────────────┘
+</pre>
+<ul>
+<li><b>相棒は本体を持たない</b>。項目をクリックすると URL を開き、Sequoia 以降はそれが Web アプリに渡る（ハッシュ <code>#/post/123</code> が保たれるかは<b>未確認</b>。Web アプリを1つ作って <code>open</code> で試せば1分で確定する）。</li>
+<li><b>通知は PWA の Web Push に任せる</b>（二重通知を避ける）。通知の上で返信したい需要が試作で確かめられたら、v2 で相棒側に移すことを検討する。</li>
+<li><b>チャット小窓だけは WebView</b>。中身は Web 側の <code>?compact=1</code> 表示なので、チャットの新機能はそのまま入る。</li>
+<li>相棒が依存するのは UI ではなく agent API の契約だけ。サーバーは <code>apiVersion</code> と <code>capabilities</code> を返し、相棒は知らない項目を無視し、無い機能は隠す。小窓に何を出すかもサーバー側で切り替えられる。</li>
+</ul>
+
+<h3>進化への追従</h3>
+<div class="tbl"><table>
+<tr><th>変わるもの</th><th>反映のしかた</th></tr>
+<tr><td>B-guru の UI・新機能・ビーグル演出</td><td>PWA なので Web をデプロイすれば即反映</td></tr>
+<tr><td>チャット小窓の中身</td><td>Web の <code>?compact=1</code> 表示なので即反映</td></tr>
+<tr><td>小窓に出す項目の on/off</td><td>サーバーの <code>capabilities</code> で切り替え（再配布なし）</td></tr>
+<tr><td>相棒そのものの変更</td><td>Sparkle で自動更新（Developer ID 署名と公証）。頻度は低い想定</td></tr>
+</table></div>
+
+<h2>相棒の触り心地（専門家と会員パネルの合意点）</h2>
+<ol>
+<li><b>覗いて戻る</b>: ポップオーバーは 0.18 秒で開き、0.12 秒で閉じる。作業中のアプリからフォーカスを奪わない。会員パネルの5人全員がこれを一番の価値に挙げた。</li>
+<li><b>状態はビーグルの姿勢で表す</b>: 寝ている＝静かな時間、座っている＝通常、耳が立つ＝新着、吠える＝自分宛て（0.5 秒だけ）。点滅、バウンス、Dock の跳ねは使わない。</li>
+<li><b>自分宛てが主役</b>: 新着は折りたためるようにし、読み専の会員向けに「続きから読む」を付ける。入力欄はフォーカスしたときだけ広げる（常に出ていると発言を促されているようで居心地が悪い、という声があった）。</li>
+<li><b>アクセシビリティ</b>（パネルの a11y ペルソナの指摘）: ホバーしないと出ないボタンは使わない。アイコンの状態は accessibilityLabel にも入れる（例:「B-guru、自分宛て2件」）。Dynamic Type に合わせて高さが伸びるようにする。開いたときのフォーカス位置を決めておく。</li>
+<li><b>配信モード</b>（ホスト役の指摘）: チャット小窓を最前面に固定し、静かな時間はローカル通知だけに効かせる。ホスト役はこの小窓を MVP に入れてほしいと求めた。</li>
+<li>「おはようだわん。夜のあいだに 3件（自分宛て 1件）」のように、朝に1行でまとめる。ビーグルの一言はローカルのテンプレートで作り、表示の頻度を下げ、オフにもできるようにする。</li>
+</ol>
+
+<h3>小窓のワイヤーフレーム</h3>
+<pre>
+ メニューバー:  … 🔋 [🐶] 21:04            ← 姿勢で状態を表す
+ ┌──────────────────────────────────┐
+ │ 🐶 B-guru                       ⚙ │
+ │ あなた宛て (2)                     │
+ │  ↩ kai3desu: それRAWで撮った… 3分 [❤][↩] │
+ │  ❤ ゆう さんが ❤ しました     8分 │
+ │ ▸ 新着 5件（続きから読む）          │
+ │ チャット  ゆう: 今夜のアフター何時？ │
+ │ [💬 チャット小窓を出す]  ⌘O 本体を開く │
+ │ 🐶「おはようだわん。夜のあいだに3件」│
+ └──────────────────────────────────┘
+   ボタンは常に表示 / 高さは文字サイズに追従
+</pre>
+
+<h2>やめた案と理由</h2>
+<ul>
+<li><b>WKWebView で本体を包むアプリ</b>（最初のチーム案）: 本体の体験は PWA と大差がないのに、Web Push が使えなくなる（WKWebView は Web Push に非対応）。WKWebView 固有の回避策が page.tsx に溜まっていく危険もある。PWA を基準にすると、損のほうが大きい。</li>
+<li><b>フル SwiftUI</b>: 直近30日で 261 コミット、そのうち 159 が page.tsx への変更。一人開発では Web の速さに追いつけない。</li>
+<li><b>Electron / Tauri</b>: PWA より重く、ネイティブらしさも足りない。</li>
+</ul>
+
+<h2>どの案でも先に直すべきこと（セキュリティ）</h2>
+<ul>
+<li><span class="pill ng">high・確認済み</span> ログインがメールアドレスだけで、OTP なしにセッションを発行している（<code>src/app/api/auth/request/route.ts:49</code>）。そこから 30 日有効の agent token も作れる。相棒が長期トークンを持つ前に OTP を入れる（<code>otp_codes</code> テーブルは定義済み）。</li>
+<li><span class="pill ng">high・コードで確認、本番では未検証</span> 認証前のレート制限が実質的に効いていない。<code>src/lib/agent-auth.ts:349</code> の <code>ON CONFLICT (key, window_start)</code> に対し、一意制約は <code>key</code> だけなので PostgreSQL がエラーを返し、catch が <code>true</code> を返して素通りになる。</li>
+<li><span class="pill mid">medium</span> Cookie セッションは発行後に会員資格を再確認していない。Web Push は全購読者に本文の先頭60字を送っていて、退会者にも届く。CSP が未設定。</li>
+<li>相棒用のトークンは短命にし、refresh rotation と、読み取りと通知だけの <code>native</code> スコープにする。Keychain には <code>ThisDeviceOnly</code> で保存し、失効は既存の settings-devices を使う。</li>
+<li><span class="pill mid">確認済み</span> <code>/api/posts/stream</code> は接続中を「オンライン」とみなすので、相棒が常時つなぐとずっと在席表示になる。相棒には presence に影響しない個人宛てストリームを別に用意する。</li>
+</ul>
+
+<h2>進め方と判定基準</h2>
+<div class="tbl"><table>
+<tr><th>段階</th><th>内容</th><th>目安</th></tr>
+<tr><td>0. PWA を磨く（どの案でもやる）</td><td><code>setAppBadge</code> で未読バッジ、manifest の <code>shortcuts</code> と <code>scope</code>、小さいウィンドウ幅でのレイアウト、OTP ログイン、レート制限の修正、CSP。会員の Mac と iPhone の比率を集計する。</td><td>3〜5日</td></tr>
+<tr><td>1. チャットアプリの試作（運営者専用）</td><td>SwiftUI で、メニューバーとホットキー、最前面にできる小窓、送信・編集・リアクション、メンション通知（通知から返信）、未読バッジ。Web 側には agent chat の書き込み API、個人宛てストリーム、capabilities を足す。チャットの発言数も集計する。</td><td>1〜1.5週</td></tr>
+<tr><td>判定（2週間使う）</td><td>続ける条件: チャットを PWA ではなくアプリから使うのが当たり前になること。メンションへの反応が速くなること。配信中に小窓を置きっぱなしにしていること。どちらも当てはまらなければ、PWA に一本化して終える。</td><td>2週間</td></tr>
+<tr><td>2. 会員に配布</td><td>Sparkle、短命トークン、アクセシビリティ対応、配信モード。配布後4週でインストールが20人未満なら、運営者用の道具に戻す。</td><td>+1〜2週</td></tr>
+<tr><td>3. 必要なら</td><td>通知の上での返信・❤️（APNs）、ウィジェット。</td><td>+2週〜</td></tr>
+</table></div>
+
+<h2>決めていただきたいこと</h2>
+<div class="ask">
+<ol>
+<li><b>方針</b>: 「本体は PWA のまま、ネイティブはチャット専用アプリとして試作し判定する」で進めてよいか。</li>
+<li><b>着手順</b>: 段階0（PWA の磨き込みと認証の修正）から始めてよいか。この段階は Web 版の会員全員にも効く。</li>
+<li><b>需要確認</b>: 本番 DB を読み取りのみで集計してよいか（直近のチャット発言数・発言者数、push 購読の User-Agent から Mac と iPhone の比率）。</li>
+</ol>
+</div>
+</div>
