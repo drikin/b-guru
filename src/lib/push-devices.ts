@@ -4,10 +4,18 @@
 import { pool } from "./db";
 import { APNS_TOKEN_RE, type ApnsEnvironment } from "./apns";
 
+export type NotifyMode = "all" | "mentions";
+
 export interface PushDevice {
   email: string;
   apnsToken: string;
   environment: ApnsEnvironment;
+  notifyMode: NotifyMode;
+  quietHours: boolean;
+}
+
+export function normalizeNotifyMode(v: unknown): NotifyMode {
+  return v === "mentions" ? "mentions" : "all";
 }
 
 export function normalizeEnvironment(v: unknown): ApnsEnvironment | null {
@@ -20,6 +28,8 @@ export async function registerPushDevice(input: {
   apnsToken: string;
   environment: ApnsEnvironment;
   platform?: string;
+  notifyMode?: NotifyMode;
+  quietHours?: boolean;
 }): Promise<void> {
   if (!APNS_TOKEN_RE.test(input.apnsToken)) throw new Error("invalid_token");
   const email = input.email.trim().toLowerCase();
@@ -34,15 +44,17 @@ export async function registerPushDevice(input: {
   // when the previous owner's agent token is no longer valid (they signed out
   // on that shared iPad) — never away from a member who is still signed in.
   await pool.query(
-    `INSERT INTO push_devices (email, agent_token_id, apns_token, environment, platform)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO push_devices (email, agent_token_id, apns_token, environment, platform, notify_mode, quiet_hours)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (apns_token) DO UPDATE SET
        email = EXCLUDED.email, agent_token_id = EXCLUDED.agent_token_id,
-       environment = EXCLUDED.environment, platform = EXCLUDED.platform, updated_at = now()
+       environment = EXCLUDED.environment, platform = EXCLUDED.platform,
+       notify_mode = EXCLUDED.notify_mode, quiet_hours = EXCLUDED.quiet_hours, updated_at = now()
      WHERE push_devices.email = EXCLUDED.email
         OR NOT EXISTS (SELECT 1 FROM agent_tokens t WHERE t.id = push_devices.agent_token_id
                         AND t.revoked_at IS NULL AND t.expires_at > now())`,
-    [email, input.agentTokenId, apnsToken, input.environment, input.platform ?? "ios"]
+    [email, input.agentTokenId, apnsToken, input.environment, input.platform ?? "ios",
+     input.notifyMode ?? "all", input.quietHours ?? true]
   );
   // At most MAX_DEVICES_PER_EMAIL devices per member (oldest go first).
   await pool.query(
@@ -78,18 +90,22 @@ export async function removePushDevice(apnsToken: string): Promise<void> {
 /** Devices whose agent token is still valid. `emails` null = everyone with a device. */
 export async function activePushDevices(emails: string[] | null): Promise<PushDevice[]> {
   const res = await pool.query(
-    `SELECT d.email, d.apns_token, d.environment
+    `SELECT d.email, d.apns_token, d.environment, d.notify_mode, d.quiet_hours
        FROM push_devices d
        JOIN agent_tokens t ON t.id = d.agent_token_id
       WHERE t.revoked_at IS NULL AND t.expires_at > now()
         AND ($1::text[] IS NULL OR d.email = ANY($1::text[]))`,
     [emails ? emails.map((e) => e.trim().toLowerCase()) : null]
   );
-  return res.rows.map((r: { email: string; apns_token: string; environment: string }) => ({
-    email: r.email,
-    apnsToken: r.apns_token,
-    environment: r.environment === "sandbox" ? "sandbox" : "production",
-  }));
+  return res.rows.map(
+    (r: { email: string; apns_token: string; environment: string; notify_mode: string; quiet_hours: boolean }) => ({
+      email: r.email,
+      apnsToken: r.apns_token,
+      environment: r.environment === "sandbox" ? "sandbox" : "production",
+      notifyMode: normalizeNotifyMode(r.notify_mode),
+      quietHours: r.quiet_hours !== false,
+    })
+  );
 }
 
 export async function markPushSent(apnsTokens: string[]): Promise<void> {

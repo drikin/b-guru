@@ -8,6 +8,8 @@ struct ChatScreen: View {
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var draft = ""
+    @State private var notifyAll = PushCenter.shared.notifyMode == "all"
+    @State private var quietHours = PushCenter.shared.quietHours
     @State private var editingId: Int?
     @FocusState private var composerFocused: Bool
 
@@ -48,6 +50,15 @@ struct ChatScreen: View {
 
     private var menu: some View {
         Menu {
+            Section("通知") {
+                Picker("通知", selection: $notifyAll) {
+                    Text("新着すべて").tag(true)
+                    Text("メンションだけ").tag(false)
+                }
+                .onChange(of: notifyAll) { _, all in PushCenter.shared.notifyMode = all ? "all" : "mentions" }
+                Toggle("静かな時間（0:00〜7:00）", isOn: $quietHours)
+                    .onChange(of: quietHours) { _, on in PushCenter.shared.quietHours = on }
+            }
             Button("B-guru をブラウザで開く", systemImage: "safari") { Platform.open(APIClient.baseURL) }
             Button("ログアウト", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive, action: onSignOut)
         } label: {

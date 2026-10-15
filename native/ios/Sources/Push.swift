@@ -17,6 +17,28 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
     weak var session: Session?
     private var deviceToken: String?
 
+    /// Notification settings for this device (kept by the server per device).
+    /// "all": every new chat message (one rolling notification) / "mentions": mentions + replies only.
+    var notifyMode: String {
+        get { UserDefaults.standard.string(forKey: "notifyMode") ?? "all" }
+        set { UserDefaults.standard.set(newValue, forKey: "notifyMode"); syncSettings() }
+    }
+    /// 0:00–7:00 JST: no new-message notifications (mentions still come).
+    var quietHours: Bool {
+        get { UserDefaults.standard.object(forKey: "quietHours") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "quietHours"); syncSettings() }
+    }
+
+    private func syncSettings() {
+        guard let hex = deviceToken, let api = session?.api else { return }
+        let platform = UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "ios"
+        let mode = notifyMode, quiet = quietHours
+        Task {
+            try? await api.registerPush(deviceToken: hex, environment: Self.environment, platform: platform,
+                                        notifyMode: mode, quietHours: quiet)
+        }
+    }
+
     #if DEBUG
     static let environment = "sandbox"     // Xcode-installed builds get sandbox tokens
     #else
@@ -34,6 +56,7 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
         let open = UNNotificationAction(identifier: "open", title: "開く", options: [.foreground])
         center.setNotificationCategories([
             UNNotificationCategory(identifier: "mention", actions: [reply, heart], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: "newmsg", actions: [reply], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: "reply", actions: [open], intentIdentifiers: [], options: []),
         ])
     }
@@ -49,11 +72,8 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
     }
 
     func didRegister(_ token: Data) {
-        let hex = token.map { String(format: "%02x", $0) }.joined()
-        deviceToken = hex
-        guard let api = session?.api else { return }
-        let platform = UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "ios"
-        Task { try? await api.registerPush(deviceToken: hex, environment: Self.environment, platform: platform) }
+        deviceToken = token.map { String(format: "%02x", $0) }.joined()
+        syncSettings()
     }
 
     /// Sign-out: stop pushes to this device (the token is revoked right after,
@@ -67,11 +87,11 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
     // MARK: UNUserNotificationCenterDelegate
 
     /// In the foreground the chat is already on screen: don't show chat
-    /// mentions again; replies to your posts still show as a banner.
+    /// notifications again; replies to your posts still show as a banner.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         let kind = notification.request.content.userInfo["kind"] as? String
-        return kind == "chat_mention" ? [] : [.banner, .sound]
+        return kind == "chat_mention" || kind == "chat_new" ? [] : [.banner, .sound]
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,

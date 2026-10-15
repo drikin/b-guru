@@ -522,6 +522,10 @@ export async function initSchema() {
       last_sent_at TIMESTAMPTZ
     );
     CREATE INDEX IF NOT EXISTS idx_push_devices_email ON push_devices(email);
+    -- 端末ごとの通知設定: 'all'（新着すべて・まとめて）/ 'mentions'（メンションと返信だけ）。
+    -- quiet_hours: 0:00〜7:00 JST は新着を送らない（メンションは送る）。
+    ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS notify_mode TEXT NOT NULL DEFAULT 'all';
+    ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS quiet_hours BOOLEAN NOT NULL DEFAULT TRUE;
 
     -- エージェント API のレート制限カウンタ（固定窓・key=token_id:scope）。
     CREATE TABLE IF NOT EXISTS rate_limits (

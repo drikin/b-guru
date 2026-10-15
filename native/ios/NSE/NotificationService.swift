@@ -74,7 +74,7 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
     /// The real (title, body) for a push, or nil to keep the generic text.
     static func lookup(_ q: Lookup, token: String) async -> (title: String, body: String)? {
         switch q.kind {
-        case "chat_mention":
+        case "chat_mention", "chat_new":
             guard let id = q.messageId,
                   let m = await get("/api/agent/chat/\(id)", token: token)?["message"] as? [String: Any],
                   let body = m["body"] as? String else { return nil }

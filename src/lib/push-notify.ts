@@ -13,20 +13,29 @@ import { activePushDevices, markPushSent, pushDeviceOwners, removePushDevice, ty
 import { isMentionedIn, mentionNamesFor } from "./chat-mention";
 import { resolveDisplayNames } from "./display-name";
 
-export type PushKind = "chat_mention" | "reply";
+export type PushKind = "chat_mention" | "chat_new" | "reply";
+
+/** 0:00–7:00 JST — new-message pushes wait (mentions still go out). */
+export function isQuietHourJst(now = new Date()): boolean {
+  const h = (now.getUTCHours() + 9) % 24;
+  return h < 7;
+}
 
 /** The APNs payload (pure — tested). */
 export function buildPushPayload(kind: PushKind, ids: { messageId?: number; postId?: number | null; replyId?: number | null }) {
-  const isChat = kind === "chat_mention";
+  const alert =
+    kind === "chat_mention"
+      ? { title: "B-guru チャット", body: "あなたへのメンションがあります" }
+      : kind === "chat_new"
+        ? { title: "B-guru チャット", body: "新着メッセージがあります" }
+        : { title: "B-guru", body: "あなたの投稿に返信がありました" };
   return {
     aps: {
-      alert: isChat
-        ? { title: "B-guru チャット", body: "あなたへのメンションがあります" }
-        : { title: "B-guru", body: "あなたの投稿に返信がありました" },
-      sound: isChat ? "bark.caf" : "default",
+      alert,
+      sound: kind === "chat_mention" ? "bark.caf" : "default",
       "mutable-content": 1,
-      category: isChat ? "mention" : "reply",
-      "thread-id": isChat ? "chat" : `post-${ids.postId ?? 0}`,
+      category: kind === "chat_mention" ? "mention" : kind === "chat_new" ? "newmsg" : "reply",
+      "thread-id": kind === "reply" ? `post-${ids.postId ?? 0}` : "chat",
     },
     kind,
     ...(ids.messageId != null ? { message_id: ids.messageId } : {}),
@@ -81,13 +90,35 @@ export async function mentionedRecipients(body: string, authorEmail: string, own
 }
 
 export async function pushChatMessage(m: { id: number; body: string }, authorEmail: string): Promise<number> {
-  if (!apnsEnabled() || !m.body.includes("@")) return 0;
-  // Owners first (one small DISTINCT query), devices only for those mentioned.
-  const who = (await mentionedRecipients(m.body, authorEmail, await pushDeviceOwners())).filter(
-    (e) => !throttled(e, "chat_mention")
+  if (!apnsEnabled()) return 0;
+  const author = authorEmail.trim().toLowerCase();
+  const owners = await pushDeviceOwners();
+  if (owners.length === 0) return 0;
+
+  // 1) @mentions: their own notification (bark), always — also in quiet hours.
+  const mentioned = new Set(await mentionedRecipients(m.body, author, owners));
+  let sent = 0;
+  const mentionTo = [...mentioned].filter((e) => !throttled(e, "chat_mention"));
+  if (mentionTo.length) {
+    sent += await deliver(await activePushDevices(mentionTo), buildPushPayload("chat_mention", { messageId: m.id }), `chat-${m.id}`);
+  }
+
+  // 2) Everyone else on "all": one rolling "new messages" notification
+  //    (same collapse id → replaces the previous one), at most one per 20 s
+  //    per member, held during quiet hours. Low traffic, so this stays calm.
+  const others = owners.filter((e) => e !== author && !mentioned.has(e));
+  if (others.length === 0) return sent;
+  const quiet = isQuietHourJst();
+  const devices = (await activePushDevices(others)).filter((d) => d.notifyMode === "all" && !(quiet && d.quietHours));
+  const recipients = [...new Set(devices.map((d) => d.email))].filter((e) => !throttled(e, "chat_new"));
+  if (recipients.length === 0) return sent;
+  const allowed = new Set(recipients);
+  sent += await deliver(
+    devices.filter((d) => allowed.has(d.email)),
+    buildPushPayload("chat_new", { messageId: m.id }),
+    "chat-new"
   );
-  if (who.length === 0) return 0;
-  return deliver(await activePushDevices(who), buildPushPayload("chat_mention", { messageId: m.id }), `chat-${m.id}`);
+  return sent;
 }
 
 export async function pushPersonalNotification(

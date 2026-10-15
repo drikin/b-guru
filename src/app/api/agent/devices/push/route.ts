@@ -1,11 +1,12 @@
 /* /api/agent/devices/push — ネイティブアプリ（iPhone/iPad）の APNs 端末トークン登録（スコープ read）。
- *   POST   { token, environment: "production"|"sandbox", platform? } → この端末にプッシュを送る
+ *   POST   { token, environment: "production"|"sandbox", platform?, notify_mode?: "all"|"mentions",
+ *            quiet_hours?: boolean } → この端末にプッシュを送る（設定の変更も同じ POST）
  *   DELETE { token }                                                   → 送らない（ログアウト時）
  * 端末はこの agent token に紐付く。トークンが失効・期限切れになれば送られない。 */
 import { NextRequest } from "next/server";
 import { withAgent } from "@/lib/agent-auth";
 import { APNS_TOKEN_RE } from "@/lib/apns";
-import { normalizeEnvironment, registerPushDevice, unregisterPushDevice } from "@/lib/push-devices";
+import { normalizeEnvironment, normalizeNotifyMode, registerPushDevice, unregisterPushDevice } from "@/lib/push-devices";
 import { AGENT_API_VERSION } from "@/lib/agent-chat";
 import { agentJson } from "../../_lib";
 
@@ -30,7 +31,15 @@ export async function POST(req: NextRequest) {
       return { status: 400, body: { error: "token と environment が不正です", code: "invalid_request" }, headers: {} };
     }
     const platform = b?.platform === "ipados" ? "ipados" : "ios";
-    await registerPushDevice({ email: ctx.email, agentTokenId: ctx.tokenId, apnsToken: token, environment, platform });
+    await registerPushDevice({
+      email: ctx.email,
+      agentTokenId: ctx.tokenId,
+      apnsToken: token,
+      environment,
+      platform,
+      notifyMode: normalizeNotifyMode(b?.notify_mode),
+      quietHours: b?.quiet_hours !== false,
+    });
     return { status: 200, body: { apiVersion: AGENT_API_VERSION, ok: true }, headers: {} };
   });
   return agentJson(out);
