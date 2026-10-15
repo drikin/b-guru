@@ -11,6 +11,7 @@ import { gravatarUrl } from "./posts";
 import { resolveDisplayNames } from "./display-name";
 import { emailToUserId, emailToUserIds } from "./user";
 import { emitLive } from "./live";
+import { CHAT_BODY_LIMIT } from "./chat-optimistic";
 
 /**
  * A chat message as serialized to the client.
@@ -29,10 +30,13 @@ export interface ChatMessage {
   avatar: string | null;
   edited: boolean; // author corrected a typo after posting
   editedAt: string | null; // ISO timestamp of the edit
+  /** Only on the create event / POST response of the sender's own message:
+   *  the client-generated id of the optimistic bubble it replaces. */
+  clientId?: string;
 }
 
-/** Max body length for a chat message. */
-export const CHAT_MAX_BODY = 1000;
+/** Max body length for a chat message (shared with the composer). */
+export const CHAT_MAX_BODY = CHAT_BODY_LIMIT;
 /** Default page size returned by GET /api/chat. */
 export const CHAT_PAGE_SIZE = 50;
 /** Chat messages are ephemeral: each one disappears this long after posting. */
@@ -147,6 +151,122 @@ export async function createChatMessage(
   return mapRow(res.rows[0], viewerEmail, await emailToUserId(email));
 }
 
+/** Client-generated id echoed back on the create event so an optimistic
+ *  (pending) bubble can be matched to the stored message. Opaque, short. */
+const CLIENT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+export function normalizeClientId(v: unknown): string | null {
+  return typeof v === "string" && CLIENT_ID_RE.test(v) ? v : null;
+}
+
+/** Normalize + validate a chat body. Shared by the web route and the agent
+ *  API so both reject exactly the same input. */
+export function normalizeChatBody(
+  raw: unknown
+): { ok: true; body: string } | { ok: false; error: "empty" | "too long" } {
+  const body = (typeof raw === "string" ? raw : String(raw ?? ""))
+    .replace(/\r\n/g, "\n")
+    .trim();
+  if (!body) return { ok: false, error: "empty" };
+  if (body.length > CHAT_MAX_BODY) return { ok: false, error: "too long" };
+  return { ok: true, body };
+}
+
+/** Recent sends by (email, clientId) → the stored message (or the in-flight
+ *  insert), so a retry after a lost response — the INSERT happened, the reply
+ *  never arrived — returns the same message instead of posting it twice, and
+ *  two concurrent sends of one clientId share one insert. In-memory is enough:
+ *  single long-lived process, and a retry comes within seconds. */
+const SEND_DEDUP_TTL_MS = 10 * 60_000;
+const SEND_DEDUP_MAX = 2000;
+const recentSends = new Map<string, { at: number; p: Promise<ChatMessage> }>();
+
+function pruneRecentSends(now: number): void {
+  for (const [k, v] of recentSends) {
+    // Map iterates oldest-first: stop at the first entry that is fresh and fits.
+    if (recentSends.size <= SEND_DEDUP_MAX && now - v.at < SEND_DEDUP_TTL_MS) break;
+    recentSends.delete(k);
+  }
+}
+
+/**
+ * Send path shared by POST /api/chat and POST /api/agent/chat.
+ *
+ * Latency matters more than anything for chat, so this is ONE round-trip:
+ * display-name resolution (same rule as resolveDisplayNames + cleanDisplayName),
+ * the INSERT and the author's user_id lookup all happen in a single statement.
+ * The sender's read cursor is advanced without blocking the response (posting
+ * means you have seen the room), and the message is broadcast over SSE with
+ * the optional `clientId` so the sender's pending bubble can be reconciled.
+ *
+ * Returns the message as seen by the sender (isAuthor = true).
+ */
+export async function sendChatMessage(
+  email: string,
+  body: string,
+  clientId: string | null = null
+): Promise<ChatMessage> {
+  if (!clientId) return insertAndBroadcast(email, body, null);
+  const now = Date.now();
+  pruneRecentSends(now);
+  const key = `${email.trim().toLowerCase()}\u0000${clientId}`;
+  const hit = recentSends.get(key);
+  if (hit && now - hit.at < SEND_DEDUP_TTL_MS) return { ...(await hit.p) };
+  const p = insertAndBroadcast(email, body, clientId);
+  recentSends.set(key, { at: now, p });
+  try {
+    return await p;
+  } catch (e) {
+    recentSends.delete(key); // nothing was stored: a retry must insert
+    throw e;
+  }
+}
+
+async function insertAndBroadcast(
+  email: string,
+  body: string,
+  clientId: string | null
+): Promise<ChatMessage> {
+  const res = await pool.query(
+    `WITH nm AS MATERIALIZED (
+       SELECT COALESCE(
+                up.display_name,
+                (SELECT p.author_name FROM posts p
+                 WHERE p.author_email = $1
+                 ORDER BY p.created_at DESC LIMIT 1)
+              ) AS raw
+       FROM (SELECT 1) x
+       LEFT JOIN user_profiles up ON up.email = $1
+     ), cleaned AS (
+       -- cleanDisplayName in SQL. JS trim() also strips U+3000, so btrim does too.
+       SELECT btrim(raw, E' \\t\\r\\n\\u3000') AS s FROM nm
+     ), ins AS (
+       INSERT INTO chat_messages (author_email, author_name, body)
+       SELECT $1,
+              CASE WHEN strpos(s, '@') > 1
+                   THEN NULLIF(btrim(substr(s, 1, strpos(s, '@') - 1), E' \\t\\r\\n\\u3000'), '')
+                   ELSE NULLIF(s, '')
+              END,
+              $2
+       FROM cleaned
+       RETURNING id, author_email, author_name, body, edited, edited_at, created_at
+     )
+     SELECT ins.*, u.user_id
+     FROM ins LEFT JOIN users u ON u.email = lower(trim(ins.author_email))`,
+    [email, body]
+  );
+  const row = res.rows[0];
+  const message = await mapRow(row, email, row.user_id ?? null);
+  if (clientId) message.clientId = clientId;
+
+  const { isAuthor: _perReceiver, ...broadcast } = message;
+  emitLive({ type: "chat", message: broadcast, action: "create" });
+  void markChatRead(email, message.id).catch((e) =>
+    console.error("chat markRead after send:", (e as Error)?.message)
+  );
+  return message;
+}
+
 /** Edit a chat message's body (author self-fix for typos). Only the original
  *  author may edit, and only while the message is still within its TTL window.
  *  Returns the updated message, or null when the message is not editable
@@ -167,6 +287,20 @@ export async function editChatMessage(
   );
   if (res.rowCount === 0) return null;
   return mapRow(res.rows[0], viewerEmail, await emailToUserId(email));
+}
+
+/** Edit + broadcast, shared by PATCH /api/chat/[id] and the agent API.
+ *  Returns null when the message is not editable. */
+export async function editChatMessageAndBroadcast(
+  id: number,
+  email: string,
+  body: string
+): Promise<ChatMessage | null> {
+  const updated = await editChatMessage(id, email, body, email);
+  if (!updated) return null;
+  const { isAuthor: _perReceiver, ...broadcast } = updated;
+  emitLive({ type: "chat", action: "edit", message: broadcast });
+  return updated;
 }
 
 /** Delete a chat message (admin moderation). */

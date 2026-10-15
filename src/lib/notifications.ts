@@ -2,6 +2,7 @@
 import { pool } from "./db";
 import { resolveDisplayNames, cleanDisplayName } from "./display-name";
 import { emailToUserId, emailToUserIds } from "./user";
+import { emitPersonal } from "./personal-live";
 
 /**
  * A notification as serialized to the client.
@@ -83,7 +84,7 @@ export async function createNotification(input: {
     ]
   );
   const r = res.rows[0];
-  return {
+  const created: Notification = {
     id: r.id,
     type: r.type,
     actorId: await emailToUserId(r.actor_email),
@@ -95,6 +96,9 @@ export async function createNotification(input: {
     readAt: r.read_at ? new Date(r.read_at).toISOString() : null,
     createdAt: new Date(r.created_at).toISOString(),
   };
+  // Personal stream (native clients): only the recipient's listeners get it.
+  emitPersonal(input.userEmail, { type: "notification", notification: created });
+  return created;
 }
 
 /** List notifications for a user, newest first. */

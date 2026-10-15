@@ -334,25 +334,25 @@ describe("LiveEvent (SSE) payloads carry no email", () => {
     expect(allKeys(e).has("isAuthor")).toBe(false);
   });
 
-  it("the chat route strips isAuthor before broadcasting", async () => {
+  it("the chat send/edit path strips isAuthor before broadcasting", async () => {
     // Regression guard for a real bug: the route passed the whole ChatMessage
     // (built with viewerEmail = the sender, so isAuthor: true) straight to
     // emitLive. Every other member then rendered the sender's message as their
     // own — right-aligned, with edit/delete buttons that 403'd on click.
+    // The broadcast now lives in lib/chat.ts (sendChatMessage /
+    // editChatMessageAndBroadcast), shared by the web route and the agent API.
     // Assert on the source, because the strip happens at the call site.
-    const src = await readFile(
-      new URL("../../app/api/chat/route.ts", import.meta.url),
-      "utf8"
-    );
-    expect(src).toMatch(/const\s*\{\s*isAuthor:[^}]*\}\s*=\s*message/);
-    expect(src).not.toMatch(/emitLive\(\{\s*type:\s*"chat",\s*message,\s*action/);
+    const lib = await readFile(new URL("../chat.ts", import.meta.url), "utf8");
+    expect(lib).toMatch(/const\s*\{\s*isAuthor:[^}]*\}\s*=\s*message/);
+    expect(lib).toMatch(/const\s*\{\s*isAuthor:[^}]*\}\s*=\s*updated/);
+    expect(lib).not.toMatch(/emitLive\(\{\s*type:\s*"chat",\s*message,\s*action/);
+    expect(lib).not.toMatch(/emitLive\(\{\s*type:\s*"chat",\s*action:\s*"edit",\s*message:\s*updated/);
 
-    const editSrc = await readFile(
-      new URL("../../app/api/chat/[id]/route.ts", import.meta.url),
-      "utf8"
-    );
-    expect(editSrc).toMatch(/const\s*\{\s*isAuthor:[^}]*\}\s*=\s*updated/);
-    expect(editSrc).not.toMatch(/emitLive\(\{\s*type:\s*"chat",\s*action:\s*"edit",\s*message:\s*updated/);
+    // Routes must not broadcast chat create/edit themselves (only via the lib).
+    for (const rel of ["../../app/api/chat/route.ts", "../../app/api/chat/[id]/route.ts", "../../app/api/agent/chat/route.ts", "../../app/api/agent/chat/[id]/route.ts"]) {
+      const src = await readFile(new URL(rel, import.meta.url), "utf8");
+      expect(src).not.toMatch(/emitLive\(\{\s*type:\s*"chat",\s*(action:\s*"(create|edit)"|message)/);
+    }
   });
 });
 

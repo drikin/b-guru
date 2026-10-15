@@ -285,7 +285,7 @@ export const RATE_RULES: Record<AgentScope, RateRule> = {
   read: { limit: 120, window: "1 minute" },
   read_state: { limit: 60, window: "1 minute" },
   write: { limit: 10, window: "1 hour" },
-  chat: { limit: 30, window: "1 hour" },
+  chat: { limit: 120, window: "1 hour" }, // 送信 + リアクション。人のチャット（ネイティブアプリ）が詰まらない水準
 };
 
 export interface RateResult {

@@ -66,6 +66,8 @@ import {
   mergeFreshFeed,
 } from "@/lib/feed";
 import type { ChatMessage } from "@/lib/chat";
+import { type ChatRow, CHAT_BODY_LIMIT, newChatClientId, newChatTempId, reconcileChat, markChatFailed, markChatRetrying } from "@/lib/chat-optimistic";
+import { normWs, isMentionedIn } from "@/lib/chat-mention";
 import type { PostPoll } from "@/lib/poll";
 import type { DuplicateCandidate } from "@/lib/duplicates";
 import { DuplicateWarning } from "@/components/DuplicateWarning";
@@ -273,27 +275,6 @@ function linkifyUserLinks(text: string): string {
     /(?:https?:\/\/bsm\.backspace\.fm)?\/?#\/user\/([^\s<)\]，。、]+)/g,
     (_m, token) => "[#/user/" + token + "](#/user/" + token + ")"
   );
-}
-
-/** Normalize a member/mention name for matching: lower-case and strip all
- *  whitespace (half + full-width) so `@柳家`, `@柳家三之助` and `@[柳家 三之助]`
- *  all resolve to the same member. */
-const normWs = (s: string) => String(s || "").toLowerCase().replace(/[\s\u3000]/g, "");
-
-/** True when the chat body contains an @mention token matching any of the
- *  caller's own names (used to decide whether to make the beagle bark). */
-function isMentionedIn(body: string, myNames: Set<string>): boolean {
-  if (!myNames || myNames.size === 0) return false;
-  let hit = false;
-  body.replace(/@\[([^\]]+)\]/g, (m, name) => {
-    if (myNames.has(normWs(name))) hit = true;
-    return m;
-  });
-  body.replace(/@([^\s@\[\]]+)/g, (m, name) => {
-    if (myNames.has(normWs(name))) hit = true;
-    return m;
-  });
-  return hit;
 }
 
 /** Render a chat message body with @mention tokens highlighted. Tokens that
@@ -5212,7 +5193,7 @@ export default function Home() {
   const bmUndoRef = useRef<(() => void) | null>(null);
   const bmToastIdRef = useRef<string | null>(null);
   const bmInFlightRef = useRef<Set<number>>(new Set());
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatRow[]>([]);
   const [chatUnread, setChatUnread] = useState(0);
   // True while the first chat fetch of a given open is in flight. Without this
   // the view rendered "まだメッセージはありません" during the wait, so a slow
@@ -5220,7 +5201,7 @@ export default function Home() {
   const [chatLoading, setChatLoading] = useState(false);
   // Mirror of chatMessages so loadChat (useCallback with [] deps) can decide
   // whether a spinner is warranted without being re-created on every message.
-  const chatMessagesRef = useRef<ChatMessage[]>([]);
+  const chatMessagesRef = useRef<ChatRow[]>([]);
   chatMessagesRef.current = chatMessages;
   // Tab-favicon badge: mirror chatUnread into the module var and refresh the
   // favicon whenever it changes (unread chat / @mentions). New-post arrivals
@@ -5237,7 +5218,6 @@ export default function Home() {
   const [chatText, setChatText] = useState("");
   // Target member for a mention-pre-filled chat open (clicking an online row).
   const [chatMention, setChatMention] = useState<string | null>(null);
-  const [chatSending, setChatSending] = useState(false);
   // Slack-like emoji picker for the chat composer.
   const [chatEmojiOpen, setChatEmojiOpen] = useState(false);
   // Author self-edit (typo fix): the message id being edited + the draft text.
@@ -5305,7 +5285,9 @@ export default function Home() {
       const r = await fetch("/api/chat", { cache: "no-store" });
       if (!r.ok) return;
       const d = await r.json();
-      setChatMessages(d.messages ?? []);
+      // 送信中・送信失敗の行（id<0）は一覧の再取得で消さない（再送できるように残す）。
+      //   確定済みと重なった pending は、POST 応答 / SSE の reconcileChat が片付ける。
+      setChatMessages((prev) => [...(d.messages ?? []), ...prev.filter((m) => m.id < 0)]);
       if (open) {
         setChatUnread(0);
         fetch("/api/chat/read", { method: "POST" }).catch(() => {});
@@ -5369,33 +5351,85 @@ export default function Home() {
     }
   }, []);
 
-  // Send a chat message (callback memo ties to current input text).
-  const sendChat = useCallback(async () => {
-    const body = chatText.trim();
-    if (!body || chatSending) return;
-    setChatSending(true);
+  // Send a chat message — optimistic. The bubble appears the instant Enter is
+  // pressed (pending, slightly faded) and the composer clears at once; the
+  // stored message from the POST response or the SSE create event (whichever
+  // lands first) replaces it in place by clientId. drikin 2026-10-15: 「送信時の
+  // レスポンスが悪い」— the old flow waited a full round-trip before showing
+  // anything and blocked the composer meanwhile.
+  const postChat = useCallback(async (body: string, clientId: string) => {
+    // 応答が返らないまま「送信中」で止まらないよう 15 秒で打ち切る（再送は
+    // サーバーが clientId で重複を弾くので安全）。
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 15_000);
     try {
       const r = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body }),
+        body: JSON.stringify({ body, clientId }),
         cache: "no-store",
+        signal: ac.signal,
       });
-      const d = await r.json();
-      if (d.ok && d.message) {
-        setChatMessages((prev) =>
-          prev.some((m) => m.id === d.message.id) ? prev : [...prev, d.message]
-        );
-        setChatText("");
-        setChatUnread(0); // our own message counts as read
-        // Keep focus (and the mobile soft keyboard) on the composer after sending.
-        requestAnimationFrame(() => chatInputRef.current?.focus());
+      const d = await r.json().catch(() => null);
+      if (r.ok && d?.ok && d.message) {
+        setChatMessages((prev) => reconcileChat(prev, { ...d.message, isAuthor: true }));
+        return;
       }
+      if (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) {
+        // 再送しても通らない（ログイン切れ・本文不正）: 行を消して本文を入力欄に戻す。
+        setChatMessages((prev) => prev.filter((m) => !(m.id < 0 && m.clientId === clientId)));
+        setChatText((cur) => cur || body);
+        mantineNotifications.show({
+          color: "red",
+          message: r.status === 401 ? "ログインが切れました。再ログインしてください" : "送信できませんでした",
+        });
+        return;
+      }
+      setChatMessages((prev) => markChatFailed(prev, clientId));
     } catch {
-      /* ignore */
+      setChatMessages((prev) => markChatFailed(prev, clientId));
+    } finally {
+      clearTimeout(timer);
     }
-    setChatSending(false);
-  }, [chatText, chatSending]);
+  }, []);
+
+  const sendChat = useCallback(() => {
+    const body = chatText.trim();
+    const me = authRef.current;
+    if (!body || !me) return;
+    const clientId = newChatClientId();
+    setChatMessages((prev) => [
+      ...prev,
+      {
+        id: newChatTempId(),
+        authorId: me.userId,
+        isAuthor: true,
+        authorName: me.name ?? null,
+        body,
+        createdAt: new Date().toISOString(),
+        avatar: me.avatar ?? null,
+        edited: false,
+        editedAt: null,
+        clientId,
+        pending: true,
+      },
+    ]);
+    setChatText("");
+    setChatUnread(0); // our own message counts as read
+    // Keep focus (and the mobile soft keyboard) on the composer after sending.
+    requestAnimationFrame(() => chatInputRef.current?.focus());
+    void postChat(body, clientId);
+  }, [chatText, postChat]);
+
+  const retryChat = useCallback((row: ChatRow) => {
+    if (!row.clientId) return;
+    setChatMessages((prev) => markChatRetrying(prev, row.clientId!));
+    void postChat(row.body, row.clientId);
+  }, [postChat]);
+
+  const discardChat = useCallback((row: ChatRow) => {
+    setChatMessages((prev) => prev.filter((m) => !(m.id < 0 && m.clientId === row.clientId)));
+  }, []);
 
   // Begin editing one of the current user's own messages (typo fix).
   const startEditChat = useCallback((id: number, body: string) => {
@@ -6345,9 +6379,8 @@ export default function Home() {
         // 上書きされない → 自分のメッセージが左に表示され続ける
         // （drikin 2026-10-08 報告「しばらく放置して送信すると左に出る」）。
         const isMine = !!authRef.current?.userId && msg.authorId === authRef.current.userId;
-        setChatMessages((prev) =>
-          prev.some((m) => m.id === msg.id) ? prev : [...prev, { ...msg, isAuthor: isMine }]
-        );
+        // 自分の楽観送信（clientId 付き）は pending 行をその場で置き換える。
+        setChatMessages((prev) => reconcileChat(prev, { ...msg, isAuthor: isMine }));
         if (chatViewRef.current) {
           setChatUnread(0);
           fetch("/api/chat/read", { method: "POST" }).catch(() => {});
@@ -11065,7 +11098,7 @@ export default function Home() {
                           const touchDevice =
                             typeof window !== "undefined" &&
                             (navigator.maxTouchPoints > 0 || matchMedia("(hover: none)").matches);
-                          const chatActions = (
+                          const chatActions = m.id < 0 ? null : (
                             <Box
                               data-cx="chat-actions"
                               style={{
@@ -11099,7 +11132,16 @@ export default function Home() {
                             </Box>
                           );
                           return (
-                            <div key={m.id} style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start" }}>
+                            <div
+                              key={m.clientId ?? m.id}
+                              style={{
+                                display: "flex",
+                                justifyContent: mine ? "flex-end" : "flex-start",
+                                // 送信中は少し薄く。確定したらすぐ通常表示（遅延の体感を出さない）。
+                                opacity: m.pending ? 0.6 : 1,
+                                transition: "opacity 0.15s ease",
+                              }}
+                            >
                               <div style={{ maxWidth: "82%", display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start" }}>
                                 {!mine && (
                                   <Group gap={5} align="center" wrap="nowrap" mb={2}>
@@ -11150,6 +11192,17 @@ export default function Home() {
                                   <>
                                     {mine && (
                                       <Group gap={4} align="center" wrap="nowrap" mb={2}>
+                                        {m.failed && (
+                                          <>
+                                            <Text size="xs" c="red.7">送信できませんでした</Text>
+                                            <UnstyledButton onClick={() => retryChat(m)} style={{ fontSize: 12, color: "var(--mantine-color-green-7)" }}>
+                                              再送
+                                            </UnstyledButton>
+                                            <UnstyledButton onClick={() => discardChat(m)} style={{ fontSize: 12, color: "var(--mantine-color-dimmed)" }}>
+                                              取り消す
+                                            </UnstyledButton>
+                                          </>
+                                        )}
                                         {m.edited && <Text size="xs" c="green.7">編集済み</Text>}
                                         <Text size="xs" c="dimmed" style={{ opacity: 0.7 }}>{chatTimeStr(m.createdAt)}</Text>
                                       </Group>
@@ -11189,6 +11242,7 @@ export default function Home() {
                       value={chatText}
                       onChange={(v) => setChatText(v)}
                       inputRef={chatInputRef}
+                      maxLength={CHAT_BODY_LIMIT}
                       initialMention={chatMention}
                       onKeyDown={(e) => {
                         if ((e.nativeEvent as any).isComposing) return;
@@ -11260,7 +11314,7 @@ export default function Home() {
                       onPointerDown={(e) => {
                         if (e.pointerType !== "mouse") e.preventDefault();
                       }}
-                      disabled={chatSending || !chatText.trim()}
+                      disabled={!chatText.trim()}
                       aria-label="送信"
                       style={{ flexShrink: 0, marginBottom: 4 }}
                     >

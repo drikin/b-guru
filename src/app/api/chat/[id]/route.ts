@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { emitLive } from "@/lib/live";
 import { getSessionEmail } from "@/lib/session";
 import { isAdmin } from "@/lib/admin";
-import { CHAT_MAX_BODY, deleteChatMessage, editChatMessage } from "@/lib/chat";
+import { CHAT_MAX_BODY, deleteChatMessage, editChatMessageAndBroadcast } from "@/lib/chat";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -82,7 +82,7 @@ export async function PATCH(
       headers: NO_STORE,
     });
   }
-  const updated = await editChatMessage(msgId, email, body, email);
+  const updated = await editChatMessageAndBroadcast(msgId, email, body);
   if (!updated) {
     return new Response(JSON.stringify({ error: "not editable" }), {
       status: 403,
@@ -91,8 +91,6 @@ export async function PATCH(
   }
   // Same per-receiver rule as the create path: `isAuthor` is true for the
   // editor's own client and must not be fanned out to everyone.
-  const { isAuthor: _perReceiver, ...broadcast } = updated;
-  emitLive({ type: "chat", action: "edit", message: broadcast });
   return new Response(
     JSON.stringify({ ok: true, message: updated }),
     { status: 200, headers: NO_STORE }

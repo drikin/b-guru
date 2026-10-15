@@ -15,3 +15,17 @@ export function agentErrorResponse(e: unknown): NextResponse {
     { status: 500, headers: NO_CACHE }
   );
 }
+
+/** withAgent の戻り値 → JSON Response（各ルート共通の締め）。 */
+export function agentJson(out: { status: number; body: unknown; headers?: Record<string, string> }): Response {
+  return new Response(JSON.stringify(out.body), {
+    status: out.status,
+    headers: { "Content-Type": "application/json", ...NO_CACHE, ...(out.headers ?? {}) },
+  });
+}
+
+/** 正の int32 ID か（PG integer 範囲外は 22003 になるので弾く）。 */
+export function parsePositiveId(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 && n <= 2147483647 ? n : null;
+}

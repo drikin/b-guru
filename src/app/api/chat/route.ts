@@ -1,15 +1,14 @@
 import { NextRequest } from "next/server";
-import { emitLive } from "@/lib/live";
 import { getSessionEmail } from "@/lib/session";
-import { resolveDisplayName } from "@/lib/display-name";
 import {
-  CHAT_MAX_BODY,
   CHAT_PAGE_SIZE,
   ChatMessage,
-  createChatMessage,
   getLatestChatId,
   getUnreadCount,
   listChatMessages,
+  normalizeChatBody,
+  normalizeClientId,
+  sendChatMessage,
 } from "@/lib/chat";
 
 export const dynamic = "force-dynamic";
@@ -19,16 +18,6 @@ const NO_STORE = {
   "Content-Type": "application/json",
   "Cache-Control": "no-store, no-cache, must-revalidate",
 } as const;
-
-/** Resolve a member's current display name (profile display_name wins,
- *  else last timeline name). Profile edits propagate to new chat messages. */
-async function resolveName(email: string): Promise<string | null> {
-  try {
-    return await resolveDisplayName(email);
-  } catch {
-    return null;
-  }
-}
 
 // GET /api/chat?before=<id>&limit=<n>
 // Returns recent history (oldest→newest), plus the caller's unread count and
@@ -60,7 +49,9 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/chat — send a message to the global chat room.
-// Body: { body: string }. Broadcasts the new message over SSE.
+// Body: { body: string, clientId?: string }. Broadcasts the new message over
+// SSE (with clientId so the sender's optimistic bubble is reconciled). The
+// send path is one DB round-trip — see sendChatMessage in lib/chat.ts.
 export async function POST(req: NextRequest) {
   const email = await getSessionEmail();
   if (!email) {
@@ -70,31 +61,26 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  let bodyText = "";
+  let raw: unknown = "";
+  let clientId: string | null = null;
   try {
     const body = await req.json();
-    bodyText = (body?.body ?? "").toString();
+    raw = body?.body ?? "";
+    clientId = normalizeClientId(body?.clientId);
   } catch {
     /* ignore */
   }
-  bodyText = bodyText.replace(/\r\n/g, "\n").trim();
-  if (!bodyText) {
-    return new Response(JSON.stringify({ error: "empty" }), {
-      status: 400,
-      headers: NO_STORE,
-    });
-  }
-  if (bodyText.length > CHAT_MAX_BODY) {
-    return new Response(JSON.stringify({ error: "too long" }), {
+  const checked = normalizeChatBody(raw);
+  if (!checked.ok) {
+    return new Response(JSON.stringify({ error: checked.error }), {
       status: 400,
       headers: NO_STORE,
     });
   }
 
-  const name = await resolveName(email);
   let message: ChatMessage;
   try {
-    message = await createChatMessage(email, name, bodyText, email);
+    message = await sendChatMessage(email, checked.body, clientId);
   } catch (e) {
     console.error("chat create error:", (e as any)?.message);
     return new Response(JSON.stringify({ error: "db error" }), {
@@ -103,21 +89,10 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Realtime broadcast over the existing SSE channel.
-  //
-  // `isAuthor` must NOT go out on the bus: one payload is fanned out to every
-  // connected client, and the flag is per-RECEIVER (true only for the author's
-  // own client). `createChatMessage` is called with viewerEmail = the sender,
-  // so `message.isAuthor` is true here — broadcasting it verbatim made every
-  // other member render the sender's message as their own (right-aligned, with
-  // edit/delete buttons that then 403). Each client derives the flag locally
-  // from `authorId` instead. See the contract note in lib/live.ts.
-  const { isAuthor: _perReceiver, ...broadcast } = message;
-  emitLive({ type: "chat", message: broadcast, action: "create" });
-
-  const unreadCount = await getUnreadCount(email);
+  // The sender's read cursor is advanced inside sendChatMessage, so the
+  // unread count after one's own message is 0 by definition.
   return new Response(
-    JSON.stringify({ ok: true, message, unreadCount }),
+    JSON.stringify({ ok: true, message, unreadCount: 0 }),
     { status: 200, headers: NO_STORE }
   );
 }

@@ -30,6 +30,23 @@ const spec = {
           hint: { type: "string" },
         },
       },
+      AgentChatMessage: {
+        type: "object",
+        properties: {
+          id: { type: "integer" },
+          author_id: { type: ["string", "null"], description: "不透明 user_id" },
+          author_name: { type: ["string", "null"] },
+          avatar: { type: ["string", "null"] },
+          body: { type: "string" },
+          created_at: { type: "string", format: "date-time" },
+          edited: { type: "boolean" },
+          edited_at: { type: ["string", "null"] },
+          is_author: { type: "boolean" },
+          mentions_me: { type: "boolean" },
+          client_id: { type: "string", description: "送信者本人にだけ返る" },
+          reactions: { type: "array" },
+        },
+      },
       AgentPost: {
         type: "object",
         properties: {
@@ -245,11 +262,69 @@ const spec = {
     },
     "/api/agent/chat": {
       get: {
-        summary: "チャット履歴（24h 以内・自ユーザー可視分）",
+        summary: "チャット履歴（24h 以内・古い順）。unread_count / latest_id 付き",
         parameters: [
           { name: "limit", in: "query", schema: { type: "integer", maximum: 200, default: 50 } },
           { name: "before", in: "query", schema: { type: "integer" } },
+          { name: "include", in: "query", schema: { type: "string", enum: ["reactions"] } },
         ],
+        responses: { "200": { description: "{apiVersion, unread_count, latest_id, messages: AgentChatMessage[]}" } },
+      },
+      post: {
+        summary: "チャット送信（スコープ chat）。client_id は楽観表示の照合用で、stream の create にも返る",
+        requestBody: {
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["body"],
+                properties: {
+                  body: { type: "string", maxLength: 1000 },
+                  client_id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,64}$" },
+                },
+              },
+            },
+          },
+        },
+        responses: { "201": { description: "{apiVersion, message: AgentChatMessage}" } },
+      },
+    },
+    "/api/agent/chat/{id}": {
+      patch: {
+        summary: "自分のメッセージを編集（スコープ chat・24h 以内）",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+        responses: { "200": { description: "{apiVersion, message}" }, "403": { description: "編集不可" } },
+      },
+    },
+    "/api/agent/chat/{id}/reactions": {
+      post: {
+        summary: "チャットへのリアクショントグル（スコープ chat）。{ emoji }（Unicode or :name:）",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+        responses: { "200": { description: "{apiVersion, added, reactions}" }, "404": { description: "メッセージ無し" } },
+      },
+    },
+    "/api/agent/chat/read": {
+      post: {
+        summary: "チャット既読カーソルを進める（スコープ read_state・単調増加）。{ last_read_id? }",
+        responses: { "200": { description: "{apiVersion, unread_count, latest_id}" } },
+      },
+    },
+    "/api/agent/stream": {
+      get: {
+        summary:
+          "個人宛て SSE（スコープ read）。presence に影響しない。events: ready / chat / presence / notification / revoked。1 トークン 3 接続まで",
+        responses: { "200": { description: "text/event-stream" } },
+      },
+    },
+    "/api/agent/summary": {
+      get: {
+        summary: "バッジ用サマリ（チャット未読・通知未読と最新 5 件・在席人数）",
+        responses: { "200": { description: "OK" } },
+      },
+    },
+    "/api/agent/capabilities": {
+      get: {
+        summary: "サーバーが今サポートする機能とトークンで使える操作。クライアントは無い機能を隠し、知らない項目を無視する",
         responses: { "200": { description: "OK" } },
       },
     },

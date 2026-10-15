@@ -258,7 +258,7 @@ describe("checkRateLimit (SQL 形状)", () => {
     expect(RATE_RULES.read).toEqual({ limit: 120, window: "1 minute" });
     expect(RATE_RULES.read_state).toEqual({ limit: 60, window: "1 minute" });
     expect(RATE_RULES.write).toEqual({ limit: 10, window: "1 hour" });
-    expect(RATE_RULES.chat).toEqual({ limit: 30, window: "1 hour" });
+    expect(RATE_RULES.chat).toEqual({ limit: 120, window: "1 hour" });
   });
 });
 
