@@ -68,6 +68,7 @@ import {
 import type { ChatMessage } from "@/lib/chat";
 import { type ChatRow, CHAT_BODY_LIMIT, newChatClientId, newChatTempId, reconcileChat, markChatFailed, markChatRetrying } from "@/lib/chat-optimistic";
 import { normWs, isMentionedIn } from "@/lib/chat-mention";
+import MacAppCard from "@/components/MacAppCard";
 import type { PostPoll } from "@/lib/poll";
 import type { DuplicateCandidate } from "@/lib/duplicates";
 import { DuplicateWarning } from "@/components/DuplicateWarning";
@@ -10187,6 +10188,8 @@ export default function Home() {
         {/* offsetScrollbars: スクロールバー出現時もコンテンツがスクロールバーと重ならないよう、スクロールバー分を確保する（drikin 指摘 2026-08） */}
         <ScrollArea offsetScrollbars scrollbarSize={8}>
           <Stack pr="4" gap="sm">
+          {/* Mac アプリ（ベータ）のダウンロード案内。Mac でのみ・配布中の版があるときだけ表示 */}
+          <MacAppCard />
           {/* Search box */}
           <Paper p="sm" radius="md" withBorder shadow="xs">
             <SearchBox

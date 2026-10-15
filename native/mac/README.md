@@ -40,6 +40,15 @@ native/mac/scripts/release.sh 0.1.0              # 署名 → DMG → 公証 →
 native/mac/scripts/release.sh 0.1.0 --no-notarize  # 署名付き DMG だけ（手元確認）
 ```
 - 署名: Developer ID Application: Kohichi Aoki (F9349EVF2K)、Hardened Runtime、secure timestamp
+- ユニバーサル（Apple シリコン + Intel）。スクリプトが lipo で確認する
 - 公証: キーチェーンのプロファイル `notary`（`xcrun notarytool store-credentials notary` で一度だけ登録）
 - スクリプトは、Developer ID 署名・Hardened Runtime・timestamp を確認し、開発用の仕組み
   （BGURU_DEV_TOKEN）がリリース版に入っていないことも確認する。成果物は `native/mac/dist/`（git 管理外）
+
+## 会員への配布（B-guru 右サイドバーのダウンロード）
+```bash
+native/mac/scripts/publish.sh 0.1.2
+```
+公証済み・staple 済みかを確認してから、本番サーバーの `/home/ubuntu/bsm-downloads/` に DMG を置き、
+最後に `mac.json`（版・サイズ・SHA-256）を差し替える。サイトは `/api/download/mac`（会員のみ）で配り、
+右サイドバー最上部のカード（Mac のデスクトップでのみ表示）から落とせる。新しい版はデプロイ不要。

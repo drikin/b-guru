@@ -24,7 +24,7 @@ mkdir -p "$OUT"
 
 echo "=== 1/6 build $VERSION ($BUILD) ==="
 xcodegen generate >/dev/null
-xcodebuild -project BguruChat.xcodeproj -scheme BguruChat -configuration Release \
+xcodebuild -project BguruChat.xcodeproj -scheme BguruChat -configuration Release -destination "generic/platform=macOS" \
   -derivedDataPath "$DD" MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD" \
   clean build 2>&1 | grep -E " error:|BUILD (SUCCEEDED|FAILED)"
 
@@ -36,7 +36,9 @@ echo "$INFO" | grep -q "flags=.*runtime" || { echo "hardened runtime missing" >&
 echo "$INFO" | grep -q "Timestamp=" || { echo "secure timestamp missing" >&2; exit 1; }
 # Release must not carry dev-only switches.
 if strings "$APP/Contents/MacOS/B-guru Chat" | grep -q "BGURU_DEV_TOKEN"; then echo "dev token hook in release binary" >&2; exit 1; fi
-echo "signature OK (Developer ID, hardened runtime, timestamp, no dev hooks)"
+ARCHS_BUILT="$(lipo -archs "$APP/Contents/MacOS/B-guru Chat")"
+case "$ARCHS_BUILT" in *arm64*x86_64*|*x86_64*arm64*) ;; *) echo "not universal: $ARCHS_BUILT" >&2; exit 1 ;; esac
+echo "signature OK (Developer ID, hardened runtime, timestamp, no dev hooks, universal: $ARCHS_BUILT)"
 
 echo "=== 3/6 DMG ==="
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/bguru-dmg.XXXXXX")"
