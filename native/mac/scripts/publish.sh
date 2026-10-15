@@ -3,7 +3,7 @@
 # B-guru right sidebar (/api/download/mac). Writes the manifest LAST, so the
 # site switches to the new version only once the file is fully in place.
 #
-#   native/mac/scripts/publish.sh 0.1.7 "リアクションの表示を直しました"   ← 更新メモは必須（アップデート画面に出る）
+#   native/mac/scripts/publish.sh <版> "<今回の変更点>"   ← 更新メモは必須（アップデート画面に出る）。<> は実際の内容に置き換える
 #
 # Also signs the DMG for Sparkle (EdDSA key in the login keychain, created once
 # with Sparkle's generate_keys) and records the build number, so installed apps
@@ -14,7 +14,7 @@ VERSION="${1:?usage: publish.sh VERSION NOTES}"
 NOTES="${2:-}"
 # The notes appear in every member's update dialog: refuse empty/placeholder text.
 case "$NOTES" in
-  ""|"更新内容"|"ここに"*|*"更新内容（"*|"TODO"*|"notes"*)
+  ""|"更新内容"|"ここに"*|*"更新内容（"*|"TODO"*|"notes"*|*"<"*|*">"*|"リアクションの表示を直しました")
     echo "更新メモを書いてください（アップデート画面に出ます）: publish.sh $VERSION \"〜を直しました\"" >&2; exit 1 ;;
 esac
 VPS="ubuntu@neta.backspace.fm"
