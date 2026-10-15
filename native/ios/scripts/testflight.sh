@@ -5,6 +5,9 @@
 # Signing is automatic with the Apple ID signed in to Xcode (team F9349EVF2K).
 # The app record must exist in App Store Connect (bundle id fm.backspace.bguru.chat).
 set -euo pipefail
+# Xcode's IPA step shells out to `rsync` and expects the system one; a Homebrew
+# rsync earlier in PATH breaks it ("rsync error: syntax or usage error").
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 VERSION="${1:?usage: testflight.sh <版> [--no-upload]}"
 UPLOAD=1
 [ "${2:-}" = "--no-upload" ] && UPLOAD=0
