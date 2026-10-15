@@ -47,7 +47,7 @@ native/mac/scripts/release.sh 0.1.0 --no-notarize  # 署名付き DMG だけ（�
 
 ## 会員への配布（B-guru 右サイドバーのダウンロード）と自動アップデート
 ```bash
-native/mac/scripts/release.sh 0.1.5 && native/mac/scripts/publish.sh 0.1.5 "更新内容（アップデート画面に出る）"
+native/mac/scripts/release.sh 0.1.7 && native/mac/scripts/publish.sh 0.1.7 "リアクションの表示を直しました"
 ```
 - 自動アップデートは Sparkle 2.9.6（固定）。0.1.4 以降を入れた Mac は 6 時間ごとに確認し、新しい版があれば
   「アップデートがあります」と出る（右クリックメニュー / ⋯ の「アップデートを確認…」でも）
