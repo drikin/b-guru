@@ -9,7 +9,7 @@
  * device's own token (mutable-content); if that fails the generic text shows.
  * Everything here is fire-and-forget and a no-op until APNs is configured. */
 import { apnsEnabled, isDeadToken, sendApns } from "./apns";
-import { activePushDevices, markPushSent, removePushDevice, type PushDevice } from "./push-devices";
+import { activePushDevices, markPushSent, pushDeviceOwners, removePushDevice, type PushDevice } from "./push-devices";
 import { isMentionedIn, mentionNamesFor } from "./chat-mention";
 import { resolveDisplayNames } from "./display-name";
 
@@ -35,24 +35,46 @@ export function buildPushPayload(kind: PushKind, ids: { messageId?: number; post
   };
 }
 
+/** At most this many APNs requests in flight per delivery. */
+const SEND_CONCURRENCY = 20;
+
+/** Per recipient + kind: one push per THROTTLE_MS (a burst of mentions becomes one). */
+const THROTTLE_MS = 20_000;
+const lastPushed = new Map<string, number>();
+export function throttled(email: string, kind: PushKind, now = Date.now()): boolean {
+  const key = `${kind}:${email}`;
+  const prev = lastPushed.get(key);
+  if (prev !== undefined && now - prev < THROTTLE_MS) return true;
+  lastPushed.set(key, now);
+  if (lastPushed.size > 5000) {
+    for (const [k, t] of lastPushed) if (now - t > THROTTLE_MS) lastPushed.delete(k);
+  }
+  return false;
+}
+export function __resetThrottleForTests() {
+  lastPushed.clear();
+}
+
 async function deliver(devices: PushDevice[], payload: object, collapseId: string): Promise<number> {
   const sent: string[] = [];
-  await Promise.all(
-    devices.map(async (d) => {
-      const r = await sendApns(d.apnsToken, d.environment, payload, { collapseId });
-      if (r.status === 200) sent.push(d.apnsToken);
-      else if (isDeadToken(r)) await removePushDevice(d.apnsToken).catch(() => {});
-      else console.error("[apns]", r.status, r.reason);
-    })
-  );
+  for (let i = 0; i < devices.length; i += SEND_CONCURRENCY) {
+    await Promise.all(
+      devices.slice(i, i + SEND_CONCURRENCY).map(async (d) => {
+        const r = await sendApns(d.apnsToken, d.environment, payload, { collapseId });
+        if (r.status === 200) sent.push(d.apnsToken);
+        else if (isDeadToken(r)) await removePushDevice(d.apnsToken).catch(() => {});
+        else console.error("[apns]", r.status, r.reason);
+      })
+    );
+  }
   await markPushSent(sent).catch(() => {});
   return sent.length;
 }
 
-/** Owners of push devices mentioned in `body`, excluding the author. */
-export async function mentionedRecipients(body: string, authorEmail: string, devices: PushDevice[]): Promise<string[]> {
+/** Of the given device owners, those mentioned in `body` (never the author). */
+export async function mentionedRecipients(body: string, authorEmail: string, ownerEmails: string[]): Promise<string[]> {
   const author = authorEmail.trim().toLowerCase();
-  const owners = [...new Set(devices.map((d) => d.email))].filter((e) => e !== author);
+  const owners = [...new Set(ownerEmails)].filter((e) => e !== author);
   if (owners.length === 0 || !body.includes("@")) return [];
   const names = await resolveDisplayNames(owners);
   return owners.filter((e) => isMentionedIn(body, mentionNamesFor([names.get(e) ?? null], e)));
@@ -60,14 +82,12 @@ export async function mentionedRecipients(body: string, authorEmail: string, dev
 
 export async function pushChatMessage(m: { id: number; body: string }, authorEmail: string): Promise<number> {
   if (!apnsEnabled() || !m.body.includes("@")) return 0;
-  const devices = await activePushDevices(null);
-  const who = new Set(await mentionedRecipients(m.body, authorEmail, devices));
-  if (who.size === 0) return 0;
-  return deliver(
-    devices.filter((d) => who.has(d.email)),
-    buildPushPayload("chat_mention", { messageId: m.id }),
-    `chat-${m.id}`
+  // Owners first (one small DISTINCT query), devices only for those mentioned.
+  const who = (await mentionedRecipients(m.body, authorEmail, await pushDeviceOwners())).filter(
+    (e) => !throttled(e, "chat_mention")
   );
+  if (who.length === 0) return 0;
+  return deliver(await activePushDevices(who), buildPushPayload("chat_mention", { messageId: m.id }), `chat-${m.id}`);
 }
 
 export async function pushPersonalNotification(
@@ -75,6 +95,7 @@ export async function pushPersonalNotification(
   n: { type: string; isActor: boolean; postId: number | null; replyId: number | null }
 ): Promise<number> {
   if (!apnsEnabled() || n.type !== "reply" || n.isActor) return 0;
+  if (throttled(recipientEmail.trim().toLowerCase(), "reply")) return 0;
   const devices = await activePushDevices([recipientEmail]);
   if (devices.length === 0) return 0;
   return deliver(devices, buildPushPayload("reply", { postId: n.postId, replyId: n.replyId }), `reply-${n.replyId ?? n.postId}`);

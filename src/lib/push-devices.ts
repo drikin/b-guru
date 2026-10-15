@@ -22,16 +22,46 @@ export async function registerPushDevice(input: {
   platform?: string;
 }): Promise<void> {
   if (!APNS_TOKEN_RE.test(input.apnsToken)) throw new Error("invalid_token");
-  // A device token belongs to one install; re-registering moves it to the
-  // current owner/agent token (e.g. a different member signs in on that iPad).
+  const email = input.email.trim().toLowerCase();
+  const apnsToken = input.apnsToken.toLowerCase();
+  // One device per agent token: an app install re-registering (new APNs token
+  // after a restore, etc.) replaces its own previous row instead of piling up.
+  await pool.query(`DELETE FROM push_devices WHERE agent_token_id = $1 AND apns_token <> $2`, [
+    input.agentTokenId,
+    apnsToken,
+  ]);
+  // A device token belongs to one install. It may move to another member only
+  // when the previous owner's agent token is no longer valid (they signed out
+  // on that shared iPad) — never away from a member who is still signed in.
   await pool.query(
     `INSERT INTO push_devices (email, agent_token_id, apns_token, environment, platform)
      VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (apns_token) DO UPDATE SET
        email = EXCLUDED.email, agent_token_id = EXCLUDED.agent_token_id,
-       environment = EXCLUDED.environment, platform = EXCLUDED.platform, updated_at = now()`,
-    [input.email.trim().toLowerCase(), input.agentTokenId, input.apnsToken.toLowerCase(), input.environment, input.platform ?? "ios"]
+       environment = EXCLUDED.environment, platform = EXCLUDED.platform, updated_at = now()
+     WHERE push_devices.email = EXCLUDED.email
+        OR NOT EXISTS (SELECT 1 FROM agent_tokens t WHERE t.id = push_devices.agent_token_id
+                        AND t.revoked_at IS NULL AND t.expires_at > now())`,
+    [email, input.agentTokenId, apnsToken, input.environment, input.platform ?? "ios"]
   );
+  // At most MAX_DEVICES_PER_EMAIL devices per member (oldest go first).
+  await pool.query(
+    `DELETE FROM push_devices WHERE email = $1 AND id NOT IN
+       (SELECT id FROM push_devices WHERE email = $1 ORDER BY updated_at DESC LIMIT $2)`,
+    [email, MAX_DEVICES_PER_EMAIL]
+  );
+}
+
+export const MAX_DEVICES_PER_EMAIL = 10;
+
+/** Members who have at least one push device with a valid agent token. */
+export async function pushDeviceOwners(): Promise<string[]> {
+  const res = await pool.query(
+    `SELECT DISTINCT d.email FROM push_devices d
+       JOIN agent_tokens t ON t.id = d.agent_token_id
+      WHERE t.revoked_at IS NULL AND t.expires_at > now()`
+  );
+  return res.rows.map((r: { email: string }) => r.email);
 }
 
 export async function unregisterPushDevice(email: string, apnsToken: string): Promise<void> {

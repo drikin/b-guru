@@ -63,3 +63,18 @@ TestFlight の外部テスト: 公開リンクで最大 10,000 人。そのバ�
 4. TestFlight 内部テスト（ドリキン・運営メンバー）→ 外部テスト（会員）
 
 ユーザーの作業: App Store Connect でアプリを作成、APNs キーの作成、TestFlight の説明文・連絡先、審査用アカウントの用意。
+
+## 5. 実装状況（2026-10-15）
+- APNs のサーバー送信・端末登録・NSE・通知アクションを実装済み（commit c64c47b 以降）。鍵が無い間は送信しない。
+- セキュリティレビューを反映: ロック中の返信・❤️ は認証必須、端末は agent token あたり 1 台・1 人 10 台まで、
+  付け替えは同じ人か元の持ち主のトークンが無効なときだけ、同じ人への通知は 20 秒に 1 回、送信の並列は 20。
+- 既知（低）: 会員資格切れでもトークンが使われるまで汎用通知は届く（本文は NSE 側で失効して取れない）／
+  iOS のキーチェーンはアクセスグループ付きに変更（未配布なので移行不要）／NSE で本文を差し替えるため、
+  ロック画面に本文が出るかは iOS の「プレビューを表示」設定に従う。
+
+### 本番で動かすのに必要なこと（ユーザーの作業）
+1. developer.apple.com → Certificates, Identifiers & Profiles → Keys → ＋ → Apple Push Notifications service (APNs)。
+   環境は Sandbox と Production で 1 本ずつ（Team-scoped）。.p8 は一度しかダウンロードできない。
+2. 本番サーバーの .env.production に `APNS_KEY_PATH`（.p8 の置き場所、リポジトリ外）と `APNS_KEY_ID` を設定し、pm2 を再起動。
+   Debug ビルド（sandbox）で試すには sandbox 用の鍵、TestFlight / App Store には production 用の鍵。
+3. Identifiers で fm.backspace.bguru.chat の Push Notifications を有効化（Xcode の自動署名でも可）。

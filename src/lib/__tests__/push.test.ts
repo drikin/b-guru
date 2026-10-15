@@ -27,7 +27,7 @@ vi.mock("@/lib/user", async (orig) => {
 });
 
 import { makeProviderToken, apnsConfigFromEnv, sendApns, isDeadToken, __resetApnsForTests } from "../apns";
-import { buildPushPayload, mentionedRecipients, pushChatMessage } from "../push-notify";
+import { buildPushPayload, mentionedRecipients, pushChatMessage, throttled, __resetThrottleForTests } from "../push-notify";
 import { POST as registerPOST, DELETE as registerDELETE } from "@/app/api/agent/devices/push/route";
 
 const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
@@ -89,10 +89,19 @@ describe("宛先", () => {
     { email: "drikin@example.com", apnsToken: "a".repeat(64), environment: "production" as const },
     { email: "mazzo@example.com", apnsToken: "b".repeat(64), environment: "production" as const },
   ];
+  const owners = devices.map((d) => d.email);
   it("メンションされた人だけ。送信者本人は除く", async () => {
-    expect(await mentionedRecipients("@ドリキン 見て", "mazzo@example.com", devices)).toEqual(["drikin@example.com"]);
-    expect(await mentionedRecipients("@mazzo @ドリキン", "drikin@example.com", devices)).toEqual(["mazzo@example.com"]);
-    expect(await mentionedRecipients("ドリキンさん", "mazzo@example.com", devices)).toEqual([]);
+    expect(await mentionedRecipients("@ドリキン 見て", "mazzo@example.com", owners)).toEqual(["drikin@example.com"]);
+    expect(await mentionedRecipients("@mazzo @ドリキン", "drikin@example.com", owners)).toEqual(["mazzo@example.com"]);
+    expect(await mentionedRecipients("ドリキンさん", "mazzo@example.com", owners)).toEqual([]);
+  });
+
+  it("同じ人への同じ種類の通知は 20 秒に 1 回（連投で連打しない）", () => {
+    __resetThrottleForTests();
+    expect(throttled("a@example.com", "chat_mention", 1000)).toBe(false);
+    expect(throttled("a@example.com", "chat_mention", 5000)).toBe(true);
+    expect(throttled("a@example.com", "reply", 5000)).toBe(false);
+    expect(throttled("a@example.com", "chat_mention", 22_000)).toBe(false);
   });
 });
 
@@ -116,8 +125,14 @@ describe("POST/DELETE /api/agent/devices/push", () => {
     authed();
     const res = await registerPOST(req("POST", { token: "AB".repeat(32), environment: "sandbox" }));
     expect(res.status).toBe(200);
+    const sqls = query.mock.calls.map((c) => String(c[0]));
     const ins = query.mock.calls.find((c) => String(c[0]).includes("INSERT INTO push_devices"))!;
     expect(ins[1]).toEqual(["me@example.com", 21, "ab".repeat(32), "sandbox", "ios"]);
+    // 付け替えは同じ人か、元の持ち主のトークンが無効なときだけ
+    expect(String(ins[0])).toMatch(/WHERE push_devices\.email = EXCLUDED\.email\s+OR NOT EXISTS/);
+    // 同じ agent token の古い端末を消し、1 人 10 台まで
+    expect(sqls.findIndex((q) => q.includes("WHERE agent_token_id = $1 AND apns_token <> $2"))).toBeLessThan(sqls.findIndex((q) => q.includes("INSERT INTO push_devices")));
+    expect(sqls.some((q) => q.includes("ORDER BY updated_at DESC LIMIT $2"))).toBe(true);
   });
 
   it("不正なトークン・環境は 400、Bearer 無しは 401", async () => {

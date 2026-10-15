@@ -26,9 +26,11 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
     func configure() {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-        let reply = UNTextInputNotificationAction(identifier: "reply", title: "返信", options: [],
+        // .authenticationRequired: someone holding a locked phone must not be able
+        // to post or react as its owner from the lock screen.
+        let reply = UNTextInputNotificationAction(identifier: "reply", title: "返信", options: [.authenticationRequired],
                                                   textInputButtonTitle: "送信", textInputPlaceholder: "メッセージ")
-        let heart = UNNotificationAction(identifier: "heart", title: "❤️", options: [])
+        let heart = UNNotificationAction(identifier: "heart", title: "❤️", options: [.authenticationRequired])
         let open = UNNotificationAction(identifier: "open", title: "開く", options: [.foreground])
         center.setNotificationCategories([
             UNNotificationCategory(identifier: "mention", actions: [reply, heart], intentIdentifiers: [], options: []),
