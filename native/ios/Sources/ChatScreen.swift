@@ -63,7 +63,7 @@ struct ChatScreen: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     if store.rows.isEmpty {
-                        Text(store.connection == .live ? "今日はまだ静かだわん" : "読み込み中…")
+                        Text(store.hasLoaded ? "今日はまだ静かだわん" : "読み込み中…")
                             .font(.callout).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity).padding(.top, 40)
                     }
@@ -87,10 +87,23 @@ struct ChatScreen: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+                // Big iPad screens: keep a readable column, centred. In Split View /
+                // Slide Over the window is narrower than this and it simply fills it.
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
             }
             .defaultScrollAnchor(.bottom)
             .keepsBottomOnResize()
             .scrollDismissesKeyboard(.interactively)
+            // A LazyVStack only estimates the height of rows it hasn't drawn, so the
+            // bottom anchor can land short after the first load (seen on iPad as a
+            // blank area with the newest messages below the fold). Jump once more
+            // after the first list has been laid out.
+            .onChange(of: store.hasLoaded) { _, loaded in
+                guard loaded else { return }
+                proxy.scrollTo("bottom", anchor: .bottom)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
             .onChange(of: store.rows.last?.id) { _, _ in
                 withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
@@ -152,6 +165,8 @@ struct ChatScreen: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+        .frame(maxWidth: 760)
+        .frame(maxWidth: .infinity)
         .background(.bar)
     }
 

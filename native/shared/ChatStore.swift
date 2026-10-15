@@ -22,6 +22,8 @@ final class ChatStore {
     private(set) var onlineCount = 0
     private(set) var connection: Connection = .connecting
     private(set) var capabilities: Capabilities?
+    /// The first full list has arrived (until then "empty" means "loading").
+    private(set) var hasLoaded = false
     private(set) var myUserId: String?
     /// Set when the server revoked the token or membership ended.
     private(set) var signedOut = false
@@ -182,6 +184,7 @@ final class ChatStore {
             }
             next.append(contentsOf: local)
             rows = next
+            hasLoaded = true
             if isVisible { markReadSoon() }
             if let s = try? await api.summary() { onlineCount = s.onlineCount }
         } catch APIError.unauthorized {

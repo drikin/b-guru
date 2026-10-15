@@ -70,7 +70,11 @@ struct MessageRow: View {
         let emojiOnly = Self.isEmojiOnly(m.body)
         return Text(Self.attributed(m.body))
             .font(emojiOnly ? .system(size: 34) : .body)
+            #if os(macOS)
+            // macOS: select part of a message with the mouse. On iOS a long press
+            // must open the menu (reactions / edit / copy) instead.
             .textSelection(.enabled)
+            #endif
             .padding(.horizontal, emojiOnly ? 4 : 10)
             .padding(.vertical, emojiOnly ? 0 : 6)
             .background(

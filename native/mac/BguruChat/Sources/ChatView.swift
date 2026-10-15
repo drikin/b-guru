@@ -87,7 +87,7 @@ struct ChatView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     if store.rows.isEmpty {
-                        Text(store.connection == .live ? "今日はまだ静かだわん" : "読み込み中…")
+                        Text(store.hasLoaded ? "今日はまだ静かだわん" : "読み込み中…")
                             .font(.callout).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity).padding(.top, 40)
                     }
