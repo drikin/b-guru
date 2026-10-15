@@ -229,19 +229,4 @@ private struct OnlineLabelStyle: LabelStyle {
     }
 }
 
-extension Color {
-    static let accentGreen = Color(red: 0.086, green: 0.639, blue: 0.290) // B-guru #16a34a
-}
 
-private extension View {
-    /// macOS 15+: when content height changes, keep the bottom edge fixed (the
-    /// chat reads bottom-up), so a row growing never pushes the latest messages
-    /// out of view.
-    @ViewBuilder func keepsBottomOnResize() -> some View {
-        if #available(macOS 15.0, *) {
-            self.defaultScrollAnchor(.bottom, for: .sizeChanges)
-        } else {
-            self
-        }
-    }
-}

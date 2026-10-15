@@ -1,5 +1,8 @@
 import SwiftUI
 import WebKit
+#if os(iOS)
+import UIKit
+#endif
 
 /// First run: sign in to B-guru in an embedded, non-persistent web view, then
 /// the app issues itself a device token (read / read_state / chat) from that
@@ -28,7 +31,7 @@ struct LoginView: View {
                         Button("デバイスの管理を開く") {
                             web.view.load(URLRequest(url: APIClient.baseURL.appendingPathComponent("/settings/agent")))
                         }
-                        .buttonStyle(.link)
+                        .linkButton()
                         .font(.callout)
                     }
                 }
@@ -39,7 +42,9 @@ struct LoginView: View {
             }
             .padding(12)
         }
+        #if os(macOS)
         .frame(minWidth: 420, minHeight: 560)
+        #endif
     }
 
     private func connect() {
@@ -74,6 +79,21 @@ final class LoginWeb: NSObject, WKNavigationDelegate {
         view.load(URLRequest(url: APIClient.baseURL))
     }
 
+    /// Per-device name for the token. `replace_same_device` revokes tokens with
+    /// the SAME name, so it must differ between a member's devices. On iOS the
+    /// system device name is just "iPhone"/"iPad" for every app, so a short
+    /// per-install id is added.
+    static var deviceName: String {
+        #if os(macOS)
+        let name = "B-guru Chat (Mac) \(Host.current().localizedName ?? "")"
+        #else
+        let kind = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        let id = UIDevice.current.identifierForVendor?.uuidString.prefix(6) ?? "000000"
+        let name = "B-guru Chat (\(kind)) \(id)"
+        #endif
+        return String(name.trimmingCharacters(in: .whitespaces).prefix(100))
+    }
+
     struct IssueError: Error {
         var message: String
         var isLimit = false
@@ -85,7 +105,7 @@ final class LoginWeb: NSObject, WKNavigationDelegate {
     /// server's own reason is shown (e.g. the limit, with a link to the
     /// device list) instead of a generic message.
     func issueToken() async throws -> String {
-        let device = "B-guru Chat (Mac) \(Host.current().localizedName ?? "")".trimmingCharacters(in: .whitespaces)
+        let device = Self.deviceName
         let js = """
         const r = await fetch('/api/agent/token', {
           method: 'POST',
@@ -123,13 +143,21 @@ final class LoginWeb: NSObject, WKNavigationDelegate {
         guard let url = action.request.url else { return .cancel }
         if url.scheme == "https", url.host == APIClient.baseURL.host { return .allow }
         if url.scheme == "about" { return .allow }
-        if action.navigationType == .linkActivated { NSWorkspace.shared.open(url) }
+        if action.navigationType == .linkActivated { Platform.open(url) }
         return .cancel
     }
 }
 
+#if os(macOS)
 struct WebViewRepresentable: NSViewRepresentable {
     let web: LoginWeb
     func makeNSView(context: Context) -> WKWebView { web.view }
     func updateNSView(_ nsView: WKWebView, context: Context) {}
 }
+#else
+struct WebViewRepresentable: UIViewRepresentable {
+    let web: LoginWeb
+    func makeUIView(context: Context) -> WKWebView { web.view }
+    func updateUIView(_ uiView: WKWebView, context: Context) {}
+}
+#endif

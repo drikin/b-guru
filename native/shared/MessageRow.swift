@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct MessageRow: View {
@@ -36,8 +35,8 @@ struct MessageRow: View {
                         if !mine { Text(m.authorName ?? "").font(.caption).foregroundStyle(.secondary) }
                         if row.state == .failed {
                             Text("送信できませんでした").font(.caption).foregroundStyle(.red)
-                            Button("再送", action: onRetry).buttonStyle(.link).font(.caption)
-                            Button("取り消す", action: onDiscard).buttonStyle(.link).font(.caption).tint(.secondary)
+                            Button("再送", action: onRetry).linkButton().font(.caption)
+                            Button("取り消す", action: onDiscard).linkButton().font(.caption).tint(.secondary)
                         }
                         if m.edited { Text("編集済み").font(.caption2).foregroundStyle(Color.accentGreen) }
                         Text(Self.time(m.createdAt)).font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
@@ -116,6 +115,7 @@ struct MessageRow: View {
                                 pickerOpen = false
                                 onReact(emoji)
                             }
+                            .presentationCompactAdaptation(.popover) // iPhone: stay a popover, not a full sheet
                         }
                 }
                 if mine && canEdit {
@@ -138,8 +138,7 @@ struct MessageRow: View {
         }
         if mine && canEdit && m.id > 0 { Button("編集", action: onEdit) }
         Button("テキストをコピー") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(m.body, forType: .string)
+            Platform.copy(m.body)
         }
     }
 
@@ -318,12 +317,12 @@ final class EmojiCatalog {
 struct AvatarView: View {
     let url: String?
     let name: String
-    @State private var image: NSImage?
+    @State private var image: PlatformImage?
 
     var body: some View {
         Group {
             if let image {
-                Image(nsImage: image).resizable().scaledToFill()
+                Image(platformImage: image).resizable().scaledToFill()
             } else {
                 Text(String(name.prefix(1))).font(.caption2.bold()).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -339,13 +338,13 @@ struct AvatarView: View {
 @MainActor
 final class AvatarCache {
     static let shared = AvatarCache()
-    private var cache: [String: NSImage] = [:]
+    private var cache: [String: PlatformImage] = [:]
 
-    func image(for raw: String?) async -> NSImage? {
+    func image(for raw: String?) async -> PlatformImage? {
         guard let raw, !raw.isEmpty else { return nil }
         if let hit = cache[raw] { return hit }
         let url = raw.hasPrefix("http") ? URL(string: raw) : URL(string: raw, relativeTo: APIClient.baseURL)
-        guard let url, let (data, _) = try? await URLSession.shared.data(from: url), let img = NSImage(data: data) else { return nil }
+        guard let url, let (data, _) = try? await URLSession.shared.data(from: url), let img = PlatformImage(data: data) else { return nil }
         cache[raw] = img
         return img
     }

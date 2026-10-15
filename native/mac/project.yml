@@ -39,6 +39,7 @@ targets:
       - package: Sparkle
     sources:
       - path: BguruChat/Sources
+      - path: ../shared          # shared with the iOS/iPadOS app
       - path: BguruChat/Resources
         buildPhase: resources
     info:
@@ -71,3 +72,46 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: fm.backspace.bguru.chat
         PRODUCT_NAME: B-guru Chat
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+  # iPhone / iPad (universal). Shares native/shared with the Mac app.
+  BguruChatiOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ../ios/Sources
+      - path: ../shared
+      - path: ../ios/Resources
+        buildPhase: resources
+    info:
+      path: ../ios/Info.plist
+      properties:
+        CFBundleDisplayName: B-guru Chat
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSApplicationCategoryType: public.app-category.social-networking
+        UILaunchScreen:
+          UIColorName: ""
+        # All orientations + no UIRequiresFullScreen → iPad Split View / Slide Over / Stage Manager.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fm.backspace.bguru.chat
+        PRODUCT_NAME: B-guru Chat
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_STRICT_CONCURRENCY: complete
+        DEVELOPMENT_TEAM: F9349EVF2K
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "Apple Development"
