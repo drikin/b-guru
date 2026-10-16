@@ -42,6 +42,10 @@ class Session(private val app: Context) {
     fun startDemo() {
         if (!BuildConfig.DEBUG || store?.demo == true) return
         store = ChatStore(ApiClient("demo")).also { it.loadDemo() }
+        // Debug: print this emulator's FCM token so a test push can be sent to it.
+        if (Push.configured) com.google.firebase.messaging.FirebaseMessaging.getInstance().token
+            .addOnSuccessListener { android.util.Log.d("BguruPush", "fcm token: $it") }
+            .addOnFailureListener { android.util.Log.d("BguruPush", "fcm token failed: ${it.message}") }
     }
 
     fun signIn(token: String) {
