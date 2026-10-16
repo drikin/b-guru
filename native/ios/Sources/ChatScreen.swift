@@ -12,6 +12,11 @@ struct ChatScreen: View {
     @State private var quietHours = PushCenter.shared.quietHours
     @State private var editingId: Int?
     @FocusState private var composerFocused: Bool
+    /// Bumped on every send: a fresh text field drops any uncommitted dictation /
+    /// IME text that would otherwise stay in (or come back into) the composer.
+    @State private var composerGeneration = 0
+    /// What was just sent, to swallow a late echo of it (dictation finalising after Send).
+    @State private var justSent: (text: String, at: Date)?
 
     var body: some View {
         NavigationStack {
@@ -117,7 +122,16 @@ struct ChatScreen: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             .onChange(of: store.rows.last?.id) { _, _ in
-                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                guard store.scrollTarget == nil else { return }
+                scrollToBottom(proxy)
+            }
+            .onChange(of: store.scrollTarget) { _, target in
+                // A notification tap: jump to that message (highlighted by the store).
+                guard let target, let row = store.rows.first(where: { $0.message.id == target }) else { return }
+                DispatchQueue.main.async {
+                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(row.id, anchor: .center) }
+                    store.scrollTarget = nil
+                }
             }
             .onChange(of: composerFocused) { _, focused in
                 // Keyboard up → keep the latest message visible above it.
@@ -125,6 +139,15 @@ struct ChatScreen: View {
             }
             .refreshable { await store.reload() }
         }
+    }
+
+    /// Sending also shrinks the composer (and a LazyVStack only estimates rows it
+    /// hasn't drawn), so one scroll can land short of the bottom. Scroll now, then
+    /// again once the layout has settled.
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { proxy.scrollTo("bottom", anchor: .bottom) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { proxy.scrollTo("bottom", anchor: .bottom) }
     }
 
     // MARK: Composer
@@ -168,7 +191,9 @@ struct ChatScreen: View {
                         cancelEdit()
                         return .handled
                     }
-                    .onChange(of: draft) { _, v in
+                    .id(composerGeneration)
+                    .onChange(of: draft) { old, v in
+                        if isLateEcho(old: old, new: v) { draft = ""; return }
                         let limit = store.capabilities?.maxBody ?? 1000
                         if v.count > limit { draft = String(v.prefix(limit)) }
                     }
@@ -196,12 +221,32 @@ struct ChatScreen: View {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if let id = editingId {
             editingId = nil
-            draft = ""
+            clearComposer(sent: text)
             Task { _ = await store.edit(id, body: text) }
         } else {
-            draft = "" // the bubble is already on screen
+            clearComposer(sent: text)
             store.send(text, restore: { body in if draft.isEmpty { draft = body } })
         }
+    }
+
+    /// Empty the composer after a send — also when dictation or the Japanese IME
+    /// still holds uncommitted text, which used to stay in the field.
+    private func clearComposer(sent text: String) {
+        justSent = (text, Date())
+        draft = ""
+        composerGeneration += 1        // new field: the old one's marked text / dictation goes away
+        DispatchQueue.main.async {
+            composerFocused = true     // keep the keyboard up on the new field
+            if draft == text { draft = "" }
+        }
+    }
+
+    /// Dictation can deliver its final text a moment after Send: the whole sent
+    /// message (or part of it) reappears in the empty composer at once.
+    private func isLateEcho(old: String, new: String) -> Bool {
+        guard let s = justSent, Date().timeIntervalSince(s.at) < 2, old.isEmpty else { return false }
+        let v = new.trimmingCharacters(in: .whitespacesAndNewlines)
+        return v.count >= 2 && s.text.contains(v)
     }
 
     // MARK: @mention

@@ -40,6 +40,14 @@ final class Session {
             start(token: dev)
             return
         }
+        // Dev only: SIMCTL_CHILD_BGURU_DEMO=1 → sample chat, sends succeed offline.
+        if ProcessInfo.processInfo.environment["BGURU_DEMO"] == "1" {
+            let s = ChatStore(api: APIClient(token: "demo"))
+            s.debugOffline = true
+            s.debugLoadDemo()
+            store = s
+            return
+        }
         #endif
         if let token = Keychain.load() { start(token: token) }
     }

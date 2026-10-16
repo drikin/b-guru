@@ -265,6 +265,14 @@ final class ChatStore {
     }
 
     private func post(body: String, clientId: String, restore: @escaping (String) -> Void) {
+        #if DEBUG
+        if debugOffline {
+            var m = rows.last(where: { $0.message.clientId == clientId })!.message
+            m.id = (rows.map(\.message.id).max() ?? 0) + 1
+            rows = Self.reconcile(rows, with: m)
+            return
+        }
+        #endif
         Task {
             do {
                 let m = try await api.post(body: body, clientId: clientId)
@@ -323,6 +331,9 @@ final class ChatStore {
     }
 
     #if DEBUG
+    /// Demo mode: sends "succeed" locally, no network.
+    var debugOffline = false
+
     /// Sample data for offline UI checks (no network, no token).
     func debugLoadDemo() {
         func msg(_ id: Int, _ who: String, _ body: String, mine: Bool = false) -> ChatRow {
