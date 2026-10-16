@@ -5,6 +5,7 @@
 #
 #   native/android/scripts/publish.sh <版> "<今回の変更点>"   ← <> は実際の内容に置き換える
 set -euo pipefail
+export JAVA_HOME="${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}"
 VERSION="${1:?usage: publish.sh VERSION NOTES}"
 NOTES="${2:-}"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "版は 0.1.0 の形で" >&2; exit 1; }
@@ -27,7 +28,7 @@ AAPT2="$(ls -d "$SDK"/build-tools/*/aapt2 | sort -V | tail -1)"
 "$APKSIGNER" verify "$APK" >/dev/null || { echo "$APK is not properly signed" >&2; exit 1; }
 CERT=$("$APKSIGNER" verify --print-certs "$APK" 2>/dev/null | grep -m1 "certificate SHA-256 digest" | awk '{print $NF}')
 [ "$CERT" = "$EXPECTED_CERT" ] || { echo "APK is signed with an unexpected key ($CERT)" >&2; exit 1; }
-BADGING=$("$AAPT2" dump badging "$APK" | head -1)
+BADGING=$("$AAPT2" dump badging "$APK" | sed -n 1p)  # not head: SIGPIPE + pipefail would abort
 CODE=$(sed -E "s/.*versionCode='([0-9]+)'.*/\1/" <<<"$BADGING")
 NAME=$(sed -E "s/.*versionName='([^']+)'.*/\1/" <<<"$BADGING")
 PKG=$(sed -E "s/.*package: name='([^']+)'.*/\1/" <<<"$BADGING")
