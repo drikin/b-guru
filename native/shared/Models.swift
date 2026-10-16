@@ -84,8 +84,17 @@ struct Capabilities: Decodable, Sendable {
         var maxBody: Int?
         var ttlHours: Int?
     }
+    struct PostFeatures: Decodable, Sendable {
+        var read: Bool?
+        var publish: Bool?
+        var upload: Bool?
+        var reactions: Bool?
+        var markRead: Bool?
+        var maxImages: Int?
+    }
     struct Features: Decodable, Sendable {
         var chat: ChatFeatures?
+        var posts: PostFeatures?
     }
     var apiVersion: Int
     var scopes: [String]?
@@ -96,6 +105,12 @@ struct Capabilities: Decodable, Sendable {
     var canReact: Bool { features?.chat?.reactions ?? false }
     var canMarkRead: Bool { features?.chat?.markRead ?? false }
     var maxBody: Int { features?.chat?.maxBody ?? 1000 }
+    /// Timeline is available on this server.
+    var hasTimeline: Bool { features?.posts?.read ?? false }
+    /// Posting needs the "write" scope — tokens from before the timeline must reconnect once.
+    var canPublish: Bool { features?.posts?.publish ?? false }
+    var canReactPosts: Bool { features?.posts?.reactions ?? false }
+    var maxImages: Int { features?.posts?.maxImages ?? 5 }
 }
 
 struct TokenIssueResponse: Decodable, Sendable {
@@ -106,4 +121,58 @@ struct TokenIssueResponse: Decodable, Sendable {
 struct APIErrorBody: Decodable, Sendable {
     var error: String?
     var code: String?
+}
+
+// MARK: - Timeline (posts)
+
+/// Mirrors `agentPostDto` in src/app/api/agent/posts/route.ts (+ include=reactions,read).
+struct Post: Codable, Identifiable, Equatable, Sendable {
+    var id: Int
+    var authorId: String?
+    var authorName: String?
+    var authorAvatar: String?
+    var isAuthor: Bool?
+    var parentId: Int?
+    var replyCount: Int?
+    var text: String
+    var images: [String]?
+    var videoUrl: String?
+    var audioUrl: String?
+    var createdAt: String
+    var lastActivityAt: String?
+    var club: String?
+    var reactions: [Reaction]?
+    var unread: Bool?
+
+    var mine: Bool { isAuthor ?? false }
+}
+
+struct PostListResponse: Decodable, Sendable {
+    var posts: [Post]
+    var nextCursor: String?
+}
+
+struct ThreadResponse: Decodable, Sendable {
+    var post: Post
+    var replies: [Post]
+}
+
+struct PublishResponse: Decodable, Sendable {
+    var post: Post
+}
+
+struct UploadResponse: Decodable, Sendable {
+    var urls: [String]
+}
+
+/// POST /api/agent/reactions answers without `mine`; the app fills it in.
+struct PostReactionToggleResponse: Decodable, Sendable {
+    struct R: Decodable, Sendable { var emoji: String; var count: Int }
+    var added: Bool
+    var reactions: [R]
+}
+
+struct ClubInfo: Decodable, Sendable, Hashable {
+    var key: String
+    var name: String
 }

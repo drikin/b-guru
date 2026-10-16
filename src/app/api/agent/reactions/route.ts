@@ -1,4 +1,4 @@
-/* POST /api/agent/reactions — リアクショントグル（スコープ write）。
+/* POST /api/agent/reactions — リアクショントグル（スコープ post＝アプリ、または write）。
  * 対象は投稿のみ（chat は chat スコープの将来課題）。lib 正本: agent-write.ts。 */
 import { NextRequest } from "next/server";
 import { withAgent } from "@/lib/agent-auth";
@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
-  const out = await withAgent(req, "POST /api/agent/reactions", "write", async (ctx) => {
+  const out = await withAgent(req, "POST /api/agent/reactions", ["post", "write"], async (ctx) => {
     let body: { post_id?: unknown; emoji?: unknown };
     try {
       body = await req.json();

@@ -129,8 +129,13 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
         default:
             if let messageId {
                 session?.store?.reveal(messageId)
-            } else if let postId, let url = URL(string: "https://bsm.backspace.fm/#/post/\(postId)") {
-                Platform.open(url)
+            } else if let postId {
+                // A reply to your post: open the thread in the app's timeline.
+                if let timeline = session?.timeline {
+                    timeline.openThread = postId
+                } else if let url = URL(string: "https://bsm.backspace.fm/#/post/\(postId)") {
+                    Platform.open(url)
+                }
             }
         }
     }

@@ -150,3 +150,18 @@ describe("Android（APK）", () => {
     expect(await i.json()).toMatchObject({ available: true, version: "0.1.0", version_code: 3 });
   });
 });
+
+describe("アップロード画像の閲覧（アプリのトークン）", () => {
+  it("トークンで見られる。検証は 60 秒覚えておき、無効なトークンは通さない", async () => {
+    const auth = await import("../download-auth");
+    auth.__resetMediaAuthForTests();
+    sessionEmail.mockResolvedValue(null);
+    verifyAgentToken.mockResolvedValue({ email: "me@example.com", scopes: ["read"] });
+    expect(await auth.mediaAuthEmail(R({ authorization: "Bearer bga_ok" }))).toBe("me@example.com");
+    expect(await auth.mediaAuthEmail(R({ authorization: "Bearer bga_ok" }))).toBe("me@example.com");
+    expect(verifyAgentToken).toHaveBeenCalledTimes(1);
+    verifyAgentToken.mockRejectedValue(new Error("revoked"));
+    expect(await auth.mediaAuthEmail(R({ authorization: "Bearer bga_bad" }))).toBeNull();
+    expect(await auth.mediaAuthEmail(R())).toBeNull();
+  });
+});

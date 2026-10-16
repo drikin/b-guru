@@ -342,6 +342,7 @@ final class EmojiCatalog {
 struct AvatarView: View {
     let url: String?
     let name: String
+    var size: CGFloat = 22
     @State private var image: PlatformImage?
 
     var body: some View {
@@ -354,7 +355,7 @@ struct AvatarView: View {
                     .background(Color.primary.opacity(0.08))
             }
         }
-        .frame(width: 22, height: 22)
+        .frame(width: size, height: size)
         .clipShape(Circle())
         .task(id: url) { image = await AvatarCache.shared.image(for: url) }
     }

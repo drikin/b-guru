@@ -18,9 +18,12 @@ import { findMemberByEmail, isPaidMember } from "./ghost";
 import { ensureUserId } from "./user";
 import { clientIp } from "./client-ip";
 
-export type AgentScope = "read" | "read_state" | "write" | "chat";
+/** post = ネイティブアプリの人による投稿（タイムラインへの投稿・画像・リアクション）。
+ *  write（エージェントの投稿・via=agent）とは別のバケツにして、AI エージェント向けの
+ *  厳しい上限（1 時間 10 回）を人のアプリに当てないようにする。 */
+export type AgentScope = "read" | "read_state" | "write" | "chat" | "post";
 
-export const AGENT_SCOPES: AgentScope[] = ["read", "read_state", "write", "chat"];
+export const AGENT_SCOPES: AgentScope[] = ["read", "read_state", "write", "chat", "post"];
 
 /** トークン TTL（日）。 */
 export const AGENT_TOKEN_TTL_DAYS = 30;
@@ -301,6 +304,7 @@ export const RATE_RULES: Record<AgentScope, RateRule> = {
   read_state: { limit: 60, window: "1 minute" },
   write: { limit: 10, window: "1 hour" },
   chat: { limit: 120, window: "1 hour" }, // 送信 + リアクション。人のチャット（ネイティブアプリ）が詰まらない水準
+  post: { limit: 60, window: "1 hour" }, // アプリからの投稿・画像・リアクション（1 投稿 = upload + publish の 2 回）
 };
 
 export interface RateResult {
@@ -415,7 +419,7 @@ export function sanitizeLikePattern(input: string | undefined): string | undefin
 export async function withAgent(
   req: Request,
   endpoint: string,
-  scope: AgentScope | null,
+  scope: AgentScope | AgentScope[] | null,
   handler: (ctx: AgentContext) => Promise<{ status: number; body: unknown; headers?: Record<string, string> }>
 ): Promise<{ status: number; body: unknown; headers?: Record<string, string> }> {
   let ctx: AgentContext | null = null;
@@ -423,9 +427,12 @@ export async function withAgent(
   try {
     ip = clientIp(req);
     ctx = await verifyAgentToken(req.headers.get("authorization"), { ip });
-    if (scope) requireScope(ctx, scope);
-    if (scope) {
-      const rate = await checkRateLimit(ctx.tokenId, scope);
+    // Several accepted scopes: the first one the token has decides (and its rate bucket).
+    const c = ctx;
+    const need = Array.isArray(scope) ? scope.find((s) => c.scopes.includes(s)) ?? scope[0] : scope;
+    if (need) requireScope(ctx, need);
+    if (need) {
+      const rate = await checkRateLimit(ctx.tokenId, need);
       if (!rate.allowed) {
         throw err(429, "rate_limited", "レート制限に達しました", `${rate.retryAfter} 秒後に再試行してください`);
       }

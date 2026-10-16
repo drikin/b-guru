@@ -136,6 +136,64 @@ final class APIClient: Sendable {
         return r.message
     }
 
+    // MARK: - Timeline
+
+    func posts(cursor: String? = nil, limit: Int = 30) async throws -> PostListResponse {
+        var comps = URLComponents(url: APIClient.baseURL.appendingPathComponent("/api/agent/posts"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [.init(name: "limit", value: String(limit)), .init(name: "include", value: "reactions,read")]
+        if let cursor { comps.queryItems?.append(.init(name: "cursor", value: cursor)) }
+        var req = request("GET", "/api/agent/posts")
+        req.url = comps.url
+        return try await send(req)
+    }
+
+    func thread(id: Int) async throws -> ThreadResponse {
+        var comps = URLComponents(url: APIClient.baseURL.appendingPathComponent("/api/agent/posts/\(id)"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [.init(name: "include", value: "reactions,read")]
+        var req = request("GET", "/api/agent/posts/\(id)")
+        req.url = comps.url
+        return try await send(req)
+    }
+
+    func clubs() async throws -> [ClubInfo] {
+        struct R: Decodable { var clubs: [ClubInfo] }
+        let r: R = try await send(request("GET", "/api/agent/clubs"))
+        return r.clubs
+    }
+
+    func publish(text: String, images: [String], parentId: Int?) async throws -> Post {
+        var json: [String: Any] = ["text": text, "images": images]
+        if let parentId { json["parent_id"] = parentId }
+        let r: PublishResponse = try await send(request("POST", "/api/agent/publish", json: json))
+        return r.post
+    }
+
+    /// JPEG data for each image (already resized by the caller). Returns /api/media/… URLs.
+    func upload(images: [Data]) async throws -> [String] {
+        let boundary = "bguru-\(UUID().uuidString)"
+        var body = Data()
+        for (i, data) in images.enumerated() {
+            body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"images\"; filename=\"photo\(i).jpg\"\r\nContent-Type: image/jpeg\r\n\r\n".utf8))
+            body.append(data)
+            body.append(Data("\r\n".utf8))
+        }
+        body.append(Data("--\(boundary)--\r\n".utf8))
+        var req = request("POST", "/api/agent/upload")
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+        req.timeoutInterval = 120
+        let r: UploadResponse = try await send(req)
+        return r.urls
+    }
+
+    func togglePostReaction(id: Int, emoji: String) async throws -> PostReactionToggleResponse {
+        try await send(request("POST", "/api/agent/reactions", json: ["post_id": id, "emoji": emoji]))
+    }
+
+    func markPostsRead(_ ids: [Int]) async {
+        _ = try? await session.data(for: request("POST", "/api/agent/read", json: ["post_ids": ids]))
+    }
+
     func revokeSelf() async {
         _ = try? await session.data(for: request("DELETE", "/api/agent/token/self"))
     }

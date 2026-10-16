@@ -13,6 +13,8 @@ import { userIdToEmail } from "@/lib/user";
 import { withAgent, sanitizeLikePattern } from "@/lib/agent-auth";
 import { agentCreatePost, asAgentPostDto } from "@/lib/agent-write";
 import { NO_CACHE } from "../_lib";
+import { toProxiedAvatar } from "@/lib/members";
+import { parseInclude, timelineExtras } from "@/lib/agent-timeline";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,6 +25,9 @@ export function agentPostDto(p: any) {
     id: p.id,
     author_id: p.authorId,
     author_name: p.authorName ?? null,
+    // Same-origin avatar proxy (never the gravatar URL: it carries the email hash).
+    author_avatar: toProxiedAvatar(p.authorAvatar),
+    is_author: !!p.isAuthor,
     parent_id: p.parentId ?? null,
     reply_count: p.replyCount ?? 0,
     text: p.text,
@@ -52,17 +57,19 @@ export async function GET(req: NextRequest) {
     const fav = sp.get("fav") === "1";
     const bm = sp.get("bm") === "1";
     const authorUserId = sp.get("author_user_id") ?? undefined;
+    const include = parseInclude(sp.get("include"));
 
     // since_id: cursor が優先。「その投稿より新しい投稿を新しい順」で返す
     //   （共通 helper・MCP get_posts と単一正本）。
     if (!cursor && Number.isInteger(sinceIdRaw) && sinceIdRaw > 0) {
       const hiddenArr = Array.from(await getHiddenClubs(ctx.email));
       const posts = await listPostsSince(ctx, sinceIdRaw, limit, hiddenArr);
+      const extras = await timelineExtras(posts, ctx.email, include);
       return {
         status: 200,
         body: {
           apiVersion: 1,
-          posts: posts.map(agentPostDto),
+          posts: posts.map((p) => ({ ...agentPostDto(p), ...extras.get(p.id) })),
           next_cursor: null,
           has_more: posts.length === limit,
         },
@@ -93,6 +100,7 @@ export async function GET(req: NextRequest) {
       author: authorEmail || undefined,
     });
 
+    const extras = await timelineExtras(posts, ctx.email, include);
     const last = posts[posts.length - 1];
     const nextCursor =
       posts.length === limit && last ? (last.lastActivityAt ?? last.createdAt) : null;
@@ -101,7 +109,7 @@ export async function GET(req: NextRequest) {
       status: 200,
       body: {
         apiVersion: 1,
-        posts: posts.map(agentPostDto),
+        posts: posts.map((p) => ({ ...agentPostDto(p), ...extras.get(p.id) })),
         next_cursor: nextCursor,
       },
       headers: {} as Record<string, string>,

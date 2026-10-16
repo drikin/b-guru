@@ -127,6 +127,17 @@ export function agentCapabilities(scopes: AgentScope[]) {
         ttl_hours: ttlHours,
         reaction_events: false, // reactions are fetched, not streamed (yet)
       },
+      // Timeline for the native apps. publish/upload need the "post" scope (people
+      // posting from the app); tokens issued before it existed must reconnect once.
+      posts: {
+        read: can("read"),
+        include: ["reactions", "read"],
+        publish: can("post"),
+        upload: can("post"),
+        reactions: can("post") || can("write"),
+        mark_read: can("read_state"),
+        max_images: 5,
+      },
       stream: {
         path: "/api/agent/stream",
         events: ["ready", "chat", "presence", "notification"],

@@ -10,8 +10,8 @@ struct BguruChatApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if let store = session.store {
-                    ChatScreen(store: store, onSignOut: { session.signOut() })
+                if let store = session.store, let timeline = session.timeline {
+                    MainView(store: store, timeline: timeline, onSignOut: { session.signOut() })
                 } else {
                     NavigationStack {
                         LoginView { token in session.signIn(token: token) }
@@ -30,6 +30,7 @@ struct BguruChatApp: App {
 @Observable
 final class Session {
     private(set) var store: ChatStore?
+    private(set) var timeline: TimelineStore?
     private(set) var api: APIClient?
 
     init() {
@@ -46,6 +47,9 @@ final class Session {
             s.debugOffline = true
             s.debugLoadDemo()
             store = s
+            let t = TimelineStore(api: APIClient(token: "demo"))
+            t.debugLoadDemo()
+            timeline = t
             return
         }
         #endif
@@ -61,6 +65,8 @@ final class Session {
         let api = self.api
         store?.stop()
         store = nil
+        timeline = nil
+        MediaCache.shared.token = nil
         self.api = nil
         PushCenter.shared.session = nil
         Keychain.delete()
@@ -77,6 +83,8 @@ final class Session {
         let s = ChatStore(api: api)
         self.api = api
         store = s
+        timeline = TimelineStore(api: api)
+        MediaCache.shared.token = token
         s.start()
         observeSignOut(s)
         PushCenter.shared.session = self

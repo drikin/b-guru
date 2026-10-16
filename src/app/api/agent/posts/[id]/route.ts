@@ -5,6 +5,7 @@ import { withAgent } from "@/lib/agent-auth";
 import { agentUpdatePost, agentDeletePost } from "@/lib/agent-write";
 import { NO_CACHE } from "../../_lib";
 import { agentPostDto } from "../route";
+import { parseInclude, timelineExtras } from "@/lib/agent-timeline";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -20,9 +21,11 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     if (!post) {
       return { status: 404, body: { error: "投稿が見つかりません", code: "not_found" }, headers: {} };
     }
+    const extras = await timelineExtras([post, ...replies], ctx.email, parseInclude(req.nextUrl.searchParams.get("include")));
+    const dto = (p: typeof post) => ({ ...agentPostDto(p), ...extras.get(p.id) });
     return {
       status: 200,
-      body: { apiVersion: 1, post: agentPostDto(post), replies: replies.map(agentPostDto) },
+      body: { apiVersion: 1, post: dto(post), replies: replies.map(dto) },
       headers: {},
     };
   });

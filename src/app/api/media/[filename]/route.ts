@@ -3,7 +3,7 @@ import { createReadStream } from "fs";
 import { stat } from "fs/promises";
 import { Readable } from "stream";
 import path from "path";
-import { getSessionEmail } from "@/lib/session";
+import { mediaAuthEmail } from "@/lib/download-auth";
 
 // Stream a byte range of `filePath` as a web ReadableStream. Buffering the whole
 // file (Buffer.alloc + fh.read) held the HTTP connection until the entire
@@ -28,8 +28,9 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ filename: string }> }
 ) {
-  // Uploaded media requires auth (same as posting)
-  const email = await getSessionEmail();
+  // Uploaded media requires auth (same as posting): a browser session, or the
+  // native app's agent token (Bearer) — see lib/download-auth.ts.
+  const email = await mediaAuthEmail(req);
   if (!email) {
     return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
   }
@@ -54,7 +55,9 @@ export async function GET(
 
     const baseHeaders: Record<string, string> = {
       "Content-Type": contentType,
-      "Cache-Control": "public, max-age=31536000, immutable",
+      // private: the response needs a login (session or app token) — never let a
+      // shared cache (CDN / proxy) store it and hand it to anyone.
+      "Cache-Control": "private, max-age=31536000, immutable",
       "Accept-Ranges": "bytes",
     };
 

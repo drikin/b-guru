@@ -348,6 +348,10 @@ final class ChatStore {
         hasLoaded = true
         connection = .live
         onlineCount = 12
+        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5}}}"#
+        let dec = JSONDecoder()
+        dec.keyDecodingStrategy = .convertFromSnakeCase
+        capabilities = try? dec.decode(Capabilities.self, from: Data(caps.utf8))
     }
 
     func debugAddReactionToLast() {

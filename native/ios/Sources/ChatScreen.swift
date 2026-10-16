@@ -5,6 +5,8 @@ import SwiftUI
 struct ChatScreen: View {
     @Bindable var store: ChatStore
     let onSignOut: () -> Void
+    /// iPhone: the chat / timeline switch shown in place of the title.
+    var tabPicker: AnyView? = nil
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var draft = ""
@@ -28,6 +30,7 @@ struct ChatScreen: View {
             .navigationTitle("B-guru チャット")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if let tabPicker { ToolbarItem(placement: .principal) { tabPicker } }
                 ToolbarItem(placement: .topBarLeading) { status }
                 ToolbarItem(placement: .topBarTrailing) { menu }
             }

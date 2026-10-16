@@ -35,6 +35,7 @@ const SCOPES: { key: string; label: string; hint: string }[] = [
   { key: "read_state", label: "read_state", hint: "既読・未読状態の読み書き（将来用）" },
   { key: "write", label: "write", hint: "投稿・リアクション（将来用・既定 OFF 推奨）" },
   { key: "chat", label: "chat", hint: "チャットの読み書き（将来用）" },
+  { key: "post", label: "post", hint: "アプリからタイムラインに投稿（画像・リアクションを含む。人の投稿として表示）" },
 ];
 
 function fmt(iso: string | null): string {

@@ -21,7 +21,7 @@ const CACHE_TTL = 60_000;
  * cross-origin avatar requests (measured 900-2,500ms each, and it leaks every
  * member's email hash to Automattic). Rewrite it to our same-origin proxy.
  * Anything that is not a gravatar URL (a custom upload, or null) is left as-is. */
-function toProxiedAvatar(avatar: string | null | undefined): string | null {
+export function toProxiedAvatar(avatar: string | null | undefined): string | null {
   if (!avatar) return null;
   const m = avatar.match(/gravatar\.com\/avatar\/([a-f0-9]{32})/i);
   if (m) return `/api/avatar/${m[1].toLowerCase()}`;
