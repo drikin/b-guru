@@ -88,33 +88,49 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
 
     /// In the foreground the chat is already on screen: don't show chat
     /// notifications again; replies to your posts still show as a banner.
+    ///
+    /// The completion-handler forms (not the `async` ones) on purpose: UIKit
+    /// asserts its completion handler runs on the main thread, and the async
+    /// form resumes it from a background executor — tapping a notification
+    /// crashed every TestFlight build up to 0.1.2 (SIGABRT in
+    /// -[UIApplication _performBlockAfterCATransactionCommitSynchronizes:]).
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
-                                            willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
+                                            willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void) {
         let kind = notification.request.content.userInfo["kind"] as? String
-        return kind == "chat_mention" || kind == "chat_new" ? [] : [.banner, .sound]
+        let options: UNNotificationPresentationOptions = kind == "chat_mention" || kind == "chat_new" ? [] : [.banner, .sound]
+        DispatchQueue.main.async { completionHandler(options) }
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
-                                            didReceive response: UNNotificationResponse) async {
+                                            didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping @Sendable () -> Void) {
         let info = response.notification.request.content.userInfo
         let messageId = (info["message_id"] as? NSNumber)?.intValue
         let postId = (info["post_id"] as? NSNumber)?.intValue
         let action = response.actionIdentifier
         let text = (response as? UNTextInputNotificationResponse)?.userText
-        await MainActor.run {
-            switch action {
-            case "reply":
-                if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    session?.store?.send(text, restore: { _ in })
-                }
-            case "heart":
-                if let messageId { session?.store?.toggleReaction(messageId, emoji: "❤️") }
-            default:
-                if let messageId {
-                    session?.store?.reveal(messageId)
-                } else if let postId {
-                    Platform.open(URL(string: "https://bsm.backspace.fm/#/post/\(postId)")!)
-                }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                PushCenter.shared.handle(action: action, messageId: messageId, postId: postId, text: text)
+            }
+            completionHandler()
+        }
+    }
+
+    private func handle(action: String, messageId: Int?, postId: Int?, text: String?) {
+        switch action {
+        case "reply":
+            if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                session?.store?.send(text, restore: { _ in })
+            }
+        case "heart":
+            if let messageId { session?.store?.toggleReaction(messageId, emoji: "❤️") }
+        default:
+            if let messageId {
+                session?.store?.reveal(messageId)
+            } else if let postId, let url = URL(string: "https://bsm.backspace.fm/#/post/\(postId)") {
+                Platform.open(url)
             }
         }
     }
