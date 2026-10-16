@@ -1,5 +1,5 @@
 "use client";
-/* 左メニュー（スマホではドロワー）: B-guru Chat for Android（ベータ）のダウンロード案内（drikin 2026-10-16）。
+/* 右サイドバー最上部（Mac 版の案内と同じ場所）: B-guru Chat for Android（ベータ）のダウンロード案内（drikin 2026-10-16）。
  * - Android のブラウザでだけ出す
  * - 配布中の版があるときだけ出す（/api/download/android/info）
  * - × で閉じたらこのブラウザでは出さない。新しい版が出たらまた出す */

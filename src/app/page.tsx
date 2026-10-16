@@ -10102,8 +10102,6 @@ export default function Home() {
             />
           </Group>
         )}
-        {/* Android アプリ（ベータ）のダウンロード案内。Android のブラウザでのみ・配布中の版があるときだけ表示 */}
-        <AndroidAppCard />
         {/* Account: profile + logout — moved from header to bottom of left sidebar.
             Tapping the avatar/name opens the viewer's own profile timeline. */}
         <Divider my="xs" />
@@ -10206,8 +10204,10 @@ export default function Home() {
         {/* offsetScrollbars: スクロールバー出現時もコンテンツがスクロールバーと重ならないよう、スクロールバー分を確保する（drikin 指摘 2026-08） */}
         <ScrollArea offsetScrollbars scrollbarSize={8}>
           <Stack pr="4" gap="sm">
-          {/* Mac アプリ（ベータ）のダウンロード案内。Mac でのみ・配布中の版があるときだけ表示 */}
+          {/* ネイティブアプリ（ベータ）のダウンロード案内。Mac には Mac 版、Android には Android 版だけを、
+           *  配布中の版があるときだけ表示（drikin 2026-10-16） */}
           <MacAppCard />
+          <AndroidAppCard />
           {/* Search box */}
           <Paper p="sm" radius="md" withBorder shadow="xs">
             <SearchBox
