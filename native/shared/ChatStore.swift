@@ -24,6 +24,17 @@ final class ChatStore {
     private(set) var capabilities: Capabilities?
     /// The first full list has arrived (until then "empty" means "loading").
     private(set) var hasLoaded = false
+    /// For @mention autocomplete (loaded once per launch).
+    private(set) var members: [MentionMember] = []
+
+    /// Names of people who spoke recently (newest first) — ranked first in autocomplete.
+    var recentAuthors: [String] {
+        var seen = Set<String>(), out: [String] = []
+        for r in rows.reversed() where !r.message.isAuthor {
+            if let n = r.message.authorName, !n.isEmpty, seen.insert(n).inserted { out.append(n) }
+        }
+        return out
+    }
     private(set) var myUserId: String?
     /// Set when the server revoked the token or membership ended.
     private(set) var signedOut = false
@@ -63,6 +74,7 @@ final class ChatStore {
         streamTask = Task { [weak self] in
             await self?.loadCapabilities()
             await EmojiCatalog.shared.load()
+            await self?.loadMembers()
             await self?.runStream()
         }
     }
@@ -70,6 +82,10 @@ final class ChatStore {
     func stop() {
         streamTask?.cancel()
         streamTask = nil
+    }
+
+    private func loadMembers() async {
+        if let m = try? await api.members() { members = m }
     }
 
     private func loadCapabilities() async {
@@ -307,6 +323,22 @@ final class ChatStore {
     }
 
     #if DEBUG
+    /// Sample data for offline UI checks (no network, no token).
+    func debugLoadDemo() {
+        func msg(_ id: Int, _ who: String, _ body: String, mine: Bool = false) -> ChatRow {
+            ChatRow(ChatMessage(id: id, authorId: mine ? "me" : who, authorName: mine ? "ドリキン" : who, avatar: nil,
+                                body: body, createdAt: "2026-10-16T08:0\(id % 10):00Z", edited: false, editedAt: nil,
+                                isAuthor: mine, mentionsMe: false, clientId: nil, reactions: nil))
+        }
+        rows = [msg(1, "NORIO TAKAHASHI", "おはようございます"), msg(2, "mazzo", "iPhone 版いい感じ"),
+                msg(3, "ドリキン", "ありがとうございます！", mine: true), msg(4, "takuto", "通知も来ました")]
+        members = ["ビーグル", "mazzo", "NORIO TAKAHASHI", "takuto", "coban", "ポンコツ散財王ドリキン", "りとる"]
+            .map { MentionMember(userId: $0, name: $0, avatar: nil) }
+        hasLoaded = true
+        connection = .live
+        onlineCount = 12
+    }
+
     func debugAddReactionToLast() {
         guard let i = rows.indices.last else { return }
         rows[i].message.reactions = [Reaction(emoji: "❤️", count: 2, mine: true, reactors: []),

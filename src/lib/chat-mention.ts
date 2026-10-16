@@ -35,3 +35,9 @@ export function mentionNamesFor(names: (string | null | undefined)[], email: str
   if (local) s.add(local);
   return s;
 }
+
+/** The @mention token for a member name, as the web composer writes it:
+ *  `@name ` or, when the name has a space, `@[First Last] `. */
+export function mentionToken(name: string): string {
+  return /\s/.test(name) ? `@[${name}] ` : `@${name} `;
+}

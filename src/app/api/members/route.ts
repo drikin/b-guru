@@ -1,69 +1,18 @@
-import { cleanDisplayName } from "@/lib/display-name";
 import { NextResponse } from "next/server";
 import { getSessionEmail } from "@/lib/session";
-import { listMembers } from "@/lib/ghost";
-import { gravatarUrl } from "@/lib/posts";
-import { ensureUserId } from "@/lib/user";
+import { mentionMembers } from "@/lib/members";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// In-process cache with 60s TTL to avoid hammering Ghost API on every keystroke
-let cache: {
-  data: { userId: string; name: string; avatar: string | null }[];
-  ts: number;
-} | null = null;
-const CACHE_TTL = 60_000;
-
-/** Ghost returns `avatar_image` as a full https://www.gravatar.com/avatar/<md5>
- * URL. Passing that through to the client made the member list render 30+
- * cross-origin avatar requests (measured 900-2,500ms each, and it leaks every
- * member's email hash to Automattic). Rewrite it to our same-origin proxy.
- * Anything that is not a gravatar URL (a custom upload, or null) is left as-is. */
-function toProxiedAvatar(avatar: string | null | undefined, email: string): string | null {
-  if (!avatar) return null;
-  const m = avatar.match(/gravatar\.com\/avatar\/([a-f0-9]{32})/i);
-  if (m) return `/api/avatar/${m[1].toLowerCase()}`;
-  return avatar;
-}
-
-// GET /api/members — list paid members for @mention suggestions
+// GET /api/members — list paid members for @mention suggestions (lib/members.ts)
 export async function GET() {
   const email = await getSessionEmail();
   if (!email) {
     return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
   }
-
-  if (cache && Date.now() - cache.ts < CACHE_TTL) {
-    return NextResponse.json({ members: cache.data });
-  }
-
   try {
-    const members = await listMembers();
-    // ビーグル（システムアカウント）を先頭に追加 → @ビーグル で明示的にメンション可能に
-    const data = [
-      {
-        userId: await ensureUserId("system@backspace.fm"),
-        name: "ビーグル",
-        avatar: "/icon-192.png",
-      },
-      ...(await Promise.all(
-        members
-          .filter((m) => m.status === "paid" || m.status === "comped")
-          .map(async (m) => ({
-            // Opaque public id only. This list goes to EVERY logged-in member,
-            // so an `email` field here was a full paid-membership address dump.
-            // The club-leader picker PATCHes the userId and the server resolves
-            // it (club_leaders stays email-keyed internally); the mention
-            // highlighter compares userId with the viewer's own.
-            userId: await ensureUserId(m.email),
-            name: cleanDisplayName(m.name) || m.email.split("@")[0],
-            avatar: toProxiedAvatar(m.avatar_image, m.email) || gravatarUrl(m.email),
-          }))
-      )),
-    ];
-    cache = { data, ts: Date.now() };
-    return NextResponse.json({ members: data });
+    return NextResponse.json({ members: await mentionMembers() });
   } catch (e: any) {
     console.error("members list error:", e.message);
     return NextResponse.json(

@@ -8,7 +8,15 @@ struct ChatView: View {
     let onSignOut: () -> Void
 
     @Bindable private var settings = AppSettings.shared
-    @State private var draft = ""
+    @State private var draft: String
+
+    init(store: ChatStore, pin: PinState, onClose: @escaping () -> Void, onSignOut: @escaping () -> Void, initialDraft: String = "") {
+        self.store = store
+        self.pin = pin
+        self.onClose = onClose
+        self.onSignOut = onSignOut
+        _draft = State(initialValue: initialDraft)
+    }
     @State private var editingId: Int?
     @FocusState private var composerFocused: Bool
 
@@ -102,6 +110,7 @@ struct ChatView: View {
                             onEdit: { beginEdit(row.message) },
                             onRetry: { store.retry(row) },
                             onDiscard: { store.discard(row) },
+                            onReplyMention: row.message.authorName.map { name in { replyTo(name) } },
                             highlighted: store.highlightId == row.message.id,
                             editing: editingId == row.message.id
                         )
@@ -147,6 +156,11 @@ struct ChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 4) {
+            let matches = mentionMatches
+            if !matches.isEmpty {
+                MentionSuggestions(members: matches, onPick: pickMention)
+                    .transition(.opacity)
+            }
             if editingId != nil {
                 HStack {
                     Text("メッセージを編集中").font(.caption).foregroundStyle(Color.accentGreen)
@@ -195,6 +209,10 @@ struct ChatView: View {
     }
 
     private func submit() {
+        if let first = mentionMatches.first {
+            pickMention(first) // Return with suggestions open = complete, not send
+            return
+        }
         let text = draft
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if let id = editingId {
@@ -205,6 +223,28 @@ struct ChatView: View {
             draft = "" // the bubble is already on screen; clear at once
             store.send(text, restore: { body in if draft.isEmpty { draft = body } })
         }
+        composerFocused = true
+    }
+
+    // MARK: @mention
+
+    private var mentionMatches: [MentionMember] {
+        guard editingId == nil, let q = Mention.activeQuery(in: draft) else { return [] }
+        return Mention.candidates(store.members, query: q.query, recent: store.recentAuthors)
+    }
+
+    private func pickMention(_ m: MentionMember) {
+        draft = Mention.complete(draft, with: m.name)
+        composerFocused = true
+    }
+
+    /// Reply to someone: `@name ` at the start of the composer (keeps what was typed).
+    private func replyTo(_ name: String) {
+        let token = Mention.token(name)
+        if !draft.hasPrefix(token) {
+            draft = token + draft.trimmingCharacters(in: .whitespaces)
+        }
+        editingId = nil
         composerFocused = true
     }
 

@@ -125,6 +125,12 @@ final class APIClient: Sendable {
         _ = try? await session.data(for: request("DELETE", "/api/agent/devices/push", json: ["token": deviceToken]))
     }
 
+    func members() async throws -> [MentionMember] {
+        struct R: Decodable { var members: [MentionMember] }
+        let r: R = try await send(request("GET", "/api/agent/members"))
+        return r.members
+    }
+
     func chatMessage(id: Int) async throws -> ChatMessage {
         let r: ChatSendResponse = try await send(request("GET", "/api/agent/chat/\(id)"))
         return r.message

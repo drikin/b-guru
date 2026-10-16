@@ -49,6 +49,9 @@ vi.mock("@/lib/chat", async (orig) => {
     markChatRead: (...a: unknown[]) => markChatRead(...a),
   };
 });
+vi.mock("@/lib/members", () => ({
+  mentionMembers: async () => [{ userId: "uid_x", name: "mazzo", avatar: "/api/avatar/abc" }],
+}));
 vi.mock("@/lib/reactions", async (orig) => {
   const actual = await (orig as () => Promise<Record<string, unknown>>)();
   return {
@@ -65,6 +68,7 @@ import { POST as readPOST } from "@/app/api/agent/chat/read/route";
 import { GET as streamGET } from "@/app/api/agent/stream/route";
 import { GET as capsGET } from "@/app/api/agent/capabilities/route";
 import { GET as summaryGET } from "@/app/api/agent/summary/route";
+import { GET as membersGET } from "@/app/api/agent/members/route";
 import { emitLive } from "@/lib/live";
 import { emitPersonal } from "@/lib/personal-live";
 
@@ -277,5 +281,16 @@ describe("GET /api/agent/stream", () => {
     expect(again.status).toBe(200);
     for (const ac of acs) ac.abort();
     await again.body?.cancel();
+  });
+});
+
+describe("GET /api/agent/members", () => {
+  it("補完用の会員一覧（user_id・名前・アバターだけ、メールなし）", async () => {
+    authed();
+    const res = await membersGET(req("http://x/api/agent/members", { headers: H }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.members).toEqual([{ user_id: "uid_x", name: "mazzo", avatar: "/api/avatar/abc" }]);
+    expect(JSON.stringify(body)).not.toContain("@");
   });
 });

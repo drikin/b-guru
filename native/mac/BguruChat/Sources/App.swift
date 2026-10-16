@@ -55,6 +55,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
 
         #if DEBUG
+        // Dev only: offline demo data → screenshot (no token, no network).
+        if let i = CommandLine.arguments.firstIndex(of: "-selftest"), i + 1 < CommandLine.arguments.count,
+           CommandLine.arguments.contains("-demo") {
+            let store = ChatStore(api: APIClient(token: "demo"))
+            store.debugLoadDemo()
+            SelfTest.run(store: store, outDir: CommandLine.arguments[i + 1], send: false)
+            return
+        }
         // Dev only: BGURU_DEV_TOKEN=bga_… runs against a token without touching the Keychain.
         if let dev = ProcessInfo.processInfo.environment["BGURU_DEV_TOKEN"], !dev.isEmpty {
             startSession(token: dev)

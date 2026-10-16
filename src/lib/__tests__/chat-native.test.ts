@@ -9,7 +9,7 @@
 import { describe, it, expect } from "vitest";
 import { reconcileChat, markChatFailed, markChatRetrying, newChatClientId, newChatTempId, type ChatRow } from "../chat-optimistic";
 import { toAgentChatDto, liveToStreamEvent, agentCapabilities } from "../agent-chat";
-import { isMentionedIn, mentionNamesFor } from "../chat-mention";
+import { isMentionedIn, mentionNamesFor, mentionToken } from "../chat-mention";
 import { normalizeChatBody, normalizeClientId, CHAT_MAX_BODY } from "../chat";
 
 const base = {
@@ -148,5 +148,14 @@ describe("capabilities", () => {
     expect(ro.features.stream.affects_presence).toBe(false);
     const full = agentCapabilities(["read", "read_state", "chat"]);
     expect(full.features.chat).toMatchObject({ send: true, edit_own: true, reactions: true, mark_read: true, ttl_hours: 24 });
+  });
+});
+
+describe("mentionToken（返信で入れる @名前）", () => {
+  it("空白を含む名前は @[...]、それ以外は @名前。どちらも判定で本人に当たる", () => {
+    expect(mentionToken("mazzo")).toBe("@mazzo ");
+    expect(mentionToken("NORIO TAKAHASHI")).toBe("@[NORIO TAKAHASHI] ");
+    expect(isMentionedIn(mentionToken("NORIO TAKAHASHI") + "どうも", mentionNamesFor(["NORIO TAKAHASHI"], null))).toBe(true);
+    expect(isMentionedIn(mentionToken("ポンコツ散財王ドリキン") + "了解", mentionNamesFor(["ポンコツ散財王ドリキン"], null))).toBe(true);
   });
 });

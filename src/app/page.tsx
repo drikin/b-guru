@@ -67,7 +67,7 @@ import {
 } from "@/lib/feed";
 import type { ChatMessage } from "@/lib/chat";
 import { type ChatRow, CHAT_BODY_LIMIT, newChatClientId, newChatTempId, reconcileChat, markChatFailed, markChatRetrying } from "@/lib/chat-optimistic";
-import { normWs, isMentionedIn } from "@/lib/chat-mention";
+import { normWs, isMentionedIn, mentionToken } from "@/lib/chat-mention";
 import MacAppCard from "@/components/MacAppCard";
 import type { PostPoll } from "@/lib/poll";
 import type { DuplicateCandidate } from "@/lib/duplicates";
@@ -5339,7 +5339,7 @@ export default function Home() {
   // Used when the user clicks an online member: open + @mention + focus.
   const openChatMention = useCallback(
     (name: string) => {
-      const token = name.includes(" ") ? `@[${name}] ` : `@${name} `;
+      const token = mentionToken(name);
       setChatText(token);
       setChatMention(name);
       chatViewRef.current = true;
@@ -5456,6 +5456,21 @@ export default function Home() {
 
   const discardChat = useCallback((row: ChatRow) => {
     setChatMessages((prev) => prev.filter((m) => !(m.id < 0 && m.clientId === row.clientId)));
+  }, []);
+
+  // Reply to someone in chat: put `@name ` at the start of the composer (keeping
+  // anything already typed) and focus it. drikin 2026-10-16「リプライしたい人の
+  // メッセージを選んで、直接その人に @ でメンションをつけてリプライ」。
+  const replyChatTo = useCallback((name: string) => {
+    const token = mentionToken(name);
+    setChatText((cur) => (cur.startsWith(token) ? cur : token + cur.replace(/^\s+/, "")));
+    requestAnimationFrame(() => {
+      const ta = chatInputRef.current;
+      if (!ta) return;
+      ta.focus();
+      const end = ta.value.length;
+      ta.setSelectionRange(end, end);
+    });
   }, []);
 
   // Begin editing one of the current user's own messages (typo fix).
@@ -11143,6 +11158,21 @@ export default function Home() {
                               className={touchDevice ? undefined : "bguru-chat-actions"}
                             >
                               {renderChatReactionBar(m.id)}
+                              {!mine && name && (
+                                <ActionIcon
+                                  size="xs"
+                                  variant="subtle"
+                                  color="gray"
+                                  aria-label={`${name} さんに返信`}
+                                  title={`${name} さんに返信（@メンション）`}
+                                  onClick={() => replyChatTo(name)}
+                                >
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M9 14 4 9l5-5" />
+                                    <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+                                  </svg>
+                                </ActionIcon>
+                              )}
                               {mine && (
                                 <ActionIcon
                                   size="xs"

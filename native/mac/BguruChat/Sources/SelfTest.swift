@@ -52,7 +52,8 @@ enum SelfTest {
             // Render through a real (off-screen) window so AppKit-backed views
             // — ScrollView, TextField — draw too; ImageRenderer cannot.
             let pin = PinState()
-            let host = NSHostingView(rootView: ChatView(store: store, pin: pin, onClose: {}, onSignOut: {}))
+            let draft = CommandLine.arguments.contains("-demo") ? "こんにちは @n" : ""
+            let host = NSHostingView(rootView: ChatView(store: store, pin: pin, onClose: {}, onSignOut: {}, initialDraft: draft))
             let win = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 380, height: 560),
                                styleMask: [.borderless], backing: .buffered, defer: false)
             win.appearance = NSAppearance(named: CommandLine.arguments.contains("-dark") ? .darkAqua : .aqua)

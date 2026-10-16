@@ -9,12 +9,15 @@ struct MessageRow: View {
     let onEdit: () -> Void
     let onRetry: () -> Void
     let onDiscard: () -> Void
+    /// Reply with an @mention of this message's author (others' messages only).
+    var onReplyMention: (() -> Void)? = nil
     var highlighted = false
     /// This message is open in the composer for editing.
     var editing = false
 
     @State private var hovering = false
     @State private var pickerOpen = false
+    @State private var selecting = false
 
     static let quick = ["❤️", "👍", "😂", "🎉", "🙏", "👀"]
 
@@ -60,9 +63,13 @@ struct MessageRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .contextMenu { menu }
+        .sheet(isPresented: $selecting) {
+            SelectableTextSheet(author: m.authorName ?? "メッセージ", text: m.body)
+        }
         .accessibilityElement(children: .combine)
         .accessibilityAction(named: "❤️ を付ける") { if canReact && m.id > 0 { onReact("❤️") } }
         .accessibilityAction(named: "編集") { if mine && canEdit && m.id > 0 { onEdit() } }
+        .accessibilityAction(named: "返信") { if !mine { onReplyMention?() } }
         .accessibilityLabel("\(mine ? "自分" : (m.authorName ?? ""))、\(m.body)\(m.mentionsMe ? "、あなたへのメンション" : "")\(row.state == .failed ? "、送信失敗" : "")")
     }
 
@@ -86,7 +93,11 @@ struct MessageRow: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(Color.accentGreen, lineWidth: editing ? 1.5 : 0)
             )
+            #if os(iOS)
+            // iOS: double-tap = ❤️ (text selection lives in the menu → "テキストを選択").
+            // macOS has no double-click shortcut: it would block selecting text with the mouse.
             .onTapGesture(count: 2) { if canReact && m.id > 0 { onReact("❤️") } }
+            #endif
             // Actions hang off the bubble's outer top corner on hover: ❤️ in one
             // click, 😊 for the picker, ✏️ for your own. An overlay takes no
             // space, so bubbles keep their full width and nothing jumps.
@@ -109,7 +120,7 @@ struct MessageRow: View {
     #endif
 
     @ViewBuilder private var actionBar: some View {
-        if canReact || (mine && canEdit) {
+        if canReact || (mine && canEdit) || (!mine && onReplyMention != nil) {
             HStack(spacing: 0) {
                 if canReact {
                     ActionButton(systemImage: nil, text: "❤️", help: "❤️ を付ける（ダブルクリックでも）") { onReact("❤️") }
@@ -121,6 +132,10 @@ struct MessageRow: View {
                             }
                             .presentationCompactAdaptation(.popover) // iPhone: stay a popover, not a full sheet
                         }
+                }
+                if let onReplyMention, !mine {
+                    ActionButton(systemImage: "arrowshape.turn.up.left", text: nil,
+                                 help: "\(m.authorName ?? "") さんに返信（@メンション）", action: onReplyMention)
                 }
                 if mine && canEdit {
                     ActionButton(systemImage: "pencil", text: nil, help: "編集（入力欄が空のとき ↑ でも）", action: onEdit)
@@ -136,14 +151,20 @@ struct MessageRow: View {
     }
 
     @ViewBuilder private var menu: some View {
+        if let onReplyMention, !mine, m.id > 0 {
+            Button("返信（@メンション）", systemImage: "arrowshape.turn.up.left", action: onReplyMention)
+        }
         if canReact && m.id > 0 {
             ForEach(Self.quick, id: \.self) { e in Button(e) { onReact(e) } }
             Divider()
         }
         if mine && canEdit && m.id > 0 { Button("編集", action: onEdit) }
-        Button("テキストをコピー") {
+        Button("テキストをコピー", systemImage: "doc.on.doc") {
             Platform.copy(m.body)
         }
+        #if os(iOS)
+        Button("テキストを選択", systemImage: "selection.pin.in.out") { selecting = true }
+        #endif
     }
 
     // MARK: helpers
