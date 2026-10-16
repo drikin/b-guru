@@ -177,12 +177,14 @@ struct ChatView: View {
                     .onSubmit(submit)
                     .onKeyPress(.upArrow) {
                         // Slack-style: ↑ in an empty composer edits your last message.
-                        guard draft.isEmpty, editingId == nil, let m = store.lastOwnMessage,
+                        guard !TextComposition.isActive, draft.isEmpty, editingId == nil, let m = store.lastOwnMessage,
                               store.capabilities?.canEdit ?? false else { return .ignored }
                         beginEdit(m)
                         return .handled
                     }
                     .onKeyPress(.escape) {
+                        // Esc during a Japanese conversion cancels the conversion, not the panel.
+                        if TextComposition.isActive { return .ignored }
                         if editingId != nil { cancelEdit(); return .handled }
                         onClose()
                         return .handled

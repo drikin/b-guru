@@ -379,6 +379,8 @@ private fun Composer(
                                 // Hardware keyboard: Enter sends, Shift+Enter is a newline, ↑ edits the last message.
                                 .onPreviewKeyEvent { e ->
                                     if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    // A Japanese conversion is open: Enter / ↑ / Esc belong to the IME.
+                                    if (field.composition != null) return@onPreviewKeyEvent false
                                     when {
                                         e.key == Key.Enter && !e.isShiftPressed -> {
                                             if (matches.isNotEmpty()) onPickMention(matches.first()) else onSubmit(); true

@@ -62,3 +62,34 @@ extension View {
         #endif
     }
 }
+
+/// True while an input method holds uncommitted text in the focused field —
+/// Japanese conversion (Enter/↑/Esc belong to the IME then) or dictation.
+/// SwiftUI's TextField does not expose this, so ask the text view itself.
+@MainActor
+enum TextComposition {
+    static var isActive: Bool {
+        #if os(macOS)
+        return (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
+        #else
+        return (FirstResponderProbe.current() as? UITextInput)?.markedTextRange != nil
+        #endif
+    }
+}
+
+#if os(iOS)
+/// UIKit has no public "current first responder"; a nil-targeted action reaches it.
+@MainActor
+private enum FirstResponderProbe {
+    static weak var found: UIResponder?
+    static func current() -> UIResponder? {
+        found = nil
+        UIApplication.shared.sendAction(#selector(UIResponder.bguruReportFirstResponder), to: nil, from: nil, for: nil)
+        return found
+    }
+}
+
+extension UIResponder {
+    @objc fileprivate func bguruReportFirstResponder() { FirstResponderProbe.found = self }
+}
+#endif

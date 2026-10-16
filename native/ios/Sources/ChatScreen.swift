@@ -175,19 +175,21 @@ struct ChatScreen: View {
                     .background(RoundedRectangle(cornerRadius: 18).fill(Color(.secondarySystemBackground)))
                     // Hardware keyboard (iPad): Return sends, Shift+Return is a newline.
                     // The on-screen keyboard's return key still inserts a newline.
+                    // While a Japanese conversion is open, Return confirms it instead
+                    // (takuto 2026-10-16: it used to send mid-conversion).
                     .onKeyPress(keys: [.return], phases: .down) { press in
-                        if press.modifiers.contains(.shift) { return .ignored }
+                        if press.modifiers.contains(.shift) || TextComposition.isActive { return .ignored }
                         submit()
                         return .handled
                     }
                     .onKeyPress(.upArrow) {
-                        guard draft.isEmpty, editingId == nil, let m = store.lastOwnMessage,
+                        guard !TextComposition.isActive, draft.isEmpty, editingId == nil, let m = store.lastOwnMessage,
                               store.capabilities?.canEdit ?? false else { return .ignored }
                         beginEdit(m)
                         return .handled
                     }
                     .onKeyPress(.escape) {
-                        guard editingId != nil else { return .ignored }
+                        guard !TextComposition.isActive, editingId != nil else { return .ignored }
                         cancelEdit()
                         return .handled
                     }
