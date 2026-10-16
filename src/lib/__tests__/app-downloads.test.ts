@@ -119,3 +119,34 @@ describe("appcast / アプリのトークン", () => {
     expect(lib.buildAppcast(null, "https://x")).toContain("<channel>");
   });
 });
+
+describe("Android（APK）", () => {
+  it("manifest: 版・versionCode・ファイル名を検証（パス横断を通さない）", () => {
+    const ok = { version: "0.1.0", versionCode: 3, file: "BguruChat-0.1.0.apk", sha256: "b".repeat(64) };
+    expect(lib.parseAndroidManifest(ok)).toMatchObject({ version: "0.1.0", versionCode: 3 });
+    expect(lib.parseAndroidManifest({ ...ok, file: "../secret.apk" })).toBeNull();
+    expect(lib.parseAndroidManifest({ ...ok, file: "BguruChat-0.1.0.dmg" })).toBeNull();
+    expect(lib.parseAndroidManifest({ ...ok, versionCode: 0 })).toBeNull();
+    expect(lib.parseAndroidManifest({ ...ok, versionCode: "3" })).toBeNull();
+  });
+
+  it("会員だけがダウンロードでき、info はアプリのトークンでも読める", async () => {
+    const adl = await import("@/app/api/download/android/route");
+    const ainfo = await import("@/app/api/download/android/info/route");
+    sessionEmail.mockResolvedValue(null);
+    expect((await adl.GET(R())).status).toBe(401);
+
+    await writeFile(path.join(dir, "BguruChat-0.1.0.apk"), "PK-apk");
+    await writeFile(path.join(dir, "android.json"), JSON.stringify({ version: "0.1.0", versionCode: 3, file: "BguruChat-0.1.0.apk" }));
+    sessionEmail.mockResolvedValue("me@example.com");
+    const r = await adl.GET(R());
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toBe("application/vnd.android.package-archive");
+    expect(await r.text()).toBe("PK-apk");
+
+    sessionEmail.mockResolvedValue(null);
+    verifyAgentToken.mockResolvedValue({ email: "me@example.com", scopes: ["read"] });
+    const i = await ainfo.GET(R({ authorization: "Bearer bga_x" }));
+    expect(await i.json()).toMatchObject({ available: true, version: "0.1.0", version_code: 3 });
+  });
+});

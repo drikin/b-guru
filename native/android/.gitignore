@@ -1,0 +1,11 @@
+.gradle/
+build/
+app/build/
+local.properties
+.idea/
+*.iml
+# Release signing (kept outside the repo)
+keystore.properties
+*.jks
+*.keystore
+dist/

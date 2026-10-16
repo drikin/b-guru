@@ -9,6 +9,7 @@
  * device's own token (mutable-content); if that fails the generic text shows.
  * Everything here is fire-and-forget and a no-op until APNs is configured. */
 import { apnsEnabled, isDeadToken, sendApns } from "./apns";
+import { fcmEnabled, isDeadFcmToken, sendFcm, toFcmData } from "./fcm";
 import { activePushDevices, markPushSent, pushDeviceOwners, removePushDevice, type PushDevice } from "./push-devices";
 import { isMentionedIn, mentionNamesFor } from "./chat-mention";
 import { resolveDisplayNames } from "./display-name";
@@ -64,15 +65,27 @@ export function __resetThrottleForTests() {
   lastPushed.clear();
 }
 
-async function deliver(devices: PushDevice[], payload: object, collapseId: string): Promise<number> {
+export function pushEnabled(): boolean {
+  return apnsEnabled() || fcmEnabled();
+}
+
+async function deliver(devices: PushDevice[], payload: Record<string, unknown>, collapseId: string): Promise<number> {
   const sent: string[] = [];
+  const data = toFcmData(payload);
   for (let i = 0; i < devices.length; i += SEND_CONCURRENCY) {
     await Promise.all(
       devices.slice(i, i + SEND_CONCURRENCY).map(async (d) => {
+        if (d.environment === "fcm") {
+          const r = await sendFcm(d.apnsToken, data, { collapseKey: collapseId });
+          if (r.status === 200) sent.push(d.apnsToken);
+          else if (isDeadFcmToken(r)) await removePushDevice(d.apnsToken).catch(() => {});
+          else if (r.reason !== "disabled") console.error("[fcm]", r.status, r.reason);
+          return;
+        }
         const r = await sendApns(d.apnsToken, d.environment, payload, { collapseId });
         if (r.status === 200) sent.push(d.apnsToken);
         else if (isDeadToken(r)) await removePushDevice(d.apnsToken).catch(() => {});
-        else console.error("[apns]", r.status, r.reason);
+        else if (r.reason !== "disabled") console.error("[apns]", r.status, r.reason);
       })
     );
   }
@@ -90,7 +103,7 @@ export async function mentionedRecipients(body: string, authorEmail: string, own
 }
 
 export async function pushChatMessage(m: { id: number; body: string }, authorEmail: string): Promise<number> {
-  if (!apnsEnabled()) return 0;
+  if (!pushEnabled()) return 0;
   const author = authorEmail.trim().toLowerCase();
   const owners = await pushDeviceOwners();
   if (owners.length === 0) return 0;
@@ -125,7 +138,7 @@ export async function pushPersonalNotification(
   recipientEmail: string,
   n: { type: string; isActor: boolean; postId: number | null; replyId: number | null }
 ): Promise<number> {
-  if (!apnsEnabled() || n.type !== "reply" || n.isActor) return 0;
+  if (!pushEnabled() || n.type !== "reply" || n.isActor) return 0;
   if (throttled(recipientEmail.trim().toLowerCase(), "reply")) return 0;
   const devices = await activePushDevices([recipientEmail]);
   if (devices.length === 0) return 0;

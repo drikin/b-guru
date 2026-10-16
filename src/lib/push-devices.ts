@@ -1,15 +1,19 @@
-/* Native-app push devices (APNs tokens), owned by an agent token. A device only
+/* Native-app push devices (APNs tokens for iPhone/iPad, FCM tokens for Android —
+ * environment "fcm"; the column is still called apns_token), owned by an agent token. A device only
  * receives pushes while its agent token is valid (not revoked, not expired), so
  * signing out or revoking a device in /settings/agent stops its pushes at once. */
 import { pool } from "./db";
 import { APNS_TOKEN_RE, type ApnsEnvironment } from "./apns";
+import { FCM_TOKEN_RE } from "./fcm";
+
+export type PushEnvironment = ApnsEnvironment | "fcm";
 
 export type NotifyMode = "all" | "mentions";
 
 export interface PushDevice {
   email: string;
   apnsToken: string;
-  environment: ApnsEnvironment;
+  environment: PushEnvironment;
   notifyMode: NotifyMode;
   quietHours: boolean;
 }
@@ -18,22 +22,32 @@ export function normalizeNotifyMode(v: unknown): NotifyMode {
   return v === "mentions" ? "mentions" : "all";
 }
 
-export function normalizeEnvironment(v: unknown): ApnsEnvironment | null {
-  return v === "production" || v === "sandbox" ? v : null;
+export function normalizeEnvironment(v: unknown): PushEnvironment | null {
+  return v === "production" || v === "sandbox" || v === "fcm" ? v : null;
+}
+
+/** Token format check per environment. APNs tokens are hex (stored lower-case);
+ *  FCM tokens are case-sensitive and stored as-is. */
+export function validPushToken(token: string, environment: PushEnvironment): boolean {
+  return environment === "fcm" ? FCM_TOKEN_RE.test(token) : APNS_TOKEN_RE.test(token);
+}
+
+export function storedPushToken(token: string, environment: PushEnvironment): string {
+  return environment === "fcm" ? token : token.toLowerCase();
 }
 
 export async function registerPushDevice(input: {
   email: string;
   agentTokenId: number;
   apnsToken: string;
-  environment: ApnsEnvironment;
+  environment: PushEnvironment;
   platform?: string;
   notifyMode?: NotifyMode;
   quietHours?: boolean;
 }): Promise<void> {
-  if (!APNS_TOKEN_RE.test(input.apnsToken)) throw new Error("invalid_token");
+  if (!validPushToken(input.apnsToken, input.environment)) throw new Error("invalid_token");
   const email = input.email.trim().toLowerCase();
-  const apnsToken = input.apnsToken.toLowerCase();
+  const apnsToken = storedPushToken(input.apnsToken, input.environment);
   // One device per agent token: an app install re-registering (new APNs token
   // after a restore, etc.) replaces its own previous row instead of piling up.
   await pool.query(`DELETE FROM push_devices WHERE agent_token_id = $1 AND apns_token <> $2`, [
@@ -76,15 +90,18 @@ export async function pushDeviceOwners(): Promise<string[]> {
   return res.rows.map((r: { email: string }) => r.email);
 }
 
-export async function unregisterPushDevice(email: string, apnsToken: string): Promise<void> {
-  await pool.query(`DELETE FROM push_devices WHERE email = $1 AND apns_token = $2`, [
+/** Either token kind: APNs tokens are stored lower-case, FCM tokens as-is. */
+export async function unregisterPushDevice(email: string, token: string): Promise<void> {
+  await pool.query(`DELETE FROM push_devices WHERE email = $1 AND apns_token IN ($2, $3)`, [
     email.trim().toLowerCase(),
-    apnsToken.toLowerCase(),
+    token,
+    token.toLowerCase(),
   ]);
 }
 
-export async function removePushDevice(apnsToken: string): Promise<void> {
-  await pool.query(`DELETE FROM push_devices WHERE apns_token = $1`, [apnsToken.toLowerCase()]);
+/** `token` exactly as stored (from activePushDevices). */
+export async function removePushDevice(token: string): Promise<void> {
+  await pool.query(`DELETE FROM push_devices WHERE apns_token = $1`, [token]);
 }
 
 /** Devices whose agent token is still valid. `emails` null = everyone with a device. */
@@ -101,7 +118,7 @@ export async function activePushDevices(emails: string[] | null): Promise<PushDe
     (r: { email: string; apns_token: string; environment: string; notify_mode: string; quiet_hours: boolean }) => ({
       email: r.email,
       apnsToken: r.apns_token,
-      environment: r.environment === "sandbox" ? "sandbox" : "production",
+      environment: r.environment === "sandbox" ? "sandbox" : r.environment === "fcm" ? "fcm" : "production",
       notifyMode: normalizeNotifyMode(r.notify_mode),
       quietHours: r.quiet_hours !== false,
     })

@@ -1,4 +1,4 @@
-/* Native app downloads (B-guru Chat for Mac beta).
+/* Native app downloads (B-guru Chat for Mac beta, and the Android APK).
  *
  * The signed + notarized DMG lives OUTSIDE the repo on the server, in
  * DOWNLOADS_DIR (default /home/ubuntu/bsm-downloads), next to a small manifest
@@ -98,4 +98,59 @@ export function buildAppcast(rel: MacRelease | null, origin: string): string {
   </channel>
 </rss>
 `;
+}
+
+/* ---- Android (APK, sideloaded) ----
+ * `android.json`, written by native/android/scripts/publish.sh:
+ *   { "version": "0.1.0", "versionCode": 3, "file": "BguruChat-0.1.0.apk", "size": …,
+ *     "sha256": "…", "certSha256": "…", "minSdk": 28, "notes": "…", "publishedAt": "…" }
+ * certSha256 is the signing certificate's fingerprint, shown so members can check
+ * that an APK really came from us (and every update must keep the same key). */
+export interface AndroidRelease {
+  version: string;
+  versionCode: number;
+  file: string;
+  size: number;
+  sha256: string;
+  certSha256: string;
+  minSdk: number;
+  notes: string;
+  publishedAt: string;
+}
+
+const APK_RE = /^BguruChat-\d+\.\d+\.\d+\.apk$/;
+
+export function parseAndroidManifest(raw: unknown): AndroidRelease | null {
+  if (!raw || typeof raw !== "object") return null;
+  const m = raw as Record<string, unknown>;
+  const file = typeof m.file === "string" ? m.file : "";
+  const version = typeof m.version === "string" ? m.version : "";
+  const versionCode = typeof m.versionCode === "number" && Number.isInteger(m.versionCode) && m.versionCode > 0 ? m.versionCode : 0;
+  if (!APK_RE.test(file) || !VERSION_RE.test(version) || !versionCode) return null; // also blocks path traversal
+  return {
+    version,
+    versionCode,
+    file,
+    size: typeof m.size === "number" && m.size > 0 ? m.size : 0,
+    sha256: typeof m.sha256 === "string" && /^[0-9a-f]{64}$/.test(m.sha256) ? m.sha256 : "",
+    certSha256: typeof m.certSha256 === "string" && /^[0-9A-F:]{64,95}$/i.test(m.certSha256) ? m.certSha256 : "",
+    minSdk: typeof m.minSdk === "number" ? m.minSdk : 28,
+    notes: typeof m.notes === "string" ? m.notes.slice(0, 2000) : "",
+    publishedAt: typeof m.publishedAt === "string" ? m.publishedAt : "",
+  };
+}
+
+/** Current Android release, or null when none is published / the file is missing. */
+export async function getAndroidRelease(): Promise<(AndroidRelease & { path: string }) | null> {
+  try {
+    const raw = JSON.parse(await readFile(/*turbopackIgnore: true*/ path.join(DOWNLOADS_DIR, "android.json"), "utf8"));
+    const rel = parseAndroidManifest(raw);
+    if (!rel) return null;
+    const p = path.join(/*turbopackIgnore: true*/ DOWNLOADS_DIR, rel.file);
+    const s = await stat(/*turbopackIgnore: true*/ p);
+    if (!s.isFile()) return null;
+    return { ...rel, size: s.size, path: p };
+  } catch {
+    return null;
+  }
 }

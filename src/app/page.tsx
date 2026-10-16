@@ -69,6 +69,7 @@ import type { ChatMessage } from "@/lib/chat";
 import { type ChatRow, CHAT_BODY_LIMIT, newChatClientId, newChatTempId, reconcileChat, markChatFailed, markChatRetrying } from "@/lib/chat-optimistic";
 import { normWs, isMentionedIn, mentionToken } from "@/lib/chat-mention";
 import MacAppCard from "@/components/MacAppCard";
+import AndroidAppCard from "@/components/AndroidAppCard";
 import type { PostPoll } from "@/lib/poll";
 import type { DuplicateCandidate } from "@/lib/duplicates";
 import { DuplicateWarning } from "@/components/DuplicateWarning";
@@ -10101,6 +10102,8 @@ export default function Home() {
             />
           </Group>
         )}
+        {/* Android アプリ（ベータ）のダウンロード案内。Android のブラウザでのみ・配布中の版があるときだけ表示 */}
+        <AndroidAppCard />
         {/* Account: profile + logout — moved from header to bottom of left sidebar.
             Tapping the avatar/name opens the viewer's own profile timeline. */}
         <Divider my="xs" />

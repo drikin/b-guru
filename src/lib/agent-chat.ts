@@ -17,6 +17,7 @@ import type { ReactionSummary } from "./reactions";
 import type { AgentScope } from "./agent-auth";
 import { isMentionedIn, mentionNamesFor } from "./chat-mention";
 import { apnsEnabled } from "./apns";
+import { fcmEnabled } from "./fcm";
 import { resolveDisplayName } from "./display-name";
 
 export const AGENT_API_VERSION = 1;
@@ -132,8 +133,8 @@ export function agentCapabilities(scopes: AgentScope[]) {
         affects_presence: false,
       },
       notifications: { read: can("read"), stream: true },
-      // APNs (iPhone/iPad): register with POST /api/agent/devices/push.
-      push: { apns: apnsEnabled(), register: "/api/agent/devices/push", kinds: ["chat_mention", "reply"] },
+      // APNs (iPhone/iPad) and FCM (Android): register with POST /api/agent/devices/push.
+      push: { apns: apnsEnabled(), fcm: fcmEnabled(), register: "/api/agent/devices/push", kinds: ["chat_mention", "chat_new", "reply"] },
       summary: { path: "/api/agent/summary" },
     },
   };

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The agent token is bound to this device's Keystore key: never back it up. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="auth.xml" />
+    <exclude domain="sharedpref" path="push.xml" />
+</full-backup-content>

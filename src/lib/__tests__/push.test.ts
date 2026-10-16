@@ -155,6 +155,22 @@ describe("POST/DELETE /api/agent/devices/push", () => {
     authed();
     expect((await registerDELETE(req("DELETE", { token: "c".repeat(64) }))).status).toBe(200);
     const del = query.mock.calls.find((c) => String(c[0]).includes("DELETE FROM push_devices"))!;
-    expect(del[1]).toEqual(["me@example.com", "c".repeat(64)]);
+    expect(del[1]).toEqual(["me@example.com", "c".repeat(64), "c".repeat(64)]);
+  });
+
+  it("Android（FCM）の端末も登録できる。トークンは大文字小文字をそのまま保存", async () => {
+    authed();
+    const fcm = "dAbC" + "x".repeat(18) + ":APA91b" + "Yz_-".repeat(30);
+    const r = await registerPOST(req("POST", { token: fcm, environment: "fcm", platform: "ios" }));
+    expect(r.status).toBe(200);
+    const ins = query.mock.calls.find((c) => String(c[0]).includes("INSERT INTO push_devices"))!;
+    expect(ins[1][2]).toBe(fcm);
+    expect(ins[1][3]).toBe("fcm");
+    expect(ins[1][4]).toBe("android");
+  });
+
+  it("FCM 用の environment に APNs 形式のトークンは通らない", async () => {
+    authed();
+    expect((await registerPOST(req("POST", { token: "c".repeat(64), environment: "fcm" }))).status).toBe(400);
   });
 });
