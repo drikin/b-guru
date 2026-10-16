@@ -99,7 +99,7 @@ describe("no API route leaks a raw gravatar.com URL to the client", () => {
   // (900-2,500ms each) and leaked every member's email hash to Automattic.
   // Every route that surfaces an avatar must rewrite it to /api/avatar/<md5>.
   const ROUTES = [
-    "src/app/api/members/route.ts",
+    "src/lib/members.ts", // /api/members と /api/agent/members の共通処理
     "src/app/api/auth/me/route.ts",
     "src/app/api/bsm/member-check/route.ts",
   ];
