@@ -71,6 +71,7 @@ struct VoiceBar: View {
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 avatars(voice.members.map { ($0.userId, $0.name, $0.avatar, $0.speaking, $0.muted) }, size: 30, menus: true)
+                    .padding(3) // room for the speaking ring, which the scroll view would clip
             }
             Spacer(minLength: 4)
             MicButton(voice: voice)

@@ -317,7 +317,8 @@ final class VoiceStore {
                 userId: id,
                 name: p.name.flatMap { $0.isEmpty ? nil : $0 } ?? info?.name ?? "?",
                 avatar: info?.avatar,
-                speaking: p.isSpeaking || (isMe && micActive),
+                // My own talking shows on the mic button, not as a ring on my face.
+                speaking: !isMe && p.isSpeaking,
                 muted: !p.isMicrophoneEnabled(),
                 isMe: isMe
             )
