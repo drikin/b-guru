@@ -63,6 +63,8 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
+        # Read the images a member chooses (file picker / drag & drop) to attach to a post.
+        com.apple.security.files.user-selected.read-only: true
         # Sparkle installer (sandboxed apps): talk to its XPC services.
         com.apple.security.temporary-exception.mach-lookup.global-name:
           - fm.backspace.bguru.chat-spks

@@ -27,20 +27,33 @@ final class PostDraft {
         guard !picks.isEmpty else { return }
         let items = picks
         picks = []
+        var failed = 0
         for item in items where images.count < maxImages {
-            if let data = try? await item.loadTransferable(type: Data.self), let img = PlatformImage(data: data) {
-                images.append(img)
-            }
+            if let img = await Self.load(item) { images.append(img) } else { failed += 1 }
         }
+        error = failed > 0 ? "画像を \(failed) 枚読み込めませんでした（別の写真で試すか、ファイルから選んでください）" : nil
+    }
+
+    /// The photo's bytes; if the library will not hand them over directly (e.g. an
+    /// original kept only in iCloud), take it as a file instead.
+    private static func load(_ item: PhotosPickerItem) async -> PlatformImage? {
+        if let data = try? await item.loadTransferable(type: Data.self), let img = PlatformImage(data: data) { return img }
+        if let file = try? await item.loadTransferable(type: PickedImageFile.self) {
+            defer { try? FileManager.default.removeItem(at: file.url) }
+            if let data = try? Data(contentsOf: file.url), let img = PlatformImage(data: data) { return img }
+        }
+        return nil
     }
 
     /// macOS: images chosen with the file picker (or dropped on the composer).
     func add(fileURLs: [URL]) {
+        var failed = 0
         for url in fileURLs where images.count < maxImages {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            if let data = try? Data(contentsOf: url), let img = PlatformImage(data: data) { images.append(img) }
+            if let data = try? Data(contentsOf: url), let img = PlatformImage(data: data) { images.append(img) } else { failed += 1 }
         }
+        error = failed > 0 ? "画像を \(failed) 枚読み込めませんでした" : nil
     }
 
     func remove(_ i: Int) { if images.indices.contains(i) { images.remove(at: i) } }
@@ -55,6 +68,10 @@ final class PostDraft {
             var urls: [String] = []
             if !images.isEmpty {
                 let jpegs = images.compactMap { $0.uploadJPEG() }
+                guard jpegs.count == images.count else {
+                    error = "画像を送れる形に変換できませんでした"
+                    return nil
+                }
                 urls = try await api.upload(images: jpegs)
             }
             let post = try await api.publish(text: text.trimmingCharacters(in: .whitespacesAndNewlines), images: urls, parentId: parentId)
@@ -71,6 +88,20 @@ final class PostDraft {
             self.error = "投稿できませんでした"
         }
         return nil
+    }
+}
+
+/// A picked photo received as a file (copied out of the picker's temporary location).
+struct PickedImageFile: Transferable {
+    let url: URL
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(importedContentType: .image) { received in
+            let dst = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension(received.file.pathExtension)
+            try FileManager.default.copyItem(at: received.file, to: dst)
+            return PickedImageFile(url: dst)
+        }
     }
 }
 
