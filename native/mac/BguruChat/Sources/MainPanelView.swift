@@ -9,7 +9,10 @@ struct MainPanelView: View {
     let onClose: () -> Void
     let onSignOut: () -> Void
 
-    @State private var tab: MainTab
+    private var tab: MainTab {
+        get { pin.tab }
+        nonmutating set { pin.tab = newValue }
+    }
 
     init(store: ChatStore, timeline: TimelineStore, pin: PinState, onClose: @escaping () -> Void,
          onSignOut: @escaping () -> Void, initialTab: MainTab = .chat) {
@@ -18,12 +21,12 @@ struct MainPanelView: View {
         self.pin = pin
         self.onClose = onClose
         self.onSignOut = onSignOut
-        _tab = State(initialValue: initialTab)
+        pin.tab = initialTab
     }
 
     var body: some View {
         Group {
-            switch tab {
+            switch pin.tab {
             case .chat:
                 ChatView(store: store, pin: pin, onClose: onClose, onSignOut: onSignOut, tabPicker: AnyView(picker))
             case .timeline:
@@ -41,7 +44,7 @@ struct MainPanelView: View {
     }
 
     private var picker: some View {
-        Picker("表示", selection: $tab) {
+        Picker("表示", selection: $pin.tab) {
             Text(store.unreadCount > 0 ? "チャット ●" : "チャット").tag(MainTab.chat)
             Text(timeline.unreadCount > 0 ? "タイムライン ●" : "タイムライン").tag(MainTab.timeline)
         }

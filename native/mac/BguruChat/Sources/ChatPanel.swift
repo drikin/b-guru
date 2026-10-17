@@ -58,6 +58,15 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
 
     override var canBecomeKey: Bool { true }
 
+    private var swipe = SwipeTracker()
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .scrollWheel, let step = swipe.handle(event) {
+            withAnimation(.easeOut(duration: 0.18)) { pin.tab = step > 0 ? .timeline : .chat }
+        }
+        super.sendEvent(event)
+    }
+
     func present(below anchor: NSRect) {
         if !pin.pinned || !UserDefaults.standard.bool(forKey: "hasPinnedFrame") {
             let screen = NSScreen.screens.first { $0.frame.contains(anchor.origin) } ?? NSScreen.main
@@ -172,5 +181,31 @@ final class PinState {
     /// Incremented each time the panel opens; the chat view moves the caret
     /// into the message box when it changes.
     var focusRequest = 0
+    /// Chat or timeline (the switch at the top, ⌘1 / ⌘2, or a two-finger swipe).
+    var tab: MainTab = .chat
     @ObservationIgnored var onChange: ((Bool) -> Void)?
+}
+
+/// Two-finger horizontal swipe on the trackpad → switch chat ⇄ timeline, like
+/// paging. Fingers to the left = the page on the right (timeline), fingers to the
+/// right = back to chat — whatever the "natural scrolling" setting is.
+/// One switch per gesture; vertical scrolling and momentum are left alone.
+struct SwipeTracker {
+    private var dx: CGFloat = 0
+    private var dy: CGFloat = 0
+    private var fired = false
+
+    /// Returns +1 (fingers moved left → next page), -1 (fingers moved right → previous) or nil.
+    mutating func handle(_ e: NSEvent) -> Int? {
+        guard e.hasPreciseScrollingDeltas, e.momentumPhase.isEmpty else { return nil }
+        if e.phase.contains(.began) { dx = 0; dy = 0; fired = false }
+        // Finger direction: with natural scrolling the deltas already follow the fingers.
+        let sign: CGFloat = e.isDirectionInvertedFromDevice ? 1 : -1
+        dx += e.scrollingDeltaX * sign
+        dy += e.scrollingDeltaY
+        if e.phase.contains(.ended) || e.phase.contains(.cancelled) { defer { dx = 0; dy = 0 } ; return nil }
+        guard !fired, abs(dx) > 60, abs(dx) > abs(dy) * 2 else { return nil }
+        fired = true
+        return dx < 0 ? 1 : -1
+    }
 }
