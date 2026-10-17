@@ -31,6 +31,7 @@ class App : Application() {
 /** Signed-in state: a ChatStore while a token exists (Keystore, this device only). */
 class Session(private val app: Context) {
     var store by mutableStateOf<ChatStore?>(null); private set
+    var timeline by mutableStateOf<TimelineStore?>(null); private set
     val api: ApiClient? get() = store?.api
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -42,6 +43,7 @@ class Session(private val app: Context) {
     fun startDemo() {
         if (!BuildConfig.DEBUG || store?.demo == true) return
         store = ChatStore(ApiClient("demo")).also { it.loadDemo() }
+        timeline = TimelineStore(ApiClient("demo")).also { it.loadDemo() }
         // Debug: print this emulator's FCM token so a test push can be sent to it.
         if (Push.configured) com.google.firebase.messaging.FirebaseMessaging.getInstance().token
             .addOnSuccessListener { android.util.Log.d("BguruPush", "fcm token: $it") }
@@ -57,6 +59,9 @@ class Session(private val app: Context) {
         val s = store ?: return
         s.stop()
         store = null
+        timeline?.stop()
+        timeline = null
+        ImageCache.token = null
         TokenStore.delete(app)
         scope.launch {
             Push.unregister(app, s.api)
@@ -65,7 +70,10 @@ class Session(private val app: Context) {
     }
 
     private fun start(token: String) {
-        val s = ChatStore(ApiClient(token))
+        val api = ApiClient(token)
+        val s = ChatStore(api)
+        timeline = TimelineStore(api)
+        ImageCache.token = token
         store = s // the stream connects when the chat comes on screen (ChatScreen)
         Push.register(app, s.api)
         // The server revoked the token / membership ended → back to login.

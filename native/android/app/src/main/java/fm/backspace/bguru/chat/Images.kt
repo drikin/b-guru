@@ -33,6 +33,8 @@ import okhttp3.Request
  *  so scrolling and live updates never refetch. */
 object ImageCache {
     private val cache = LruCache<String, ImageBitmap>(300)
+    /** Uploaded images (/api/media/…) need the member's token: the app has no web session. */
+    @Volatile var token: String? = null
 
     fun peek(url: String): ImageBitmap? = cache.get(url)
 
@@ -40,7 +42,12 @@ object ImageCache {
         cache.get(url)?.let { return it }
         return withContext(Dispatchers.IO) {
             runCatching {
-                Net.http.newCall(Request.Builder().url(url).build()).execute().use { r ->
+                val req = Request.Builder().url(url).apply {
+                    // Only our own server (same scheme, host, port) ever gets the token.
+                    val t = token
+                    if (t != null && url.startsWith(Net.BASE + "/")) header("Authorization", "Bearer $t")
+                }.build()
+                Net.http.newCall(req).execute().use { r ->
                     if (!r.isSuccessful) return@use null
                     val bytes = r.body.bytes()
                     val opts = BitmapFactory.Options().apply { inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888 }

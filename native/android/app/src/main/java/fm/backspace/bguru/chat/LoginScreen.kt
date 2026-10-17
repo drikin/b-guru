@@ -46,7 +46,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /** First run: sign in to B-guru in an embedded web view, then the app issues
- *  itself a device token (read / read_state / chat) with that page's session
+ *  itself a device token (read / read_state / chat / post) with that page's session
  *  cookie and keeps only the token. The web session is wiped right after. No JS
  *  bridge is installed, and navigation is confined to bsm.backspace.fm. */
 @Composable
@@ -146,7 +146,7 @@ private suspend fun issueToken(ctx: Context): String {
     if (cookie.isNullOrBlank()) throw IssueError("まだログインしていません。上の画面で B-guru にログインしてください")
     val body = buildJsonObject {
         put("device_name", deviceName(ctx))
-        putJsonArray("scopes") { add("read"); add("read_state"); add("chat") }
+        putJsonArray("scopes") { add("read"); add("read_state"); add("chat"); add("post") }
         put("replace_same_device", true)
     }.toString().toRequestBody("application/json".toMediaType())
     // No Origin header (a direct API client) — the route accepts that; the

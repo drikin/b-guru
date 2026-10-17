@@ -58,7 +58,15 @@ data class ChatRow(
 /** GET /api/agent/capabilities. A feature the server does not report is absent. */
 @Serializable
 data class Capabilities(val scopes: List<String> = emptyList(), val features: Features? = null) {
-    @Serializable data class Features(val chat: ChatFeatures? = null)
+    @Serializable data class Features(val chat: ChatFeatures? = null, val posts: PostFeatures? = null)
+    @Serializable data class PostFeatures(
+        val read: Boolean? = null,
+        val publish: Boolean? = null,
+        val upload: Boolean? = null,
+        val reactions: Boolean? = null,
+        val markRead: Boolean? = null,
+        val maxImages: Int? = null,
+    )
     @Serializable data class ChatFeatures(
         val read: Boolean? = null,
         val send: Boolean? = null,
@@ -72,4 +80,43 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val canReact get() = features?.chat?.reactions ?: false
     val canMarkRead get() = features?.chat?.markRead ?: false
     val maxBody get() = features?.chat?.maxBody ?: 1000
+    val hasTimeline get() = features?.posts?.read ?: false
+    /** Posting needs the "post" scope — tokens from before the timeline must reconnect once. */
+    val canPublish get() = features?.posts?.publish ?: false
+    val canReactPosts get() = features?.posts?.reactions ?: false
+    val maxImages get() = features?.posts?.maxImages ?: 5
+}
+
+// MARK: timeline
+
+/** Mirrors `agentPostDto` (+ include=reactions,read) in src/app/api/agent/posts/route.ts. */
+@Serializable
+data class Post(
+    val id: Long,
+    val authorId: String? = null,
+    val authorName: String? = null,
+    val authorAvatar: String? = null,
+    val isAuthor: Boolean = false,
+    val parentId: Long? = null,
+    val replyCount: Int = 0,
+    val text: String = "",
+    val images: List<String> = emptyList(),
+    val videoUrl: String? = null,
+    val audioUrl: String? = null,
+    val createdAt: String = "",
+    val lastActivityAt: String? = null,
+    val club: String? = null,
+    val reactions: List<Reaction>? = null,
+    val unread: Boolean? = null,
+)
+
+@Serializable data class PostListResponse(val posts: List<Post> = emptyList(), val nextCursor: String? = null)
+@Serializable data class ThreadResponse(val post: Post, val replies: List<Post> = emptyList())
+@Serializable data class PublishResponse(val post: Post)
+@Serializable data class UploadResponse(val urls: List<String> = emptyList())
+@Serializable data class ClubInfo(val key: String, val name: String)
+@Serializable data class ClubsResponse(val clubs: List<ClubInfo> = emptyList())
+/** POST /api/agent/reactions answers without `mine`; the app fills it in. */
+@Serializable data class PostReactionToggle(val added: Boolean = false, val reactions: List<Count> = emptyList()) {
+    @Serializable data class Count(val emoji: String, val count: Int)
 }

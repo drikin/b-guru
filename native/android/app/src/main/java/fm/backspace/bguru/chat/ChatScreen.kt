@@ -91,12 +91,12 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-private val QUICK = listOf("❤️", "👍", "😂", "🎉", "🙏", "👀")
-private val MORE = listOf("😮", "😢", "🔥", "💯", "👏", "🤔")
+internal val QUICK = listOf("❤️", "👍", "😂", "🎉", "🙏", "👀")
+internal val MORE = listOf("😮", "😢", "🔥", "💯", "👏", "🤔")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(store: ChatStore, onSignOut: () -> Unit) {
+fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable () -> Unit)? = null, visible: Boolean = true) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -108,13 +108,19 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit) {
     // What was just sent, to swallow a late echo of it (voice input finalising after Send).
     var justSent by remember { mutableStateOf<Pair<String, Long>?>(null) }
 
+    // The page itself may be off screen (phone pager): only then is it "visible" for read marking.
+    val visibleNow by androidx.compose.runtime.rememberUpdatedState(visible)
+    LaunchedEffect(visible) {
+        if (lifecycleIsResumed(context)) store.isVisible = visible
+        if (visible) Push.clearChatNotifications(context)
+    }
     // Foreground ↔ background: read marking and a quick reconnect.
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle, store) {
         val obs = LifecycleEventObserver { _, e ->
             when (e) {
                 Lifecycle.Event.ON_START -> store.start()
-                Lifecycle.Event.ON_RESUME -> { store.isVisible = true; Push.clearChatNotifications(context) }
+                Lifecycle.Event.ON_RESUME -> { store.isVisible = visibleNow; if (visibleNow) Push.clearChatNotifications(context) }
                 Lifecycle.Event.ON_PAUSE -> store.isVisible = false
                 Lifecycle.Event.ON_STOP -> store.pause()
                 else -> Unit
@@ -172,7 +178,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("B-guru チャット", maxLines = 1) },
+                title = { if (tabSwitch != null) tabSwitch() else Text("B-guru チャット", maxLines = 1) },
                 navigationIcon = { StatusBadge(store) },
                 actions = { ChatMenu(onSignOut) },
             )
@@ -535,7 +541,7 @@ private fun MessageRow(
 }
 
 @Composable
-private fun ReactionChip(r: Reaction, enabled: Boolean, onTap: () -> Unit) {
+internal fun ReactionChip(r: Reaction, enabled: Boolean, onTap: () -> Unit) {
     val border = if (r.mine) AccentGreen else MaterialTheme.colorScheme.outlineVariant
     Row(
         Modifier
@@ -569,7 +575,7 @@ private val URL_RE = Regex("""https?://[^\s<>"]+""")
 private val MENTION_RE = Regex("""@\[[^\]]+]|@[^\s@\[\]]+""")
 
 /** Links are tappable; @mentions are green (same as the web). */
-private fun linkified(s: String): AnnotatedString = buildAnnotatedString {
+internal fun linkified(s: String): AnnotatedString = buildAnnotatedString {
     append(s)
     MENTION_RE.findAll(s).forEach { addStyle(SpanStyle(color = AccentGreen), it.range.first, it.range.last + 1) }
     URL_RE.findAll(s).forEach {
@@ -589,3 +595,6 @@ private class Draft {
         get() = value.text
         set(v) { value = TextFieldValue(v, TextRange(v.length)) }
 }
+
+private fun lifecycleIsResumed(context: android.content.Context): Boolean =
+    (context as? androidx.lifecycle.LifecycleOwner)?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) ?: true

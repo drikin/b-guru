@@ -34,6 +34,7 @@ import java.util.UUID
  *  Service Extension. If the fetch fails, a generic text shows. */
 object Push {
     const val EXTRA_MESSAGE_ID = "message_id"
+    const val EXTRA_POST_ID = "post_id"
     private const val CH_MENTION = "mention"
     private const val CH_CHAT = "chat"
     private const val CH_REPLY = "reply"
@@ -141,8 +142,12 @@ object Push {
             if (messageId != null) putExtra(EXTRA_MESSAGE_ID, messageId)
         }
         val tap = if (kind == "reply" && postId != null) {
-            PendingIntent.getActivity(context, postId.toInt(),
-                Intent(Intent.ACTION_VIEW, android.net.Uri.parse("${Net.BASE}/#/post/$postId")), PendingIntent.FLAG_IMMUTABLE)
+            // A reply to your post: open the thread in the app's timeline.
+            val thread = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_POST_ID, postId)
+            }
+            PendingIntent.getActivity(context, postId.toInt() + 2_000_000, thread, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         } else {
             PendingIntent.getActivity(context, (messageId ?: 0L).toInt(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         }

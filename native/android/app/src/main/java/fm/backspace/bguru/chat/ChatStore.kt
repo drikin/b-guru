@@ -75,7 +75,7 @@ class ChatStore(val api: ApiClient) {
             msg(5, "takuto", "👍"),
         )
         members = listOf("ビーグル", "mazzo", "NORIO TAKAHASHI", "takuto", "coban", "ポンコツ散財王ドリキン").map { MentionMember(it, it) }
-        capabilities = Capabilities(features = Capabilities.Features(Capabilities.ChatFeatures(send = true, editOwn = true, reactions = true, markRead = false)))
+        capabilities = Capabilities(features = Capabilities.Features(Capabilities.ChatFeatures(send = true, editOwn = true, reactions = true, markRead = false), Capabilities.PostFeatures(read = true, publish = true, upload = true, reactions = true, maxImages = 5)))
         hasLoaded = true
         connection = Connection.LIVE
         onlineCount = 12

@@ -8,6 +8,9 @@ import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -122,6 +125,50 @@ class ApiClient(val token: String) {
 
     suspend fun unregisterPush(fcmToken: String) {
         runCatching { send(request("DELETE", "/api/agent/devices/push", buildJsonObject { put("token", fcmToken) })) }
+    }
+
+    // MARK: timeline
+
+    suspend fun posts(cursor: String? = null, limit: Int = 30): PostListResponse =
+        get("/api/agent/posts", buildMap {
+            put("limit", "$limit"); put("include", "reactions,read")
+            if (cursor != null) put("cursor", cursor)
+        })
+
+    suspend fun thread(id: Long): ThreadResponse = get("/api/agent/posts/$id", mapOf("include" to "reactions,read"))
+
+    suspend fun clubs(): List<ClubInfo> = get<ClubsResponse>("/api/agent/clubs").clubs
+
+    suspend fun publish(text: String, images: List<String>, parentId: Long?): Post =
+        decode<PublishResponse>(send(request("POST", "/api/agent/publish", buildJsonObject {
+            put("text", text)
+            put("images", JsonArray(images.map { JsonPrimitive(it) }))
+            if (parentId != null) put("parent_id", parentId)
+        }))).post
+
+    /** JPEGs (already resized). Returns /api/media/… URLs. */
+    suspend fun upload(jpegs: List<ByteArray>): List<String> {
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM).apply {
+            jpegs.forEachIndexed { i, b -> addFormDataPart("images", "photo$i.jpg", b.toRequestBody("image/jpeg".toMediaType())) }
+        }.build()
+        val req = Request.Builder().url("${Net.BASE}/api/agent/upload").header("Authorization", "Bearer $token").post(body).build()
+        val resp = Net.http.newBuilder().callTimeout(120, TimeUnit.SECONDS).writeTimeout(120, TimeUnit.SECONDS).build().newCall(req).await()
+        resp.use {
+            val text = it.body.string()
+            if (!it.isSuccessful) {
+                val err = runCatching { ApiJson.decodeFromString<ApiErrorBody>(text) }.getOrNull()
+                if (it.code == 401) throw ApiError.Unauthorized(err?.code)
+                throw ApiError.Http(it.code, err?.code, err?.error)
+            }
+            return decode<UploadResponse>(text).urls
+        }
+    }
+
+    suspend fun togglePostReaction(id: Long, emoji: String): PostReactionToggle =
+        decode(send(request("POST", "/api/agent/reactions", buildJsonObject { put("post_id", id); put("emoji", emoji) })))
+
+    suspend fun markPostsRead(ids: List<Long>) {
+        runCatching { send(request("POST", "/api/agent/read", buildJsonObject { put("post_ids", JsonArray(ids.map { JsonPrimitive(it) })) })) }
     }
 
     /** The newest APK on the server (members only) — for the in-app update notice. */

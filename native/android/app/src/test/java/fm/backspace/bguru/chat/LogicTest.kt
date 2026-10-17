@@ -64,3 +64,32 @@ class LogicTest {
         assertEquals(false, caps.canReact)
     }
 }
+
+class TimelineLogicTest {
+    @Test fun mergeKeepsMineAndSetsToggled() {
+        val prev = listOf(Reaction("❤️", 2, mine = true), Reaction("👍", 1, mine = false))
+        val r = PostReactionToggle(added = true, reactions = listOf(PostReactionToggle.Count("❤️", 2), PostReactionToggle.Count("👍", 2)))
+        val out = TimelineStore.merge(r, prev, "👍")
+        assertEquals(listOf(true, true), out.map { it.mine })
+        assertEquals(listOf(2, 2), out.map { it.count })
+    }
+
+    @Test fun relativeTimes() {
+        val now = java.time.Instant.parse("2026-10-17T12:00:00Z")
+        assertEquals("たった今", relativeTime("2026-10-17T11:59:30Z", now))
+        assertEquals("5分前", relativeTime("2026-10-17T11:55:00Z", now))
+        assertEquals("3時間前", relativeTime("2026-10-17T09:00:00Z", now))
+        assertEquals("", relativeTime("not a date", now))
+    }
+
+    @Test fun decodesPostWithIncludes() {
+        val p = ApiJson.decodeFromString<Post>(
+            """{"id":9,"author_name":"mazzo","author_avatar":"/api/avatar/x","is_author":false,"reply_count":2,"text":"hi","images":["/api/media/a.jpg"],"created_at":"2026-10-17T00:00:00Z","club":"pet","reactions":[{"emoji":"❤️","count":1,"mine":true,"reactors":[]}],"unread":true}"""
+        )
+        assertEquals(true, p.unread)
+        assertEquals(listOf("/api/media/a.jpg"), p.images)
+        val caps = ApiJson.decodeFromString<Capabilities>("""{"features":{"posts":{"read":true,"publish":false,"max_images":5}}}""")
+        assertEquals(false, caps.canPublish)
+        assertEquals(true, caps.hasTimeline)
+    }
+}
