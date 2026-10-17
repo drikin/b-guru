@@ -44,6 +44,9 @@ export async function GET(req: NextRequest) {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       send = (event) => {
+        // The web has no voice UI yet, and this stream is open to signed-out
+        // visitors too: who is in the voice room goes to the members' apps only.
+        if (event.type === "voice") return;
         try {
           const payload = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
           controller.enqueue(encoder.encode(payload));

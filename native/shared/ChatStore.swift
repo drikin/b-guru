@@ -61,8 +61,13 @@ final class ChatStore {
     private var tempSeq = 0
     private var latestId = 0
 
+    /// The voice room. Lives as long as the chat, so a call survives switching
+    /// tabs or closing the Mac panel.
+    let voice: VoiceStore
+
     init(api: APIClient) {
         self.api = api
+        self.voice = VoiceStore(api: api)
     }
 
     var token: String { api.token }
@@ -82,6 +87,7 @@ final class ChatStore {
     func stop() {
         streamTask?.cancel()
         streamTask = nil
+        Task { await voice.leave() }
     }
 
     private func loadMembers() async {
@@ -91,6 +97,7 @@ final class ChatStore {
     private func loadCapabilities() async {
         do {
             capabilities = try await api.capabilities()
+            voice.configure(with: capabilities)
         } catch APIError.unauthorized {
             signedOut = true
         } catch {
@@ -131,6 +138,7 @@ final class ChatStore {
         switch ev.event {
         case "ready":
             connection = .live
+            if voice.enabled { Task { await voice.loadState() } } // resync after a reconnect
             await reload()
         case "chat":
             struct ChatEvent: Decodable { var action: String; var message: ChatMessage?; var id: Int?; var reactions: [Reaction]? }
@@ -158,6 +166,8 @@ final class ChatStore {
         case "presence":
             struct P: Decodable { var userIds: [String] }
             if let p = try? dec.decode(P.self, from: ev.data) { onlineCount = p.userIds.count }
+        case "voice":
+            if let v = try? dec.decode(VoiceRoomInfo.self, from: ev.data) { voice.apply(v) }
         case "revoked":
             signedOut = true
         default:

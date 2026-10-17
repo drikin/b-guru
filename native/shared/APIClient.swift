@@ -19,7 +19,13 @@ enum APIError: Error, Sendable {
 /// Talks to /api/agent/*. One shared URLSession so requests ride a warm
 /// HTTP/2 connection — the single biggest factor in how fast a send feels.
 final class APIClient: Sendable {
-    static let baseURL = URL(string: "https://bsm.backspace.fm")!
+    static let baseURL: URL = {
+        #if DEBUG
+        // Dev only: BGURU_DEV_BASE_URL=http://localhost:3000 talks to a local server.
+        if let s = ProcessInfo.processInfo.environment["BGURU_DEV_BASE_URL"], let u = URL(string: s) { return u }
+        #endif
+        return URL(string: "https://bsm.backspace.fm")!
+    }()
 
     let token: String
     private let session: URLSession
@@ -80,6 +86,22 @@ final class APIClient: Sendable {
 
     func capabilities() async throws -> Capabilities {
         try await send(request("GET", "/api/agent/capabilities"))
+    }
+
+    // MARK: Voice room
+
+    func voiceState() async throws -> VoiceStateResponse {
+        try await send(request("GET", "/api/agent/voice"))
+    }
+
+    func voiceToken() async throws -> VoiceTokenResponse {
+        try await send(request("POST", "/api/agent/voice/token", json: [:]))
+    }
+
+    struct OK: Decodable, Sendable { var ok: Bool }
+
+    func voiceKick(userId: String, ban: Bool) async throws {
+        _ = try await send(request("POST", "/api/agent/voice/kick", json: ["user_id": userId, "ban": ban]), as: OK.self)
     }
 
     func chat(limit: Int = 100) async throws -> ChatListResponse {

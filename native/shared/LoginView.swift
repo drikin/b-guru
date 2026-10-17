@@ -5,7 +5,7 @@ import UIKit
 #endif
 
 /// First run: sign in to B-guru in an embedded, non-persistent web view, then
-/// the app issues itself a device token (read / read_state / chat / post) from that
+/// the app issues itself a device token (read / read_state / chat / post / voice) from that
 /// signed-in page and keeps only the token, in the Keychain. The web session
 /// itself is thrown away with the web view. No JS bridge is installed: the
 /// token comes back as the return value of callAsyncJavaScript on our own
@@ -110,7 +110,7 @@ final class LoginWeb: NSObject, WKNavigationDelegate {
         const r = await fetch('/api/agent/token', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ device_name: device, scopes: ['read', 'read_state', 'chat', 'post'], replace_same_device: true }),
+          body: JSON.stringify({ device_name: device, scopes: ['read', 'read_state', 'chat', 'post', 'voice'], replace_same_device: true }),
           credentials: 'same-origin'
         });
         let d = null;

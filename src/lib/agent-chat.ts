@@ -15,9 +15,11 @@ import type { LiveEvent } from "./live";
 import type { Notification } from "./notifications";
 import type { ReactionSummary } from "./reactions";
 import type { AgentScope } from "./agent-auth";
+import type { VoiceState } from "./voice";
 import { isMentionedIn, mentionNamesFor } from "./chat-mention";
 import { apnsEnabled } from "./apns";
 import { fcmEnabled } from "./fcm";
+import { VOICE_MAX_PARTICIPANTS } from "./voice";
 import { resolveDisplayName } from "./display-name";
 
 export const AGENT_API_VERSION = 1;
@@ -118,12 +120,25 @@ export function liveToStreamEvent(ev: LiveEvent, viewer: ChatViewer): StreamEven
       },
     };
   }
+  if (ev.type === "voice") {
+    return { event: "voice", data: toAgentVoiceDto(ev.state) };
+  }
   return null;
+}
+
+/** Voice room state for the native apps (snake_case like the rest of /api/agent). */
+export function toAgentVoiceDto(s: VoiceState) {
+  return {
+    active: s.active,
+    opened_by: s.openedBy,
+    started_at: s.startedAt,
+    participants: s.participants.map((p) => ({ user_id: p.userId, name: p.name, avatar: p.avatar })),
+  };
 }
 
 /** The capabilities document for GET /api/agent/capabilities. `scopes` are the
  *  calling token's, so a client knows up front which actions will be refused. */
-export function agentCapabilities(scopes: AgentScope[]) {
+export function agentCapabilities(scopes: AgentScope[], opts: { voice?: boolean; voiceAdmin?: boolean } = {}) {
   const ttlHours = parseInt(CHAT_TTL, 10) || 24;
   const can = (s: AgentScope) => scopes.includes(s);
   return {
@@ -156,13 +171,23 @@ export function agentCapabilities(scopes: AgentScope[]) {
       },
       stream: {
         path: "/api/agent/stream",
-        events: ["ready", "chat", "presence", "notification"],
+        events: ["ready", "chat", "presence", "notification", "voice"],
         affects_presence: false,
       },
       notifications: { read: can("read"), stream: true },
       // APNs (iPhone/iPad) and FCM (Android): register with POST /api/agent/devices/push.
       push: { apns: apnsEnabled(), fcm: fcmEnabled(), register: "/api/agent/devices/push", kinds: ["chat_mention", "chat_new", "reply"] },
       summary: { path: "/api/agent/summary" },
+      // Voice room (LiveKit). `enabled` = configured and this member is in the rollout;
+      // `join` = this token has the "voice" scope (apps issued before it must sign in again).
+      voice: {
+        enabled: !!opts.voice,
+        join: !!opts.voice && can("voice"),
+        path: "/api/agent/voice",
+        max_participants: VOICE_MAX_PARTICIPANTS,
+        // Admins may remove anyone and ban; the session's opener may remove (server enforces both).
+        admin: !!opts.voice && !!opts.voiceAdmin,
+      },
     },
   };
 }

@@ -543,5 +543,32 @@ export async function initSchema() {
       window_start TIMESTAMPTZ NOT NULL,
       count INTEGER NOT NULL DEFAULT 0
     );
+
+    -- ボイスルーム（lib/voice.ts）。音声は保存しない。開いた回と入退室の記録だけを
+    -- モデレーションと監査のために 30 日残す（housekeeping が削除）。user_id は users.user_id。
+    CREATE TABLE IF NOT EXISTS voice_sessions (
+      id SERIAL PRIMARY KEY,
+      livekit_sid TEXT,
+      opened_by TEXT,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      ended_at TIMESTAMPTZ
+    );
+    -- 開いている回は常に 1 本（同時入室で 2 本立たない）。
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_voice_sessions_open ON voice_sessions((true)) WHERE ended_at IS NULL;
+    CREATE TABLE IF NOT EXISTS voice_participations (
+      id SERIAL PRIMARY KEY,
+      session_id INTEGER REFERENCES voice_sessions(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL,
+      joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      left_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS idx_voice_participations_open ON voice_participations(user_id) WHERE left_at IS NULL;
+    -- 管理者が入室禁止にした会員（解除は行を消す）。
+    CREATE TABLE IF NOT EXISTS voice_bans (
+      email TEXT PRIMARY KEY,
+      banned_by TEXT NOT NULL,
+      reason TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 }

@@ -49,7 +49,7 @@ echo "$INFO" | grep -q "Authority=Developer ID Application: .*($TEAM)" || { echo
 echo "$INFO" | grep -q "flags=.*runtime" || { echo "hardened runtime missing" >&2; exit 1; }
 echo "$INFO" | grep -q "Timestamp=" || { echo "secure timestamp missing" >&2; exit 1; }
 # Release must not carry dev-only switches.
-if strings "$APP/Contents/MacOS/B-guru Chat" | grep -q "BGURU_DEV_TOKEN"; then echo "dev token hook in release binary" >&2; exit 1; fi
+if strings "$APP/Contents/MacOS/B-guru Chat" | grep -q "BGURU_DEV_"; then echo "dev token hook in release binary" >&2; exit 1; fi
 ARCHS_BUILT="$(lipo -archs "$APP/Contents/MacOS/B-guru Chat")"
 case "$ARCHS_BUILT" in *arm64*x86_64*|*x86_64*arm64*) ;; *) echo "not universal: $ARCHS_BUILT" >&2; exit 1 ;; esac
 echo "signature OK (Developer ID, hardened runtime, timestamp, no dev hooks, universal: $ARCHS_BUILT)"

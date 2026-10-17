@@ -23,6 +23,7 @@ struct ChatScreen: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                VoiceBar(voice: store.voice)
                 messages
                 Divider()
                 composer

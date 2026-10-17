@@ -29,7 +29,7 @@ echo "=== 2/3 check ==="
 APP="$ARCHIVE/Products/Applications/B-guru Chat.app"
 [ -d "$APP/PlugIns/BguruChatNSE.appex" ] || { echo "NSE missing" >&2; exit 1; }
 codesign -d --entitlements :- "$APP" 2>/dev/null | grep -A1 "aps-environment" | tail -1
-if strings "$APP/B-guru Chat" | grep -q "BGURU_DEV_TOKEN"; then echo "dev token hook in release binary" >&2; exit 1; fi
+if strings "$APP/B-guru Chat" | grep -q "BGURU_DEV_"; then echo "dev token hook in release binary" >&2; exit 1; fi
 echo "archive OK: $ARCHIVE"
 
 if [ "$UPLOAD" -eq 0 ]; then echo "=== 3/3 skipped (--no-upload) ==="; exit 0; fi

@@ -21,9 +21,11 @@ import { clientIp } from "./client-ip";
 /** post = ネイティブアプリの人による投稿（タイムラインへの投稿・画像・リアクション）。
  *  write（エージェントの投稿・via=agent）とは別のバケツにして、AI エージェント向けの
  *  厳しい上限（1 時間 10 回）を人のアプリに当てないようにする。 */
-export type AgentScope = "read" | "read_state" | "write" | "chat" | "post";
+// "voice": join the voice room. Only the people's apps ask for it (native login);
+// /connect (AI agents) never offers it, so an agent cannot speak in the room.
+export type AgentScope = "read" | "read_state" | "write" | "chat" | "post" | "voice";
 
-export const AGENT_SCOPES: AgentScope[] = ["read", "read_state", "write", "chat", "post"];
+export const AGENT_SCOPES: AgentScope[] = ["read", "read_state", "write", "chat", "post", "voice"];
 
 /** トークン TTL（日）。 */
 export const AGENT_TOKEN_TTL_DAYS = 30;
@@ -305,6 +307,7 @@ export const RATE_RULES: Record<AgentScope, RateRule> = {
   write: { limit: 10, window: "1 hour" },
   chat: { limit: 120, window: "1 hour" }, // 送信 + リアクション。人のチャット（ネイティブアプリ）が詰まらない水準
   post: { limit: 60, window: "1 hour" }, // アプリからの投稿・画像・リアクション（1 投稿 = upload + publish の 2 回）
+  voice: { limit: 60, window: "1 hour" }, // 入室トークン発行・モデレーション（再接続込みでも足りる水準）
 };
 
 export interface RateResult {

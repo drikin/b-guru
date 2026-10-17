@@ -11,6 +11,7 @@
  * ensureChatSweeper / ensurePresenceSweeper.
  */
 import { pool } from "./db";
+import { purgeOldVoiceLog } from "./voice";
 
 const INTERVAL_MS = 60 * 60 * 1000; // hourly — expired rows are harmless, just clutter
 
@@ -50,7 +51,9 @@ export function ensureHousekeeping(): void {
             `[bsm] housekeeping: -${r.sessions} sessions, -${r.otp} otp, -${r.agentTokens} agent tokens, -${r.agentAudit} agent audit`
           );
       })
-      .catch((e) => console.error("[bsm] housekeeping error:", (e as Error)?.message));
+      .catch((e) => console.error("[bsm] housekeeping error:", (e as Error)?.message))
+      .then(() => purgeOldVoiceLog())
+      .catch((e) => console.error("[bsm] voice log purge error:", (e as Error)?.message));
   run();
   setInterval(run, INTERVAL_MS).unref?.();
 }

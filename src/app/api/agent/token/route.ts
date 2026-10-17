@@ -65,8 +65,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // "voice" (speaking in the voice room) is only for the people's own apps, which sign
+  // in through their login screen with replace_same_device. Tokens made for AI agents
+  // (settings page / connect) never get it, even if asked for by hand.
+  const nativeLogin = body?.replace_same_device === true;
   const scopes = AGENT_SCOPES.filter((s: AgentScope) =>
-    Array.isArray(body?.scopes) ? body.scopes.includes(s) : false
+    Array.isArray(body?.scopes) ? body.scopes.includes(s) && (s !== "voice" || nativeLogin) : false
   );
 
   try {

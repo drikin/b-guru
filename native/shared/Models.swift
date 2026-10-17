@@ -92,9 +92,16 @@ struct Capabilities: Decodable, Sendable {
         var markRead: Bool?
         var maxImages: Int?
     }
+    struct VoiceFeatures: Decodable, Sendable {
+        var enabled: Bool?
+        var join: Bool?
+        var admin: Bool?
+        var maxParticipants: Int?
+    }
     struct Features: Decodable, Sendable {
         var chat: ChatFeatures?
         var posts: PostFeatures?
+        var voice: VoiceFeatures?
     }
     var apiVersion: Int
     var scopes: [String]?
@@ -111,6 +118,40 @@ struct Capabilities: Decodable, Sendable {
     var canPublish: Bool { features?.posts?.publish ?? false }
     var canReactPosts: Bool { features?.posts?.reactions ?? false }
     var maxImages: Int { features?.posts?.maxImages ?? 5 }
+    /// Voice room is on for this member (server configured + in the rollout).
+    var voiceEnabled: Bool { features?.voice?.enabled ?? false }
+    /// This token may join (has the "voice" scope — older tokens must sign in again).
+    var canJoinVoice: Bool { features?.voice?.join ?? false }
+    var isVoiceAdmin: Bool { features?.voice?.admin ?? false }
+}
+
+// MARK: - Voice room
+
+/// Who is in the voice room, as the server sees it (GET /api/agent/voice and
+/// the stream's `voice` event). Shown to people who have not joined.
+struct VoiceRoomInfo: Codable, Equatable, Sendable {
+    struct Member: Codable, Equatable, Sendable, Identifiable {
+        var userId: String
+        var name: String?
+        var avatar: String?
+        var id: String { userId }
+    }
+    var active: Bool
+    var openedBy: String?
+    var startedAt: String?
+    var participants: [Member]
+}
+
+struct VoiceStateResponse: Decodable, Sendable {
+    var enabled: Bool
+    var room: VoiceRoomInfo?
+}
+
+struct VoiceTokenResponse: Decodable, Sendable {
+    var url: String
+    var token: String
+    var room: String
+    var identity: String
 }
 
 struct TokenIssueResponse: Decodable, Sendable {

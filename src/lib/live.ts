@@ -2,6 +2,7 @@ import type { PostPoll } from "./poll";
 import { EventEmitter } from "events";
 import type { ChatMessage } from "./chat";
 import type { UrlPreview } from "./urlpreview";
+import type { VoiceState } from "./voice";
 
 // Chat delete events only carry the message id; create events carry the full
 // message. A chat event's `message` always has at least `id`.
@@ -40,7 +41,9 @@ export type LiveEvent =
   | { type: "club"; postId: number; club: string | null }
   /** A chat message's reactions changed. `userIds` are opaque users.user_id (never
    *  emails) so each receiver can mark its own chips; `reactors` are display names. */
-  | { type: "chat_reaction"; messageId: number; reactions: ChatReactionLive[] };
+  | { type: "chat_reaction"; messageId: number; reactions: ChatReactionLive[] }
+  /** Who is in the voice room (user_id / display name / avatar only — no email). */
+  | { type: "voice"; state: VoiceState };
 
 export type ChatReactionLive = { emoji: string; count: number; reactors: string[]; userIds: string[] };
 

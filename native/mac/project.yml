@@ -9,6 +9,10 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     exactVersion: 2.9.6
+  # Voice room (LiveKit, Apache-2.0, official SDK). Pinned exactly like Sparkle.
+  LiveKit:
+    url: https://github.com/livekit/client-sdk-swift
+    revision: 07d7d04ba0b284ad485e82696b0e88009c4df54a   # tag 2.17.0 (Package.resolved is not in git, so pin the commit)
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -37,6 +41,7 @@ targets:
     platform: macOS
     dependencies:
       - package: Sparkle
+      - package: LiveKit
     sources:
       - path: BguruChat/Sources
       - path: ../shared          # shared with the iOS/iPadOS app
@@ -58,11 +63,17 @@ targets:
         SUScheduledCheckInterval: 21600
         # Sandboxed app: the installer runs through Sparkle's launcher XPC service.
         SUEnableInstallerLauncherService: true
+        NSMicrophoneUsageDescription: ボイスルームで話すときだけマイクを使います。録音はしません。
     entitlements:
       path: BguruChat/BguruChat.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true
+        # Voice room: the microphone, only while in the room.
+        com.apple.security.device.audio-input: true
+        # Voice room: WebRTC receives the audio over UDP on sockets it binds itself,
+        # which the sandbox treats as "incoming connections" (LiveKit's own test host has it too).
+        com.apple.security.network.server: true
         # Read the images a member chooses (file picker / drag & drop) to attach to a post.
         com.apple.security.files.user-selected.read-only: true
         # Sparkle installer (sandboxed apps): talk to its XPC services.
@@ -82,6 +93,7 @@ targets:
     deploymentTarget: "17.0"
     dependencies:
       - target: BguruChatNSE
+      - package: LiveKit
     entitlements:
       path: ../ios/BguruChat.entitlements
       properties:
@@ -115,6 +127,10 @@ targets:
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: true
         ITSAppUsesNonExemptEncryption: false
+        NSMicrophoneUsageDescription: ボイスルームで話すときだけマイクを使います。録音はしません。
+        # Keep the voice room going with the screen off / in another app.
+        UIBackgroundModes:
+          - audio
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fm.backspace.bguru.chat

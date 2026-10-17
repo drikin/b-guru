@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>backspace.fm</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>ボイスルームで話すときだけマイクを使います。録音はしません。</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUEnableInstallerLauncherService</key>

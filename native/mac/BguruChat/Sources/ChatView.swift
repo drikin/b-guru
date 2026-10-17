@@ -28,6 +28,7 @@ struct ChatView: View {
         VStack(spacing: 0) {
             header
             Divider()
+            VoiceBar(voice: store.voice)
             messages
             Divider()
             composer
