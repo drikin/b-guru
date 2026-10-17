@@ -5,6 +5,7 @@
 import { cleanDisplayName } from "./display-name";
 import { listMembers } from "./ghost";
 import { gravatarUrl } from "./posts";
+import { resolveDisplayNames } from "./display-name";
 import { ensureUserId } from "./user";
 
 export interface MentionMember {
@@ -30,19 +31,23 @@ export function toProxiedAvatar(avatar: string | null | undefined): string | nul
 
 export async function mentionMembers(): Promise<MentionMember[]> {
   if (cache && Date.now() - cache.ts < CACHE_TTL) return cache.data;
-  const members = await listMembers();
+  const members = (await listMembers()).filter((m) => m.status === "paid" || m.status === "comped");
+  // The name a member is shown (and matched for mentions) as on B-guru: the
+  // profile display name first — the same name the chat's 返信 button inserts.
+  // Ghost's account name only when there is no B-guru name yet (riyu 2026-10-17:
+  // 「返信」と @ 補完で宛先の表示が違う).
+  const shown = await resolveDisplayNames(members.map((m) => m.email));
   const data: MentionMember[] = [
     // ビーグル（システムアカウント）を先頭に → @ビーグル で明示的にメンション可能に
     { userId: await ensureUserId("system@backspace.fm"), name: "ビーグル", avatar: "/icon-192.png" },
     ...(await Promise.all(
       members
-        .filter((m) => m.status === "paid" || m.status === "comped")
         .map(async (m) => ({
           // The club-leader picker PATCHes the userId and the server resolves
           // it (club_leaders stays email-keyed internally); the mention
           // highlighter compares userId with the viewer's own.
           userId: await ensureUserId(m.email),
-          name: cleanDisplayName(m.name) || m.email.split("@")[0],
+          name: shown.get(m.email) || cleanDisplayName(m.name) || m.email.split("@")[0],
           avatar: toProxiedAvatar(m.avatar_image) || gravatarUrl(m.email),
         }))
     )),

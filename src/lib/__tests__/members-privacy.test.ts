@@ -27,6 +27,13 @@ vi.mock("@/lib/user", () => ({
   userIdToEmail: (id: string) => userIdToEmail(id),
 }));
 
+// B-guru profile names (DB) — matsuo has one, which wins over Ghost's name.
+vi.mock("@/lib/display-name", async (orig) => ({
+  ...(await orig<typeof import("@/lib/display-name")>()),
+  resolveDisplayNames: async (emails: string[]) =>
+    new Map(emails.filter((e) => e === "matsuo@gmail.com").map((e) => [e, "まつお"])),
+}));
+
 const setClubLeader = vi.fn();
 vi.mock("@/lib/club-leaders", () => ({
   getClubLeaders: async () => ({}),
@@ -78,6 +85,14 @@ describe("GET /api/members — real handler", () => {
     expect(ids).toContain("uid_matsuo");
     expect(ids).toContain("uid_noname");
     expect(ids).not.toContain("uid_free");
+  });
+
+  it("names members by their B-guru display name (same as the chat 返信 button)", async () => {
+    sessionEmail.mockResolvedValue("someone@example.com");
+    const json = await (await membersGET()).json();
+    const name = (id: string) => json.members.find((m: { userId: string }) => m.userId === id)?.name;
+    expect(name("uid_matsuo")).toBe("まつお");
+    expect(name("uid_noname")).toBe("noname");
   });
 
   it("is 401 without a session", async () => {
