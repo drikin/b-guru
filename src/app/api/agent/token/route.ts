@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ネイティブアプリの再ログイン: 同じデバイス名の古いトークンを先に失効させ、
-    //   入れ直し・ログインし直しで枠（5 本）が埋まっていかないようにする。
+    //   入れ直し・ログインし直しで枠（MAX_TOKENS_PER_EMAIL）が埋まっていかないようにする。
     if (body?.replace_same_device === true) {
       await revokeTokensByDeviceName(email, deviceName);
     }

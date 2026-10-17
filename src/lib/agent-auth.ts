@@ -28,7 +28,7 @@ export const AGENT_SCOPES: AgentScope[] = ["read", "read_state", "write", "chat"
 /** トークン TTL（日）。 */
 export const AGENT_TOKEN_TTL_DAYS = 30;
 /** 1 メールあたりのアクティブトークン上限（デバイスごと）。 */
-export const MAX_TOKENS_PER_EMAIL = 5;
+export const MAX_TOKENS_PER_EMAIL = 10; // 5 → 10（drikin 2026-10-17: Mac・iPhone・iPad・Android・エージェントで足りない）
 /** Ghost 会員再判定の最小間隔（時間）。 */
 export const MEMBERSHIP_RECHECK_HOURS = 6;
 
@@ -179,7 +179,7 @@ export async function revokeAgentToken(tokenId: number, email: string): Promise<
 /**
  * 同じデバイス名の有効なトークンを失効させる（ネイティブアプリの再ログイン用）。
  * アプリを入れ直したりログインし直したりすると、手元から消えた古いトークンが
- * 有効なまま 5 本の枠を占め続ける。発行時に `replace_same_device: true` が来たときだけ、
+ * 有効なまま上限（MAX_TOKENS_PER_EMAIL）の枠を占め続ける。発行時に `replace_same_device: true` が来たときだけ、
  * 本人の・完全一致の名前のものに限って片付ける。返り値は失効させた本数。
  */
 export async function revokeTokensByDeviceName(email: string, deviceName: string): Promise<number> {
