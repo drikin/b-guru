@@ -13,7 +13,7 @@ struct ChatScreen: View {
     @State private var notifyAll = PushCenter.shared.notifyMode == "all"
     @State private var quietHours = PushCenter.shared.quietHours
     @State private var editingId: Int?
-    @FocusState private var composerFocused: Bool
+    @State private var composerFocused = false
     /// Bumped on every send: a fresh text field drops any uncommitted dictation /
     /// IME text that would otherwise stay in (or come back into) the composer.
     @State private var composerGeneration = 0
@@ -115,6 +115,7 @@ struct ChatScreen: View {
             .defaultScrollAnchor(.bottom)
             .keepsBottomOnResize()
             .scrollDismissesKeyboard(.interactively)
+            .dismissesKeyboardOnTap()
             // A LazyVStack only estimates the height of rows it hasn't drawn, so the
             // bottom anchor can land short after the first load (seen on iPad as a
             // blank area with the newest messages below the fold). Jump once more
@@ -170,33 +171,30 @@ struct ChatScreen: View {
                 }
             }
             HStack(alignment: .bottom, spacing: 8) {
-                TextField(editingId == nil ? "メッセージ" : "編集内容", text: $draft, axis: .vertical)
-                    .lineLimit(1...6)
-                    .focused($composerFocused)
+                // Hardware keyboard (iPad): Return sends, Shift+Return is a newline, and the
+                // Return that confirms a Japanese conversion only confirms it (see
+                // ComposerTextView). The on-screen keyboard's return key inserts a newline.
+                ComposerTextView(
+                    text: $draft,
+                    isFocused: $composerFocused,
+                    placeholder: editingId == nil ? "メッセージ" : "編集内容",
+                    onSubmit: submit,
+                    onUpArrowWhenEmpty: {
+                        guard editingId == nil, let m = store.lastOwnMessage, store.capabilities?.canEdit ?? false else { return false }
+                        beginEdit(m)
+                        return true
+                    },
+                    onEscape: {
+                        guard editingId != nil else { return false }
+                        cancelEdit()
+                        return true
+                    }
+                )
                     .padding(.vertical, 8)
                     .padding(.horizontal, 12)
                     .background(RoundedRectangle(cornerRadius: 18).fill(Color(.secondarySystemBackground)))
-                    // Hardware keyboard (iPad): Return sends, Shift+Return is a newline.
-                    // The on-screen keyboard's return key still inserts a newline.
-                    // While a Japanese conversion is open, Return confirms it instead
-                    // (takuto 2026-10-16: it used to send mid-conversion).
-                    .onKeyPress(keys: [.return], phases: .down) { press in
-                        if press.modifiers.contains(.shift) || TextComposition.isActive { return .ignored }
-                        submit()
-                        return .handled
-                    }
-                    .onKeyPress(.upArrow) {
-                        guard !TextComposition.isActive, draft.isEmpty, editingId == nil, let m = store.lastOwnMessage,
-                              store.capabilities?.canEdit ?? false else { return .ignored }
-                        beginEdit(m)
-                        return .handled
-                    }
-                    .onKeyPress(.escape) {
-                        guard !TextComposition.isActive, editingId != nil else { return .ignored }
-                        cancelEdit()
-                        return .handled
-                    }
-                    .id(composerGeneration)
+                    .contentShape(Rectangle())
+                    .onTapGesture { composerFocused = true }
                     .onChange(of: draft) { old, v in
                         if isLateEcho(old: old, new: v) { draft = ""; return }
                         let limit = store.capabilities?.maxBody ?? 1000

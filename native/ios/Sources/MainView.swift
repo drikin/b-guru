@@ -28,6 +28,8 @@ struct MainView: View {
             .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea(.container, edges: .bottom)
             .onChange(of: timeline.openThread) { _, id in if id != nil { tab = .timeline } }
+            // Switching pages hides the keyboard (it used to stay up over the timeline).
+            .onChange(of: tab) { _, _ in Keyboard.dismiss() }
         }
     }
 

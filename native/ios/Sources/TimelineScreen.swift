@@ -43,6 +43,8 @@ struct TimelineScreen: View {
                 .frame(maxWidth: .infinity)
             }
             .refreshable { await timeline.refresh() }
+            .scrollDismissesKeyboard(.immediately)
+            .dismissesKeyboardOnTap()
             .navigationTitle("タイムライン")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

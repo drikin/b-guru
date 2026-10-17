@@ -54,6 +54,7 @@ struct ThreadScreen: View {
                 }
                 .refreshable { await load() }
                 .scrollDismissesKeyboard(.interactively)
+                .dismissesKeyboardOnTap()
                 .onChange(of: replies.last?.id) { _, last in
                     if let last { withAnimation { proxy.scrollTo(last, anchor: .bottom) } }
                 }
