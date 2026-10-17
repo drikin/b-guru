@@ -31,6 +31,8 @@ final class VoiceStore {
     /// People in the room while I am in it (me first), from LiveKit itself.
     private(set) var members: [Member] = []
     private(set) var micOn = false
+    /// Turning the mic on/off is in progress.
+    private(set) var micBusy = false
     /// What the mic is sending right now, 0…1 (after echo cancellation / noise
     /// suppression), measured on this device so it reacts instantly.
     private(set) var micLevel: Float = 0
@@ -190,11 +192,18 @@ final class VoiceStore {
         await teardown()
     }
 
+    /// The first unmute starts the mic and publishes the track, which takes a
+    /// second or two. The button flips at once (optimistic) and ignores taps
+    /// until that finishes — otherwise a second tap queued a "mute" and the
+    /// first unmute seemed not to work.
     func setMic(_ on: Bool) async {
-        guard let room, phase == .connected || phase == .reconnecting else { return }
+        guard let room, phase == .connected || phase == .reconnecting, !micBusy else { return }
+        micBusy = true
+        micOn = on
+        notice = nil
+        defer { micBusy = false }
         do {
             try await room.localParticipant.setMicrophone(enabled: on)
-            micOn = on
             setMeter(on)
         } catch {
             micOn = room.localParticipant.isMicrophoneEnabled()
@@ -221,6 +230,7 @@ final class VoiceStore {
         observer = nil
         phase = .idle
         micOn = false
+        micBusy = false
         setMeter(false)
         members = []
         await r?.disconnect()

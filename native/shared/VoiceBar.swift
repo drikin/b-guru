@@ -158,6 +158,11 @@ private struct MicButton: View {
                         .scaleEffect(active && !reduceMotion ? 1 + CGFloat(voice.micLevel) * 0.18 : 1)
                         .opacity(active ? 1 : 0)
                 )
+                .overlay(alignment: .bottomTrailing) {
+                    if voice.micBusy {
+                        ProgressView().controlSize(.mini).padding(1)
+                    }
+                }
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: voice.micLevel)
                 .contentShape(Rectangle())
         }
