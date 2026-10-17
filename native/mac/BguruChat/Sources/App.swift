@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var panel: ChatPanel?
     private var loginWindow: NSWindow?
     private var store: ChatStore?
+    private var timeline: TimelineStore?
     private var hotKey: HotKey?
     private var observeTask: Task<Void, Never>?
     private let settings = AppSettings.shared
@@ -106,14 +107,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // MARK: - Session
 
     private func startSession(token: String) {
-        let store = ChatStore(api: APIClient(token: token))
+        let api = APIClient(token: token)
+        let store = ChatStore(api: api)
+        let timeline = TimelineStore(api: api)
+        self.timeline = timeline
+        MediaCache.shared.token = token
         store.onMention = { [weak self] m in self?.notifyMention(m) }
         store.onNewMessage = { [weak self] m in self?.notifyNewMessage(m) }
         store.onBecameVisible = { [weak self] in self?.clearBundledNotification() }
         self.store = store
         store.start()
         Updater.shared.start(token: token)
-        panel = ChatPanel(store: store, onSignOut: { [weak self] in self?.signOut() })
+        panel = ChatPanel(store: store, timeline: timeline, onSignOut: { [weak self] in self?.signOut() })
         observeStore()
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
@@ -142,6 +147,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         panel?.close()
         panel = nil
         store = nil
+        timeline = nil
+        MediaCache.shared.token = nil
         Keychain.delete()
         Updater.shared.stop()
         if revoke, let token { Task { await APIClient(token: token).revokeSelf() } }

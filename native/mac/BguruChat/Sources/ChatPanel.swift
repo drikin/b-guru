@@ -31,7 +31,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         return false
     }
 
-    init(store: ChatStore, onSignOut: @escaping () -> Void) {
+    init(store: ChatStore, timeline: TimelineStore, onSignOut: @escaping () -> Void) {
         self.store = store
         super.init(contentRect: NSRect(x: 0, y: 0, width: 380, height: 560),
                    styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
@@ -50,7 +50,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         standardWindowButton(.zoomButton)?.isHidden = true
         delegate = self
         animationBehavior = .utilityWindow
-        let root = ChatView(store: store, pin: pin, onClose: { [weak self] in self?.dismiss() }, onSignOut: onSignOut)
+        let root = MainPanelView(store: store, timeline: timeline, pin: pin, onClose: { [weak self] in self?.dismiss() }, onSignOut: onSignOut)
         contentView = NSHostingView(rootView: root)
         pin.onChange = { [weak self] pinned in self?.applyPin(pinned) }
         if UserDefaults.standard.bool(forKey: "pinned") { pin.pinned = true }

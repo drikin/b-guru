@@ -1,7 +1,5 @@
 import SwiftUI
 
-enum MainTab: Hashable { case timeline, chat }
-
 /// iPhone (compact): chat and timeline side by side as pages — swipe left/right or
 /// use the switch at the top. iPad (regular): both at once, timeline left, chat right.
 struct MainView: View {

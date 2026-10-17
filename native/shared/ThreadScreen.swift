@@ -63,9 +63,9 @@ struct ThreadScreen: View {
             replyBar
         }
         .navigationTitle(root?.authorName.map { "\($0) さんの投稿" } ?? "スレッド")
-        .navigationBarTitleDisplayMode(.inline)
+        .inlineNavigationTitle()
         .task { await load() }
-        .fullScreenCover(item: $viewing) { ImageViewer(item: $0) }
+        .imageViewer($viewing)
         .alert("返信するには再接続が必要です", isPresented: $needsReconnect) {
             Button("再接続する", action: onReconnect)
             Button("あとで", role: .cancel) {}
@@ -96,7 +96,7 @@ struct ThreadScreen: View {
                     .focused($replyFocused)
                     .padding(.vertical, 8)
                     .padding(.horizontal, 12)
-                    .background(RoundedRectangle(cornerRadius: 18).fill(Color(.secondarySystemBackground)))
+                    .background(RoundedRectangle(cornerRadius: 18).fill(Color.primary.opacity(0.06)))
                     .disabled(capabilities?.canPublish != true)
                     .onTapGesture { if capabilities?.canPublish != true { needsReconnect = true } }
                 Button {

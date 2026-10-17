@@ -1,6 +1,9 @@
 import Foundation
 import Observation
 
+/// Chat or timeline (iPhone pages, the Mac panel switch).
+enum MainTab: Hashable { case timeline, chat }
+
 /// The timeline (root posts, newest activity first) for the native apps.
 /// Read-mostly: list + reactions + unread, open a thread, reply / post with images.
 /// Not streamed: refreshed on appear, on pull, when the app comes back and every

@@ -6,11 +6,15 @@ struct ChatView: View {
     @Bindable var pin: PinState
     let onClose: () -> Void
     let onSignOut: () -> Void
+    /// The chat / timeline switch shown in place of the title.
+    var tabPicker: AnyView? = nil
 
     @Bindable private var settings = AppSettings.shared
     @State private var draft: String
 
-    init(store: ChatStore, pin: PinState, onClose: @escaping () -> Void, onSignOut: @escaping () -> Void, initialDraft: String = "") {
+    init(store: ChatStore, pin: PinState, onClose: @escaping () -> Void, onSignOut: @escaping () -> Void,
+         initialDraft: String = "", tabPicker: AnyView? = nil) {
+        self.tabPicker = tabPicker
         self.store = store
         self.pin = pin
         self.onClose = onClose
@@ -41,9 +45,13 @@ struct ChatView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: store.unreadCount > 0 ? "dog.fill" : "dog")
-                .foregroundStyle(Color.accentGreen)
-            Text("B-guru チャット").font(.headline)
+            if let tabPicker {
+                tabPicker
+            } else {
+                Image(systemName: store.unreadCount > 0 ? "dog.fill" : "dog")
+                    .foregroundStyle(Color.accentGreen)
+                Text("B-guru チャット").font(.headline)
+            }
             if store.connection != .live {
                 Text(store.connection == .offline ? "オフライン" : "接続中…")
                     .font(.caption).foregroundStyle(.secondary)

@@ -186,19 +186,3 @@ final class ComposerUITextView: UITextView {
         updatePlaceholder()
     }
 }
-
-/// Hide the software keyboard wherever it is (tap outside the composer, page switch).
-@MainActor
-enum Keyboard {
-    static func dismiss() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-    }
-}
-
-extension View {
-    /// Tapping this area (outside a text field) hides the keyboard. Simultaneous,
-    /// so buttons, links and long-press menus inside keep working.
-    func dismissesKeyboardOnTap() -> some View {
-        simultaneousGesture(TapGesture().onEnded { Keyboard.dismiss() })
-    }
-}

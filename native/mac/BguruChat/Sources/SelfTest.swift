@@ -53,7 +53,14 @@ enum SelfTest {
             // — ScrollView, TextField — draw too; ImageRenderer cannot.
             let pin = PinState()
             let draft = CommandLine.arguments.contains("-demo") ? "こんにちは @n" : ""
-            let host = NSHostingView(rootView: ChatView(store: store, pin: pin, onClose: {}, onSignOut: {}, initialDraft: draft))
+            let host: NSView
+            if CommandLine.arguments.contains("-timeline") {
+                let t = TimelineStore(api: APIClient(token: "demo"))
+                t.debugLoadDemo()
+                host = NSHostingView(rootView: MainPanelView(store: store, timeline: t, pin: pin, onClose: {}, onSignOut: {}, initialTab: .timeline))
+            } else {
+                host = NSHostingView(rootView: ChatView(store: store, pin: pin, onClose: {}, onSignOut: {}, initialDraft: draft))
+            }
             let win = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 380, height: 560),
                                styleMask: [.borderless], backing: .buffered, defer: false)
             win.appearance = NSAppearance(named: CommandLine.arguments.contains("-dark") ? .darkAqua : .aqua)

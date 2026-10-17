@@ -1,6 +1,6 @@
 import SwiftUI
 import PhotosUI
-import UIKit
+import UniformTypeIdentifiers
 
 /// Text + up to 5 photos, shared by a new post (sheet) and a thread reply (bar).
 /// Photos are resized (long side ≤ 2048 px) and sent as JPEG — HEIC and huge
@@ -9,7 +9,7 @@ import UIKit
 @Observable
 final class PostDraft {
     var text = ""
-    var images: [UIImage] = []
+    var images: [PlatformImage] = []
     var picks: [PhotosPickerItem] = [] {
         didSet { Task { await loadPicks() } }
     }
@@ -28,9 +28,18 @@ final class PostDraft {
         let items = picks
         picks = []
         for item in items where images.count < maxImages {
-            if let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
+            if let data = try? await item.loadTransferable(type: Data.self), let img = PlatformImage(data: data) {
                 images.append(img)
             }
+        }
+    }
+
+    /// macOS: images chosen with the file picker (or dropped on the composer).
+    func add(fileURLs: [URL]) {
+        for url in fileURLs where images.count < maxImages {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            if let data = try? Data(contentsOf: url), let img = PlatformImage(data: data) { images.append(img) }
         }
     }
 
@@ -45,7 +54,7 @@ final class PostDraft {
         do {
             var urls: [String] = []
             if !images.isEmpty {
-                let jpegs = images.compactMap { Self.jpeg($0) }
+                let jpegs = images.compactMap { $0.uploadJPEG() }
                 urls = try await api.upload(images: jpegs)
             }
             let post = try await api.publish(text: text.trimmingCharacters(in: .whitespacesAndNewlines), images: urls, parentId: parentId)
@@ -63,18 +72,6 @@ final class PostDraft {
         }
         return nil
     }
-
-    static func jpeg(_ image: UIImage, maxSide: CGFloat = 2048) -> Data? {
-        let size = image.size
-        let scale = min(1, maxSide / max(size.width, size.height))
-        let target = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
-        let format = UIGraphicsImageRendererFormat.default()
-        format.scale = 1
-        let resized = UIGraphicsImageRenderer(size: target, format: format).image { _ in
-            image.draw(in: CGRect(origin: .zero, size: target))
-        }
-        return resized.jpegData(compressionQuality: 0.82)
-    }
 }
 
 /// Thumbnails of the attached photos with ✕.
@@ -86,7 +83,7 @@ struct DraftImages: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
                     ForEach(Array(draft.images.enumerated()), id: \.offset) { i, img in
-                        Image(uiImage: img).resizable().scaledToFill()
+                        Image(platformImage: img).resizable().scaledToFill()
                             .frame(width: 64, height: 64)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .overlay(alignment: .topTrailing) {
@@ -112,6 +109,7 @@ struct ComposeSheet: View {
     let onPosted: (Post) -> Void
     @State private var draft: PostDraft
     @FocusState private var focused: Bool
+    @State private var importing = false
     @Environment(\.dismiss) private var dismiss
 
     init(api: APIClient, parentId: Int?, maxImages: Int, onPosted: @escaping (Post) -> Void) {
@@ -135,13 +133,17 @@ struct ComposeSheet: View {
                         Label("写真", systemImage: "photo.on.rectangle")
                     }
                     .disabled(draft.images.count >= draft.maxImages)
+                    #if os(macOS)
+                    Button { importing = true } label: { Label("ファイル…", systemImage: "folder") }
+                        .disabled(draft.images.count >= draft.maxImages)
+                    #endif
                     Text("\(draft.images.count)/\(draft.maxImages)").font(.caption).foregroundStyle(.secondary)
                     Spacer()
                 }
             }
             .padding()
             .navigationTitle(parentId == nil ? "新しい投稿" : "返信")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() }.disabled(draft.sending) }
                 ToolbarItem(placement: .confirmationAction) {
@@ -157,6 +159,16 @@ struct ComposeSheet: View {
                 }
             }
             .interactiveDismissDisabled(draft.sending || !draft.text.isEmpty || !draft.images.isEmpty)
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
+                if case let .success(urls) = result { draft.add(fileURLs: urls) }
+            }
+            .dropDestination(for: URL.self) { urls, _ in
+                draft.add(fileURLs: urls)
+                return true
+            }
+            #if os(macOS)
+            .frame(minWidth: 420, minHeight: 320)
+            #endif
             .onAppear { focused = true }
         }
     }
