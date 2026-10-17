@@ -40,6 +40,7 @@ import {
 import { notifications as mantineNotifications } from "@mantine/notifications";
 import { mdToHtml } from "@/lib/md";
 import { computeNextKbdId } from "@/lib/kbd-nav";
+import { orderClubKeys } from "@/lib/club-order";
 import {
   ReactionBar,
   useReactions,
@@ -6135,17 +6136,53 @@ export default function Home() {
       .finally(() => setFeedLoadingMore(false));
   };
 
-  // 部活の表示順（活性度=直近7日アクティビティ降順、同数ならカタログ順）。
+  // ---- Per-user club pins (snize 2026-10-17) ----
+  // ピン留めした部活は活性度に関係なく先頭に固定（ピンした順）。サーバー
+  // （club_pins テーブル）に保存され端末間で同期。目玉（非表示）とは独立。
+  const [pinnedClubs, setPinnedClubs] = useState<string[]>([]);
+  const pinnedClubsRef = useRef<string[]>([]);
+  pinnedClubsRef.current = pinnedClubs;
+
+  // 部活の表示順（ピン留め → 活性度=直近7日アクティビティ降順、同数ならカタログ順）。
   // 左サイドバーとモバイルの部活バーの両方がこれを使う — 2箇所で別々に
   // ソートすると、片方だけ直して順序が食い違う（drikin は重複実装を嫌う）。
   const orderedClubKeys = useMemo(
     () =>
-      currentCategories()
-        .flatMap((cat) => cat.keys)
-        .slice()
-        .sort((a, b) => (clubActivity[b] ?? 0) - (clubActivity[a] ?? 0)),
-    [clubCatalogState, clubActivity],
+      orderClubKeys(
+        currentCategories().flatMap((cat) => cat.keys),
+        clubActivity,
+        pinnedClubs,
+      ),
+    [clubCatalogState, clubActivity, pinnedClubs],
   );
+  const pinnedClubSet = useMemo(() => new Set(pinnedClubs), [pinnedClubs]);
+  const loadPinnedClubs = useCallback(() => {
+    fetch("/api/clubs/pins", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { pinned: [] }))
+      .then((d) => setPinnedClubs(Array.isArray(d.pinned) ? d.pinned : []))
+      .catch(() => {});
+  }, []);
+  const toggleClubPinned = useCallback((key: string) => {
+    const nextPinned = !pinnedClubsRef.current.includes(key);
+    // 楽観更新 → PUT → 失敗時は戻す（目玉トグルと同じ流儀）。
+    const apply = (pin: boolean) =>
+      setPinnedClubs((prev) =>
+        pin ? (prev.includes(key) ? prev : [...prev, key]) : prev.filter((k) => k !== key),
+      );
+    apply(nextPinned);
+    fetch("/api/clubs/pins", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ club: key, pinned: nextPinned }),
+    })
+      .then(async (r) => {
+        if (!r.ok) throw new Error((await r.json()).error || "保存に失敗しました");
+      })
+      .catch(() => {
+        apply(!nextPinned);
+        setActionError("部活のピン留めを保存できませんでした");
+      });
+  }, []);
 
   // ---- Per-user club visibility (drikin 2026-10-02) ----
   // 目玉トグルで隠した部活は、サーバー（club_visibility テーブル）に保存され
@@ -6173,7 +6210,8 @@ export default function Home() {
   useEffect(() => {
     if (!auth) return;
     loadHiddenClubs();
-  }, [auth, loadHiddenClubs]);
+    loadPinnedClubs();
+  }, [auth, loadHiddenClubs, loadPinnedClubs]);
   const toggleClubHidden = useCallback(
     (key: string) => {
       const nextHidden = !hiddenClubsRef.current.has(key);
@@ -9822,8 +9860,14 @@ export default function Home() {
               )}
             </Group>
             <ClubNavRow label="すべて" activity={clubActivityTotal} trend={clubTrendTotal} active={clubFilter === null} onClick={() => selectClub(null)} />
-            {orderedClubKeys.map((k) => (
-              <ClubNavRow key={k} label={clubLabel(k) ?? k} activity={clubActivity[k] ?? 0} trend={clubTrend[k] ?? "flat"} active={clubFilter === k} onClick={() => selectClub(k)} hidden={hiddenClubs.has(k)} onToggleHidden={() => toggleClubHidden(k)} />
+            {orderedClubKeys.map((k, i) => (
+              <Fragment key={k}>
+                <ClubNavRow label={clubLabel(k) ?? k} activity={clubActivity[k] ?? 0} trend={clubTrend[k] ?? "flat"} active={clubFilter === k} onClick={() => selectClub(k)} hidden={hiddenClubs.has(k)} onToggleHidden={() => toggleClubHidden(k)} pinned={pinnedClubSet.has(k)} onTogglePinned={() => toggleClubPinned(k)} />
+                {/* ピン留め群と活性度順の境目に細い区切り線 */}
+                {pinnedClubSet.has(k) && i + 1 < orderedClubKeys.length && !pinnedClubSet.has(orderedClubKeys[i + 1]) && (
+                  <Divider my={4} mx={12} data-testid="club-pin-divider" />
+                )}
+              </Fragment>
             ))}
             <ClubNavRow label="未設定" activity={clubActivityUnset} trend={clubTrendUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} hidden={hiddenClubs.has(CLUB_UNSET)} onToggleHidden={() => toggleClubHidden(CLUB_UNSET)} />
 
@@ -11066,6 +11110,7 @@ export default function Home() {
                       key={k}
                       label={clubLabel(k) ?? k}
                       activity={clubActivity[k] ?? 0}
+                      pinned={pinnedClubSet.has(k)}
                       active={clubFilter === k}
                       onClick={() => selectClub(k)}
                     />
@@ -13218,6 +13263,8 @@ function ClubNavRow({
   onClick,
   hidden,
   onToggleHidden,
+  pinned,
+  onTogglePinned,
 }: {
   label: string;
   activity?: number;
@@ -13229,12 +13276,16 @@ function ClubNavRow({
    *  the eye (「すべて」/「未設定」 don't get one). */
   hidden?: boolean;
   onToggleHidden?: () => void;
+  /** Per-user pin (snize 2026-10-17). Undefined = no pin button. */
+  pinned?: boolean;
+  onTogglePinned?: () => void;
 }) {
   const activityCount = activity ?? 0;
   return (
     <UnstyledButton
       onClick={onClick}
       aria-pressed={active}
+      className="club-nav-row"
       style={{
         display: "flex",
         alignItems: "center",
@@ -13322,7 +13373,46 @@ function ClubNavRow({
           {activityCount}
         </Badge>
       )}
+      {onTogglePinned && (
+        <Box
+          component="button"
+          className="club-pin-btn"
+          // aria-label は必須: 選択行への自動スクロールが
+          // `button[aria-pressed="true"]:not([aria-label])` で行を探すため、
+          // 無いとピン済みボタンが選択行と誤認される。
+          aria-label={pinned ? `${label} のピン留めを外す` : `${label} をピン留め`}
+          aria-pressed={!!pinned}
+          title={pinned ? "ピン留めを外す（活性度順に戻す）" : "ピン留め（一覧の先頭に固定）"}
+          onClick={(e: React.MouseEvent) => {
+            e.stopPropagation(); // 行クリック（部活選択）と競合させない
+            onTogglePinned();
+          }}
+          style={{
+            background: "none",
+            border: "none",
+            padding: 0,
+            cursor: "pointer",
+            color: pinned ? "var(--text-green)" : "var(--text-secondary)",
+            display: "inline-flex",
+            flexShrink: 0,
+            width: 17,
+            justifyContent: "center",
+          }}
+        >
+          <PinIcon size={14} filled={!!pinned} />
+        </Box>
+      )}
     </UnstyledButton>
+  );
+}
+
+/** 単色インラインSVGのピン（drikin嗜好: 絵文字ではなくモノクロアイコン）。 */
+function PinIcon({ size, filled }: { size: number; filled?: boolean }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <line x1="12" y1="17" x2="12" y2="22" />
+      <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+    </svg>
   );
 }
 
@@ -13332,11 +13422,14 @@ function ClubNavRow({
 function ClubChip({
   label,
   activity,
+  pinned,
   active,
   onClick,
 }: {
   label: string;
   activity?: number;
+  /** ピン留め中は先頭に並び、小さなピンを添える（ピン操作はサイドバーで）。 */
+  pinned?: boolean;
   active: boolean;
   onClick: () => void;
 }) {
@@ -13362,6 +13455,7 @@ function ClubChip({
         fontWeight: active ? 600 : 500,
       }}
     >
+      {pinned && <PinIcon size={11} filled />}
       {label}
       {activityCount > 0 && (
         <span

@@ -401,6 +401,16 @@ export async function initSchema() {
       PRIMARY KEY (email, club_key)
     );
 
+    -- Per-user club pins (snize 2026-10-17): pinned clubs stay at the top of
+    -- the sidebar in pin order (pinned_at) instead of moving with activity.
+    -- One row per (email, club) only when pinned. Independent of club_visibility.
+    CREATE TABLE IF NOT EXISTS club_pins (
+      email TEXT NOT NULL,
+      club_key TEXT NOT NULL,
+      pinned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (email, club_key)
+    );
+
     -- User identity mapping: opaque public user_id <-> internal email.
     -- Canonical public profile URL is #/user/<user_id> (no email exposure).
     -- email is still the internal key everywhere; this table lets any email

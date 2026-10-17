@@ -519,3 +519,19 @@ body {
     opacity: 1 !important;
   }
 }
+
+/* 部活ピン（snize 2026-10-17）: 未ピンのピンボタンは行ホバー時だけ出す。
+ * ピン済みは常に表示（どれが固定か一目で分かるように）。タッチ端末は
+ * ホバーが無いので常に薄く出す（そうしないとスマホでピンできない）。 */
+.club-nav-row .club-pin-btn[aria-pressed="false"] {
+  opacity: 0.35;
+}
+@media (hover: hover) and (pointer: fine) {
+  .club-nav-row .club-pin-btn[aria-pressed="false"] {
+    opacity: 0;
+  }
+  .club-nav-row:hover .club-pin-btn,
+  .club-nav-row .club-pin-btn:focus-visible {
+    opacity: 1;
+  }
+}
