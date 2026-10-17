@@ -41,6 +41,7 @@ import { notifications as mantineNotifications } from "@mantine/notifications";
 import { mdToHtml } from "@/lib/md";
 import { computeNextKbdId } from "@/lib/kbd-nav";
 import { orderClubKeys } from "@/lib/club-order";
+import { notifJumpClub } from "@/lib/notif-jump";
 import {
   ReactionBar,
   useReactions,
@@ -4682,6 +4683,10 @@ export default function Home() {
   // Post auto-scroll/highlight ref removed (2026-08-17): posting never
   // auto-scrolls the timeline per user request.
   const feedCursorRef = useRef<string | null>(null);
+  // loadFeed の連番。絞り込みを素早く切り替えると（通知ジャンプで activeNav の
+  // effect と selectClub が同時に読む等）応答の順序が入れ替わり、古い条件の一覧が
+  // 後勝ちで上書きする。最新の読み込み以外の応答は捨てる。
+  const feedSeqRef = useRef(0);
   const feedSentinelRef = useRef<HTMLDivElement | null>(null);
   // Composer collapsed to a small "+" by default (clean timeline); opens into the full form on click.
   const [composerOpen, setComposerOpen] = useState(false);
@@ -6056,6 +6061,7 @@ export default function Home() {
   }, []);
 
   const loadFeed = (filter?: string, search?: string) => {
+    const seq = ++feedSeqRef.current;
     setFeedLoading(true);
     setFeedHasMore(true);
     feedCursorRef.current = null;
@@ -6067,6 +6073,7 @@ export default function Home() {
     return earlyOrFetch(`/api/posts${q}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
+        if (seq !== feedSeqRef.current) return; // 新しい読み込みに追い越された
         const posts = d.posts ?? [];
         setFeedPosts(posts);
         // ★ サーバーの既読を適用（tochi 2026-09-27 の未読共通化）。
@@ -6081,10 +6088,13 @@ export default function Home() {
         setFeedHasMore(posts.length === FEED_PAGE);
       })
       .catch(() => {
+        if (seq !== feedSeqRef.current) return;
         setFeedPosts([]);
         setFeedHasMore(false);
       })
-      .finally(() => setFeedLoading(false));
+      .finally(() => {
+        if (seq === feedSeqRef.current) setFeedLoading(false);
+      });
   };
 
   // Pull-to-refresh: reload the current feed view. Invoked by the iOS-only
@@ -6115,9 +6125,12 @@ export default function Home() {
     const q = `?limit=${FEED_PAGE}&before=${encodeURIComponent(feedCursorRef.current)}${
       filter ? `&filter=${filter}` : ""
     }${c ? `&club=${encodeURIComponent(c)}` : ""}${fv ? "&fav=1" : ""}${bv ? "&bm=1" : ""}${s ? `&search=${encodeURIComponent(s)}` : ""}`;
+    const seq = feedSeqRef.current;
     fetch(`/api/posts${q}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
+        // 読み込み中に絞り込みが変わった（loadFeed が走った）なら古い条件のページは捨てる。
+        if (seq !== feedSeqRef.current) return;
         const posts = d.posts ?? [];
         setFeedPosts((prev) => [
           ...prev,
@@ -6269,7 +6282,8 @@ export default function Home() {
     } catch {
       // ignore — URL sync is best-effort
     }
-    loadFeed(undefined, searchQueryRef.current.trim() || undefined);
+    // 読み込み完了を待てるよう Promise を返す（通知ジャンプが新しい一覧を待つ）。
+    return loadFeed(undefined, searchQueryRef.current.trim() || undefined);
   }, []);
 
   // 現在の部活フィルタを ?club=... 形式で返す（closeThread/goHome で URL クエリを保持するため）
@@ -6657,8 +6671,13 @@ export default function Home() {
   // "grandchild" that opening the reply's thread view used to create.
   // Returns null when the post no longer exists (e.g. the replier deleted it),
   // so the caller can fall back instead of paging the feed for a ghost id.
-  const resolveRootId = async (id: number): Promise<number | null> => {
+  // club = the root's club (undefined when unknown, e.g. a network error), so
+  // the jump can switch the club filter to one where the post is visible.
+  const resolveRoot = async (
+    id: number,
+  ): Promise<{ id: number; club?: string | null } | null> => {
     let cur = id;
+    let club: string | null | undefined;
     const seen = new Set<number>();
     while (!seen.has(cur)) {
       seen.add(cur);
@@ -6668,13 +6687,17 @@ export default function Home() {
         const d = await r.json();
         const p = d?.post;
         if (!p) return null;
-        if (p.parentId == null) break; // this is the root
+        club = undefined;
+        if (p.parentId == null) {
+          club = p.club ?? null; // this is the root
+          break;
+        }
         cur = p.parentId;
       } catch {
         break; // network error: keep the best id so far
       }
     }
-    return cur;
+    return { id: cur, club };
   };
 
   const handleNotifClick = async (n: any) => {
@@ -6694,18 +6717,18 @@ export default function Home() {
       // If the reply was deleted, fall back to the parent post the
       // notification carries; if that is gone too, say so instead of paging
       // through up to 80 feed pages (which froze the browser).
-      let rootId = await resolveRootId(targetId);
-      if (rootId == null && n.postId && n.postId !== targetId) {
-        rootId = await resolveRootId(n.postId);
+      let root = await resolveRoot(targetId);
+      if (root == null && n.postId && n.postId !== targetId) {
+        root = await resolveRoot(n.postId);
       }
-      if (rootId == null) {
+      if (root == null) {
         mantineNotifications.show({
           message: "この通知の投稿は削除されています",
           color: "gray",
         });
         return;
       }
-      scrollToPinnedPost(rootId);
+      scrollToPinnedPost(root.id, root.club);
     }
   };
 
@@ -8453,7 +8476,7 @@ export default function Home() {
   // already-loaded feed, wait for a fresh load (pinned posts are recent, so they
   // usually appear on the first page after switching back to ホーム), then page
   // back in time (bounded); as a last resort open the thread view.
-  const scrollToPinnedPost = async (postId: number) => {
+  const scrollToPinnedPost = async (postId: number, rootClub?: string | null) => {
     // Close the mobile right sidebar (aside overlay) so the user sees the
     // timeline scroll happen. On desktop the aside is always visible and this
     // is a no-op.
@@ -8463,6 +8486,14 @@ export default function Home() {
     setScrollingPostId(postId);
     const nav = activeNavRef.current;
     if (nav !== "feed") setActiveNav("feed");
+    // チャット表示中はタイムラインが描画されていないので、先に切り替える
+    // （リュー 2026-10-16 「チャットを見ている時に通知を押しても飛ばない」）。
+    if (chatViewRef.current) {
+      showTimeline();
+      await new Promise((r) =>
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => r(null)))
+      );
+    }
 
     const findEl = () =>
       document.querySelector(
@@ -8498,6 +8529,38 @@ export default function Home() {
       return;
     }
 
+    // 1b) 部活・お気に入り・ブックマークで絞り込み中なら、投稿が見える一覧へ
+    //     切り替えて読み込みを待つ。絞り込んだ一覧には別の部活の投稿が無く、
+    //     下の遡り読み込みも今の絞り込みのままでは見つからない（リュー 2026-10-16
+    //     「別の部活から来ている通知をクリックしても何も起きない」）。
+    if (rootClub === undefined) {
+      try {
+        const d = await fetch(`/api/posts/${postId}`, { cache: "no-store" }).then((r) => r.json());
+        rootClub = d?.post ? (d.post.club ?? null) : undefined;
+      } catch {
+        // unknown — fall through to the generic search below
+      }
+    }
+    if (rootClub !== undefined) {
+      const targetClub = notifJumpClub(
+        clubFilterRef.current,
+        rootClub,
+        new Set(currentCategories().flatMap((cat) => cat.keys)),
+        hiddenClubsRef.current,
+      );
+      if (targetClub !== clubFilterRef.current || favViewRef.current || bmViewRef.current) {
+        await selectClub(targetClub); // お気に入り/ブックマークも解除して読み直す
+        await new Promise((r) =>
+          window.requestAnimationFrame(() => window.requestAnimationFrame(() => r(null)))
+        );
+        el = findEl();
+        if (el) {
+          revealAndScroll(el);
+          return;
+        }
+      }
+    }
+
     // 2) Brief wait for a feed reload right after switching nav.
     const reloadDeadline = Date.now() + 800;
     while (Date.now() < reloadDeadline) {
@@ -8517,7 +8580,10 @@ export default function Home() {
     let guard = 0;
     let cursor = feedCursorRef.current;
     while (guard < 80 && cursor) {
-      const q = `?limit=${FEED_PAGE}&before=${encodeURIComponent(cursor)}`;
+      // 今の部活の絞り込みで遡る（1b で投稿が見える部活に揃えてある）。検索語は
+      // 付けない: 検索に一致しない投稿でも見つけて飛べるよう、従来どおり遡る。
+      const c = clubFilterRef.current;
+      const q = `?limit=${FEED_PAGE}&before=${encodeURIComponent(cursor)}${c ? `&club=${encodeURIComponent(c)}` : ""}`;
       let d: any = null;
       try {
         d = await fetch(`/api/posts${q}`).then((r) => r.json());
