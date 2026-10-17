@@ -9,6 +9,7 @@ import SwiftUI
 /// Hidden entirely unless the server says voice is on for this member.
 struct VoiceBar: View {
     @Bindable var voice: VoiceStore
+    @State private var reportReason = ""
 
     var body: some View {
         if voice.enabled {
@@ -26,6 +27,26 @@ struct VoiceBar: View {
             .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.accentGreen.opacity(voice.inRoom ? 0.12 : 0.05), ignoresSafeAreaEdges: [])
+            .alert(
+                "\(voice.reportTarget?.name ?? "") さんを管理者に通報",
+                isPresented: Binding(get: { voice.reportTarget != nil }, set: { if !$0 { voice.reportTarget = nil } })
+            ) {
+                TextField("何があったか（任意）", text: $reportReason)
+                Button("通報する", role: .destructive) {
+                    if let t = voice.reportTarget {
+                        let reason = reportReason
+                        Task { await voice.report(t.userId, reason: reason) }
+                    }
+                    reportReason = ""
+                    voice.reportTarget = nil
+                }
+                Button("やめる", role: .cancel) {
+                    reportReason = ""
+                    voice.reportTarget = nil
+                }
+            } message: {
+                Text("管理者に通知が届きます。相手には知らされません。")
+            }
         }
     }
 
@@ -143,20 +164,9 @@ struct VoiceBar: View {
                     }
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("\(p.name)\(p.speaking ? "、話しています" : "")\(menus && p.muted ? "、ミュート中" : "")")
-                if menus && voice.canModerate && p.id != voice.myUserId {
+                if menus && p.id != voice.myUserId {
                     face.contextMenu {
-                        Button("ミュートさせる", systemImage: "mic.slash") {
-                            Task { await voice.forceMute(p.id) }
-                        }
-                        .disabled(p.muted)
-                        Button("退出させる", systemImage: "person.fill.xmark") {
-                            Task { await voice.kick(p.id) }
-                        }
-                        if voice.isAdmin {
-                            Button("退出させて入室禁止", systemImage: "nosign", role: .destructive) {
-                                Task { await voice.kick(p.id, ban: true) }
-                            }
-                        }
+                        MemberActions(voice: voice, userId: p.id, muted: p.muted)
                     }
                 } else {
                     face
@@ -269,20 +279,9 @@ private struct VoiceMemberList: View {
                     Image(systemName: m.muted ? "mic.slash" : "mic.fill")
                         .foregroundStyle(m.muted ? Color.secondary : Color.accentGreen)
                         .accessibilityLabel(m.muted ? "ミュート中" : "マイク オン")
-                    if voice.canModerate && !m.isMe {
+                    if !m.isMe {
                         Menu {
-                            Button("ミュートさせる", systemImage: "mic.slash") {
-                                Task { await voice.forceMute(m.userId) }
-                            }
-                            .disabled(m.muted)
-                            Button("退出させる", systemImage: "person.fill.xmark") {
-                                Task { await voice.kick(m.userId) }
-                            }
-                            if voice.isAdmin {
-                                Button("退出させて入室禁止", systemImage: "nosign", role: .destructive) {
-                                    Task { await voice.kick(m.userId, ban: true) }
-                                }
-                            }
+                            MemberActions(voice: voice, userId: m.userId, muted: m.muted)
                         } label: {
                             Image(systemName: "ellipsis.circle")
                         }
@@ -300,5 +299,32 @@ private struct VoiceMemberList: View {
         #else
         .presentationDetents([.medium, .large])
         #endif
+    }
+}
+
+/// Menu items for someone else in the room: report (anyone), and for admins
+/// mute / remove / remove and ban.
+private struct MemberActions: View {
+    @Bindable var voice: VoiceStore
+    let userId: String
+    let muted: Bool
+
+    var body: some View {
+        if voice.canModerate {
+            Button("ミュートさせる", systemImage: "mic.slash") {
+                Task { await voice.forceMute(userId) }
+            }
+            .disabled(muted)
+            Button("退出させる", systemImage: "person.fill.xmark") {
+                Task { await voice.kick(userId) }
+            }
+            Button("退出させて入室禁止", systemImage: "nosign", role: .destructive) {
+                Task { await voice.kick(userId, ban: true) }
+            }
+            Divider()
+        }
+        Button("管理者に通報…", systemImage: "flag") {
+            voice.reportTarget = voice.members.first { $0.userId == userId }
+        }
     }
 }

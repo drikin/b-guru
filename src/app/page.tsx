@@ -6721,6 +6721,10 @@ export default function Home() {
       });
       loadNotifications();
     }
+    if (n.type === "voice_report") {
+      setChatView(true); // the voice room bar (with the member list) lives in the chat
+      return;
+    }
     const targetId = n.replyId ?? n.postId;
     if (targetId) {
       // Link to the card on the MAIN timeline (not the reply's thread view),
@@ -10625,12 +10629,12 @@ export default function Home() {
                   >
                     <Group gap="xs" align="flex-start" wrap="nowrap">
                       <Text size="lg" style={{ lineHeight: 1 }}>
-                        {n.type === "reply" ? "💬" : n.type === "mention" ? "📢" : n.type === "favorite" ? "⭐" : "❤️"}
+                        {n.type === "voice_report" ? "🚩" : n.type === "reply" ? "💬" : n.type === "mention" ? "📢" : n.type === "favorite" ? "⭐" : "❤️"}
                       </Text>
                       <div style={{ minWidth: 0 }}>
                         <Text size="sm" c="inherit" style={{ wordBreak: "break-word" }}>
                           <b>{n.actorName}</b>
-                          {n.type === "reply" ? " があなたの投稿に返信しました" : n.type === "mention" ? " があなたをメンションしました" : n.type === "favorite" ? " があなたをお気に入りに追加しました" : " があなたの投稿にいいねしました"}
+                          {n.type === "voice_report" ? " が通報しました（ボイスルーム）" : n.type === "reply" ? " があなたの投稿に返信しました" : n.type === "mention" ? " があなたをメンションしました" : n.type === "favorite" ? " があなたをお気に入りに追加しました" : " があなたの投稿にいいねしました"}
                         </Text>
                         {n.text ? (
                           <Text size="xs" c="dimmed" lineClamp={2}>

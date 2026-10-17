@@ -1,7 +1,8 @@
 /* Voice room actions shared by the native apps (/api/agent/voice/*, agent token
  * with the "voice" scope) and the web (/api/voice/*, session cookie). Each
  * returns { status, body } and the route only does its own authentication. */
-import { isAdmin } from "./admin";
+import { ADMIN_EMAILS, isAdmin } from "./admin";
+import { createNotification } from "./notifications";
 import { resolveDisplayName } from "./display-name";
 import { findMemberByEmail, isPaidMember } from "./ghost";
 import { livekitConfig } from "./livekit";
@@ -11,6 +12,10 @@ import {
   VOICE_TOKEN_TTL_SEC,
   banFromVoice,
   canModerate,
+  listBans,
+  recentReports,
+  recordReport,
+  unban,
   logModeration,
   muteParticipant,
   ensureRoom,
@@ -114,6 +119,49 @@ export async function muteInVoice(email: string, userId: string | null, input: {
   const muted = await muteParticipant(cfg, target);
   if (muted) await logModeration(email, "mute", target, null);
   return { status: 200, body: { ok: true, muted } };
+}
+
+/** Report someone in the room to the admins (any member). Recorded in
+ *  voice_reports and sent to every admin as a "voice_report" notification. */
+export async function reportVoice(email: string, userId: string | null, input: { user_id?: unknown; reason?: unknown }): Promise<ActionResult> {
+  if (!livekitConfig() || !voiceEnabledFor(email)) return notAvailable;
+  const target = typeof input.user_id === "string" ? input.user_id.trim() : "";
+  if (!target || target.length > 64 || target === userId) {
+    return { status: 400, body: { error: "通報する相手を指定してください", code: "invalid_request" } };
+  }
+  const targetEmail = await userIdToEmail(target);
+  if (!targetEmail) return { status: 404, body: { error: "会員が見つかりません", code: "not_found" } };
+  if ((await recentReports(email)) >= 5) {
+    return { status: 429, body: { error: "通報は 1 時間に 5 回までです", code: "rate_limited" } };
+  }
+  const reason = typeof input.reason === "string" ? input.reason.trim().slice(0, 300) || null : null;
+  await recordReport(email, target, reason);
+  const [reporterName, targetName] = await Promise.all([resolveDisplayName(email), resolveDisplayName(targetEmail)]);
+  const text = `ボイスルームで ${targetName ?? "（名前なし）"} さんを通報しました${reason ? `：${reason}` : ""}`;
+  for (const admin of ADMIN_EMAILS) {
+    if (admin === email) continue;
+    await createNotification({ userEmail: admin, type: "voice_report", actorEmail: email, actorName: reporterName, text }).catch((e) =>
+      console.error("[voice] report notify:", (e as Error)?.message)
+    );
+  }
+  return { status: 200, body: { ok: true } };
+}
+
+/** Admins: who is banned from the voice room. */
+export async function listVoiceBans(email: string): Promise<ActionResult> {
+  if (!isAdmin(email)) return { status: 403, body: { error: "この操作はできません", code: "forbidden" } };
+  return { status: 200, body: { bans: await listBans() } };
+}
+
+/** Admins: let a banned member back in. */
+export async function unbanVoice(email: string, input: { user_id?: unknown }): Promise<ActionResult> {
+  if (!isAdmin(email)) return { status: 403, body: { error: "この操作はできません", code: "forbidden" } };
+  const target = typeof input.user_id === "string" ? input.user_id.trim() : "";
+  const targetEmail = target ? await userIdToEmail(target) : null;
+  if (!targetEmail) return { status: 404, body: { error: "会員が見つかりません", code: "not_found" } };
+  const removed = await unban(targetEmail);
+  if (removed) await logModeration(email, "unban", target, null);
+  return { status: 200, body: { ok: true, removed } };
 }
 
 // Web routes have no per-token rate bucket like /api/agent/*; a small per-member

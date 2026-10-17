@@ -572,6 +572,14 @@ export async function initSchema() {
       reason TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    -- ボイスルームの通報（通報した人・された人・理由）。管理者に通知も送る。1 年で削除。
+    CREATE TABLE IF NOT EXISTS voice_reports (
+      id SERIAL PRIMARY KEY,
+      reporter_email TEXT NOT NULL,
+      target_user_id TEXT NOT NULL,
+      reason TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     -- 管理者が入室禁止にした会員（解除は行を消す）。
     CREATE TABLE IF NOT EXISTS voice_bans (
       email TEXT PRIMARY KEY,

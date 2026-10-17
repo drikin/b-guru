@@ -5,8 +5,8 @@
  *   in the room               → faces (ring = talking, slash = muted) [mic] [⚙] [退出]
  * VoiceMini: a small floating pill while in the room but away from the chat,
  * so a live mic is never out of reach. Hidden unless voice is on for this member. */
-import { useEffect, useSyncExternalStore } from "react";
-import { ActionIcon, Avatar, Button, Group, Loader, Menu, Popover, ScrollArea, Text, Tooltip, UnstyledButton } from "@mantine/core";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { ActionIcon, Avatar, Button, Group, Loader, Menu, Modal, Popover, ScrollArea, Stack, Text, Textarea, Tooltip, UnstyledButton } from "@mantine/core";
 import {
   canModerate,
   getServerSnapshot,
@@ -15,6 +15,10 @@ import {
   kickVoice,
   leaveVoice,
   muteVoice,
+  reportVoice,
+  fetchVoiceBans,
+  unbanVoice,
+  type VoiceBanRow,
   loadVoice,
   micActive,
   selectInput,
@@ -148,6 +152,8 @@ function DeviceMenu({ s }: { s: VoiceSnapshot }) {
 
 export default function VoiceBar() {
   const s = useVoice();
+  const [reportTarget, setReportTarget] = useState<Member | null>(null);
+  const [bansOpen, setBansOpen] = useState(false);
   useEffect(() => {
     if (!voiceLoaded()) void loadVoice();
   }, []);
@@ -155,7 +161,6 @@ export default function VoiceBar() {
 
   const inRoom = s.phase !== "idle";
   const people = s.roomInfo?.active ? s.roomInfo.participants : [];
-  const mod = canModerate(s);
 
   return (
     <div
@@ -180,9 +185,9 @@ export default function VoiceBar() {
           )}
           <div style={{ display: "flex", gap: 8, padding: 3, flex: 1, minWidth: 0, alignItems: "center" }}>
             {s.members.slice(0, FACE_SLOTS).map((m) => (
-              <MemberFace key={m.userId} s={s} m={m} mod={mod} />
+              <MemberFace key={m.userId} s={s} m={m} onReport={setReportTarget} />
             ))}
-            {s.members.length > 1 && <AllMembers s={s} mod={mod} />}
+            {s.members.length > 1 && <AllMembers s={s} onReport={setReportTarget} onBans={() => setBansOpen(true)} />}
           </div>
           {s.needsAudioUnlock && (
             <Button size="compact-xs" variant="light" color="green" onClick={() => void unlockAudio()}>
@@ -232,36 +237,57 @@ export default function VoiceBar() {
           {s.notice}
         </Text>
       )}
+      <ReportModal target={reportTarget} onClose={() => setReportTarget(null)} />
+      {canModerate(s) && <BansModal opened={bansOpen} onClose={() => setBansOpen(false)} />}
     </div>
   );
 }
 
 const FACE_SLOTS = 6;
 
-function MemberFace({ s, m, mod }: { s: VoiceSnapshot; m: VoiceSnapshot["members"][number]; mod: boolean }) {
+type Member = VoiceSnapshot["members"][number];
+type Actions = { onReport: (m: Member) => void };
+
+/** Menu items for someone else in the room: report (anyone), and for admins
+ *  mute / remove / remove and ban. */
+function MemberMenuItems({ s, m, onReport }: { s: VoiceSnapshot; m: Member } & Actions) {
+  return (
+    <>
+      <Menu.Label>{m.name}</Menu.Label>
+      {canModerate(s) && (
+        <>
+          <Menu.Item onClick={() => void muteVoice(m.userId)} disabled={m.muted}>
+            ミュートさせる
+          </Menu.Item>
+          <Menu.Item onClick={() => void kickVoice(m.userId)}>退出させる</Menu.Item>
+          <Menu.Item color="red" onClick={() => void kickVoice(m.userId, true)}>
+            退出させて入室禁止
+          </Menu.Item>
+          <Menu.Divider />
+        </>
+      )}
+      <Menu.Item onClick={() => onReport(m)}>管理者に通報…</Menu.Item>
+    </>
+  );
+}
+
+function MemberFace({ s, m, onReport }: { s: VoiceSnapshot; m: Member } & Actions) {
   const face = <Face name={m.name} avatar={m.avatar} size={28} speaking={m.speaking} muted={m.muted} />;
-  if (!mod || m.isMe) return face;
+  if (m.isMe) return face;
   return (
     <Menu position="bottom-start" withinPortal>
       <Menu.Target>
         <UnstyledButton aria-label={`${m.name}（操作）`}>{face}</UnstyledButton>
       </Menu.Target>
       <Menu.Dropdown>
-        <Menu.Label>{m.name}</Menu.Label>
-        <Menu.Item onClick={() => void muteVoice(m.userId)} disabled={m.muted}>ミュートさせる</Menu.Item>
-                    <Menu.Item onClick={() => void kickVoice(m.userId)}>退出させる</Menu.Item>
-        {(
-          <Menu.Item color="red" onClick={() => void kickVoice(m.userId, true)}>
-            退出させて入室禁止
-          </Menu.Item>
-        )}
+        <MemberMenuItems s={s} m={m} onReport={onReport} />
       </Menu.Dropdown>
     </Menu>
   );
 }
 
 /** "+N" (or 一覧) → everyone in the room, up to 100: talking, mics on, listeners. */
-function AllMembers({ s, mod }: { s: VoiceSnapshot; mod: boolean }) {
+function AllMembers({ s, onReport, onBans }: { s: VoiceSnapshot; onBans: () => void } & Actions) {
   const rest = s.members.length - Math.min(s.members.length, FACE_SLOTS);
   const speakers = s.members.filter((m) => !m.muted).length;
   return (
@@ -308,7 +334,7 @@ function AllMembers({ s, mod }: { s: VoiceSnapshot; mod: boolean }) {
               <span style={{ color: m.muted ? "var(--mantine-color-dimmed)" : GREEN, display: "grid" }} aria-label={m.muted ? "ミュート中" : "マイク オン"}>
                 <MicIcon off={m.muted} size={14} />
               </span>
-              {mod && !m.isMe && (
+              {!m.isMe && (
                 <Menu position="left-start" withinPortal>
                   <Menu.Target>
                     <ActionIcon size="sm" variant="subtle" color="gray" aria-label={`${m.name} の操作`}>
@@ -316,21 +342,116 @@ function AllMembers({ s, mod }: { s: VoiceSnapshot; mod: boolean }) {
                     </ActionIcon>
                   </Menu.Target>
                   <Menu.Dropdown>
-                    <Menu.Item onClick={() => void muteVoice(m.userId)} disabled={m.muted}>ミュートさせる</Menu.Item>
-                    <Menu.Item onClick={() => void kickVoice(m.userId)}>退出させる</Menu.Item>
-                    {(
-                      <Menu.Item color="red" onClick={() => void kickVoice(m.userId, true)}>
-                        退出させて入室禁止
-                      </Menu.Item>
-                    )}
+                    <MemberMenuItems s={s} m={m} onReport={onReport} />
                   </Menu.Dropdown>
                 </Menu>
               )}
             </Group>
           ))}
         </ScrollArea.Autosize>
+        {canModerate(s) && (
+          <UnstyledButton onClick={onBans} px="sm" py={8} style={{ display: "block", width: "100%", borderTop: "1px solid var(--mantine-color-default-border)" }}>
+            <Text size="xs" c="dimmed">
+              入室禁止の一覧…
+            </Text>
+          </UnstyledButton>
+        )}
       </Popover.Dropdown>
     </Popover>
+  );
+}
+
+function ReportModal({ target, onClose }: { target: Member | null; onClose: () => void }) {
+  const [reason, setReason] = useState("");
+  const [sending, setSending] = useState(false);
+  return (
+    <Modal opened={!!target} onClose={onClose} title={target ? `${target.name} さんを管理者に通報` : ""} centered size="sm">
+      <Stack gap="sm">
+        <Text size="sm" c="dimmed">
+          管理者に通知が届きます。相手には知らされません。
+        </Text>
+        <Textarea
+          id="voice-report-reason"
+          placeholder="何があったか（任意）"
+          autosize
+          minRows={2}
+          maxLength={300}
+          value={reason}
+          onChange={(e) => setReason(e.currentTarget.value)}
+        />
+        <Group justify="flex-end">
+          <Button variant="default" onClick={onClose}>
+            やめる
+          </Button>
+          <Button
+            color="red"
+            loading={sending}
+            onClick={async () => {
+              if (!target) return;
+              setSending(true);
+              const ok = await reportVoice(target.userId, reason.trim());
+              setSending(false);
+              if (ok) {
+                setReason("");
+                onClose();
+              }
+            }}
+          >
+            通報する
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
+}
+
+function BansModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
+  const [rows, setRows] = useState<VoiceBanRow[] | null>(null);
+  useEffect(() => {
+    if (!opened) return;
+    let alive = true;
+    void fetchVoiceBans().then((r) => {
+      if (alive) setRows(r);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [opened]);
+  return (
+    <Modal opened={opened} onClose={onClose} title="ボイスルームの入室禁止" centered size="sm">
+      {rows === null ? (
+        <Loader size="sm" />
+      ) : rows.length === 0 ? (
+        <Text size="sm" c="dimmed">
+          入室禁止の人はいません。
+        </Text>
+      ) : (
+        <Stack gap={6}>
+          {rows.map((b) => (
+            <Group key={b.userId ?? b.bannedAt} gap={8} wrap="nowrap">
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Text size="sm">{b.name ?? "（名前なし）"}</Text>
+                <Text size="xs" c="dimmed">
+                  {new Date(b.bannedAt).toLocaleString("ja-JP")}
+                  {b.reason ? ` · ${b.reason}` : ""}
+                </Text>
+              </div>
+              {b.userId && (
+                <Button
+                  size="compact-xs"
+                  variant="light"
+                  onClick={async () => {
+                    if (await unbanVoice(b.userId!)) setRows((r) => (r ?? []).filter((x) => x.userId !== b.userId));
+                  }}
+                >
+                  解除
+                </Button>
+              )}
+            </Group>
+          ))}
+        </Stack>
+      )}
+    </Modal>
   );
 }
 

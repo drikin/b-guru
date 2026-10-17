@@ -219,10 +219,27 @@ final class VoiceStore {
             )
             setMeter(on)
         } catch {
+            #if DEBUG
+            FileHandle.standardError.write(Data("[voice] setMic(\(on)) error: \(error)\n".utf8))
+            #endif
             micOn = room.localParticipant.isMicrophoneEnabled()
             notice = on ? "マイクを使えません（設定でマイクを許可してください）" : nil
         }
         refreshMembers()
+    }
+
+    /// Someone the member chose to report (the bar shows the reason prompt).
+    var reportTarget: Member?
+
+    func report(_ userId: String, reason: String) async {
+        do {
+            try await api.voiceReport(userId: userId, reason: reason)
+            notice = "管理者に通報しました"
+        } catch let e as APIError {
+            notice = Self.message(for: e)
+        } catch {
+            notice = "通報できませんでした"
+        }
     }
 
     func forceMute(_ userId: String) async {
@@ -314,7 +331,7 @@ final class VoiceStore {
         if micOn, !micBusy, !room.localParticipant.isMicrophoneEnabled(), phase == .connected {
             micOn = false
             setMeter(false)
-            notice = "管理者がマイクをオフにしました"
+            notice = "マイクがオフにされました（管理者の操作か、話せる人数の上限のため）"
         }
         switch room.connectionState {
         case .connected: if phase != .idle { phase = .connected }

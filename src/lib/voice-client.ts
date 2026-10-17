@@ -199,7 +199,7 @@ async function connect(url: string, token: string, mine: number) {
       // An admin turned my mic off from the server: follow it.
       if (room === r && participant === r.localParticipant && pub.source === lk.Track.Source.Microphone && snap.micOn && !snap.micBusy) {
         stopMeter();
-        set({ micOn: false, notice: "管理者がマイクをオフにしました" });
+        set({ micOn: false, notice: "マイクがオフにされました（管理者の操作か、話せる人数の上限のため）" });
       }
       changed();
     })
@@ -348,6 +348,45 @@ export async function kickVoice(userId: string, ban = false): Promise<void> {
   } catch {
     set({ notice: "操作できませんでした" });
   }
+}
+
+export async function reportVoice(userId: string, reason: string): Promise<boolean> {
+  try {
+    const r = await fetch("/api/voice/report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, reason }),
+    });
+    const d = await r.json().catch(() => ({}));
+    set({ notice: r.ok ? "管理者に通報しました" : d?.error ?? "通報できませんでした" });
+    return r.ok;
+  } catch {
+    set({ notice: "通報できませんでした" });
+    return false;
+  }
+}
+
+export interface VoiceBanRow {
+  userId: string | null;
+  name: string | null;
+  reason: string | null;
+  bannedAt: string;
+}
+
+export async function fetchVoiceBans(): Promise<VoiceBanRow[]> {
+  const r = await fetch("/api/voice/bans", { cache: "no-store" });
+  if (!r.ok) return [];
+  const d = await r.json().catch(() => ({}));
+  return (d?.bans ?? []) as VoiceBanRow[];
+}
+
+export async function unbanVoice(userId: string): Promise<boolean> {
+  const r = await fetch("/api/voice/bans", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user_id: userId }),
+  }).catch(() => null);
+  return !!r?.ok;
 }
 
 /** Only admins remove / mute / ban (the server enforces the same). */

@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import crypto from "crypto";
 import { signAccessToken, verifyJwt, verifyWebhook, livekitHttpUrl, type LiveKitConfig } from "../livekit";
-import { issueJoinToken, isOpenerPresent, joinGrant, voiceEnabledFor, VOICE_ROOM, VOICE_TOKEN_TTL_SEC } from "../voice";
+import { issueJoinToken, isOpenerPresent, joinGrant, overCap, voiceEnabledFor, VOICE_ROOM, VOICE_TOKEN_TTL_SEC } from "../voice";
 import { liveToStreamEvent, agentCapabilities } from "../agent-chat";
 
 const cfg: LiveKitConfig = { url: "wss://example.livekit.cloud", apiKey: "APIkey123", apiSecret: "s".repeat(40) };
@@ -165,5 +165,24 @@ describe("開いた人のモデレーション権限", () => {
     expect(isOpenerPresent(state("uid_a", ["uid_b"]), "uid_a")).toBe(false); // 抜けた後は権限なし
     expect(isOpenerPresent(state("uid_a", ["uid_a", "uid_b"]), "uid_b")).toBe(false);
     expect(isOpenerPresent(state("uid_a", []), "uid_a")).toBe(false);
+  });
+});
+
+describe("話せる人数の上限（サーバー側）", () => {
+  it("上限以内なら誰もミュートしない", () => {
+    const since = new Map<string, number>();
+    expect(overCap(["a", "b"], since, 2, 1000)).toEqual([]);
+  });
+  it("あとから話し始めた人をミュートする（先に話していた人は残す）", () => {
+    const since = new Map<string, number>();
+    overCap(["a", "b"], since, 2, 1000);
+    expect(overCap(["a", "b", "c"], since, 2, 2000)).toEqual(["c"]);
+  });
+  it("マイクを切った人は記録から外れ、次に話すときは新しい順番になる", () => {
+    const since = new Map<string, number>();
+    overCap(["a", "b"], since, 2, 1000);
+    overCap(["b"], since, 2, 2000); // a がミュート
+    expect(since.has("a")).toBe(false);
+    expect(overCap(["b", "c", "a"], since, 2, 3000)).toEqual(["c"]); // c と a は同時刻 → 名前順で並べ、後ろの c
   });
 });

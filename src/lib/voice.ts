@@ -187,6 +187,7 @@ export async function refreshVoiceState(): Promise<VoiceState> {
       const next: VoiceState = { active: participants.length > 0, ...session, participants };
       const prev = g.__voiceState;
       g.__voiceState = next;
+      if (next.active) ensureSpeakerGuard();
       g.__voiceFetchedAt = Date.now();
       if (!prev || !sameState(prev, next)) emitLive({ type: "voice", state: next });
       return next;
@@ -316,6 +317,7 @@ export async function handleWebhookEvent(ev: LkWebhookEvent): Promise<void> {
 
 export async function purgeOldVoiceLog(): Promise<number> {
   await pool.query(`DELETE FROM voice_mod_log WHERE created_at < now() - interval '365 days'`);
+  await pool.query(`DELETE FROM voice_reports WHERE created_at < now() - interval '365 days'`);
   await pool.query(
     `DELETE FROM voice_participations WHERE joined_at < now() - interval '30 days'`
   );
@@ -356,7 +358,7 @@ export async function muteParticipant(cfg: LiveKitConfig, userId: string): Promi
 }
 
 /** Who removed / muted / banned whom, and when (kept a year). */
-export async function logModeration(actorEmail: string, action: "kick" | "ban" | "mute", targetUserId: string, reason: string | null): Promise<void> {
+export async function logModeration(actorEmail: string, action: "kick" | "ban" | "mute" | "unban", targetUserId: string, reason: string | null): Promise<void> {
   await pool.query(
     `INSERT INTO voice_mod_log (actor_email, action, target_user_id, reason) VALUES ($1, $2, $3, $4)`,
     [actorEmail, action, targetUserId, reason]
@@ -369,4 +371,115 @@ export async function banFromVoice(email: string, bannedBy: string, reason: stri
      ON CONFLICT (email) DO UPDATE SET banned_by = EXCLUDED.banned_by, reason = EXCLUDED.reason, created_at = now()`,
     [email.trim().toLowerCase(), bannedBy, reason]
   );
+}
+
+// ---- speaker cap, enforced by the server ----
+//
+// The apps and the web check the cap before unmuting; this catches everyone else
+// (older app versions, a modified client): while the room is in use it counts the
+// unmuted mics every few seconds and mutes whoever went over the cap most recently.
+
+type Guard = { timer: ReturnType<typeof setInterval> | null; since: Map<string, number>; busy: boolean };
+const gg = globalThis as unknown as { __voiceGuard?: Guard };
+const guard: Guard = (gg.__voiceGuard ??= { timer: null, since: new Map(), busy: false });
+const GUARD_MS = 3000;
+
+interface LkTrack { sid?: string; type?: string | number; muted?: boolean }
+interface LkParticipantFull { identity?: string; tracks?: LkTrack[] }
+
+const isLiveMic = (t: LkTrack) => !!t.sid && !t.muted && (t.type === "AUDIO" || t.type === 0);
+
+/** Pure part (tested): who must be muted, given who has a live mic now and when
+ *  each of them was first seen talking. Keeps the earliest `max`. */
+export function overCap(speakers: string[], since: Map<string, number>, max: number, now: number): string[] {
+  for (const id of speakers) if (!since.has(id)) since.set(id, now);
+  for (const id of Array.from(since.keys())) if (!speakers.includes(id)) since.delete(id);
+  if (speakers.length <= max) return [];
+  const order = [...speakers].sort((a, b) => (since.get(a)! - since.get(b)!) || a.localeCompare(b));
+  return order.slice(max);
+}
+
+export async function enforceSpeakerCap(): Promise<number> {
+  const cfg = livekitConfig();
+  if (!cfg || guard.busy) return 0;
+  guard.busy = true;
+  try {
+    const res = await roomService<{ participants?: LkParticipantFull[] }>(cfg, "ListParticipants", { room: VOICE_ROOM }, VOICE_ROOM);
+    const people = res?.participants ?? [];
+    if (people.length === 0) {
+      stopSpeakerGuard();
+      return 0;
+    }
+    const speakers = people.filter((p) => p.identity && (p.tracks ?? []).some(isLiveMic)).map((p) => p.identity!);
+    const extra = overCap(speakers, guard.since, VOICE_MAX_SPEAKERS, Date.now());
+    for (const id of extra) {
+      const p = people.find((x) => x.identity === id);
+      for (const t of (p?.tracks ?? []).filter(isLiveMic)) {
+        await roomService(cfg, "MutePublishedTrack", { room: VOICE_ROOM, identity: id, track_sid: t.sid, muted: true }, VOICE_ROOM);
+      }
+      guard.since.delete(id);
+    }
+    if (extra.length) console.log(`[voice] speaker cap: muted ${extra.length}`);
+    return extra.length;
+  } finally {
+    guard.busy = false;
+  }
+}
+
+export function ensureSpeakerGuard(): void {
+  if (guard.timer || !livekitConfig()) return;
+  guard.timer = setInterval(() => {
+    enforceSpeakerCap().catch((e) => console.error("[voice] speaker guard:", (e as Error)?.message));
+  }, GUARD_MS);
+  guard.timer.unref?.();
+}
+
+function stopSpeakerGuard(): void {
+  if (guard.timer) clearInterval(guard.timer);
+  guard.timer = null;
+  guard.since.clear();
+}
+
+// ---- reports and bans (admins) ----
+
+export async function recordReport(reporterEmail: string, targetUserId: string, reason: string | null): Promise<number> {
+  const r = await pool.query(
+    `INSERT INTO voice_reports (reporter_email, target_user_id, reason) VALUES ($1, $2, $3) RETURNING id`,
+    [reporterEmail, targetUserId, reason]
+  );
+  return r.rows[0].id as number;
+}
+
+/** Reports by this member in the last hour (abuse guard for the report button). */
+export async function recentReports(reporterEmail: string): Promise<number> {
+  const r = await pool.query(
+    `SELECT count(*)::int AS n FROM voice_reports WHERE reporter_email = $1 AND created_at > now() - interval '1 hour'`,
+    [reporterEmail]
+  );
+  return r.rows[0].n as number;
+}
+
+export interface VoiceBan {
+  userId: string | null;
+  name: string | null;
+  reason: string | null;
+  bannedAt: string;
+}
+
+export async function listBans(): Promise<VoiceBan[]> {
+  const r = await pool.query(
+    `SELECT b.email, b.reason, b.created_at, u.user_id FROM voice_bans b LEFT JOIN users u ON u.email = b.email ORDER BY b.created_at DESC`
+  );
+  const names = await resolveDisplayNames(r.rows.map((x) => x.email as string));
+  return r.rows.map((x) => ({
+    userId: (x.user_id as string) ?? null,
+    name: names.get(x.email as string) ?? null,
+    reason: (x.reason as string) ?? null,
+    bannedAt: new Date(x.created_at).toISOString(),
+  }));
+}
+
+export async function unban(email: string): Promise<boolean> {
+  const r = await pool.query(`DELETE FROM voice_bans WHERE email = $1`, [email.trim().toLowerCase()]);
+  return (r.rowCount ?? 0) > 0;
 }
