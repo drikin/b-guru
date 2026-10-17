@@ -65,6 +65,11 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         if event.type == .scrollWheel, let step = swipe.handle(event) {
             withAnimation(.easeOut(duration: 0.18)) { pin.tab = step > 0 ? .timeline : .chat }
         }
+        // Mouse back button (button 4 = number 3): thread → timeline.
+        if event.type == .otherMouseDown, event.buttonNumber == 3, pin.tab == .timeline {
+            NotificationCenter.default.post(name: .timelineBack, object: nil)
+            return
+        }
         super.sendEvent(event)
     }
 

@@ -100,6 +100,8 @@ struct TimelineScreen: View {
                 list
             }
         }
+        // The mouse's back button (sent by the panel) also leaves the thread (Ryu 2026-10-17).
+        .onReceive(NotificationCenter.default.publisher(for: .timelineBack)) { _ in macThread = nil }
         #endif
     }
 
@@ -387,3 +389,10 @@ private struct ZoomableImage: View {
             .onTapGesture(count: 2) { withAnimation { scale = scale > 1 ? 1 : 2.5 } }
     }
 }
+
+#if os(macOS)
+extension Notification.Name {
+    /// The mouse's back button was pressed over the timeline (posted by the Mac panel).
+    static let timelineBack = Notification.Name("fm.backspace.bguru.timelineBack")
+}
+#endif
