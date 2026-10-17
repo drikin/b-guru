@@ -22,8 +22,11 @@ export const VOICE_ROOM = "bguru-lounge";
 /** Join tokens are only needed to connect (LiveKit refreshes them in-session), so
  *  keep them short: a removed / banned member cannot reuse one for long. */
 export const VOICE_TOKEN_TTL_SEC = 2 * 60;
-/** Room capacity (LiveKit max_participants). */
-export const VOICE_MAX_PARTICIPANTS = 20;
+/** Room capacity (LiveKit max_participants), listeners included. */
+export const VOICE_MAX_PARTICIPANTS = 100;
+/** At most this many people with their mic on at once. Enforced by the apps and
+ *  the web before unmuting (a closed members' room: a soft limit is enough). */
+export const VOICE_MAX_SPEAKERS = 10;
 /** LiveKit closes the room this long after the last person leaves. */
 export const VOICE_EMPTY_TIMEOUT_SEC = 60;
 

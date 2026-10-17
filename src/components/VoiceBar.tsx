@@ -6,7 +6,7 @@
  * VoiceMini: a small floating pill while in the room but away from the chat,
  * so a live mic is never out of reach. Hidden unless voice is on for this member. */
 import { useEffect, useSyncExternalStore } from "react";
-import { ActionIcon, Avatar, Button, Group, Loader, Menu, Text, Tooltip, UnstyledButton } from "@mantine/core";
+import { ActionIcon, Avatar, Button, Group, Loader, Menu, Popover, ScrollArea, Text, Tooltip, UnstyledButton } from "@mantine/core";
 import {
   canModerate,
   getServerSnapshot,
@@ -177,29 +177,11 @@ export default function VoiceBar() {
               </Text>
             </Group>
           )}
-          <div style={{ display: "flex", gap: 8, overflowX: "auto", padding: 3, flex: 1, minWidth: 0 }}>
-            {s.members.map((m) =>
-              mod && !m.isMe ? (
-                <Menu key={m.userId} position="bottom-start" withinPortal>
-                  <Menu.Target>
-                    <UnstyledButton aria-label={`${m.name}（操作）`}>
-                      <Face name={m.name} avatar={m.avatar} size={28} speaking={m.speaking} muted={m.muted} />
-                    </UnstyledButton>
-                  </Menu.Target>
-                  <Menu.Dropdown>
-                    <Menu.Label>{m.name}</Menu.Label>
-                    <Menu.Item onClick={() => void kickVoice(m.userId)}>退出させる</Menu.Item>
-                    {s.admin && (
-                      <Menu.Item color="red" onClick={() => void kickVoice(m.userId, true)}>
-                        退出させて入室禁止
-                      </Menu.Item>
-                    )}
-                  </Menu.Dropdown>
-                </Menu>
-              ) : (
-                <Face key={m.userId} name={m.name} avatar={m.avatar} size={28} speaking={m.speaking} muted={m.muted} />
-              )
-            )}
+          <div style={{ display: "flex", gap: 8, padding: 3, flex: 1, minWidth: 0, alignItems: "center" }}>
+            {s.members.slice(0, FACE_SLOTS).map((m) => (
+              <MemberFace key={m.userId} s={s} m={m} mod={mod} />
+            ))}
+            {s.members.length > 1 && <AllMembers s={s} mod={mod} />}
           </div>
           {s.needsAudioUnlock && (
             <Button size="compact-xs" variant="light" color="green" onClick={() => void unlockAudio()}>
@@ -227,7 +209,7 @@ export default function VoiceBar() {
           ) : (
             <>
               <Text size="sm" style={{ fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                {people.length} 人が話しています
+                {people.length} 人が参加中
               </Text>
               <div style={{ display: "flex", minWidth: 0, overflow: "hidden" }}>
                 {people.slice(0, 6).map((p, i) => (
@@ -250,6 +232,102 @@ export default function VoiceBar() {
         </Text>
       )}
     </div>
+  );
+}
+
+const FACE_SLOTS = 6;
+
+function MemberFace({ s, m, mod }: { s: VoiceSnapshot; m: VoiceSnapshot["members"][number]; mod: boolean }) {
+  const face = <Face name={m.name} avatar={m.avatar} size={28} speaking={m.speaking} muted={m.muted} />;
+  if (!mod || m.isMe) return face;
+  return (
+    <Menu position="bottom-start" withinPortal>
+      <Menu.Target>
+        <UnstyledButton aria-label={`${m.name}（操作）`}>{face}</UnstyledButton>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Label>{m.name}</Menu.Label>
+        <Menu.Item onClick={() => void kickVoice(m.userId)}>退出させる</Menu.Item>
+        {s.admin && (
+          <Menu.Item color="red" onClick={() => void kickVoice(m.userId, true)}>
+            退出させて入室禁止
+          </Menu.Item>
+        )}
+      </Menu.Dropdown>
+    </Menu>
+  );
+}
+
+/** "+N" (or 一覧) → everyone in the room, up to 100: talking, mics on, listeners. */
+function AllMembers({ s, mod }: { s: VoiceSnapshot; mod: boolean }) {
+  const rest = s.members.length - Math.min(s.members.length, FACE_SLOTS);
+  const speakers = s.members.filter((m) => !m.muted).length;
+  return (
+    <Popover position="bottom-start" withinPortal shadow="md" width={300}>
+      <Popover.Target>
+        <UnstyledButton
+          aria-label={`参加者 ${s.members.length} 人の一覧`}
+          style={{
+            minWidth: 30,
+            height: 28,
+            padding: "0 8px",
+            borderRadius: 14,
+            background: "var(--bg-subtle)",
+            fontSize: 12,
+            fontWeight: 600,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {rest > 0 ? `+${rest}` : "一覧"}
+        </UnstyledButton>
+      </Popover.Target>
+      <Popover.Dropdown p={0}>
+        <Group justify="space-between" px="sm" py={8} style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}>
+          <Text size="sm" fw={600}>
+            参加者 {s.members.length} 人
+          </Text>
+          <Text size="xs" c="dimmed" style={{ fontVariantNumeric: "tabular-nums" }}>
+            話せる人 {speakers}/{s.maxSpeakers}
+          </Text>
+        </Group>
+        <ScrollArea.Autosize mah={360}>
+          {s.members.map((m) => (
+            <Group key={m.userId} gap={8} px="sm" py={6} wrap="nowrap">
+              <Face name={m.name} avatar={m.avatar} size={24} speaking={m.speaking} />
+              <Text size="sm" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {m.name}
+                {m.isMe ? "（自分）" : ""}
+              </Text>
+              {m.speaking && (
+                <Text size="xs" c="green">
+                  話しています
+                </Text>
+              )}
+              <span style={{ color: m.muted ? "var(--mantine-color-dimmed)" : GREEN, display: "grid" }} aria-label={m.muted ? "ミュート中" : "マイク オン"}>
+                <MicIcon off={m.muted} size={14} />
+              </span>
+              {mod && !m.isMe && (
+                <Menu position="left-start" withinPortal>
+                  <Menu.Target>
+                    <ActionIcon size="sm" variant="subtle" color="gray" aria-label={`${m.name} の操作`}>
+                      ⋯
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    <Menu.Item onClick={() => void kickVoice(m.userId)}>退出させる</Menu.Item>
+                    {s.admin && (
+                      <Menu.Item color="red" onClick={() => void kickVoice(m.userId, true)}>
+                        退出させて入室禁止
+                      </Menu.Item>
+                    )}
+                  </Menu.Dropdown>
+                </Menu>
+              )}
+            </Group>
+          ))}
+        </ScrollArea.Autosize>
+      </Popover.Dropdown>
+    </Popover>
   );
 }
 

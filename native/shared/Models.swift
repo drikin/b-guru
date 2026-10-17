@@ -97,6 +97,7 @@ struct Capabilities: Decodable, Sendable {
         var join: Bool?
         var admin: Bool?
         var maxParticipants: Int?
+        var maxSpeakers: Int?
     }
     struct Features: Decodable, Sendable {
         var chat: ChatFeatures?
@@ -123,6 +124,7 @@ struct Capabilities: Decodable, Sendable {
     /// This token may join (has the "voice" scope — older tokens must sign in again).
     var canJoinVoice: Bool { features?.voice?.join ?? false }
     var isVoiceAdmin: Bool { features?.voice?.admin ?? false }
+    var voiceMaxSpeakers: Int { features?.voice?.maxSpeakers ?? 10 }
 }
 
 // MARK: - Voice room

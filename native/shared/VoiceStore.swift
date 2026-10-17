@@ -43,6 +43,8 @@ final class VoiceStore {
     private(set) var enabled = false
     private(set) var canJoin = false
     private(set) var isAdmin = false
+    /// At most this many people with the mic on at once (server-provided).
+    private(set) var maxSpeakers = 10
     var myUserId: String?
 
     var inRoom: Bool { phase != .idle }
@@ -91,6 +93,7 @@ final class VoiceStore {
         enabled = caps?.voiceEnabled ?? false
         canJoin = caps?.canJoinVoice ?? false
         isAdmin = caps?.isVoiceAdmin ?? false
+        maxSpeakers = caps?.voiceMaxSpeakers ?? 10
         if enabled { Task { await loadState() } }
     }
 
@@ -198,6 +201,10 @@ final class VoiceStore {
     /// first unmute seemed not to work.
     func setMic(_ on: Bool) async {
         guard let room, phase == .connected || phase == .reconnecting, !micBusy else { return }
+        if on, members.filter({ !$0.isMe && !$0.muted }).count >= maxSpeakers {
+            notice = "話せるのは同時に \(maxSpeakers) 人までです。誰かがミュートするまでお待ちください"
+            return
+        }
         micBusy = true
         micOn = on
         notice = nil
@@ -325,9 +332,14 @@ final class VoiceStore {
         }
         var out: [Member] = []
         if let me = member(room.localParticipant, isMe: true) { out.append(me) }
+        // Talking first, then mics on, then listeners — the bar only shows the first few.
         out += room.remoteParticipants.values
             .compactMap { member($0, isMe: false) }
-            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            .sorted {
+                if $0.speaking != $1.speaking { return $0.speaking }
+                if $0.muted != $1.muted { return !$0.muted }
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
         members = out
         #if DEBUG
         let line = out.map { "\($0.name)\($0.isMe ? "*" : "")[\($0.muted ? "muted" : "mic")\($0.speaking ? ",speaking" : "")]" }.joined(separator: " ")

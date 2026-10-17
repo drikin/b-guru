@@ -35,6 +35,7 @@ export interface DeviceChoice {
 export interface VoiceSnapshot {
   enabled: boolean;
   admin: boolean;
+  maxSpeakers: number;
   myUserId: string | null;
   roomInfo: VoiceRoomInfo | null;
   phase: VoicePhase;
@@ -70,6 +71,7 @@ const lsSet = (k: string, v: string) => {
 let snap: VoiceSnapshot = {
   enabled: false,
   admin: false,
+  maxSpeakers: 10,
   myUserId: null,
   roomInfo: null,
   phase: "idle",
@@ -124,6 +126,7 @@ export async function loadVoice(): Promise<void> {
     set({
       enabled: !!d.enabled,
       admin: !!d.admin,
+      maxSpeakers: typeof d.maxSpeakers === "number" ? d.maxSpeakers : 10,
       myUserId: d.userId ?? snap.myUserId,
       roomInfo: d.room ?? null,
       inputId: lsGet(LS_IN),
@@ -256,6 +259,10 @@ export async function unlockAudio() {
 export async function setMic(on: boolean): Promise<void> {
   const r = room;
   if (!r || (snap.phase !== "connected" && snap.phase !== "reconnecting") || snap.micBusy) return;
+  if (on && snap.members.filter((m) => !m.isMe && !m.muted).length >= snap.maxSpeakers) {
+    set({ notice: `話せるのは同時に ${snap.maxSpeakers} 人までです。誰かがミュートするまでお待ちください` });
+    return;
+  }
   set({ micBusy: true, micOn: on, notice: null });
   try {
     // The saved mic is chosen here (not at join) so the browser asks for the
@@ -395,7 +402,10 @@ function refreshMembers() {
   const others = Array.from(r.remoteParticipants.values())
     .map((p) => toMember(p, false))
     .filter((m): m is VoiceMember => !!m)
-    .sort((a, b) => a.name.localeCompare(b.name, "ja"));
+    // Talking first, then mics on, then listeners — the bar only shows the first few.
+    .sort((a, b) =>
+      a.speaking !== b.speaking ? (a.speaking ? -1 : 1) : a.muted !== b.muted ? (a.muted ? 1 : -1) : a.name.localeCompare(b.name, "ja")
+    );
   set({ members: me ? [me, ...others] : others });
 }
 

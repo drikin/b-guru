@@ -19,7 +19,7 @@ import type { VoiceState } from "./voice";
 import { isMentionedIn, mentionNamesFor } from "./chat-mention";
 import { apnsEnabled } from "./apns";
 import { fcmEnabled } from "./fcm";
-import { VOICE_MAX_PARTICIPANTS } from "./voice";
+import { VOICE_MAX_PARTICIPANTS, VOICE_MAX_SPEAKERS } from "./voice";
 import { resolveDisplayName } from "./display-name";
 
 export const AGENT_API_VERSION = 1;
@@ -185,6 +185,7 @@ export function agentCapabilities(scopes: AgentScope[], opts: { voice?: boolean;
         join: !!opts.voice && can("voice"),
         path: "/api/agent/voice",
         max_participants: VOICE_MAX_PARTICIPANTS,
+        max_speakers: VOICE_MAX_SPEAKERS,
         // Admins may remove anyone and ban; the session's opener may remove (server enforces both).
         admin: !!opts.voice && !!opts.voiceAdmin,
       },

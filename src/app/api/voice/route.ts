@@ -6,7 +6,7 @@ import { getSessionEmail } from "@/lib/session";
 import { isAdmin } from "@/lib/admin";
 import { emailToUserId } from "@/lib/user";
 import { toAgentVoiceDto } from "@/lib/agent-chat";
-import { getVoiceState, voiceEnabledFor } from "@/lib/voice";
+import { VOICE_MAX_SPEAKERS, getVoiceState, voiceEnabledFor } from "@/lib/voice";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,7 +20,7 @@ export async function GET() {
   if (!enabled) return NextResponse.json({ enabled: false }, { headers: NO_STORE });
   const [state, userId] = await Promise.all([getVoiceState(), emailToUserId(email)]);
   return NextResponse.json(
-    { enabled: true, admin: isAdmin(email), userId, room: toAgentVoiceDto(state) },
+    { enabled: true, admin: isAdmin(email), userId, maxSpeakers: VOICE_MAX_SPEAKERS, room: toAgentVoiceDto(state) },
     { headers: NO_STORE }
   );
 }

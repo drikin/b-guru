@@ -40,7 +40,7 @@ struct VoiceBar: View {
                 Text("ボイスルーム").font(.subheadline)
                 Text("誰もいません").font(.caption).foregroundStyle(.secondary)
             } else {
-                Text("\(people.count) 人が話しています").font(.subheadline).monospacedDigit()
+                Text("\(people.count) 人が参加中").font(.subheadline).monospacedDigit()
                 avatars(people.map { ($0.userId, $0.name ?? "?", $0.avatar, false, false) })
             }
             Spacer(minLength: 4)
@@ -69,10 +69,7 @@ struct VoiceBar: View {
                 ProgressView().controlSize(.small)
                 Text(voice.phase == .connecting ? "接続中…" : "再接続中…").font(.caption).foregroundStyle(.secondary)
             }
-            ScrollView(.horizontal, showsIndicators: false) {
-                avatars(voice.members.map { ($0.userId, $0.name, $0.avatar, $0.speaking, $0.muted) }, size: 30, menus: true)
-                    .padding(3) // room for the speaking ring, which the scroll view would clip
-            }
+            faces
             Spacer(minLength: 4)
             MicButton(voice: voice)
             #if os(macOS)
@@ -86,6 +83,45 @@ struct VoiceBar: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
         }
+    }
+
+    // MARK: Faces in the room (up to 100 people)
+
+    /// How many faces fit next to the buttons; the rest go behind "+N".
+    private var faceSlots: Int {
+        #if os(macOS)
+        return 6
+        #else
+        return 4
+        #endif
+    }
+
+    @State private var showAll = false
+
+    private var faces: some View {
+        let shown = Array(voice.members.prefix(faceSlots))
+        let rest = voice.members.count - shown.count
+        return HStack(spacing: 6) {
+            avatars(shown.map { ($0.userId, $0.name, $0.avatar, $0.speaking, $0.muted) }, size: 30, menus: true)
+            if rest > 0 || voice.members.count > 1 {
+                Button {
+                    showAll = true
+                } label: {
+                    Text(rest > 0 ? "+\(rest)" : "一覧")
+                        .font(.caption.bold())
+                        .monospacedDigit()
+                        .frame(minWidth: 30, minHeight: 30)
+                        .padding(.horizontal, rest > 99 ? 4 : 0)
+                        .background(Capsule().fill(Color.primary.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("参加者 \(voice.members.count) 人の一覧")
+                .popover(isPresented: $showAll) {
+                    VoiceMemberList(voice: voice)
+                }
+            }
+        }
+        .padding(3) // room for the speaking ring
     }
 
     // MARK: Avatars
@@ -200,3 +236,61 @@ private struct DeviceMenu: View {
     }
 }
 #endif
+
+/// Everyone in the room (up to 100): talking first, then mics on, then listeners.
+private struct VoiceMemberList: View {
+    @Bindable var voice: VoiceStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let speakers = voice.members.filter { !$0.muted }.count
+        VStack(spacing: 0) {
+            HStack {
+                Text("参加者 \(voice.members.count) 人").font(.headline).monospacedDigit()
+                Text("話せる人 \(speakers)/\(voice.maxSpeakers)").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                Spacer()
+                Button("閉じる") { dismiss() }
+            }
+            .padding(12)
+            Divider()
+            List(voice.members) { m in
+                HStack(spacing: 10) {
+                    AvatarView(url: m.avatar, name: m.name, size: 28)
+                        .overlay(Circle().stroke(Color.accentGreen, lineWidth: m.speaking ? 2.5 : 0))
+                    Text(m.name + (m.isMe ? "（自分）" : "")).lineLimit(1)
+                    Spacer()
+                    if m.speaking {
+                        Text("話しています").font(.caption).foregroundStyle(Color.accentGreen)
+                    }
+                    Image(systemName: m.muted ? "mic.slash" : "mic.fill")
+                        .foregroundStyle(m.muted ? Color.secondary : Color.accentGreen)
+                        .accessibilityLabel(m.muted ? "ミュート中" : "マイク オン")
+                    if voice.canModerate && !m.isMe {
+                        Menu {
+                            Button("退出させる", systemImage: "person.fill.xmark") {
+                                Task { await voice.kick(m.userId) }
+                            }
+                            if voice.isAdmin {
+                                Button("退出させて入室禁止", systemImage: "nosign", role: .destructive) {
+                                    Task { await voice.kick(m.userId, ban: true) }
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .accessibilityLabel("\(m.name) の操作")
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+            .listStyle(.plain)
+        }
+        #if os(macOS)
+        .frame(width: 320, height: 420)
+        #else
+        .presentationDetents([.medium, .large])
+        #endif
+    }
+}
