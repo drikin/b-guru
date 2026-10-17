@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionEmail } from "@/lib/session";
 import { isAdmin } from "@/lib/admin";
-import { CLUB_KEYS } from "@/lib/club-catalog";
+import { isActiveClubKey } from "@/lib/club-store";
 import { getClubLeaders, setClubLeader } from "@/lib/club-leaders";
 import { userIdToEmail } from "@/lib/user";
 
@@ -47,7 +47,8 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "JSON が不正です" }, { status: 400, headers: NO_CACHE });
   }
   const club = typeof body.club === "string" ? body.club : "";
-  if (!CLUB_KEYS.has(club)) {
+  // DB の active な部活（admin が後から追加した部活も含む）。
+  if (!(await isActiveClubKey(club))) {
     return NextResponse.json({ error: "不正な部活です" }, { status: 400, headers: NO_CACHE });
   }
   // 旧契約 { club, email } は受け付けない。userId が無い body を「解除」と解釈すると、

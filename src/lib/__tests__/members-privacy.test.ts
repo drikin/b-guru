@@ -33,7 +33,8 @@ vi.mock("@/lib/club-leaders", () => ({
   setClubLeader: (club: string, email: string | null) => setClubLeader(club, email),
 }));
 vi.mock("@/lib/admin", () => ({ isAdmin: (e: string) => e === "drikin@gmail.com" }));
-vi.mock("@/lib/club-catalog", () => ({ CLUB_KEYS: new Set(["motorsport"]) }));
+// 部活キーは DB（clubs.active）で検証する（admin が後から追加した部活も通す）。
+vi.mock("@/lib/club-store", () => ({ isActiveClubKey: async (k: string) => k === "motorsport" }));
 
 import { GET as membersGET } from "../../app/api/members/route";
 import { PATCH as leadersPATCH } from "../../app/api/clubs/leaders/route";

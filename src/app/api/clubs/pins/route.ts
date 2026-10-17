@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionEmail } from "@/lib/session";
 import { getPinnedClubs, setClubPinned } from "@/lib/club-pins";
-import { allClubs } from "@/lib/club-catalog";
+import { isActiveClubKey } from "@/lib/club-store";
 
 const NO_CACHE = { "Cache-Control": "no-store, no-cache, must-revalidate" };
 
-// 「未設定」は常に最下段の固定枠なのでピン対象外。カタログにある部活だけ。
-const isValidClubKey = (key: string) => allClubs().some((c) => c.key === key);
+// ピンできるのは DB の active な部活だけ（admin が後から追加した部活も含む。
+// 静的 seed の allClubs() はサーバーでは追加分を知らない）。「未設定」は常に
+// 最下段の固定枠なので対象外。外す側は、削除済み部活の行も消せるよう検証しない。
+const isValidClubKey = async (key: string, pinned: boolean) =>
+  /^[a-z0-9_-]{1,40}$/.test(key) && (!pinned || (await isActiveClubKey(key)));
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +42,7 @@ export async function PUT(req: NextRequest) {
   }
   const club = typeof body.club === "string" ? body.club.trim() : "";
   const pinned = body.pinned === true;
-  if (!club || !isValidClubKey(club)) {
+  if (!club || !(await isValidClubKey(club, pinned))) {
     return NextResponse.json({ error: "不正な部活キーです" }, { status: 400, headers: NO_CACHE });
   }
   try {
