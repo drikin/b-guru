@@ -280,12 +280,18 @@ function startMeter(r: LkRoom) {
     const pub = r.localParticipant.getTrackPublication(lk.Track.Source.Microphone);
     const track = pub?.track as LocalAudioTrack | undefined;
     if (!track) return;
-    const { calculateVolume, cleanup } = lk.createAudioAnalyser(track, { cloneTrack: true });
+    // Use the analyser's waveform (not calculateVolume, whose byte-frequency
+    // value is already dB-scaled and reads "loud" for room noise) and measure
+    // RMS → dBFS exactly like the native apps (-50 dBFS → 0, -10 dBFS → 1).
+    const { analyser, cleanup } = lk.createAudioAnalyser(track, { cloneTrack: true });
+    const buf = new Float32Array(analyser.fftSize);
     let level = 0;
     const timer = window.setInterval(() => {
-      // calculateVolume is an RMS in 0…1; map roughly like the native apps.
-      const v = calculateVolume();
-      const db = 20 * Math.log10(Math.max(v, 1e-6));
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      const rms = Math.sqrt(sum / buf.length);
+      const db = 20 * Math.log10(Math.max(rms, 1e-6));
       const target = Math.min(Math.max((db + 50) / 40, 0), 1);
       level = target > level ? target : Math.max(target, level * 0.7);
       if (Math.abs(level - snap.micLevel) > 0.02) {
