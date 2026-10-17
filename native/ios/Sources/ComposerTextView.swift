@@ -18,6 +18,7 @@ struct ComposerTextView: UIViewRepresentable {
     @Binding var text: String
     @Binding var isFocused: Bool
     var placeholder: String
+    var minLines = 1
     var maxLines = 6
     var onSubmit: () -> Void
     /// ↑ in an empty composer (hardware keyboard). Return true when handled.
@@ -71,7 +72,7 @@ struct ComposerTextView: UIViewRepresentable {
         let maxHeight = line * CGFloat(maxLines)
         let scroll = fitting > maxHeight + 1
         if tv.isScrollEnabled != scroll { DispatchQueue.main.async { tv.isScrollEnabled = scroll } }
-        return CGSize(width: width, height: min(max(fitting, line), maxHeight))
+        return CGSize(width: width, height: min(max(fitting, line * CGFloat(minLines)), maxHeight))
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {

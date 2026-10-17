@@ -139,7 +139,7 @@ struct ComposeSheet: View {
     let parentId: Int?
     let onPosted: (Post) -> Void
     @State private var draft: PostDraft
-    @FocusState private var focused: Bool
+    @State private var focused = false
     @State private var importing = false
     @Environment(\.dismiss) private var dismiss
 
@@ -163,10 +163,8 @@ struct ComposeSheet: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 8) {
-                TextField(ComposerHint.with("いまどうしてる？"), text: $draft.text, axis: .vertical)
-                    .lineLimit(5...20)
-                    .focused($focused)
-                    .returnSends(post)
+                PostTextInput(text: $draft.text, isFocused: $focused, placeholder: "いまどうしてる？",
+                              minLines: 5, maxLines: 20, onSubmit: post)
                 DraftImages(draft: draft)
                 if let e = draft.error { Text(e).font(.caption).foregroundStyle(.red) }
                 Spacer()

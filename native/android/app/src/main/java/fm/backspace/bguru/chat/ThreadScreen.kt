@@ -92,6 +92,17 @@ fun ThreadScreen(
         if (!inTimeline && !timeline.demo) scope.launch { runCatching { timeline.api.togglePostReaction(postId, emoji) } }
     }
 
+    fun sendReply() {
+        if (!draft.canSend) return
+        scope.launch {
+            draft.send(timeline.api, id)?.let { post ->
+                replies = replies + post
+                timeline.didPublish(post)
+                listState.animateScrollToItem(replies.size)
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize().imePadding()) {
         LazyColumn(
             state = listState,
@@ -127,20 +138,12 @@ fun ThreadScreen(
                     Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         TextButton(onClick = pick, enabled = draft.remaining > 0) { Text("📷") }
                         TextField(
-                            value = draft.text, onValueChange = { draft.text = it },
+                            value = draft.value, onValueChange = { draft.value = it },
                             placeholder = { Text("返信") }, maxLines = 6, shape = RoundedCornerShape(20.dp),
                             colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).enterSends(draft, ::sendReply),
                         )
-                        IconButton(enabled = draft.canSend, onClick = {
-                            scope.launch {
-                                draft.send(timeline.api, id)?.let { post ->
-                                    replies = replies + post
-                                    timeline.didPublish(post)
-                                    listState.animateScrollToItem(replies.size)
-                                }
-                            }
-                        }) {
+                        IconButton(enabled = draft.canSend, onClick = ::sendReply) {
                             Icon(Icons.AutoMirrored.Filled.Send, "返信を送信", tint = if (draft.canSend) AccentGreen else MaterialTheme.colorScheme.outline)
                         }
                     }

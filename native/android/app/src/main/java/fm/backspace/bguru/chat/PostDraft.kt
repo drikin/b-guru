@@ -17,7 +17,11 @@ import kotlin.math.max
  *  2048 px on the long side (ImageDecoder also applies the EXIF rotation) and
  *  re-encoded as JPEG, so location and other EXIF never leave the phone. */
 class PostDraft(val maxImages: Int) {
-    var text by mutableStateOf("")
+    /** The text with its cursor and IME composition (needed to tell a conversion's Enter apart). */
+    var value by mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(""))
+    var text: String
+        get() = value.text
+        set(v) { value = androidx.compose.ui.text.input.TextFieldValue(v, androidx.compose.ui.text.TextRange(v.length)) }
     var images by mutableStateOf<List<Bitmap>>(emptyList()); private set
     var sending by mutableStateOf(false); private set
     /** Photos being decoded (a large original can take a moment). */

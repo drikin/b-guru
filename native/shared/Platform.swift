@@ -186,3 +186,33 @@ extension View {
         #endif
     }
 }
+
+/// The text box of the timeline's reply bar and new post — the same keys as the chat:
+/// iOS uses the chat's ComposerTextView (hardware Return sends, ⇧Return / the on-screen
+/// return key = newline, conversion-confirming Return only confirms); macOS a TextField
+/// with `returnSends` (Return sends, ⇧Return newline).
+struct PostTextInput: View {
+    @Binding var text: String
+    @Binding var isFocused: Bool
+    let placeholder: String
+    var minLines = 1
+    var maxLines = 6
+    let onSubmit: () -> Void
+    #if os(macOS)
+    @FocusState private var focused: Bool
+    #endif
+
+    var body: some View {
+        #if os(iOS)
+        ComposerTextView(text: $text, isFocused: $isFocused, placeholder: placeholder,
+                         minLines: minLines, maxLines: maxLines, onSubmit: onSubmit)
+        #else
+        TextField(ComposerHint.with(placeholder), text: $text, axis: .vertical)
+            .lineLimit(minLines...maxLines)
+            .focused($focused)
+            .returnSends(onSubmit)
+            .onChange(of: isFocused, initial: true) { _, v in if focused != v { focused = v } }
+            .onChange(of: focused) { _, v in if isFocused != v { isFocused = v } }
+        #endif
+    }
+}

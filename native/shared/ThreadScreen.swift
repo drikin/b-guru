@@ -14,7 +14,7 @@ struct ThreadScreen: View {
     @State private var draft: PostDraft
     @State private var needsReconnect = false
     @State private var viewing: ImageViewerItem?
-    @FocusState private var replyFocused: Bool
+    @State private var replyFocused = false
 
     init(id: Int, timeline: TimelineStore, capabilities: Capabilities?, onReconnect: @escaping () -> Void) {
         self.id = id
@@ -90,10 +90,7 @@ struct ThreadScreen: View {
                 }
                 .disabled(draft.images.count >= draft.maxImages || capabilities?.canPublish != true)
                 .accessibilityLabel("写真を添付")
-                TextField(ComposerHint.with("返信"), text: $draft.text, axis: .vertical)
-                    .lineLimit(1...6)
-                    .focused($replyFocused)
-                    .returnSends(sendReply)
+                PostTextInput(text: $draft.text, isFocused: $replyFocused, placeholder: "返信", onSubmit: sendReply)
                     .padding(.vertical, 8)
                     .padding(.horizontal, 12)
                     .background(RoundedRectangle(cornerRadius: 18).fill(Color.primary.opacity(0.06)))
