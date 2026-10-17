@@ -60,18 +60,17 @@ struct ThreadScreen: View {
                 }
             }
             Divider()
-            replyBar
+            if capabilities?.canPublish == true {
+                replyBar
+            } else {
+                // No permission yet: say so right where the reply would go.
+                ReconnectBanner(onReconnect: onReconnect)
+            }
         }
         .navigationTitle(root?.authorName.map { "\($0) さんの投稿" } ?? "スレッド")
         .inlineNavigationTitle()
         .task { await load() }
         .imageViewer($viewing)
-        .alert("返信するには再接続が必要です", isPresented: $needsReconnect) {
-            Button("再接続する", action: onReconnect)
-            Button("あとで", role: .cancel) {}
-        } message: {
-            Text("タイムラインへの投稿の許可を追加するため、もう一度 B-guru にログインしてアプリを接続してください。")
-        }
     }
 
     private func row(_ p: Post, isRoot: Bool) -> some View {

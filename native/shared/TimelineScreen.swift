@@ -24,12 +24,6 @@ struct TimelineScreen: View {
                 }
             }
             .imageViewer($viewing)
-            .alert("投稿するには再接続が必要です", isPresented: $needsReconnect) {
-                Button("再接続する", action: onReconnect)
-                Button("あとで", role: .cancel) {}
-            } message: {
-                Text("タイムラインへの投稿・リアクションの許可を追加するため、もう一度 B-guru にログインしてアプリを接続してください。")
-            }
             .task {
                 if !timeline.hasLoaded { await timeline.refresh() }
             }
@@ -110,6 +104,16 @@ struct TimelineScreen: View {
     }
 
     private var list: some View {
+        VStack(spacing: 0) {
+            // Above the list (not inside it) so it is visible wherever you have scrolled to.
+            if needsReconnect {
+                ReconnectBanner(onReconnect: onReconnect, onClose: { needsReconnect = false })
+            }
+            posts
+        }
+    }
+
+    private var posts: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if timeline.posts.isEmpty {
@@ -139,6 +143,40 @@ struct TimelineScreen: View {
         .refreshable { await timeline.refresh() }
         .scrollDismissesKeyboard(.immediately)
         .dismissesKeyboardOnTap()
+    }
+}
+
+/// Posting needs the "post" permission, which tokens from before the timeline lack.
+/// Shown in place (not as an alert: an alert would take the Mac panel's focus and
+/// the panel hides itself when it loses focus).
+struct ReconnectBanner: View {
+    let onReconnect: () -> Void
+    var onClose: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "key.fill").foregroundStyle(Color.accentGreen)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("投稿・返信・リアクションには再接続が必要です").font(.subheadline.bold())
+                Text("タイムラインに書き込む許可を追加するため、もう一度 B-guru にログインしてアプリを接続してください。")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("再接続する", action: onReconnect)
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.accentGreen)
+                    .controlSize(.small)
+            }
+            Spacer(minLength: 0)
+            if let onClose {
+                Button(action: onClose) { Image(systemName: "xmark").font(.caption) }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("閉じる")
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentGreen.opacity(0.10)))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 }
 

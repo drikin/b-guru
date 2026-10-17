@@ -159,8 +159,27 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
 
     func windowDidResignKey(_ notification: Notification) {
         lastResignKeyAt = Date()
-        // Peek mode: click elsewhere and it gets out of the way.
-        if !pin.pinned { dismiss() }
+        // Peek mode: click elsewhere and it gets out of the way — but not when the
+        // focus only moved to our own sheet (new post, image viewer, alert) or the
+        // photo / file picker it opened. Decide once the new key window is known.
+        guard !pin.pinned else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.isKeyWindow, !self.ownsKeyWindow else { return }
+            self.dismiss()
+        }
+    }
+
+    /// The key window belongs to this panel: an attached sheet (and anything it
+    /// opened), a child window, or a picker presented for it.
+    private var ownsKeyWindow: Bool {
+        if attachedSheet != nil { return true }
+        guard let key = NSApp.keyWindow else { return false }
+        var w: NSWindow? = key
+        while let cur = w {
+            if cur === self { return true }
+            w = cur.sheetParent ?? cur.parent
+        }
+        return key is NSOpenPanel || key is NSSavePanel
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
