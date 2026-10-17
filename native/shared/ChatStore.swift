@@ -70,6 +70,8 @@ final class ChatStore {
         self.voice = VoiceStore(api: api)
     }
 
+    private static let voiceReloginKey = "voiceReloginAsked"
+
     var token: String { api.token }
 
     // MARK: - Lifecycle
@@ -98,6 +100,16 @@ final class ChatStore {
         do {
             capabilities = try await api.capabilities()
             voice.configure(with: capabilities)
+            // Voice is on for me but this token predates the "voice" scope: send the
+            // member back to sign in once (a new sign-in gets the scope). Only once per
+            // install, so a server that still withholds it cannot loop us.
+            if let c = capabilities, c.voiceEnabled, !c.canJoinVoice,
+               !UserDefaults.standard.bool(forKey: Self.voiceReloginKey) {
+                UserDefaults.standard.set(true, forKey: Self.voiceReloginKey)
+                LoginNotice.message = "ボイスルームに対応しました。お手数ですが、一度ログインし直してください。"
+                signedOut = true
+                return
+            }
         } catch APIError.unauthorized {
             signedOut = true
         } catch {

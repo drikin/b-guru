@@ -73,17 +73,10 @@ struct VoiceBar: View {
                 avatars(voice.members.map { ($0.userId, $0.name, $0.avatar, $0.speaking, $0.muted) }, size: 30, menus: true)
             }
             Spacer(minLength: 4)
-            Button {
-                Task { await voice.setMic(!voice.micOn) }
-            } label: {
-                Image(systemName: voice.micOn ? "mic.fill" : "mic.slash.fill")
-                    .frame(width: 22, height: 22)
-            }
-            .buttonStyle(.bordered)
-            .tint(voice.micOn ? Color.accentGreen : .secondary)
-            .controlSize(.small)
-            .disabled(voice.phase != .connected)
-            .accessibilityLabel(voice.micOn ? "ミュートする" : "ミュートを解除して話す")
+            MicButton(voice: voice)
+            #if os(macOS)
+            DeviceMenu(voice: voice)
+            #endif
             Button(role: .destructive) {
                 Task { await voice.leave() }
             } label: {
@@ -131,3 +124,73 @@ struct VoiceBar: View {
         }
     }
 }
+
+/// Mute toggle that shows whether my voice is going out:
+///   muted          → grey, slashed mic
+///   on, quiet      → green outline, mic
+///   on, talking    → solid green, bold mic, ring that swells with the level
+private struct MicButton: View {
+    @Bindable var voice: VoiceStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let active = voice.micActive
+        Button {
+            Task { await voice.setMic(!voice.micOn) }
+        } label: {
+            Image(systemName: voice.micOn ? "mic.fill" : "mic.slash.fill")
+                .font(.system(size: 14, weight: active ? .heavy : .regular))
+                .foregroundStyle(active ? Color.white : (voice.micOn ? Color.accentGreen : Color.secondary))
+                .frame(width: 34, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(active ? Color.accentGreen : Color.primary.opacity(voice.micOn ? 0.06 : 0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.accentGreen, lineWidth: voice.micOn ? 1.5 : 0)
+                )
+                .overlay(
+                    // Level ring: grows with how loud I am while talking.
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.accentGreen.opacity(0.45), lineWidth: 3)
+                        .padding(-3)
+                        .scaleEffect(active && !reduceMotion ? 1 + CGFloat(voice.micLevel) * 0.18 : 1)
+                        .opacity(active ? 1 : 0)
+                )
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: voice.micLevel)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(voice.phase != .connected)
+        .accessibilityLabel(voice.micOn ? "ミュートする" : "ミュートを解除して話す")
+        .accessibilityValue(voice.micOn ? (active ? "話しています" : "マイク オン") : "ミュート中")
+    }
+}
+
+#if os(macOS)
+/// Which mic and speakers to use in the voice room (remembered per Mac).
+private struct DeviceMenu: View {
+    @Bindable var voice: VoiceStore
+
+    var body: some View {
+        Menu {
+            Picker("マイク", selection: Binding(get: { voice.inputId }, set: { voice.selectInput($0) })) {
+                ForEach(voice.inputs) { Text($0.name).tag($0.id) }
+            }
+            .pickerStyle(.inline)
+            Picker("スピーカー", selection: Binding(get: { voice.outputId }, set: { voice.selectOutput($0) })) {
+                ForEach(voice.outputs) { Text($0.name).tag($0.id) }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("マイクとスピーカーを選ぶ")
+        .accessibilityLabel("マイクとスピーカーを選ぶ")
+    }
+}
+#endif

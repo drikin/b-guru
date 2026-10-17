@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Observation
 import LiveKit
@@ -30,6 +31,11 @@ final class VoiceStore {
     /// People in the room while I am in it (me first), from LiveKit itself.
     private(set) var members: [Member] = []
     private(set) var micOn = false
+    /// What the mic is sending right now, 0…1 (after echo cancellation / noise
+    /// suppression), measured on this device so it reacts instantly.
+    private(set) var micLevel: Float = 0
+    /// My voice is going out (mic on and above the noise floor).
+    var micActive: Bool { micOn && micLevel > 0.12 }
     /// Shown under the bar until the next action.
     private(set) var notice: String?
     private(set) var enabled = false
@@ -44,6 +50,18 @@ final class VoiceStore {
     private let api: APIClient
     private var room: Room?
     private var observer: Observer?
+    private var meter: MicMeter?
+
+    // MARK: Audio devices (Mac only — iOS routes audio itself, e.g. to AirPods)
+
+    struct AudioChoice: Identifiable, Equatable {
+        var id: String   // "" = follow the system default
+        var name: String
+    }
+    private(set) var inputs: [AudioChoice] = []
+    private(set) var outputs: [AudioChoice] = []
+    private(set) var inputId: String = UserDefaults.standard.string(forKey: "voiceInputDevice") ?? ""
+    private(set) var outputId: String = UserDefaults.standard.string(forKey: "voiceOutputDevice") ?? ""
     /// Bumped by every join and leave, so an in-flight join that was overtaken
     /// by a leave (or a newer join) gives up instead of connecting.
     private var attempt = 0
@@ -158,6 +176,13 @@ final class VoiceStore {
         if myUserId == nil { myUserId = room.localParticipant.identity?.stringValue }
         micOn = false
         phase = .connected
+        #if os(macOS)
+        AudioManager.shared.onDeviceUpdate = { [weak self] _ in
+            Task { @MainActor in self?.refreshDevices() }
+        }
+        refreshDevices()
+        applyDevices()
+        #endif
         refreshMembers()
     }
 
@@ -170,6 +195,7 @@ final class VoiceStore {
         do {
             try await room.localParticipant.setMicrophone(enabled: on)
             micOn = on
+            setMeter(on)
         } catch {
             micOn = room.localParticipant.isMicrophoneEnabled()
             notice = on ? "マイクを使えません（設定でマイクを許可してください）" : nil
@@ -195,8 +221,55 @@ final class VoiceStore {
         observer = nil
         phase = .idle
         micOn = false
+        setMeter(false)
         members = []
         await r?.disconnect()
+    }
+
+    #if os(macOS)
+    func selectInput(_ id: String) {
+        inputId = id
+        UserDefaults.standard.set(id, forKey: "voiceInputDevice")
+        applyDevices()
+    }
+
+    func selectOutput(_ id: String) {
+        outputId = id
+        UserDefaults.standard.set(id, forKey: "voiceOutputDevice")
+        applyDevices()
+    }
+
+    private func refreshDevices() {
+        let am = AudioManager.shared
+        let def = AudioChoice(id: "", name: "システムの設定に従う")
+        inputs = [def] + am.inputDevices.filter { !$0.isDefault }.map { AudioChoice(id: $0.deviceId, name: $0.name) }
+        outputs = [def] + am.outputDevices.filter { !$0.isDefault }.map { AudioChoice(id: $0.deviceId, name: $0.name) }
+    }
+
+    /// Use the saved devices; one that is unplugged falls back to the system default.
+    private func applyDevices() {
+        let am = AudioManager.shared
+        am.inputDevice = am.inputDevices.first { $0.deviceId == inputId && !inputId.isEmpty } ?? am.defaultInputDevice
+        am.outputDevice = am.outputDevices.first { $0.deviceId == outputId && !outputId.isEmpty } ?? am.defaultOutputDevice
+    }
+    #endif
+
+    private func setMeter(_ on: Bool) {
+        if on, meter == nil {
+            let m = MicMeter { [weak self] level in
+                Task { @MainActor in
+                    guard let self, self.meter != nil else { return }
+                    // Rise fast, fall slowly, so the indicator does not flicker between words.
+                    self.micLevel = level > self.micLevel ? level : max(level, self.micLevel * 0.7)
+                }
+            }
+            AudioManager.shared.add(localAudioRenderer: m)
+            meter = m
+        } else if !on, let m = meter {
+            AudioManager.shared.remove(localAudioRenderer: m)
+            meter = nil
+            micLevel = 0
+        }
     }
 
     // MARK: LiveKit events (via Observer)
@@ -234,7 +307,7 @@ final class VoiceStore {
                 userId: id,
                 name: p.name.flatMap { $0.isEmpty ? nil : $0 } ?? info?.name ?? "?",
                 avatar: info?.avatar,
-                speaking: p.isSpeaking,
+                speaking: p.isSpeaking || (isMe && micActive),
                 muted: !p.isMicrophoneEnabled(),
                 isMe: isMe
             )
@@ -281,5 +354,41 @@ final class VoiceStore {
         func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
             Task { @MainActor [weak self] in self?.store?.roomEnded(room, error) }
         }
+    }
+}
+
+/// Turns the mic's processed buffers into a 0…1 level (about 15 updates a
+/// second). Called on the audio thread, so it only does arithmetic and hands
+/// the number off.
+private final class MicMeter: NSObject, AudioRenderer, @unchecked Sendable {
+    private let onLevel: @Sendable (Float) -> Void
+    private let lock = NSLock()
+    private var lastEmit: UInt64 = 0
+
+    init(onLevel: @escaping @Sendable (Float) -> Void) {
+        self.onLevel = onLevel
+    }
+
+    func render(pcmBuffer: AVAudioPCMBuffer) {
+        let now = DispatchTime.now().uptimeNanoseconds
+        lock.lock()
+        let due = now - lastEmit > 66_000_000
+        if due { lastEmit = now }
+        lock.unlock()
+        guard due else { return }
+        let n = Int(pcmBuffer.frameLength)
+        guard n > 0 else { return }
+        var sum: Float = 0
+        if let f = pcmBuffer.floatChannelData?[0] {
+            for i in 0..<n { sum += f[i] * f[i] }
+        } else if let s = pcmBuffer.int16ChannelData?[0] {
+            for i in 0..<n { let v = Float(s[i]) / 32768; sum += v * v }
+        } else {
+            return
+        }
+        let rms = (sum / Float(n)).squareRoot()
+        let db = 20 * log10(max(rms, 1e-6))
+        // -50 dBFS (room noise) → 0, -10 dBFS (close, loud speech) → 1.
+        onLevel(min(max((db + 50) / 40, 0), 1))
     }
 }

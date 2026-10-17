@@ -10,9 +10,15 @@ import UIKit
 /// itself is thrown away with the web view. No JS bridge is installed: the
 /// token comes back as the return value of callAsyncJavaScript on our own
 /// origin, and navigation is confined to bsm.backspace.fm.
+/// A one-off message for the next sign-in screen (e.g. why the app signed out).
+@MainActor
+enum LoginNotice {
+    static var message: String?
+}
+
 struct LoginView: View {
     let onToken: (String) -> Void
-    @State private var status: String?
+    @State private var status: String? = LoginNotice.message
     @State private var showDevices = false
     @State private var working = false
     @State private var web = LoginWeb()
