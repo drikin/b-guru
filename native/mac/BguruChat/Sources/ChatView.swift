@@ -205,6 +205,13 @@ struct ChatView: View {
                     .padding(.horizontal, 10)
                     .background(RoundedRectangle(cornerRadius: 9).fill(Color(nsColor: .textBackgroundColor)))
                     .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.12)))
+                Button {
+                    composerFocused = true
+                    pin.openEmoji?()
+                } label: { Image(systemName: "face.smiling") }
+                .buttonStyle(.borderless)
+                .help("絵文字と記号（⌃⌘Space）")
+                .accessibilityLabel("絵文字を入力")
                 Button(action: submit) {
                     Image(systemName: editingId == nil ? "paperplane.fill" : "checkmark")
                         .frame(width: 18, height: 18)

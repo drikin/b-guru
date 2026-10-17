@@ -64,6 +64,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             SelfTest.run(store: store, outDir: CommandLine.arguments[i + 1], send: false)
             return
         }
+        // Dev only: -demoPanel opens the real panel with sample data (no token, no network).
+        if CommandLine.arguments.contains("-demoPanel") {
+            let store = ChatStore(api: APIClient(token: "demo"))
+            store.debugLoadDemo()
+            let timeline = TimelineStore(api: APIClient(token: "demo"))
+            timeline.debugLoadDemo()
+            self.store = store
+            self.timeline = timeline
+            panel = ChatPanel(store: store, timeline: timeline, onSignOut: {})
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.showPanel() }
+            return
+        }
         // Dev only: BGURU_DEV_TOKEN=bga_… runs against a token without touching the Keychain.
         if let dev = ProcessInfo.processInfo.environment["BGURU_DEV_TOKEN"], !dev.isEmpty {
             startSession(token: dev)

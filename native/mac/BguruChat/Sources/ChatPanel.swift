@@ -42,7 +42,8 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
         becomesKeyOnlyIfNeeded = false
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        // On every desktop (Space) and over full-screen apps; stays put during Mission Control.
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         // Always above other apps' windows (drikin 2026-10-15「常に前面に」).
         level = .floating
         minSize = NSSize(width: 300, height: 320)
@@ -53,6 +54,16 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         let root = MainPanelView(store: store, timeline: timeline, pin: pin, onClose: { [weak self] in self?.dismiss() }, onSignOut: onSignOut)
         contentView = NSHostingView(rootView: root)
         pin.onChange = { [weak self] pinned in self?.applyPin(pinned) }
+        pin.openEmoji = { [weak self] in self?.openEmojiPalette() }
+        // Pinned: when you switch to another desktop (Space), bring the panel along
+        // in front — it is on every Space, but could end up behind that desktop's windows.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification,
+                                                          object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.pin.pinned, self.isVisible else { return }
+                self.orderFrontRegardless()
+            }
+        }
         if UserDefaults.standard.bool(forKey: "pinned") { pin.pinned = true }
     }
 
@@ -129,6 +140,11 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     }
 
     func dismiss() {
+        stopFollowingPalette()
+        if let prev = previousApp {
+            previousApp = nil
+            prev.activate()
+        }
         generation += 1
         isDismissing = true
         let mine = generation
@@ -163,10 +179,124 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         // focus only moved to our own sheet (new post, image viewer, alert) or the
         // photo / file picker it opened. Decide once the new key window is known.
         guard !pin.pinned else { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, !self.isKeyWindow, !self.ownsKeyWindow else { return }
-            self.dismiss()
+        // The emoji & symbols palette appears a moment after it takes the focus,
+        // so look twice before deciding the user clicked elsewhere.
+        DispatchQueue.main.async { [weak self] in self?.dismissIfFocusLeft(recheck: true) }
+    }
+
+    private func dismissIfFocusLeft(recheck: Bool) {
+        guard isVisible, !isDismissing, !pin.pinned, !isKeyWindow, !ownsKeyWindow else { return }
+        if Self.systemInputPaletteVisible {
+            followPalette()
+            return
         }
+        if recheck {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in self?.dismissIfFocusLeft(recheck: false) }
+            return
+        }
+        dismiss()
+    }
+
+    // MARK: Emoji & symbols palette (⌃⌘Space / 🌐E)
+
+    /// Processes whose windows are part of typing into us (the emoji & symbols
+    /// palette, press-and-hold accents): focus moving there is not "clicked elsewhere".
+    private static let inputPaletteBundles: Set<String> = [
+        "com.apple.CharacterPaletteIM", "com.apple.PressAndHold", "com.apple.inputmethod.EmojiFunctionRowItem",
+    ]
+
+    static var systemInputPaletteVisible: Bool {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        for w in list {
+            guard let pid = w[kCGWindowOwnerPID as String] as? pid_t,
+                  let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { continue }
+            if inputPaletteBundles.contains(id) { return true }
+        }
+        return false
+    }
+
+    private var paletteWatch: Timer?
+    private var outsideClick: Any?
+    /// The app that was in front before we activated for the palette (given back on dismiss).
+    private var previousApp: NSRunningApplication?
+
+    /// The palette types into the ACTIVE app, and this panel normally never
+    /// activates its app — so become active (remembering who was) while it is used.
+    private func activateForPalette() {
+        if !NSApp.isActive {
+            let front = NSWorkspace.shared.frontmostApplication
+            if front?.processIdentifier != ProcessInfo.processInfo.processIdentifier { previousApp = front }
+            NSApp.activate()
+        }
+        makeKeyAndOrderFront(nil)
+    }
+
+    /// While the palette is open: stay. When it closes, give the caret back to the
+    /// message box; a click anywhere else (not on the palette) puts the panel away.
+    private func followPalette() {
+        stopFollowingPalette()
+        activateForPalette()
+        paletteWatch = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if !self.isVisible || self.isKeyWindow { self.stopFollowingPalette(); return }
+                if !Self.systemInputPaletteVisible {
+                    self.stopFollowingPalette()
+                    self.makeKeyAndOrderFront(nil)
+                    self.pin.focusRequest += 1
+                }
+            }
+        }
+        outsideClick = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                // A click on the palette itself (picking an emoji) keeps us open.
+                if Self.paletteUnderMouse { return }
+                self.stopFollowingPalette()
+                if !self.pin.pinned { self.dismiss() }
+            }
+        }
+    }
+
+    private func stopFollowingPalette() {
+        paletteWatch?.invalidate()
+        paletteWatch = nil
+        if let m = outsideClick { NSEvent.removeMonitor(m) }
+        outsideClick = nil
+    }
+
+    private static var paletteUnderMouse: Bool {
+        let p = NSEvent.mouseLocation
+        guard let screenH = NSScreen.screens.first?.frame.height else { return false }
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        for w in list {
+            guard let pid = w[kCGWindowOwnerPID as String] as? pid_t,
+                  let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+                  inputPaletteBundles.contains(id),
+                  let b = w[kCGWindowBounds as String] as? [String: CGFloat],
+                  let x = b["X"], let y = b["Y"], let wd = b["Width"], let ht = b["Height"] else { continue }
+            // CG window bounds are top-left based; NSEvent.mouseLocation is bottom-left.
+            if NSRect(x: x, y: screenH - y - ht, width: wd, height: ht).contains(p) { return true }
+        }
+        return false
+    }
+
+    /// The 😀 button and ⌃⌘Space.
+    func openEmojiPalette() {
+        activateForPalette()
+        NSApp.orderFrontCharacterPalette(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.followPalette() }
+    }
+
+    /// ⌃⌘Space opens the emoji & symbols palette for the message box (an
+    /// accessory app has no Edit menu to provide that shortcut).
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.charactersIgnoringModifiers == " ",
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.control, .command] {
+            NSApp.orderFrontCharacterPalette(nil)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
     }
 
     /// The key window belongs to this panel: an attached sheet (and anything it
@@ -202,6 +332,8 @@ final class PinState {
     var focusRequest = 0
     /// Chat or timeline (the switch at the top, ⌘1 / ⌘2, or a two-finger swipe).
     var tab: MainTab = .chat
+    /// Opens the emoji & symbols palette for the message box (set by the panel).
+    @ObservationIgnored var openEmoji: (() -> Void)?
     @ObservationIgnored var onChange: ((Bool) -> Void)?
 }
 
