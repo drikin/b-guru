@@ -25,7 +25,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     /// Open and in front as far as a toggle is concerned.
     var isFrontForToggle: Bool {
         if isDismissing { return true } // already closing because of this very click
-        guard isVisible else { return false }
+        guard isVisible, isOnActiveSpace else { return false } // pinned on another desktop: summon it here
         if isKeyWindow { return true }
         if let t = lastResignKeyAt, Date().timeIntervalSince(t) < 0.35 { return true }
         return false
@@ -42,8 +42,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
         becomesKeyOnlyIfNeeded = false
-        // On every desktop (Space) and over full-screen apps; stays put during Mission Control.
-        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        collectionBehavior = Self.peekBehavior
         // Always above other apps' windows (drikin 2026-10-15「常に前面に」).
         level = .floating
         minSize = NSSize(width: 300, height: 320)
@@ -55,15 +54,6 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         contentView = NSHostingView(rootView: root)
         pin.onChange = { [weak self] pinned in self?.applyPin(pinned) }
         pin.openEmoji = { [weak self] in self?.openEmojiPalette() }
-        // Pinned: when you switch to another desktop (Space), bring the panel along
-        // in front — it is on every Space, but could end up behind that desktop's windows.
-        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification,
-                                                          object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.pin.pinned, self.isVisible else { return }
-                self.orderFrontRegardless()
-            }
-        }
         if UserDefaults.standard.bool(forKey: "pinned") { pin.pinned = true }
     }
 
@@ -91,6 +81,13 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         isDismissing = false
         let fadeIn = !isVisible || alphaValue < 1
         if fadeIn { alphaValue = 0 }
+        if pin.pinned, isVisible, !isOnActiveSpace {
+            // Pinned on another desktop and called up here (⌃⌥B / menu bar):
+            // bring it to this desktop and pin it here from now on.
+            collectionBehavior = Self.peekBehavior
+            orderFrontRegardless()
+            collectionBehavior = Self.pinnedBehavior
+        }
         orderFrontRegardless()
         makeKey()
         if fadeIn {
@@ -162,7 +159,15 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         })
     }
 
+    /// Peek (not pinned): drops down on whichever desktop (Space) you are on.
+    static let peekBehavior: NSWindow.CollectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+    /// Pinned: stays on the desktop where it was pinned (drikin 2026-10-17) —
+    /// switching desktops leaves it behind; coming back finds it where it was.
+    static let pinnedBehavior: NSWindow.CollectionBehavior = [.fullScreenAuxiliary, .ignoresCycle]
+
     private func applyPin(_ pinned: Bool) {
+        // Dropping canJoinAllSpaces while on screen binds the panel to the current desktop.
+        collectionBehavior = pinned ? Self.pinnedBehavior : Self.peekBehavior
         UserDefaults.standard.set(pinned, forKey: "pinned")
         if pinned {
             setFrameAutosaveName("BguruChatPinned")
