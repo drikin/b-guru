@@ -24,6 +24,12 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
   configs:
+    # Debug = local builds: sign with the team's Apple Development certificate so
+    # macOS keeps the mic / Keychain permissions across rebuilds (an ad-hoc
+    # signature is a new app to macOS every build, so it asked every time).
+    Debug:
+      CODE_SIGN_IDENTITY: "Apple Development"
+      DEVELOPMENT_TEAM: F9349EVF2K
     # Release = what members download: Developer ID + hardened runtime +
     # secure timestamp (both required for notarization).
     Release:
