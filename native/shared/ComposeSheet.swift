@@ -150,12 +150,23 @@ struct ComposeSheet: View {
         _draft = State(initialValue: PostDraft(maxImages: maxImages))
     }
 
+    private func post() {
+        guard draft.canSend else { return }
+        Task {
+            if let post = await draft.send(api: api, parentId: parentId) {
+                onPosted(post)
+                dismiss()
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 8) {
-                TextField("いまどうしてる？", text: $draft.text, axis: .vertical)
+                TextField(ComposerHint.with("いまどうしてる？"), text: $draft.text, axis: .vertical)
                     .lineLimit(5...20)
                     .focused($focused)
+                    .returnSends(post)
                 DraftImages(draft: draft)
                 if let e = draft.error { Text(e).font(.caption).foregroundStyle(.red) }
                 Spacer()
@@ -178,14 +189,7 @@ struct ComposeSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("キャンセル") { dismiss() }.disabled(draft.sending) }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(draft.sending ? "送信中…" : "投稿") {
-                        Task {
-                            if let post = await draft.send(api: api, parentId: parentId) {
-                                onPosted(post)
-                                dismiss()
-                            }
-                        }
-                    }
+                    Button(draft.sending ? "送信中…" : "投稿", action: post)
                     .disabled(!draft.canSend)
                 }
             }

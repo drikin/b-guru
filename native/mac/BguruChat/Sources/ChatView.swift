@@ -182,14 +182,8 @@ struct ChatView: View {
                     .textFieldStyle(.plain)
                     .lineLimit(1...6)
                     .focused($composerFocused)
-                    .onSubmit(submit)
-                    // ⇧Enter = newline at the caret (a vertical TextField would submit on it).
-                    .onKeyPress(keys: [.return], phases: .down) { press in
-                        guard press.modifiers.contains(.shift), !TextComposition.isActive,
-                              let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return .ignored }
-                        editor.insertNewlineIgnoringFieldEditor(nil)
-                        return .handled
-                    }
+                    // Enter sends, ⇧Enter is a newline (shared with the timeline's composers).
+                    .returnSends(submit)
                     .onKeyPress(.upArrow) {
                         // Slack-style: ↑ in an empty composer edits your last message.
                         guard !TextComposition.isActive, draft.isEmpty, editingId == nil, let m = store.lastOwnMessage,

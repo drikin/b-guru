@@ -90,22 +90,16 @@ struct ThreadScreen: View {
                 }
                 .disabled(draft.images.count >= draft.maxImages || capabilities?.canPublish != true)
                 .accessibilityLabel("写真を添付")
-                TextField("返信", text: $draft.text, axis: .vertical)
+                TextField(ComposerHint.with("返信"), text: $draft.text, axis: .vertical)
                     .lineLimit(1...6)
                     .focused($replyFocused)
+                    .returnSends(sendReply)
                     .padding(.vertical, 8)
                     .padding(.horizontal, 12)
                     .background(RoundedRectangle(cornerRadius: 18).fill(Color.primary.opacity(0.06)))
                     .disabled(capabilities?.canPublish != true)
                     .onTapGesture { if capabilities?.canPublish != true { needsReconnect = true } }
-                Button {
-                    Task {
-                        if let post = await draft.send(api: timeline.api, parentId: id) {
-                            replies.append(post)
-                            timeline.didPublish(post)
-                        }
-                    }
-                } label: {
+                Button(action: sendReply) {
                     Image(systemName: draft.sending ? "hourglass.circle.fill" : "arrow.up.circle.fill").font(.system(size: 30))
                 }
                 .disabled(!draft.canSend)
@@ -117,6 +111,17 @@ struct ThreadScreen: View {
         .frame(maxWidth: 760)
         .frame(maxWidth: .infinity)
         .background(.bar)
+    }
+
+    private func sendReply() {
+        guard draft.canSend else { return }
+        Task {
+            if let post = await draft.send(api: timeline.api, parentId: id) {
+                replies.append(post)
+                timeline.didPublish(post)
+                replyFocused = true
+            }
+        }
     }
 
     private func load() async {

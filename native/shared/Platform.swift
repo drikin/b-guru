@@ -154,3 +154,35 @@ extension PlatformImage {
         #endif
     }
 }
+
+/// Placeholder hint for composers that send on Return (Mac).
+enum ComposerHint {
+    static func with(_ base: String) -> String {
+        #if os(macOS)
+        return "\(base)（Enter 送信・⇧Enter 改行）"
+        #else
+        return base
+        #endif
+    }
+}
+
+extension View {
+    /// Same keys as the chat composer, for the timeline's reply bar and new post (Mac):
+    /// Return sends, ⇧Return inserts a newline at the caret, and the Return that
+    /// confirms a Japanese conversion only confirms it (onSubmit does not fire for it).
+    /// iOS: unchanged here (the on-screen keyboard's return key is a newline).
+    @ViewBuilder func returnSends(_ action: @escaping () -> Void) -> some View {
+        #if os(macOS)
+        self
+            .onSubmit(action)
+            .onKeyPress(keys: [.return], phases: .down) { press in
+                guard press.modifiers.contains(.shift), !TextComposition.isActive,
+                      let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return .ignored }
+                editor.insertNewlineIgnoringFieldEditor(nil)
+                return .handled
+            }
+        #else
+        self
+        #endif
+    }
+}
