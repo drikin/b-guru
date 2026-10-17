@@ -1,4 +1,5 @@
 import { pool } from "./db";
+import { emitLive } from "./live";
 
 /**
  * Reactions on posts and chat messages.
@@ -119,6 +120,10 @@ export async function toggleReaction(
       [targetType, targetId, userEmail, emoji]
     );
   }
+
+  // Chat: tell connected clients (the native apps' streams) right away — they used
+  // to see others' reactions only after a reload (tochi 2026-10-17).
+  if (targetType === "chat") void broadcastChatReactions(targetId);
 
   return {
     added: already.rows.length === 0,
@@ -247,4 +252,42 @@ export async function deleteCustomEmoji(
   const name = found.rows[0].name;
   await pool.query(`DELETE FROM custom_emojis WHERE id = $1`, [id]);
   await pool.query(`DELETE FROM reactions WHERE emoji = $1`, [`:${name}:`]);
+}
+
+/** Emit a chat message's current reactions on the live bus. Fire-and-forget. */
+export async function broadcastChatReactions(messageId: number): Promise<void> {
+  try {
+    const res = await pool.query(
+      `SELECT r.emoji,
+              COUNT(*)::int AS count,
+              ARRAY_AGG(u.user_id ORDER BY r.created_at) FILTER (WHERE u.user_id IS NOT NULL) AS user_ids,
+              (ARRAY_AGG(
+                 CASE
+                   WHEN COALESCE(up.display_name, r.user_email) LIKE '%@%'
+                   THEN split_part(COALESCE(up.display_name, r.user_email), '@', 1)
+                   ELSE COALESCE(up.display_name, r.user_email)
+                 END
+                 ORDER BY r.created_at
+               ))[1:${REACTOR_LIMIT}] AS reactors
+         FROM reactions r
+         LEFT JOIN user_profiles up ON up.email = r.user_email
+         LEFT JOIN users u ON u.email = r.user_email
+        WHERE r.target_type = 'chat' AND r.target_id = $1
+        GROUP BY r.emoji
+        ORDER BY count DESC, r.emoji`,
+      [messageId]
+    );
+    emitLive({
+      type: "chat_reaction",
+      messageId,
+      reactions: res.rows.map((row: { emoji: string; count: number; user_ids: string[] | null; reactors: string[] | null }) => ({
+        emoji: row.emoji,
+        count: Number(row.count),
+        reactors: row.reactors ?? [],
+        userIds: row.user_ids ?? [],
+      })),
+    });
+  } catch (e) {
+    console.error("broadcastChatReactions:", (e as Error)?.message);
+  }
 }

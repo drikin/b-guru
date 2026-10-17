@@ -37,7 +37,12 @@ export type LiveEvent =
   | { type: "presence"; userIds: string[] }
   | { type: "chat"; message: ChatLiveMessage; action: "create" | "delete" | "edit" }
   | { type: "poll"; action: "vote" | "edit"; postId: number; poll: PostPoll }
-  | { type: "club"; postId: number; club: string | null };
+  | { type: "club"; postId: number; club: string | null }
+  /** A chat message's reactions changed. `userIds` are opaque users.user_id (never
+   *  emails) so each receiver can mark its own chips; `reactors` are display names. */
+  | { type: "chat_reaction"; messageId: number; reactions: ChatReactionLive[] };
+
+export type ChatReactionLive = { emoji: string; count: number; reactors: string[]; userIds: string[] };
 
 /**
  * ⚠️ Every event on this bus is broadcast VERBATIM to every connected SSE

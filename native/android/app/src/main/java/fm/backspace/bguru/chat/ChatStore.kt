@@ -144,7 +144,7 @@ class ChatStore(val api: ApiClient) {
         }
     }
 
-    @Serializable private data class ChatEvent(val action: String, val message: ChatMessage? = null, val id: Long? = null)
+    @Serializable private data class ChatEvent(val action: String, val message: ChatMessage? = null, val id: Long? = null, val reactions: List<Reaction>? = null)
     @Serializable private data class Presence(val userIds: List<String> = emptyList())
 
     private suspend fun handle(ev: ServerEvent) {
@@ -163,6 +163,10 @@ class ChatStore(val api: ApiClient) {
                         }
                     }
                     "delete" -> e.id?.let { id -> rows = rows.filterNot { it.message.id == id } }
+                    // Someone (or you, elsewhere) reacted: update the chips at once.
+                    "reactions" -> e.id?.let { id ->
+                        rows = rows.map { if (it.message.id == id) it.copy(message = it.message.copy(reactions = e.reactions ?: emptyList())) else it }
+                    }
                 }
             }
             "presence" -> runCatching { ApiJson.decodeFromString<Presence>(ev.data) }.getOrNull()?.let { onlineCount = it.userIds.size }

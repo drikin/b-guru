@@ -133,7 +133,7 @@ final class ChatStore {
             connection = .live
             await reload()
         case "chat":
-            struct ChatEvent: Decodable { var action: String; var message: ChatMessage?; var id: Int? }
+            struct ChatEvent: Decodable { var action: String; var message: ChatMessage?; var id: Int?; var reactions: [Reaction]? }
             guard let e = try? dec.decode(ChatEvent.self, from: ev.data) else { return }
             switch e.action {
             case "create":
@@ -147,6 +147,11 @@ final class ChatStore {
                 }
             case "delete":
                 if let id = e.id { rows.removeAll { $0.message.id == id } }
+            case "reactions":
+                // Someone (or you, elsewhere) reacted: update the chips at once.
+                if let id = e.id, let i = rows.firstIndex(where: { $0.message.id == id }) {
+                    rows[i].message.reactions = e.reactions ?? []
+                }
             default:
                 break
             }

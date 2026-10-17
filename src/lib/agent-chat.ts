@@ -102,6 +102,22 @@ export function liveToStreamEvent(ev: LiveEvent, viewer: ChatViewer): StreamEven
   if (ev.type === "presence") {
     return { event: "presence", data: { user_ids: ev.userIds } };
   }
+  if (ev.type === "chat_reaction") {
+    // Same shape as the chat list's reactions, with `mine` for this viewer.
+    return {
+      event: "chat",
+      data: {
+        action: "reactions",
+        id: ev.messageId,
+        reactions: ev.reactions.map((r) => ({
+          emoji: r.emoji,
+          count: r.count,
+          mine: !!viewer.userId && r.userIds.includes(viewer.userId),
+          reactors: r.reactors,
+        })),
+      },
+    };
+  }
   return null;
 }
 
@@ -125,7 +141,7 @@ export function agentCapabilities(scopes: AgentScope[]) {
         client_id: true,
         max_body: CHAT_MAX_BODY,
         ttl_hours: ttlHours,
-        reaction_events: false, // reactions are fetched, not streamed (yet)
+        reaction_events: true, // stream: event "chat", action "reactions" { id, reactions }
       },
       // Timeline for the native apps. publish/upload need the "post" scope (people
       // posting from the app); tokens issued before it existed must reconnect once.
