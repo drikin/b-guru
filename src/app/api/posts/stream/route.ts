@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { toAgentVoiceDto } from "@/lib/agent-chat";
 import { liveBus, LiveEvent } from "@/lib/live";
 import { getSessionEmail } from "@/lib/session";
 import {
@@ -44,9 +45,17 @@ export async function GET(req: NextRequest) {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       send = (event) => {
-        // The web has no voice UI yet, and this stream is open to signed-out
-        // visitors too: who is in the voice room goes to the members' apps only.
-        if (event.type === "voice") return;
+        // Who is in the voice room goes to signed-in members only (this stream is
+        // also open to signed-out visitors). Same DTO as the apps: user_id / name / avatar.
+        if (event.type === "voice") {
+          if (!email) return;
+          try {
+            controller.enqueue(encoder.encode(`event: voice\ndata: ${JSON.stringify(toAgentVoiceDto(event.state))}\n\n`));
+          } catch {
+            // stream closed
+          }
+          return;
+        }
         try {
           const payload = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
           controller.enqueue(encoder.encode(payload));

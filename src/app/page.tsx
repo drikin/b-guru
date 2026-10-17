@@ -75,6 +75,8 @@ import AndroidAppCard from "@/components/AndroidAppCard";
 import type { PostPoll } from "@/lib/poll";
 import type { DuplicateCandidate } from "@/lib/duplicates";
 import { DuplicateWarning } from "@/components/DuplicateWarning";
+import VoiceBar, { VoiceMini } from "@/components/VoiceBar";
+import { applyVoiceEvent, loadVoice, type VoiceRoomInfo } from "@/lib/voice-client";
 
 /** Decode a base64url VAPID public key into a Uint8Array for pushManager.subscribe. */
 function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
@@ -6526,6 +6528,14 @@ export default function Home() {
     es.addEventListener("chat", onChat);
     es.addEventListener("poll", onPoll);
     es.addEventListener("club", onClub);
+    // Voice room: who is in it (signed-in members only; see /api/posts/stream).
+    es.addEventListener("voice", (e: MessageEvent) => {
+      try {
+        applyVoiceEvent(JSON.parse(e.data) as VoiceRoomInfo);
+      } catch {
+        /* ignore a malformed event */
+      }
+    });
     // onopen fires on the FIRST connection too, not just on reconnects. The auth
     // effect already loads all of these panels on mount, so reloading them here
     // made every page load fire the same ~9 APIs twice (measured: 16 unique
@@ -6548,6 +6558,7 @@ export default function Home() {
       L.loadOnline();
       L.loadPollWidget();
       L.loadChat(chatViewRef.current); // recover chat missed during a disconnect
+      void loadVoice(); // and who is in the voice room
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) L.silentRefreshFeed();
     };
     es.onerror = () => {
@@ -9718,6 +9729,7 @@ export default function Home() {
       aside={{ width: { base: 280, lg: 300 }, breakpoint: "lg", collapsed: { mobile: !asideOpened } }}
       padding={0}
     >
+      <VoiceMini hidden={showChatView} onOpenChat={() => setChatView(true)} />
       {/* Header */}
       <AppShell.Header
         data-cx="header"
@@ -11205,6 +11217,7 @@ export default function Home() {
                     overscrollBehavior: "contain",
                   }}
                 >
+                  <VoiceBar />
                   {/* Message list */}
                   <ScrollArea.Autosize
                     type="auto"
