@@ -59,6 +59,7 @@ describe("LiveKit トークン", () => {
     expect(c.video.canPublishData).toBe(false);
     expect(c.video.roomAdmin).toBeUndefined();
     expect(JSON.stringify(c)).not.toMatch(/@/);
+    expect(c.roomConfig).toEqual({ maxParticipants: 100, emptyTimeout: 60, departureTimeout: 20 });
   });
 
   it("wss → https に変換する", () => {

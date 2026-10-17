@@ -195,7 +195,14 @@ async function connect(url: string, token: string, mine: number) {
     .on(lk.RoomEvent.ParticipantConnected, changed)
     .on(lk.RoomEvent.ParticipantDisconnected, changed)
     .on(lk.RoomEvent.ActiveSpeakersChanged, changed)
-    .on(lk.RoomEvent.TrackMuted, changed)
+    .on(lk.RoomEvent.TrackMuted, (pub, participant) => {
+      // An admin turned my mic off from the server: follow it.
+      if (room === r && participant === r.localParticipant && pub.source === lk.Track.Source.Microphone && snap.micOn && !snap.micBusy) {
+        stopMeter();
+        set({ micOn: false, notice: "管理者がマイクをオフにしました" });
+      }
+      changed();
+    })
     .on(lk.RoomEvent.TrackUnmuted, changed)
     .on(lk.RoomEvent.TrackPublished, changed)
     .on(lk.RoomEvent.TrackUnpublished, changed)
@@ -267,7 +274,14 @@ export async function setMic(on: boolean): Promise<void> {
   try {
     // The saved mic is chosen here (not at join) so the browser asks for the
     // microphone only when the member actually unmutes.
-    await r.localParticipant.setMicrophoneEnabled(on, on && snap.inputId ? { deviceId: snap.inputId } : undefined);
+    const lk = await import("livekit-client");
+    // Speech-quality Opus, nothing sent during silence (DTX), no redundant copy
+    // (RED doubles the bytes): ~3x less upstream than the defaults for 100 listeners.
+    await r.localParticipant.setMicrophoneEnabled(on, on && snap.inputId ? { deviceId: snap.inputId } : undefined, {
+      audioPreset: lk.AudioPresets.speech,
+      dtx: true,
+      red: false,
+    });
     if (on) {
       startMeter(r);
       void refreshDevices(); // names become readable once the mic is allowed
@@ -336,8 +350,23 @@ export async function kickVoice(userId: string, ban = false): Promise<void> {
   }
 }
 
+/** Only admins remove / mute / ban (the server enforces the same). */
 export function canModerate(s: VoiceSnapshot): boolean {
-  return s.admin || (!!s.myUserId && s.roomInfo?.opened_by === s.myUserId);
+  return s.admin;
+}
+
+export async function muteVoice(userId: string): Promise<void> {
+  try {
+    const r = await fetch("/api/voice/mute", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId }),
+    });
+    const d = await r.json().catch(() => ({}));
+    set({ notice: r.ok ? (d?.muted ? "ミュートしました" : "マイクはオフでした") : d?.error ?? "操作できませんでした" });
+  } catch {
+    set({ notice: "操作できませんでした" });
+  }
 }
 
 // ---- devices ----

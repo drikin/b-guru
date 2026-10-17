@@ -11,6 +11,8 @@ import {
   VOICE_TOKEN_TTL_SEC,
   banFromVoice,
   canModerate,
+  logModeration,
+  muteParticipant,
   ensureRoom,
   isVoiceBanned,
   issueJoinToken,
@@ -61,8 +63,7 @@ export async function issueVoiceJoin(email: string, userId: string): Promise<Act
   };
 }
 
-/** Remove someone from the room (admins, or the session's opener while still in
- *  the room). `ban` keeps them out afterwards and is admin-only. */
+/** Remove someone from the room (admins only). `ban` keeps them out afterwards. */
 export async function kickFromVoice(
   email: string,
   userId: string | null,
@@ -77,7 +78,7 @@ export async function kickFromVoice(
   if (target === userId) {
     return { status: 400, body: { error: "自分は退出させられません", code: "invalid_request" } };
   }
-  if (!(await canModerate(email, userId))) {
+  if (!(await canModerate(email))) {
     return { status: 403, body: { error: "この操作はできません", code: "forbidden" } };
   }
   const ban = input.ban === true;
@@ -94,8 +95,25 @@ export async function kickFromVoice(
     await banFromVoice(targetEmail, email, reason);
   }
   await removeParticipant(cfg, target);
+  await logModeration(email, ban ? "ban" : "kick", target, typeof input.reason === "string" ? input.reason.slice(0, 200) : null);
   await refreshVoiceState().catch(() => {});
   return { status: 200, body: { ok: true, banned: ban } };
+}
+
+/** Turn someone's mic off (admins only). */
+export async function muteInVoice(email: string, userId: string | null, input: { user_id?: unknown }): Promise<ActionResult> {
+  const cfg = livekitConfig();
+  if (!cfg || !voiceEnabledFor(email)) return notAvailable;
+  const target = typeof input.user_id === "string" ? input.user_id.trim() : "";
+  if (!target || target.length > 64 || target === userId) {
+    return { status: 400, body: { error: "user_id を指定してください", code: "invalid_request" } };
+  }
+  if (!(await canModerate(email))) {
+    return { status: 403, body: { error: "この操作はできません", code: "forbidden" } };
+  }
+  const muted = await muteParticipant(cfg, target);
+  if (muted) await logModeration(email, "mute", target, null);
+  return { status: 200, body: { ok: true, muted } };
 }
 
 // Web routes have no per-token rate bucket like /api/agent/*; a small per-member

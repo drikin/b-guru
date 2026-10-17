@@ -74,6 +74,13 @@ export function issueJoinToken(cfg: LiveKitConfig, userId: string, name: string 
     name: name ?? undefined,
     ttlSec: VOICE_TOKEN_TTL_SEC,
     video: joinGrant(VOICE_ROOM),
+    // If a reconnect re-creates the room, keep our limits instead of the shared
+    // LiveKit server's defaults (max 10, which suits rec, not this room).
+    roomConfig: {
+      maxParticipants: VOICE_MAX_PARTICIPANTS,
+      emptyTimeout: VOICE_EMPTY_TIMEOUT_SEC,
+      departureTimeout: 20,
+    },
   });
 }
 
@@ -308,6 +315,7 @@ export async function handleWebhookEvent(ev: LkWebhookEvent): Promise<void> {
 }
 
 export async function purgeOldVoiceLog(): Promise<number> {
+  await pool.query(`DELETE FROM voice_mod_log WHERE created_at < now() - interval '365 days'`);
   await pool.query(
     `DELETE FROM voice_participations WHERE joined_at < now() - interval '30 days'`
   );
@@ -319,13 +327,10 @@ export async function purgeOldVoiceLog(): Promise<number> {
 
 // ---- moderation ----
 
-/** Admins, and whoever opened the current session while they are still in the
- *  room, may remove people. Only admins may ban (keeps a member from rejoining). */
-export async function canModerate(email: string, userId: string | null): Promise<boolean> {
-  if (isAdmin(email)) return true;
-  if (!userId) return false;
-  const state = await refreshVoiceState();
-  return isOpenerPresent(state, userId);
+/** Only admins moderate (remove / mute / ban). With the room open to every
+ *  member, letting whoever opened it remove others invited repeated kicking. */
+export async function canModerate(email: string): Promise<boolean> {
+  return isAdmin(email);
 }
 
 export function isOpenerPresent(state: VoiceState, userId: string): boolean {
@@ -334,6 +339,28 @@ export function isOpenerPresent(state: VoiceState, userId: string): boolean {
 
 export async function removeParticipant(cfg: LiveKitConfig, userId: string): Promise<void> {
   await roomService(cfg, "RemoveParticipant", { room: VOICE_ROOM, identity: userId }, VOICE_ROOM);
+}
+
+/** Turn someone's mic off from the server (they can turn it back on, but an
+ *  admin can repeat this or remove them). Returns false when they have no mic track. */
+export async function muteParticipant(cfg: LiveKitConfig, userId: string): Promise<boolean> {
+  const res = await roomService<{ participants?: { identity?: string; tracks?: { sid?: string; type?: string | number; source?: string | number; muted?: boolean }[] }[] }>(
+    cfg, "ListParticipants", { room: VOICE_ROOM }, VOICE_ROOM
+  );
+  const p = (res?.participants ?? []).find((x) => x.identity === userId);
+  const mics = (p?.tracks ?? []).filter((t) => t.sid && !t.muted && (t.type === "AUDIO" || t.type === 0));
+  for (const t of mics) {
+    await roomService(cfg, "MutePublishedTrack", { room: VOICE_ROOM, identity: userId, track_sid: t.sid, muted: true }, VOICE_ROOM);
+  }
+  return mics.length > 0;
+}
+
+/** Who removed / muted / banned whom, and when (kept a year). */
+export async function logModeration(actorEmail: string, action: "kick" | "ban" | "mute", targetUserId: string, reason: string | null): Promise<void> {
+  await pool.query(
+    `INSERT INTO voice_mod_log (actor_email, action, target_user_id, reason) VALUES ($1, $2, $3, $4)`,
+    [actorEmail, action, targetUserId, reason]
+  );
 }
 
 export async function banFromVoice(email: string, bannedBy: string, reason: string | null): Promise<void> {

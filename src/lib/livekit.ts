@@ -54,6 +54,8 @@ export interface TokenInput {
   name?: string;
   ttlSec: number;
   video: VideoGrant;
+  /** Used if this join creates the room (LiveKit's own defaults otherwise apply). */
+  roomConfig?: { maxParticipants?: number; emptyTimeout?: number; departureTimeout?: number };
   nowSec?: number; // injectable for tests
 }
 
@@ -72,6 +74,7 @@ export function signAccessToken(cfg: LiveKitConfig, input: TokenInput): string {
     claims.jti = input.identity;
   }
   if (input.name) claims.name = input.name;
+  if (input.roomConfig) claims.roomConfig = input.roomConfig;
   const unsigned = `${b64url(JSON.stringify(header))}.${b64url(JSON.stringify(claims))}`;
   const sig = crypto.createHmac("sha256", cfg.apiSecret).update(unsigned).digest();
   return `${unsigned}.${b64url(sig)}`;

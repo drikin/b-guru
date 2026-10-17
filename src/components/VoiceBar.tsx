@@ -14,6 +14,7 @@ import {
   joinVoice,
   kickVoice,
   leaveVoice,
+  muteVoice,
   loadVoice,
   micActive,
   selectInput,
@@ -247,8 +248,9 @@ function MemberFace({ s, m, mod }: { s: VoiceSnapshot; m: VoiceSnapshot["members
       </Menu.Target>
       <Menu.Dropdown>
         <Menu.Label>{m.name}</Menu.Label>
-        <Menu.Item onClick={() => void kickVoice(m.userId)}>退出させる</Menu.Item>
-        {s.admin && (
+        <Menu.Item onClick={() => void muteVoice(m.userId)} disabled={m.muted}>ミュートさせる</Menu.Item>
+                    <Menu.Item onClick={() => void kickVoice(m.userId)}>退出させる</Menu.Item>
+        {(
           <Menu.Item color="red" onClick={() => void kickVoice(m.userId, true)}>
             退出させて入室禁止
           </Menu.Item>
@@ -314,8 +316,9 @@ function AllMembers({ s, mod }: { s: VoiceSnapshot; mod: boolean }) {
                     </ActionIcon>
                   </Menu.Target>
                   <Menu.Dropdown>
+                    <Menu.Item onClick={() => void muteVoice(m.userId)} disabled={m.muted}>ミュートさせる</Menu.Item>
                     <Menu.Item onClick={() => void kickVoice(m.userId)}>退出させる</Menu.Item>
-                    {s.admin && (
+                    {(
                       <Menu.Item color="red" onClick={() => void kickVoice(m.userId, true)}>
                         退出させて入室禁止
                       </Menu.Item>

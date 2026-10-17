@@ -145,6 +145,10 @@ struct VoiceBar: View {
                     .accessibilityLabel("\(p.name)\(p.speaking ? "、話しています" : "")\(menus && p.muted ? "、ミュート中" : "")")
                 if menus && voice.canModerate && p.id != voice.myUserId {
                     face.contextMenu {
+                        Button("ミュートさせる", systemImage: "mic.slash") {
+                            Task { await voice.forceMute(p.id) }
+                        }
+                        .disabled(p.muted)
                         Button("退出させる", systemImage: "person.fill.xmark") {
                             Task { await voice.kick(p.id) }
                         }
@@ -267,6 +271,10 @@ private struct VoiceMemberList: View {
                         .accessibilityLabel(m.muted ? "ミュート中" : "マイク オン")
                     if voice.canModerate && !m.isMe {
                         Menu {
+                            Button("ミュートさせる", systemImage: "mic.slash") {
+                                Task { await voice.forceMute(m.userId) }
+                            }
+                            .disabled(m.muted)
                             Button("退出させる", systemImage: "person.fill.xmark") {
                                 Task { await voice.kick(m.userId) }
                             }

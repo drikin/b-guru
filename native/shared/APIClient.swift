@@ -100,6 +100,12 @@ final class APIClient: Sendable {
 
     struct OK: Decodable, Sendable { var ok: Bool }
 
+    struct MuteResult: Decodable, Sendable { var ok: Bool; var muted: Bool? }
+
+    func voiceMute(userId: String) async throws -> Bool {
+        try await send(request("POST", "/api/agent/voice/mute", json: ["user_id": userId]), as: MuteResult.self).muted ?? false
+    }
+
     func voiceKick(userId: String, ban: Bool) async throws {
         _ = try await send(request("POST", "/api/agent/voice/kick", json: ["user_id": userId, "ban": ban]), as: OK.self)
     }

@@ -49,7 +49,8 @@ final class VoiceStore {
 
     var inRoom: Bool { phase != .idle }
     /// I opened this session (or am an admin): may remove people.
-    var canModerate: Bool { isAdmin || (myUserId != nil && roomInfo?.openedBy == myUserId) }
+    /// Only admins remove / mute / ban (the server enforces the same).
+    var canModerate: Bool { isAdmin }
 
     private let api: APIClient
     private var room: Room?
@@ -210,13 +211,29 @@ final class VoiceStore {
         notice = nil
         defer { micBusy = false }
         do {
-            try await room.localParticipant.setMicrophone(enabled: on)
+            // Speech-quality Opus, nothing sent during silence (DTX), no redundant
+            // copy (RED doubles the bytes) — the server is shared and up to 100 listen.
+            try await room.localParticipant.setMicrophone(
+                enabled: on,
+                publishOptions: AudioPublishOptions(encoding: .presetSpeech, dtx: true, red: false)
+            )
             setMeter(on)
         } catch {
             micOn = room.localParticipant.isMicrophoneEnabled()
             notice = on ? "マイクを使えません（設定でマイクを許可してください）" : nil
         }
         refreshMembers()
+    }
+
+    func forceMute(_ userId: String) async {
+        do {
+            let muted = try await api.voiceMute(userId: userId)
+            notice = muted ? "ミュートしました" : "マイクはオフでした"
+        } catch let e as APIError {
+            notice = Self.message(for: e)
+        } catch {
+            notice = "操作できませんでした"
+        }
     }
 
     func kick(_ userId: String, ban: Bool = false) async {
@@ -293,6 +310,12 @@ final class VoiceStore {
 
     fileprivate func roomChanged(_ from: Room) {
         guard let room, room === from else { return } // late event from an earlier room
+        // An admin turned my mic off from the server: follow it.
+        if micOn, !micBusy, !room.localParticipant.isMicrophoneEnabled(), phase == .connected {
+            micOn = false
+            setMeter(false)
+            notice = "管理者がマイクをオフにしました"
+        }
         switch room.connectionState {
         case .connected: if phase != .idle { phase = .connected }
         case .reconnecting: phase = .reconnecting
