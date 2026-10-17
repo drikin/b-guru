@@ -192,7 +192,9 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     private func dismissIfFocusLeft(recheck: Bool) {
         guard isVisible, !isDismissing, !pin.pinned, !isKeyWindow, !ownsKeyWindow else { return }
         if Self.systemInputPaletteVisible {
-            followPalette()
+            // Opened with 🌐E / Edit menu of the system: it is bound to the input it
+            // was opened from — activating our app now would make it close at once.
+            followPalette(activate: false)
             return
         }
         if recheck {
@@ -238,9 +240,9 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
 
     /// While the palette is open: stay. When it closes, give the caret back to the
     /// message box; a click anywhere else (not on the palette) puts the panel away.
-    private func followPalette() {
+    private func followPalette(activate: Bool) {
         stopFollowingPalette()
-        activateForPalette()
+        if activate { activateForPalette() }
         paletteWatch = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
@@ -290,7 +292,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     func openEmojiPalette() {
         activateForPalette()
         NSApp.orderFrontCharacterPalette(nil)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.followPalette() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.followPalette(activate: false) }
     }
 
     /// ⌃⌘Space opens the emoji & symbols palette for the message box (an
