@@ -5,12 +5,16 @@
  *   LIVEKIT_URL         wss://<project>.livekit.cloud  (what clients connect to)
  *   LIVEKIT_API_KEY     API key  (JWT `iss`)
  *   LIVEKIT_API_SECRET  API secret (HS256 signing key)
+ *   LIVEKIT_API_URL     optional: where this server calls the room API, when it differs
+ *                       from the client URL (e.g. http://127.0.0.1:7880 for a LiveKit on
+ *                       the same host, while clients go through nginx at wss://…/livekit)
  * Without all three, voice is disabled and every call is a no-op — so this code
  * can ship before the LiveKit project exists without changing production. */
 import crypto from "crypto";
 
 export interface LiveKitConfig {
   url: string;
+  apiUrl?: string;
   apiKey: string;
   apiSecret: string;
 }
@@ -20,7 +24,8 @@ export function livekitConfig(): LiveKitConfig | null {
   const apiKey = process.env.LIVEKIT_API_KEY?.trim();
   const apiSecret = process.env.LIVEKIT_API_SECRET?.trim();
   if (!url || !apiKey || !apiSecret) return null;
-  return { url, apiKey, apiSecret };
+  const apiUrl = process.env.LIVEKIT_API_URL?.trim() || undefined;
+  return { url, apiKey, apiSecret, apiUrl };
 }
 
 /** The room-service base URL: the client URL with ws(s) → http(s). */
@@ -116,7 +121,7 @@ export async function roomService<T>(cfg: LiveKitConfig, method: string, body: R
     ttlSec: 60,
     video: { roomAdmin: true, roomCreate: true, ...(room ? { room } : {}) },
   });
-  const res = await fetch(`${livekitHttpUrl(cfg.url)}/twirp/livekit.RoomService/${method}`, {
+  const res = await fetch(`${livekitHttpUrl(cfg.apiUrl ?? cfg.url)}/twirp/livekit.RoomService/${method}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
