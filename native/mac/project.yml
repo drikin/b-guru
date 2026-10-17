@@ -134,6 +134,9 @@ targets:
           UIApplicationSupportsMultipleScenes: true
         ITSAppUsesNonExemptEncryption: false
         NSMicrophoneUsageDescription: ボイスルームで話すときだけマイクを使います。録音はしません。
+        # The voice SDK (LiveKit/WebRTC) links camera APIs, so App Store Connect requires
+        # this string (ITMS-90683) even though the app never asks for the camera.
+        NSCameraUsageDescription: B-guru Chat はカメラを使いません（ボイスルームの通話ライブラリにカメラ機能が含まれているため、この説明が必要です）。
         # Keep the voice room going with the screen off / in another app.
         UIBackgroundModes:
           - audio
