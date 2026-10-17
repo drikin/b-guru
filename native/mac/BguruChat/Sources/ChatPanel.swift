@@ -215,6 +215,9 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     static var systemInputPaletteVisible: Bool {
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         for w in list {
+            // Only a palette you can see (the process keeps helper windows around).
+            if let alpha = w[kCGWindowAlpha as String] as? CGFloat, alpha < 0.05 { continue }
+            if let b = w[kCGWindowBounds as String] as? [String: CGFloat], (b["Width"] ?? 0) < 60 || (b["Height"] ?? 0) < 60 { continue }
             guard let pid = w[kCGWindowOwnerPID as String] as? pid_t,
                   let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { continue }
             if inputPaletteBundles.contains(id) { return true }
@@ -254,11 +257,23 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
                 }
             }
         }
-        outsideClick = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+        outsideClick = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .leftMouseUp]) { [weak self] e in
+            let type = e.type
             Task { @MainActor in
                 guard let self else { return }
-                // A click on the palette itself (picking an emoji) keeps us open.
-                if Self.paletteUnderMouse { return }
+                if Self.paletteUnderMouse {
+                    // Picked an emoji: it is typed into this panel only once the panel has
+                    // the keyboard again (it is not the active app), so take it back.
+                    if type == .leftMouseUp {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                            guard let self, self.isVisible, !self.isKeyWindow else { return }
+                            self.stopFollowingPalette()
+                            self.makeKeyAndOrderFront(nil)
+                        }
+                    }
+                    return
+                }
+                guard type != .leftMouseUp else { return }
                 self.stopFollowingPalette()
                 if !self.pin.pinned { self.dismiss() }
             }
