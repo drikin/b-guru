@@ -1,7 +1,7 @@
 /* 投稿の作成（Web の /api/publish とアプリの /api/agent/publish の共通の正本）。
  * 返信通知・@メンション通知・Live 配信・部活の自動分類・Web Push・30 秒の重複防止まで、
  * どちらから投稿しても同じ振る舞いになるようにここへ集めた（drikin 2026-10-16）。 */
-import { cleanDisplayName } from "@/lib/display-name";
+import { cleanDisplayName, resolveDisplayNames } from "@/lib/display-name";
 import { createPost } from "@/lib/posts";
 import { createNotification } from "@/lib/notifications";
 import { findMemberByEmail, listMembers } from "@/lib/ghost";
@@ -170,42 +170,13 @@ export async function publishPost(
     }
 
     // ---- @mention notifications ----
-    // Parse @name tokens from text, match against paid members, notify each.
-    try {
-      const members = await listMembers();
-      // Build a lookup: name (lowercase) → email
-      const nameMap = new Map<string, string>();
-      for (const m of members) {
-        const name = (cleanDisplayName(m.name) || m.email.split("@")[0] || "").trim();
-        if (name) nameMap.set(name.toLowerCase(), m.email);
-      }
-      // Extract @mentions: @[Full Name] (bracket syntax for spaces) or @name
-      const bracketMentions = text.match(/@\[([^\]]+)\]/g) || [];
-      const plainMentions = text.match(/@([^\s@\[]+)/g) || [];
-      const notifiedEmails = new Set<string>();
-      const tryNotify = async (name: string) => {
-        const targetEmail = nameMap.get(name.toLowerCase());
-        if (targetEmail && targetEmail !== email && !notifiedEmails.has(targetEmail)) {
-          notifiedEmails.add(targetEmail);
-          await createNotification({
-            userEmail: targetEmail,
-            type: "mention",
-            actorEmail: email,
-            actorName: authorName,
-            postId: post.id,
-            replyId: null,
-            text: text.length > 60 ? text.slice(0, 57) + "…" : text,
-          });
-        }
-      };
-      for (const token of bracketMentions) {
-        await tryNotify(token.slice(2, -1)); // remove @[ and ]
-      }
-      for (const token of plainMentions) {
-        await tryNotify(token.slice(1)); // remove @
-      }
-    } catch (me) {
-      console.error("mention notify error:", (me as any).message);
+    // After the response (fire-and-forget): matching needs the whole member list from
+    // Ghost (910 members = 10 pages ≈ 1.5 s when its 60 s cache is cold), and it used
+    // to hold every post that long. Posts without "@" skip it entirely.
+    if (text.includes("@")) {
+      void notifyMentions(text, email, authorName, post.id).catch((me) =>
+        console.error("mention notify error:", (me as any)?.message)
+      );
     }
 
     // Push a live "timeline changed" signal to connected clients.
@@ -258,5 +229,40 @@ export async function publishPost(
   } catch (e: any) {
     console.error("publish error:", e.message);
     return { status: 500, body: { error: "投稿に失敗しました" } };
+  }
+}
+
+/** @name / @[Full Name] → notification for each paid member it names. Names are matched
+ *  against both the B-guru display name (what the @ picker and the 返信 button insert)
+ *  and the Ghost account name, case-insensitively. */
+async function notifyMentions(text: string, email: string, authorName: string | null, postId: number): Promise<void> {
+  const tokens = [
+    ...(text.match(/@\[([^\]]+)\]/g) || []).map((t) => t.slice(2, -1)),
+    ...(text.match(/@([^\s@\[]+)/g) || []).map((t) => t.slice(1)),
+  ];
+  if (tokens.length === 0) return;
+  const members = (await listMembers()).filter((m) => m.status === "paid" || m.status === "comped");
+  const shown = await resolveDisplayNames(members.map((m) => m.email));
+  const nameMap = new Map<string, string>();
+  for (const m of members) {
+    for (const n of [shown.get(m.email), cleanDisplayName(m.name), m.email.split("@")[0]]) {
+      const k = (n || "").trim().toLowerCase();
+      if (k && !nameMap.has(k)) nameMap.set(k, m.email);
+    }
+  }
+  const notified = new Set<string>();
+  for (const name of tokens) {
+    const target = nameMap.get(name.trim().toLowerCase());
+    if (!target || target === email || notified.has(target)) continue;
+    notified.add(target);
+    await createNotification({
+      userEmail: target,
+      type: "mention",
+      actorEmail: email,
+      actorName: authorName,
+      postId,
+      replyId: null,
+      text: text.length > 60 ? text.slice(0, 57) + "…" : text,
+    });
   }
 }

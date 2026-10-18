@@ -1,15 +1,24 @@
 import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
+import ImageIO
 
 /// Text + up to 5 photos, shared by a new post (sheet) and a thread reply (bar).
 /// Photos are resized (long side ≤ 2048 px) and sent as JPEG — HEIC and huge
 /// originals never leave the phone — then the post references the uploaded URLs.
+///
+/// All image work happens off the main thread: the composer shows small previews,
+/// and the 2048 px JPEGs are made from the original bytes in the background when
+/// you send (doing it on the main thread froze the app for a second or more with a
+/// few photos attached).
 @MainActor
 @Observable
 final class PostDraft {
     var text = ""
-    var images: [PlatformImage] = []
+    /// Previews for the composer (≤ 600 px).
+    private(set) var images: [PlatformImage] = []
+    /// The picked photos' original bytes, same order as `images`.
+    private var originals: [Data] = []
     var picks: [PhotosPickerItem] = [] {
         didSet { Task { await loadPicks() } }
     }
@@ -29,34 +38,62 @@ final class PostDraft {
         picks = []
         var failed = 0
         for item in items where images.count < maxImages {
-            if let img = await Self.load(item) { images.append(img) } else { failed += 1 }
+            if let data = await Self.load(item), await append(data) {} else { failed += 1 }
         }
         error = failed > 0 ? "画像を \(failed) 枚読み込めませんでした（別の写真で試すか、ファイルから選んでください）" : nil
     }
 
     /// The photo's bytes; if the library will not hand them over directly (e.g. an
     /// original kept only in iCloud), take it as a file instead.
-    private static func load(_ item: PhotosPickerItem) async -> PlatformImage? {
-        if let data = try? await item.loadTransferable(type: Data.self), let img = PlatformImage(data: data) { return img }
+    private static func load(_ item: PhotosPickerItem) async -> Data? {
+        if let data = try? await item.loadTransferable(type: Data.self), !data.isEmpty { return data }
         if let file = try? await item.loadTransferable(type: PickedImageFile.self) {
             defer { try? FileManager.default.removeItem(at: file.url) }
-            if let data = try? Data(contentsOf: file.url), let img = PlatformImage(data: data) { return img }
+            if let data = try? Data(contentsOf: file.url), !data.isEmpty { return data }
         }
         return nil
     }
 
-    /// macOS: images chosen with the file picker (or dropped on the composer).
-    func add(fileURLs: [URL]) {
-        var failed = 0
-        for url in fileURLs where images.count < maxImages {
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            if let data = try? Data(contentsOf: url), let img = PlatformImage(data: data) { images.append(img) } else { failed += 1 }
-        }
-        error = failed > 0 ? "画像を \(failed) 枚読み込めませんでした" : nil
+    /// Adds a photo if it decodes (preview made in the background). False if it is not an image.
+    private func append(_ data: Data) async -> Bool {
+        guard let cg = await Task.detached(priority: .userInitiated, operation: { MediaCache.decode(data, maxPixel: 600) }).value,
+              images.count < maxImages else { return false }
+        images.append(PlatformImage.decoded(cg))
+        originals.append(data)
+        return true
     }
 
-    func remove(_ i: Int) { if images.indices.contains(i) { images.remove(at: i) } }
+    /// JPEG for upload from the original bytes: long side ≤ 2048 px, EXIF rotation
+    /// applied, and no metadata at all (location and the rest never leave the device).
+    nonisolated static func uploadJPEG(_ data: Data, maxSide: Int = 2048, quality: Double = 0.82) -> Data? {
+        guard let cg = MediaCache.decode(data, maxPixel: maxSide) else { return nil }
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, cg, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return out as Data
+    }
+
+    /// macOS: images chosen with the file picker (or dropped on the composer).
+    func add(fileURLs: [URL]) {
+        var datas: [Data] = []
+        var failed = 0
+        for url in fileURLs.prefix(max(0, maxImages - images.count)) {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            if let data = try? Data(contentsOf: url) { datas.append(data) } else { failed += 1 }
+        }
+        Task {
+            for data in datas where !(await append(data)) { failed += 1 }
+            error = failed > 0 ? "画像を \(failed) 枚読み込めませんでした" : nil
+        }
+    }
+
+    func remove(_ i: Int) {
+        guard images.indices.contains(i) else { return }
+        images.remove(at: i)
+        originals.remove(at: i)
+    }
 
     /// Upload the photos, then publish. Returns the stored post, or nil (error set).
     func send(api: APIClient, parentId: Int?) async -> Post? {
@@ -66,9 +103,10 @@ final class PostDraft {
         defer { sending = false }
         do {
             var urls: [String] = []
-            if !images.isEmpty {
-                let jpegs = images.compactMap { $0.uploadJPEG() }
-                guard jpegs.count == images.count else {
+            if !originals.isEmpty {
+                let sources = originals
+                let jpegs = await Task.detached(priority: .userInitiated) { sources.compactMap { PostDraft.uploadJPEG($0) } }.value
+                guard jpegs.count == sources.count else {
                     error = "画像を送れる形に変換できませんでした"
                     return nil
                 }
@@ -77,6 +115,7 @@ final class PostDraft {
             let post = try await api.publish(text: text.trimmingCharacters(in: .whitespacesAndNewlines), images: urls, parentId: parentId)
             text = ""
             images = []
+            originals = []
             return post
         } catch let e as APIError {
             switch e {

@@ -126,34 +126,6 @@ extension View {
     }
 }
 
-extension PlatformImage {
-    /// JPEG for upload: long side ≤ maxSide, redrawn so EXIF (GPS etc.) is dropped.
-    func uploadJPEG(maxSide: CGFloat = 2048, quality: CGFloat = 0.82) -> Data? {
-        #if os(iOS)
-        let size = self.size
-        let scale = min(1, maxSide / max(size.width, size.height))
-        let target = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
-        let format = UIGraphicsImageRendererFormat.default()
-        format.scale = 1
-        let resized = UIGraphicsImageRenderer(size: target, format: format).image { _ in
-            self.draw(in: CGRect(origin: .zero, size: target))
-        }
-        return resized.jpegData(compressionQuality: quality)
-        #else
-        guard let cg = cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
-        let w = CGFloat(cg.width), h = CGFloat(cg.height)
-        let scale = min(1, maxSide / max(w, h))
-        let tw = Int((w * scale).rounded()), th = Int((h * scale).rounded())
-        guard let ctx = CGContext(data: nil, width: tw, height: th, bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
-        ctx.interpolationQuality = .high
-        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: tw, height: th))
-        guard let out = ctx.makeImage() else { return nil }
-        return NSBitmapImageRep(cgImage: out).representation(using: .jpeg, properties: [.compressionFactor: quality])
-        #endif
-    }
-}
 
 /// Placeholder hint for composers that send on Return (Mac).
 enum ComposerHint {
