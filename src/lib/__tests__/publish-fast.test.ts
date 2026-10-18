@@ -22,8 +22,8 @@ vi.mock("@/lib/display-name", async (orig) => ({
 }));
 vi.mock("@/lib/profile", () => ({ getProfile: async () => ({ name: "ドリキン" }) }));
 vi.mock("@/lib/posts", () => ({ createPost: async (p: { text: string }) => ({ id: 77, text: p.text }) }));
-const createNotification = vi.fn(async () => {});
-vi.mock("@/lib/notifications", () => ({ createNotification: (n: unknown) => createNotification(n) }));
+const createNotification = vi.fn(async (_n: { userEmail: string }) => {});
+vi.mock("@/lib/notifications", () => ({ createNotification: (n: { userEmail: string }) => createNotification(n) }));
 vi.mock("@/lib/db", () => ({ pool: { query: vi.fn(async () => ({ rows: [] })) } }));
 vi.mock("@/lib/live", () => ({ emitLive: () => {} }));
 vi.mock("@/lib/push", () => ({ sendWebPush: async () => {} }));
@@ -47,7 +47,7 @@ describe("publishPost の速さとメンション通知", () => {
     releaseMembers();
     await flush();
     await flush();
-    const to = createNotification.mock.calls.map((c) => (c[0] as { userEmail: string }).userEmail).sort();
+    const to = createNotification.mock.calls.map((c) => c[0].userEmail).sort();
     expect(to).toEqual(["matsuo@example.com", "takuto@example.com"]);
   });
 
