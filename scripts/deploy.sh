@@ -39,6 +39,12 @@ done
 
 cd "$(dirname "$0")/.."
 
+# The VPS build type-checks too, but by then `next build` has already cleared the
+# live .next — a type error there took the site down (2026-10-18, ~2 min of 502).
+# Catch it here, before anything leaves this machine.
+echo "=== 0/5 type check (local) ==="
+npx tsc --noEmit -p . || { echo "type errors: not deploying" >&2; exit 1; }
+
 echo "=== 1/5 push ==="
 git push origin main
 
@@ -51,7 +57,9 @@ ssh "$VPS" "cd $APP_DIR && \
   git stash pop >/dev/null 2>&1 || true && \
   echo 'session.ts md5:' && md5sum src/lib/session.ts && \
   npm ci --no-audit --no-fund >/dev/null 2>&1 && \
-  npm run build 2>&1 | tail -2 && \
+  { npm run build > /tmp/bguru-build.log 2>&1 || { tail -30 /tmp/bguru-build.log; echo 'BUILD FAILED: not restarting' >&2; exit 1; }; } && \
+  tail -2 /tmp/bguru-build.log && \
+  test -f .next/BUILD_ID && \
   pm2 restart bsm-portal >/dev/null && \
   sleep 6 && \
   curl -s -o /dev/null -w 'HTTP=%{http_code}\n' https://bsm.backspace.fm/"
