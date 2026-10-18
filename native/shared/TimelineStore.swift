@@ -81,11 +81,20 @@ final class TimelineStore {
         pollTask = nil
     }
 
-    /// A post scrolled into view: read (same rule as the web — per post, debounced, batched).
+    /// A post was on screen for a moment: read (same rule as the web — per post,
+    /// debounced, batched).
     func sawPost(_ id: Int) {
         guard let i = posts.firstIndex(where: { $0.id == id }), posts[i].unread == true else { return }
         posts[i].unread = false
         markRead([id])
+    }
+
+    /// A reply in an open thread was read: one fewer "新着" on its root in the list.
+    func sawReply(_ id: Int, root: Int) {
+        markRead([id])
+        if let i = posts.firstIndex(where: { $0.id == root }), let n = posts[i].unreadReplies, n > 0 {
+            posts[i].unreadReplies = n - 1
+        }
     }
 
     func markRead(_ ids: [Int]) {
@@ -146,7 +155,7 @@ final class TimelineStore {
         posts = [
             Post(id: 3, authorId: "a", authorName: "mazzo", isAuthor: false, replyCount: 4,
                  text: "うちの犬が今朝こんな顔してました 🐶 https://bsm.backspace.fm", images: ["/api/media/demo-1.jpg"],
-                 createdAt: now, club: "pet", reactions: [Reaction(emoji: "❤️", count: 3, mine: true, reactors: [])], unread: true),
+                 createdAt: now, club: "pet", reactions: [Reaction(emoji: "❤️", count: 3, mine: true, reactors: [])], unread: true, unreadReplies: 2),
             Post(id: 2, authorId: "b", authorName: "NORIO TAKAHASHI", isAuthor: false, replyCount: 0,
                  text: "@ドリキン Android 版入れました。通知もちゃんと来ます", images: ["/api/media/a.jpg", "/api/media/b.jpg", "/api/media/c.jpg"],
                  createdAt: old, club: "apple", unread: false),

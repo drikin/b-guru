@@ -74,6 +74,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
@@ -94,6 +96,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import java.time.Duration
@@ -134,6 +137,8 @@ fun TimelineScreen(
         lifecycle.addObserver(obs)
         onDispose { lifecycle.removeObserver(obs); timeline.stopPolling() }
     }
+    // Kept here, outside the list: coming back from a thread returns to where you were.
+    val listState = rememberLazyListState()
     LaunchedEffect(timeline.openThread) {
         timeline.openThread?.let { threadId = it; timeline.openThread = null }
     }
@@ -164,7 +169,7 @@ fun TimelineScreen(
             } else {
                 Column(Modifier.fillMaxSize()) {
                     if (needsReconnect) ReconnectBanner(onReconnect, onClose = { needsReconnect = false })
-                    TimelineList(timeline, capabilities, visible, onOpen = { threadId = it }, onOpenImage = { imgs, i -> viewing = imgs to i })
+                    TimelineList(timeline, capabilities, visible, listState, onOpen = { threadId = it }, onOpenImage = { imgs, i -> viewing = imgs to i })
                 }
             }
         }
@@ -183,11 +188,11 @@ private fun TimelineList(
     timeline: TimelineStore,
     capabilities: Capabilities?,
     visible: Boolean,
+    listState: androidx.compose.foundation.lazy.LazyListState,
     onOpen: (Long) -> Unit,
     onOpenImage: (List<String>, Int) -> Unit,
 ) {
     val focus = LocalFocusManager.current
-    val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
     val posts = timeline.posts
@@ -223,7 +228,7 @@ private fun TimelineList(
                 }
             }
             items(posts, key = { it.id }, contentType = { if (it.images.isEmpty()) "text" else "photos" }) { post ->
-                LaunchedEffect(post.id, visible) { if (visible) timeline.sawPost(post.id) }
+                ReadWhenSeen(listState, post.id, active = visible && post.unread == true) { timeline.sawPost(post.id) }
                 Column(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
                     PostRow(
                         post = post,
@@ -257,12 +262,19 @@ fun PostRow(
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
+    // Unread: a light green card with the web's green bar. Read after a second on
+    // screen, and the colour fades out — so you can see what you just read.
+    val unread by androidx.compose.animation.core.animateFloatAsState(if (post.unread == true) 1f else 0f, androidx.compose.animation.core.tween(600), label = "unread")
     Box {
         Row(
             Modifier
                 .fillMaxWidth()
-                // Unread: the same green bar as the web timeline.
-                .drawBehind { if (post.unread == true) drawRect(AccentGreen, size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height)) }
+                .drawBehind {
+                    if (unread > 0f) {
+                        drawRect(AccentGreen.copy(alpha = 0.08f * unread))
+                        drawRect(AccentGreen.copy(alpha = unread), size = androidx.compose.ui.geometry.Size(3.dp.toPx(), size.height))
+                    }
+                }
                 .combinedClickable(onClick = { onClick?.invoke() }, onLongClick = { menu = true })
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -291,6 +303,12 @@ fun PostRow(
                         if (showReplyCount && post.replyCount > 0) {
                             Text("💬 ${post.replyCount}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = 2.dp))
+                            val new = post.unreadReplies ?: 0
+                            if (new > 0) {
+                                Text("新着 $new", fontSize = 11.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, color = Color.White,
+                                    modifier = Modifier.padding(top = 2.dp).background(AccentGreen, CircleShape).padding(horizontal = 6.dp, vertical = 1.dp)
+                                        .semantics { contentDescription = "新しい返信 $new 件" })
+                            }
                         }
                     }
                 }
@@ -477,4 +495,26 @@ fun Modifier.enterSends(draft: PostDraft, onSend: () -> Unit): Modifier = onPrev
     if ((e.key == androidx.compose.ui.input.key.Key.Enter || e.key == androidx.compose.ui.input.key.Key.NumPadEnter) && !e.isShiftPressed) {
         onSend(); true
     } else false
+}
+
+/** Calls `onRead` once at least a quarter of the row `key` has stayed on screen for a
+ *  second while `active` (same rule as the web). Scrolling past quickly does not read it. */
+@Composable
+fun ReadWhenSeen(listState: androidx.compose.foundation.lazy.LazyListState, key: Any, active: Boolean, onRead: () -> Unit) {
+    val read by androidx.compose.runtime.rememberUpdatedState(onRead)
+    LaunchedEffect(key, active) {
+        if (!active) return@LaunchedEffect
+        snapshotFlow { listState.isShown(key) }
+            .distinctUntilChanged()
+            .collectLatest { shown -> if (shown) { kotlinx.coroutines.delay(1000); read() } }
+    }
+}
+
+private fun androidx.compose.foundation.lazy.LazyListState.isShown(key: Any): Boolean {
+    val info = layoutInfo
+    val item = info.visibleItemsInfo.firstOrNull { it.key == key } ?: return false
+    if (item.size <= 0) return false
+    val start = maxOf(item.offset, info.viewportStartOffset)
+    val end = minOf(item.offset + item.size, info.viewportEndOffset)
+    return end - start >= item.size / 4
 }

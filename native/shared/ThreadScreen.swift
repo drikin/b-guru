@@ -78,6 +78,8 @@ struct ThreadScreen: View {
                 onReact: { react(p.id, $0) },
                 onOpenImage: { viewing = ImageViewerItem(images: p.images ?? [], index: $0) },
                 showReplyCount: false)
+            // New replies stay highlighted until each has been on screen for a second.
+            .readWhenSeen(p.unread == true) { read(p, isRoot: isRoot) }
     }
 
     private var replyBar: some View {
@@ -125,7 +127,7 @@ struct ThreadScreen: View {
         #if DEBUG
         if timeline.api.token == "demo", let p = timeline.posts.first(where: { $0.id == id }) {
             root = p
-            replies = [Post(id: 100, authorName: "takuto", isAuthor: false, parentId: id, text: "かわいい！", createdAt: p.createdAt),
+            replies = [Post(id: 100, authorName: "takuto", isAuthor: false, parentId: id, text: "かわいい！", createdAt: p.createdAt, unread: true),
                        Post(id: 101, authorName: "ドリキン", isAuthor: true, parentId: id, text: "名前なんでしたっけ", createdAt: p.createdAt)]
             return
         }
@@ -135,12 +137,18 @@ struct ThreadScreen: View {
             root = t.post
             replies = t.replies
             failed = false
-            // Opening the thread reads it (root and replies), like the web.
-            let unread = ([t.post] + t.replies).filter { $0.unread == true }.map(\.id)
-            if !unread.isEmpty { timeline.markRead(unread) }
-            timeline.sawPost(t.post.id)
         } catch {
             failed = root == nil
+        }
+    }
+
+    private func read(_ p: Post, isRoot: Bool) {
+        if isRoot {
+            if var r = root { r.unread = false; root = r }
+            if timeline.posts.contains(where: { $0.id == p.id }) { timeline.sawPost(p.id) } else { timeline.markRead([p.id]) }
+        } else if let i = replies.firstIndex(where: { $0.id == p.id }) {
+            replies[i].unread = false
+            timeline.sawReply(p.id, root: id)
         }
     }
 

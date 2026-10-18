@@ -20,7 +20,9 @@ struct MainView: View {
             }
         } else {
             TabView(selection: $tab) {
-                timelineScreen(picker: AnyView(picker)).tag(MainTab.timeline)
+                timelineScreen(picker: AnyView(picker))
+                    .environment(\.timelineOnScreen, tab == .timeline)
+                    .tag(MainTab.timeline)
                 ChatScreen(store: store, onSignOut: onSignOut, tabPicker: AnyView(picker)).tag(MainTab.chat)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))

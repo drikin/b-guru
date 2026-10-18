@@ -82,12 +82,18 @@ class TimelineStore(val api: ApiClient) {
 
     fun stopPolling() { pollJob?.cancel(); pollJob = null }
 
-    /** A post came on screen: read (per post, debounced, batched — like the web). */
+    /** A post was on screen for a second: read (per post, debounced, batched — like the web). */
     fun sawPost(id: Long) {
         val p = posts.firstOrNull { it.id == id } ?: return
         if (p.unread != true) return
         posts = posts.map { if (it.id == id) it.copy(unread = false) else it }
         markRead(listOf(id))
+    }
+
+    /** A reply in an open thread was read: one fewer "新着" on its root in the list. */
+    fun sawReply(id: Long, root: Long) {
+        markRead(listOf(id))
+        posts = posts.map { if (it.id == root && (it.unreadReplies ?: 0) > 0) it.copy(unreadReplies = it.unreadReplies!! - 1) else it }
     }
 
     fun markRead(ids: List<Long>) {
@@ -139,12 +145,13 @@ class TimelineStore(val api: ApiClient) {
                 text = "写真のテスト $i 枚目まで。スクロールの重さを測るための投稿です https://bsm.backspace.fm",
                 images = (1..n).map { k -> "$images/photo${(i + k) % 8}.jpg?p=$i-$k" },
                 createdAt = now.minusSeconds(i * 600).toString(), replyCount = (i % 6).toInt(),
-                reactions = if (i % 2 == 0L) listOf(Reaction("❤️", 3), Reaction("😂", 1)) else null)
+                reactions = if (i % 2 == 0L) listOf(Reaction("❤️", 3), Reaction("😂", 1)) else null,
+                unread = i % 3 == 0L, unreadReplies = if (i % 6 == 5L) 2 else 0)
         }
         posts = many + listOf(
             Post(3, authorName = "mazzo", replyCount = 4, text = "うちの犬が今朝こんな顔してました 🐶 https://bsm.backspace.fm",
                 images = listOf("/api/media/demo-1.jpg"), createdAt = now.minusSeconds(300).toString(), club = "pet",
-                reactions = listOf(Reaction("❤️", 3, mine = true)), unread = true),
+                reactions = listOf(Reaction("❤️", 3, mine = true)), unread = true, unreadReplies = 2),
             Post(2, authorName = "NORIO TAKAHASHI", text = "@ドリキン Android 版入れました。通知もちゃんと来ます",
                 images = listOf("/api/media/a.jpg", "/api/media/b.jpg", "/api/media/c.jpg"), createdAt = now.minusSeconds(7200).toString(), club = "apple"),
             Post(1, authorName = "ドリキン", isAuthor = true, replyCount = 12, text = "ビーグルのアプリにタイムラインを追加しています",

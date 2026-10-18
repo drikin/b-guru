@@ -63,7 +63,7 @@ fun ThreadScreen(
         if (timeline.demo) {
             root = timeline.posts.firstOrNull { it.id == id }
             replies = listOf(
-                Post(100, authorName = "takuto", parentId = id, text = "かわいい！", createdAt = root?.createdAt ?: ""),
+                Post(100, authorName = "takuto", parentId = id, text = "かわいい！", createdAt = root?.createdAt ?: "", unread = true),
                 Post(101, authorName = "ドリキン", isAuthor = true, parentId = id, text = "名前なんでしたっけ", createdAt = root?.createdAt ?: ""),
             )
             return@LaunchedEffect
@@ -72,14 +72,21 @@ fun ThreadScreen(
             val t = timeline.api.thread(id)
             root = t.post
             replies = t.replies
-            // Opening the thread reads it (root and replies), like the web.
-            val unread = (listOf(t.post) + t.replies).filter { it.unread == true }.map { it.id }
-            if (unread.isNotEmpty()) timeline.markRead(unread)
-            timeline.sawPost(t.post.id)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (_: Exception) {
             failed = root == null
+        }
+    }
+
+    // New replies (and an unread root) stay highlighted until each has been on screen for a second.
+    fun read(p: Post, isRoot: Boolean) {
+        if (isRoot) {
+            root = root?.copy(unread = false)
+            if (timeline.posts.any { it.id == p.id }) timeline.sawPost(p.id) else timeline.markRead(listOf(p.id))
+        } else {
+            replies = replies.map { if (it.id == p.id) it.copy(unread = false) else it }
+            timeline.sawReply(p.id, root = id)
         }
     }
 
@@ -113,7 +120,8 @@ fun ThreadScreen(
             if (r == null) {
                 item { Text(if (failed) "読み込めませんでした" else "読み込み中…", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 40.dp)) }
             } else {
-                item {
+                item(key = "root") {
+                    ReadWhenSeen(listState, "root", active = r.unread == true) { read(r, isRoot = true) }
                     Column(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
                         PostRow(r, timeline.clubName(r.club), canReact, { react(r.id, it) }, { onOpenImage(r.images, it) }, showReplyCount = false)
                         HorizontalDivider()
@@ -122,6 +130,7 @@ fun ThreadScreen(
                     }
                 }
                 items(replies, key = { it.id }) { p ->
+                    ReadWhenSeen(listState, p.id, active = p.unread == true) { read(p, isRoot = false) }
                     Column(Modifier.widthIn(max = 760.dp).fillMaxWidth().padding(start = 20.dp)) {
                         PostRow(p, null, canReact, { react(p.id, it) }, { onOpenImage(p.images, it) }, showReplyCount = false)
                         HorizontalDivider()

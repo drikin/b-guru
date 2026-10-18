@@ -28,7 +28,7 @@ vi.mock("@/lib/posts", async (orig) => {
   return {
     ...actual,
     listPosts: async () => [post(10), post(11, true), post(12)],
-    getPostThread: async () => ({ post: post(10), replies: [post(13)] }),
+    getPostThread: async () => ({ post: post(10), replies: [{ ...post(13), parentId: 10 }] }),
   };
 });
 vi.mock("@/lib/club-visibility", () => ({ getHiddenClubs: async () => new Set() }));
@@ -39,6 +39,7 @@ vi.mock("@/lib/reactions", async (orig) => {
 const markPostsRead = vi.fn(async () => 2);
 vi.mock("@/lib/read-state-server", () => ({
   getReadIdsForPosts: async () => [12],
+  getUnreadReplyCounts: async () => new Map([[10, 3]]),
   markPostsRead: (...a: unknown[]) => markPostsRead(...(a as [])),
 }));
 const publishPost = vi.fn();
@@ -88,6 +89,9 @@ describe("GET /api/agent/posts（アプリのタイムライン）", () => {
     expect(by(10)).toMatchObject({ unread: true, reactions: [{ emoji: "❤️", count: 2, mine: true }] });
     expect(by(11)).toMatchObject({ unread: false, is_author: true, reactions: [] });
     expect(by(12).unread).toBe(false);
+    // 新着返信の数（ルートのみ。無ければ 0）
+    expect(by(10).unread_replies).toBe(3);
+    expect(by(12).unread_replies).toBe(0);
   });
 
   it("include なしは従来の形（reactions / unread を付けない）", async () => {
@@ -95,6 +99,7 @@ describe("GET /api/agent/posts（アプリのタイムライン）", () => {
     const b = await (await postsGET(req("http://x/api/agent/posts", { headers: H }))).json();
     expect(b.posts[0].reactions).toBeUndefined();
     expect(b.posts[0].unread).toBeUndefined();
+    expect(b.posts[0].unread_replies).toBeUndefined();
   });
 
   it("アバターは同一オリジンのプロキシ。メール・gravatar の URL を含めない", async () => {
@@ -111,6 +116,7 @@ describe("GET /api/agent/posts（アプリのタイムライン）", () => {
     const b = await res.json();
     expect(b.post.unread).toBe(true);
     expect(b.replies[0]).toMatchObject({ id: 13, unread: true });
+    expect(b.replies[0].unread_replies).toBeUndefined(); // 返信には付けない
   });
 });
 

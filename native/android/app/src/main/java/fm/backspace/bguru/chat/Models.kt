@@ -139,6 +139,8 @@ data class Post(
     val club: String? = null,
     val reactions: List<Reaction>? = null,
     val unread: Boolean? = null,
+    /** Root posts: replies by others this member has not read yet. */
+    val unreadReplies: Int? = null,
 )
 
 @Serializable data class PostListResponse(val posts: List<Post> = emptyList(), val nextCursor: String? = null)

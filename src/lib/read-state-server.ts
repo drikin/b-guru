@@ -86,3 +86,30 @@ export async function getReadIdsForPosts(
   );
   return res.rows.map((r: { post_id: number }) => r.post_id);
 }
+
+/**
+ * ルート投稿ごとの「未読の返信」の数（自分の返信は数えない）。アプリのタイムラインで
+ * 「💬 12・新着 3」を出すため。ページ分のルートを 1 クエリで数える。ささやき（見える人が
+ * 限られる返信）は数えない。
+ */
+export async function getUnreadReplyCounts(
+  email: string,
+  rootIds: number[]
+): Promise<Map<number, number>> {
+  const out = new Map<number, number>();
+  if (!email || rootIds.length === 0) return out;
+  const clean = normalizeReadIds(rootIds);
+  if (clean.length === 0) return out;
+  const res = await pool.query(
+    `SELECT p.parent_id, count(*)::int AS n
+     FROM posts p
+     WHERE p.parent_id = ANY($2::int[])
+       AND lower(p.author_email) <> lower($1)
+       AND p.is_whisper IS NOT TRUE
+       AND NOT EXISTS (SELECT 1 FROM post_read_state r WHERE r.email = $1 AND r.post_id = p.id)
+     GROUP BY p.parent_id`,
+    [email, clean]
+  );
+  for (const r of res.rows as { parent_id: number; n: number }[]) out.set(r.parent_id, r.n);
+  return out;
+}

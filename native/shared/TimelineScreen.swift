@@ -9,6 +9,8 @@ struct TimelineScreen: View {
     let onReconnect: () -> Void
 
     @Environment(\.scenePhase) private var scenePhase
+    /// False while the iPhone shows the chat page (the timeline page stays alive next to it).
+    @Environment(\.timelineOnScreen) private var onScreen
     @State private var path = NavigationPath()
     /// macOS: the open thread (the menu-bar panel has no navigation bar to push into).
     @State private var macThread: Int?
@@ -93,11 +95,16 @@ struct TimelineScreen: View {
             .padding(.top, 10)
             .padding(.bottom, 8)
             Divider()
-            if let id = macThread {
-                ThreadScreen(id: id, timeline: timeline, capabilities: capabilities, onReconnect: onReconnect)
-                    .id(id)
-            } else {
+            // The list stays alive under an open thread, so coming back returns to where you were.
+            ZStack {
                 list
+                    .opacity(macThread == nil ? 1 : 0)
+                    .allowsHitTesting(macThread == nil)
+                    .accessibilityHidden(macThread != nil)
+                if let id = macThread {
+                    ThreadScreen(id: id, timeline: timeline, capabilities: capabilities, onReconnect: onReconnect)
+                        .id(id)
+                }
             }
         }
         // The mouse's back button (sent by the panel) also leaves the thread (Ryu 2026-10-17).
@@ -131,8 +138,8 @@ struct TimelineScreen: View {
                                 onOpenImage: { viewing = ImageViewerItem(images: post.images ?? [], index: $0) })
                     }
                     .buttonStyle(.plain)
+                    .readWhenSeen(post.unread == true && onScreen && macThread == nil) { timeline.sawPost(post.id) }
                     .onAppear {
-                        timeline.sawPost(post.id)
                         if post.id == timeline.posts.last?.id { Task { await timeline.loadMore() } }
                     }
                     Divider()
@@ -242,16 +249,27 @@ struct PostRow: View {
                     }
                     if showReplyCount, let n = post.replyCount, n > 0 {
                         Label("\(n)", systemImage: "bubble.left").font(.caption).foregroundStyle(.secondary)
+                        if let new = post.unreadReplies, new > 0 {
+                            Text("新着 \(new)")
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 6).padding(.vertical, 1)
+                                .background(Capsule().fill(Color.accentGreen))
+                                .foregroundStyle(.white)
+                                .accessibilityLabel("新しい返信 \(new) 件")
+                        }
                     }
                 }
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+        // Unread: a light green card with the web's green bar. Read after a second on
+        // screen, and the colour fades out — so you can see what you just read.
+        .background(Color.accentGreen.opacity(post.unread == true ? 0.08 : 0))
         .overlay(alignment: .leading) {
-            // Unread: the same green bar as the web timeline.
-            if post.unread == true { Rectangle().fill(Color.accentGreen).frame(width: 3) }
+            Rectangle().fill(Color.accentGreen).frame(width: 3).opacity(post.unread == true ? 1 : 0)
         }
+        .animation(.easeOut(duration: 0.6), value: post.unread)
         .contentShape(Rectangle())
         .contextMenu {
             if canReact {
@@ -396,3 +414,48 @@ extension Notification.Name {
     static let timelineBack = Notification.Name("fm.backspace.bguru.timelineBack")
 }
 #endif
+
+
+// MARK: read after a moment on screen (same rule as the web: 1 s, ≥ 25 % visible)
+
+extension EnvironmentValues {
+    /// The timeline is the page on screen (iPhone pages keep the other one alive).
+    @Entry var timelineOnScreen = true
+}
+
+extension View {
+    /// Calls `onRead` once this view has stayed on screen for a second while `active`.
+    /// Scrolling past quickly does not read it.
+    func readWhenSeen(_ active: Bool, onRead: @escaping () -> Void) -> some View {
+        modifier(ReadWhenSeen(active: active, onRead: onRead))
+    }
+}
+
+private struct ReadWhenSeen: ViewModifier {
+    let active: Bool
+    let onRead: () -> Void
+    @State private var visible = false
+    @State private var timer: Task<Void, Never>?
+
+    func body(content: Content) -> some View {
+        Group {
+            if #available(iOS 18.0, macOS 15.0, *) {
+                content.onScrollVisibilityChange(threshold: 0.25) { visible = $0 }
+            } else {
+                // Lazy stacks create rows just as they come on screen.
+                content.onAppear { visible = true }
+            }
+        }
+        .onDisappear { visible = false }
+        .onChange(of: visible && active, initial: true) { _, seen in
+            timer?.cancel()
+            timer = nil
+            guard seen else { return }
+            timer = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+                onRead()
+            }
+        }
+    }
+}

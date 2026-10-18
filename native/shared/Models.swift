@@ -186,6 +186,8 @@ struct Post: Codable, Identifiable, Equatable, Sendable {
     var club: String?
     var reactions: [Reaction]?
     var unread: Bool?
+    /// Root posts: replies by others this member has not read yet.
+    var unreadReplies: Int?
 
     var mine: Bool { isAuthor ?? false }
 }
