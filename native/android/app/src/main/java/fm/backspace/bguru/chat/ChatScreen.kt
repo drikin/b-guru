@@ -3,7 +3,11 @@ package fm.backspace.bguru.chat
 import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,6 +19,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -31,8 +37,10 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -59,6 +67,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -101,6 +113,8 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val d = remember { Draft() }
+    val photos = remember { ChatAttachments() }
+    var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
     var editingId by remember { mutableStateOf<Long?>(null) }
     val focus = remember { FocusRequester() }
     var refreshing by remember { mutableStateOf(false) }
@@ -149,22 +163,28 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
 
     fun submit() {
         val text = d.text
-        if (text.isBlank()) return
         val id = editingId
+        // Editing changes the text only; a new message may be photos alone.
+        if (id != null) {
+            if (text.isBlank()) return
+        } else if (photos.loading > 0 || (text.isBlank() && photos.photos.isEmpty())) return
         d.text = ""
         justSent = text to System.currentTimeMillis()
         if (id != null) {
             editingId = null
             store.edit(id, text)
         } else {
-            store.send(text) { body -> if (d.text.isEmpty()) d.text = body }
+            store.send(text, photos.take()) { body, p ->
+                if (d.text.isEmpty()) d.text = body
+                photos.restore(p)
+            }
         }
         runCatching { focus.requestFocus() }
     }
 
     fun beginEdit(m: ChatMessage) {
         editingId = m.id
-        d.text = m.body
+        d.text = m.visibleBody
         runCatching { focus.requestFocus() }
     }
 
@@ -224,7 +244,10 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                             )
                         }
                     }
-                    itemsIndexed(reversed, key = { _, r -> r.key }, contentType = { _, r -> if (r.message.isAuthor) "mine" else "theirs" }) { i, row ->
+                    itemsIndexed(reversed, key = { _, r -> r.key }, contentType = { _, r ->
+                        val photo = r.message.images.isNotEmpty() || r.localImages.isNotEmpty()
+                        (if (r.message.isAuthor) "mine" else "theirs") + if (photo) "-photo" else ""
+                    }) { i, row ->
                         val prev = reversed.getOrNull(i + 1)?.message
                         val caps = store.capabilities
                         MessageRow(
@@ -240,6 +263,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                             onRetry = { store.retry(row) },
                             onDiscard = { store.discard(row) },
                             onSelect = { selecting = row.message },
+                            onOpenImage = { urls, at -> viewing = urls to at },
                             modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth(),
                         )
                     }
@@ -262,6 +286,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                     }
                 },
                 editing = editingId != null,
+                photos = photos,
                 focus = focus,
                 onSubmit = ::submit,
                 onCancelEdit = { editingId = null; d.text = "" },
@@ -278,17 +303,18 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
         AlertDialog(
             onDismissRequest = { selecting = null },
             title = { Text(m.authorName ?: "メッセージ") },
-            text = { SelectionContainer { Text(m.body) } },
+            text = { SelectionContainer { Text(m.visibleBody) } },
             confirmButton = {
                 val clipboard = LocalClipboard.current
                 TextButton(onClick = {
-                    scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("message", m.body))) }
+                    scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("message", m.visibleBody))) }
                     selecting = null
                 }) { Text("すべてコピー") }
             },
             dismissButton = { TextButton(onClick = { selecting = null }) { Text("閉じる") } },
         )
     }
+    viewing?.let { (urls, at) -> ImageViewer(urls, at) { viewing = null } }
 }
 
 @Composable
@@ -343,6 +369,7 @@ private fun Composer(
     field: TextFieldValue,
     onField: (TextFieldValue) -> Unit,
     editing: Boolean,
+    photos: ChatAttachments,
     focus: FocusRequester,
     onSubmit: () -> Unit,
     onCancelEdit: () -> Unit,
@@ -350,6 +377,17 @@ private fun Composer(
     onPickMention: (MentionMember) -> Unit,
 ) {
     val draft = field.text
+    val caps = store.capabilities
+    val maxPhotos = caps?.maxChatImages ?: 4
+    // Photos are hidden while editing: an edit changes the text only.
+    val canAttach = !editing && caps?.canSendImages == true
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // The system Photo Picker (no storage permission). Its limit is fixed per launcher,
+    // so extra picks beyond the remaining slots are dropped in add().
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(maxPhotos.coerceAtLeast(2))) { uris ->
+        if (uris.isNotEmpty()) scope.launch { photos.add(context, uris, maxPhotos, caps?.chatImageMaxSide ?: 1280) }
+    }
     val matches = if (editing) emptyList() else Mention.activeQuery(draft)?.let { q ->
         Mention.candidates(store.members, q.second, store.recentAuthors)
     } ?: emptyList()
@@ -366,7 +404,17 @@ private fun Composer(
                         TextButton(onClick = onCancelEdit) { Text("キャンセル") }
                     }
                 }
-                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                (store.sendError ?: photos.error)?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+                if (canAttach) ComposerPhotos(photos)
+                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (canAttach) {
+                        IconButton(
+                            onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                            enabled = photos.remaining(maxPhotos) > 0,
+                        ) { Text("📷", fontSize = 20.sp, modifier = Modifier.alpha(if (photos.remaining(maxPhotos) > 0) 1f else 0.4f)) }
+                    }
                     run {
                         // Setting the value from outside (clear after send) restarts the
                         // IME input, so leftover voice / IME composition does not survive.
@@ -399,7 +447,8 @@ private fun Composer(
                                 },
                         )
                     }
-                    val canSend = draft.isNotBlank() && (store.capabilities?.canSend ?: true)
+                    val hasContent = draft.isNotBlank() || (canAttach && photos.photos.isNotEmpty())
+                    val canSend = hasContent && (editing || photos.loading == 0) && (caps?.canSend ?: true)
                     IconButton(onClick = onSubmit, enabled = canSend) {
                         Icon(
                             if (editing) Icons.Default.Check else Icons.AutoMirrored.Filled.Send,
@@ -447,6 +496,7 @@ private fun MessageRow(
     onRetry: () -> Unit,
     onDiscard: () -> Unit,
     onSelect: () -> Unit,
+    onOpenImage: (List<String>, Int) -> Unit,
     modifier: Modifier,
 ) {
     val m = row.message
@@ -483,28 +533,43 @@ private fun MessageRow(
                 }
             }
             Box {
-                // Parsed once per message, not on every frame of a scroll.
-                val emojiOnly = remember(m.body) { isEmojiOnly(m.body) }
-                val text = remember(m.body) { linkified(m.body) }
-                val bubble = when {
-                    emojiOnly -> Color.Transparent
-                    mine -> AccentGreen.copy(alpha = 0.14f)
-                    m.mentionsMe -> Color(0xFFFACC15).copy(alpha = 0.22f)
-                    else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
-                }
-                Text(
-                    text,
-                    fontSize = if (emojiOnly) 34.sp else 16.sp,
-                    modifier = Modifier
-                        .background(bubble, RoundedCornerShape(12.dp))
-                        .then(if (editing) Modifier.border(1.5.dp, AccentGreen, RoundedCornerShape(12.dp)) else Modifier)
-                        .combinedClickable(
-                            onClick = {},
-                            onDoubleClick = { if (canReact && stored) onReact("❤️") },
-                            onLongClick = { menu = true },
+                val body = m.visibleBody
+                Column(horizontalAlignment = if (mine) Alignment.End else Alignment.Start, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (m.images.isNotEmpty() || row.localImages.isNotEmpty()) {
+                        ChatImages(
+                            urls = m.images,
+                            local = row.localImages,
+                            // Previews of a message still sending have no URL to open yet.
+                            onOpen = if (m.images.isEmpty()) null else { i -> onOpenImage(m.images, i) },
+                            onLongPress = { menu = true },
                         )
-                        .padding(horizontal = if (emojiOnly) 4.dp else 10.dp, vertical = if (emojiOnly) 0.dp else 6.dp),
-                )
+                    }
+                    // A photo-only message has no text bubble.
+                    if (body.isNotEmpty()) {
+                        // Parsed once per message, not on every frame of a scroll.
+                        val emojiOnly = remember(body) { isEmojiOnly(body) }
+                        val text = remember(body) { linkified(body) }
+                        val bubble = when {
+                            emojiOnly -> Color.Transparent
+                            mine -> AccentGreen.copy(alpha = 0.14f)
+                            m.mentionsMe -> Color(0xFFFACC15).copy(alpha = 0.22f)
+                            else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+                        }
+                        Text(
+                            text,
+                            fontSize = if (emojiOnly) 34.sp else 16.sp,
+                            modifier = Modifier
+                                .background(bubble, RoundedCornerShape(12.dp))
+                                .then(if (editing) Modifier.border(1.5.dp, AccentGreen, RoundedCornerShape(12.dp)) else Modifier)
+                                .combinedClickable(
+                                    onClick = {},
+                                    onDoubleClick = { if (canReact && stored) onReact("❤️") },
+                                    onLongClick = { menu = true },
+                                )
+                                .padding(horizontal = if (emojiOnly) 4.dp else 10.dp, vertical = if (emojiOnly) 0.dp else 6.dp),
+                        )
+                    }
+                }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     if (canReact && stored) {
                         Row(Modifier.padding(horizontal = 8.dp)) {
@@ -525,11 +590,13 @@ private fun MessageRow(
                     if (mine && canEdit && stored) {
                         DropdownMenuItem(text = { Text("編集") }, onClick = { menu = false; onEdit() })
                     }
-                    DropdownMenuItem(text = { Text("テキストをコピー") }, onClick = {
-                        menu = false
-                        scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("message", m.body))) }
-                    })
-                    DropdownMenuItem(text = { Text("テキストを選択") }, onClick = { menu = false; onSelect() })
+                    if (body.isNotEmpty()) {
+                        DropdownMenuItem(text = { Text("テキストをコピー") }, onClick = {
+                            menu = false
+                            scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("message", body))) }
+                        })
+                        DropdownMenuItem(text = { Text("テキストを選択") }, onClick = { menu = false; onSelect() })
+                    }
                 }
             }
             val rs = m.reactions.orEmpty()
@@ -541,6 +608,59 @@ private fun MessageRow(
         }
     }
     if (row.state == SendState.PENDING) Unit
+}
+
+/** Photos in a bubble: one at up to 220 dp wide, 2–4 as small squares in two columns.
+ *  `local` (this device's previews) wins over `urls` so a just-sent message never flashes. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ChatImages(urls: List<String>, local: List<ImageBitmap>, onOpen: ((Int) -> Unit)?, onLongPress: () -> Unit) {
+    val count = if (local.isNotEmpty()) local.size else urls.size
+    if (count == 1) {
+        // Remote sizes are unknown until loaded, so those use a 4:3 crop; previews keep their shape.
+        val aspect = local.firstOrNull()?.let { (it.width.toFloat() / it.height).coerceIn(0.75f, 1.8f) } ?: (4f / 3f)
+        ChatImageCell(urls.firstOrNull(), local.firstOrNull(), Modifier.width(220.dp).aspectRatio(aspect), 720, onOpen?.let { { it(0) } }, onLongPress)
+        return
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        (0 until count).chunked(2).forEach { pair ->
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                pair.forEach { i ->
+                    ChatImageCell(urls.getOrNull(i), local.getOrNull(i), Modifier.size(108.dp), 400, onOpen?.let { { it(i) } }, onLongPress)
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ChatImageCell(url: String?, local: ImageBitmap?, size: Modifier, maxPx: Int, onTap: (() -> Unit)?, onLongPress: () -> Unit) {
+    val m = size.clip(RoundedCornerShape(10.dp)).combinedClickable(onClick = { onTap?.invoke() }, onLongClick = onLongPress)
+    if (local != null) Image(local, contentDescription = "写真", modifier = m, contentScale = ContentScale.Crop)
+    else RemoteImage(url, m, maxPx = maxPx) { Box(m.background(MaterialTheme.colorScheme.surfaceVariant)) }
+}
+
+/** Attached photos above the text field, each with ✕, and a spinner while decoding. */
+@Composable
+private fun ComposerPhotos(photos: ChatAttachments) {
+    if (photos.photos.isEmpty() && photos.loading == 0) return
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+        photos.photos.forEachIndexed { i, p ->
+            Box {
+                Image(p.preview, null, Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
+                Box(
+                    Modifier.align(Alignment.TopEnd).size(22.dp).background(Color.Black.copy(alpha = 0.55f), CircleShape).clickable { photos.remove(i) },
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Default.Close, "画像 ${i + 1} を外す", tint = Color.White, modifier = Modifier.size(14.dp)) }
+            }
+        }
+        repeat(photos.loading) {
+            Box(Modifier.size(56.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(8.dp)), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
+        }
+    }
 }
 
 @Composable

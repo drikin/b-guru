@@ -37,6 +37,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     var update by mutableStateOf<AndroidReleaseInfo?>(null); private set
     /** The server revoked the token or membership ended. */
     var signedOut by mutableStateOf(false); private set
+    /** Why the last send was refused (e.g. a photo the server would not take). */
+    var sendError by mutableStateOf<String?>(null)
 
     /** The voice room. Lives as long as the sign-in, so a call survives the chat
      *  leaving the screen (the stream pauses; LiveKit has its own connection). */
@@ -57,6 +59,12 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     private var latestId = 0L
     private var myUserId: String? = null
 
+    /** What a pending message still has to send, by clientId. Memory only: the JPEGs
+     *  stay until the post lands (or is discarded), so 再送 can re-upload them; `urls`
+     *  is set once the upload succeeded, so a retry after that only re-posts. */
+    private class Outgoing(val body: String, val photos: List<ChatPhoto>, var urls: List<String>? = null)
+    private val outbox = HashMap<String, Outgoing>()
+
     /** Names of people who spoke recently (newest first) — ranked first in autocomplete. */
     val recentAuthors: List<String>
         get() = rows.asReversed().filter { !it.message.isAuthor }.mapNotNull { it.message.authorName?.takeIf(String::isNotBlank) }.distinct()
@@ -67,7 +75,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     /** Debug only: sample chat, sends "succeed" locally (no network). */
     var demo = false
 
-    fun loadDemo(scale: Boolean = false) {
+    fun loadDemo(scale: Boolean = false, images: String? = null) {
         demo = true
         fun msg(id: Long, who: String, body: String, mine: Boolean = false, reactions: List<Reaction>? = null) =
             ChatRow(ChatMessage(id, authorId = if (mine) "me" else who, authorName = if (mine) "ドリキン" else who, body = body,
@@ -78,7 +86,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             msg(3, "ドリキン", "ありがとうございます！", mine = true, reactions = listOf(Reaction("❤️", 2, mine = true), Reaction("😂", 1))),
             msg(4, "takuto", "@ドリキン 通知も来ました"),
             msg(5, "takuto", "👍"),
-        ) + if (!scale) emptyList() else (6L..300L).map { i ->
+        ) + (if (!scale) emptyList() else (6L..300L).map { i ->
             val who = listOf("mazzo", "takuto", "NORIO TAKAHASHI", "coban", "ちい")[(i % 5).toInt()]
             msg(i, who, when (i % 4) {
                 0L -> "@ドリキン これ見ました？ https://bsm.backspace.fm/#/post/$i"
@@ -86,13 +94,21 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
                 2L -> "😂"
                 else -> "今日は長めのメッセージを書いてみます。スクロールが重くならないか確認するためのテキストで、改行もなく続きます。$i"
             }, mine = i % 7 == 0L, reactions = if (i % 3 == 0L) listOf(Reaction("❤️", 2), Reaction("👍", 1, mine = true)) else null)
-        }
+        }) + demoPhotos(images)
         members = listOf("ビーグル", "mazzo", "NORIO TAKAHASHI", "takuto", "coban", "ポンコツ散財王ドリキン").map { MentionMember(it, it) }
-        capabilities = Capabilities(features = Capabilities.Features(Capabilities.ChatFeatures(send = true, editOwn = true, reactions = true, markRead = false), Capabilities.PostFeatures(read = true, publish = true, upload = true, reactions = true, maxImages = 5)))
+        capabilities = Capabilities(features = Capabilities.Features(Capabilities.ChatFeatures(send = true, editOwn = true, reactions = true, markRead = false, images = true, maxImages = 4), Capabilities.PostFeatures(read = true, publish = true, upload = true, reactions = true, maxImages = 5)))
         hasLoaded = true
         connection = Connection.LIVE
         onlineCount = 12
     }
+
+    /** Photo messages for the demo, served from this Mac (`--es demo_images`); none without it. */
+    private fun demoPhotos(base: String?): List<ChatRow> = if (base == null) emptyList() else listOf(
+        ChatRow(ChatMessage(301, authorId = "mazzo", authorName = "mazzo", body = "今朝の散歩コース", createdAt = "2026-10-16T06:10:00Z",
+            images = listOf("$base/photo1.jpg"), reactions = listOf(Reaction("❤️", 1)))),
+        ChatRow(ChatMessage(302, authorId = "takuto", authorName = "takuto", body = ChatMessage.PHOTO_PLACEHOLDER, createdAt = "2026-10-16T06:12:00Z",
+            images = listOf("$base/photo2.jpg", "$base/photo3.jpg", "$base/photo4.jpg"))),
+    )
 
     /** On screen (ON_START): connect. Off screen the stream is closed — pushes
      *  cover the background, and an idle socket would only drain the battery. */
@@ -219,7 +235,10 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             // Keep rows still sending / failed; keep the stable key of rows we sent.
             val local = rows.filter { it.message.id < 0 }
             val keys = rows.associate { it.message.id to it.key }
-            rows = r.messages.map { m -> ChatRow(m, key = keys[m.id] ?: (m.clientId ?: "id-${m.id}")) } + local
+            val previews = rows.filter { it.localImages.isNotEmpty() }.associate { it.message.id to it.localImages }
+            rows = r.messages.map { m ->
+                ChatRow(m, key = keys[m.id] ?: (m.clientId ?: "id-${m.id}"), localImages = previews[m.id] ?: emptyList())
+            } + local
             hasLoaded = true
             if (isVisible) markReadSoon()
             runCatching { onlineCount = api.summary().onlineCount }
@@ -238,46 +257,60 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
 
     // MARK: actions
 
-    fun send(raw: String, restore: (String) -> Unit) {
+    /** Text and/or photos. The bubble (with the local previews) shows at once; the
+     *  photos upload first, then the message posts with their URLs. */
+    fun send(raw: String, photos: List<ChatPhoto> = emptyList(), restore: (String, List<ChatPhoto>) -> Unit) {
         val body = raw.trim()
-        if (body.isEmpty()) return
+        if (body.isEmpty() && photos.isEmpty()) return
         val clientId = UUID.randomUUID().toString()
         tempSeq += 1
         val pending = ChatMessage(
             id = -tempSeq, authorId = myUserId, body = body, createdAt = Instant.now().toString(),
             isAuthor = true, clientId = clientId, reactions = emptyList(),
         )
-        rows = rows + ChatRow(pending, SendState.PENDING)
+        outbox[clientId] = Outgoing(body, photos)
+        sendError = null
+        rows = rows + ChatRow(pending, SendState.PENDING, localImages = photos.map { it.preview })
         unreadCount = 0
-        post(body, clientId, restore)
+        post(clientId, restore)
     }
 
     fun retry(row: ChatRow) {
         val cid = row.message.clientId ?: return
+        if (cid !in outbox) outbox[cid] = Outgoing(row.message.body, emptyList())
         setState(SendState.PENDING, cid)
-        post(row.message.body, cid) {}
+        post(cid) { _, _ -> }
     }
 
     fun discard(row: ChatRow) {
+        row.message.clientId?.let(outbox::remove)
         rows = rows.filterNot { it.message.id < 0 && it.message.clientId == row.message.clientId }
     }
 
-    private fun post(body: String, clientId: String, restore: (String) -> Unit) {
+    private fun post(clientId: String, restore: (String, List<ChatPhoto>) -> Unit) {
+        val out = outbox[clientId] ?: return
         if (demo) {
+            outbox.remove(clientId)
             val m = rows.last { it.message.clientId == clientId }.message
             rows = reconcile(rows, m.copy(id = (rows.maxOf { it.message.id }) + 1, authorName = "ドリキン"))
             return
         }
         scope.launch {
             try {
-                val m = api.post(body, clientId)
+                val urls = out.urls ?: if (out.photos.isEmpty()) emptyList() else
+                    api.uploadChatImages(out.photos.map { it.jpeg }, capabilities?.chatImageUpload ?: "/api/agent/chat/upload")
+                        .also { out.urls = it }
+                val m = api.post(out.body, clientId, urls)
+                outbox.remove(clientId)
                 myUserId = m.authorId ?: myUserId
                 latestId = maxOf(latestId, m.id)
                 rows = reconcile(rows, m)
             } catch (e: ApiError) {
                 if (e.isPermanent) {
+                    outbox.remove(clientId)
                     rows = rows.filterNot { it.message.id < 0 && it.message.clientId == clientId }
-                    restore(body)
+                    if (e is ApiError.Http && e.serverMessage != null) sendError = e.serverMessage
+                    restore(out.body, out.photos)
                     if (e is ApiError.Unauthorized) signedOut = true
                 } else {
                     setState(SendState.FAILED, clientId)

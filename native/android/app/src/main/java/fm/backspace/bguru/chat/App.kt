@@ -45,7 +45,7 @@ class Session(private val app: Context) {
      *  served from this Mac, for measuring scrolling. */
     fun startDemo(images: String? = null) {
         if (!BuildConfig.DEMO || store?.demo == true) return
-        store = ChatStore(ApiClient("demo"), app).also { it.loadDemo(scale = images != null) }
+        store = ChatStore(ApiClient("demo"), app).also { it.loadDemo(scale = images != null, images = images) }
         timeline = TimelineStore(ApiClient("demo")).also { it.loadDemo(images) }
         // Debug: print this emulator's FCM token so a test push can be sent to it.
         if (Push.configured) com.google.firebase.messaging.FirebaseMessaging.getInstance().token

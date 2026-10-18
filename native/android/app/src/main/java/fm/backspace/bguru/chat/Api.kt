@@ -102,8 +102,15 @@ class ApiClient(val token: String) {
     suspend fun members(): List<MentionMember> = get<MembersResponse>("/api/agent/members").members
     suspend fun chatMessage(id: Long): ChatMessage = get<ChatSendResponse>("/api/agent/chat/$id").message
 
-    suspend fun post(body: String, clientId: String): ChatMessage =
-        decode<ChatSendResponse>(send(request("POST", "/api/agent/chat", buildJsonObject { put("body", body); put("client_id", clientId) }))).message
+    suspend fun post(body: String, clientId: String, images: List<String> = emptyList()): ChatMessage =
+        decode<ChatSendResponse>(send(request("POST", "/api/agent/chat", buildJsonObject {
+            put("body", body); put("client_id", clientId)
+            if (images.isNotEmpty()) put("images", JsonArray(images.map { JsonPrimitive(it) }))
+        }))).message
+
+    /** Chat photos (JPEGs, already resized). Returns /api/media/… URLs for [post]. */
+    suspend fun uploadChatImages(jpegs: List<ByteArray>, path: String = "/api/agent/chat/upload"): List<String> =
+        uploadImages(path, jpegs)
 
     suspend fun edit(id: Long, body: String): ChatMessage =
         decode<ChatSendResponse>(send(request("PATCH", "/api/agent/chat/$id", buildJsonObject { put("body", body) }))).message
@@ -166,11 +173,14 @@ class ApiClient(val token: String) {
         }))).post
 
     /** JPEGs (already resized). Returns /api/media/… URLs. */
-    suspend fun upload(jpegs: List<ByteArray>): List<String> {
+    suspend fun upload(jpegs: List<ByteArray>): List<String> = uploadImages("/api/agent/upload", jpegs)
+
+    /** Multipart `images` parts, with a longer timeout than JSON calls (photos on a slow uplink). */
+    private suspend fun uploadImages(path: String, jpegs: List<ByteArray>): List<String> {
         val body = MultipartBody.Builder().setType(MultipartBody.FORM).apply {
             jpegs.forEachIndexed { i, b -> addFormDataPart("images", "photo$i.jpg", b.toRequestBody("image/jpeg".toMediaType())) }
         }.build()
-        val req = Request.Builder().url("${Net.BASE}/api/agent/upload").header("Authorization", "Bearer $token").post(body).build()
+        val req = Request.Builder().url(Net.BASE + path).header("Authorization", "Bearer $token").post(body).build()
         val resp = Net.http.newBuilder().callTimeout(120, TimeUnit.SECONDS).writeTimeout(120, TimeUnit.SECONDS).build().newCall(req).await()
         resp.use {
             val text = it.body.string()

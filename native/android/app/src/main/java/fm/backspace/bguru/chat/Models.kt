@@ -30,7 +30,17 @@ data class ChatMessage(
     val mentionsMe: Boolean = false,
     val clientId: String? = null,
     val reactions: List<Reaction>? = null,
-)
+    /** /api/media/… URLs of attached photos (always sent by new servers; empty when none). */
+    val images: List<String> = emptyList(),
+) {
+    /** The text to show: a photo-only message carries "📷 写真" for apps that predate
+     *  photos, which this app replaces with the photos themselves. */
+    val visibleBody: String get() = if (images.isNotEmpty() && body == PHOTO_PLACEHOLDER) "" else body
+
+    companion object {
+        const val PHOTO_PLACEHOLDER = "📷 写真"
+    }
+}
 
 @Serializable
 data class Reaction(val emoji: String, val count: Int, val mine: Boolean = false, val reactors: List<String> = emptyList())
@@ -38,11 +48,14 @@ data class Reaction(val emoji: String, val count: Int, val mine: Boolean = false
 enum class SendState { SENT, PENDING, FAILED }
 
 /** A row in the list. `key` stays the same across the pending → stored swap
- *  (clientId when we sent it), so the bubble is never re-created on confirm. */
+ *  (clientId when we sent it), so the bubble is never re-created on confirm.
+ *  `localImages`: previews of photos this device sent, shown at once while uploading
+ *  and kept after the swap so the bubble does not flash while the URLs load. */
 data class ChatRow(
     val message: ChatMessage,
     val state: SendState = SendState.SENT,
     val key: String = message.clientId ?: "id-${message.id}",
+    val localImages: List<androidx.compose.ui.graphics.ImageBitmap> = emptyList(),
 )
 
 @Serializable data class ChatListResponse(val unreadCount: Int = 0, val latestId: Long = 0, val messages: List<ChatMessage> = emptyList())
@@ -81,12 +94,22 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val reactions: Boolean? = null,
         val markRead: Boolean? = null,
         val maxBody: Int? = null,
+        val images: Boolean? = null,
+        val imageUpload: String? = null,
+        val maxImages: Int? = null,
+        val imageMaxSide: Int? = null,
     )
     val canSend get() = features?.chat?.send ?: false
     val canEdit get() = features?.chat?.editOwn ?: false
     val canReact get() = features?.chat?.reactions ?: false
     val canMarkRead get() = features?.chat?.markRead ?: false
     val maxBody get() = features?.chat?.maxBody ?: 1000
+    /** Photos in chat: hidden until the server says it accepts them. */
+    val canSendImages get() = canSend && (features?.chat?.images ?: false)
+    val maxChatImages get() = features?.chat?.maxImages?.takeIf { it > 0 } ?: 4
+    val chatImageMaxSide get() = features?.chat?.imageMaxSide?.takeIf { it > 0 } ?: 1280
+    /** Only paths on our own server: the upload carries the token. */
+    val chatImageUpload get() = features?.chat?.imageUpload?.takeIf { it.startsWith("/api/") } ?: "/api/agent/chat/upload"
     val hasTimeline get() = features?.posts?.read ?: false
     /** Posting needs the "post" scope — tokens from before the timeline must reconnect once. */
     val canPublish get() = features?.posts?.publish ?: false
