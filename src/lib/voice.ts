@@ -10,6 +10,7 @@
  *
  * Rollout: VOICE_ALLOW_EMAILS (comma-separated) limits who may join while we
  * try it out; unset = every paid member. Without LiveKit config it is off. */
+import { voiceAnnouncer } from "./voice-announce";
 import { pool } from "./db";
 import { emitLive } from "./live";
 import { gravatarUrl } from "./posts";
@@ -267,12 +268,12 @@ export async function handleWebhookEvent(ev: LkWebhookEvent): Promise<void> {
       if (sid) await closeOpenSessions(sid);
       // The first person into an empty room opens a session. The unique index on open
       // sessions makes a simultaneous second insert a no-op.
-      await pool.query(
+      const opened = await pool.query(
         `INSERT INTO voice_sessions (livekit_sid, opened_by) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
         [sid, identity]
       );
       if (identity) {
-        await pool.query(
+        const joined = await pool.query(
           `INSERT INTO voice_participations (session_id, user_id)
            SELECT s.id, $1 FROM voice_sessions s
            WHERE s.ended_at IS NULL
@@ -281,17 +282,20 @@ export async function handleWebhookEvent(ev: LkWebhookEvent): Promise<void> {
            LIMIT 1`,
           [identity]
         );
+        // A new participation (not a repeat of one already open): tell the chat.
+        if ((joined.rowCount ?? 0) > 0) voiceAnnouncer.joined(identity, (opened.rowCount ?? 0) > 0);
       }
       break;
     }
     case "participant_left":
       if (identity) {
-        await pool.query(
+        const left = await pool.query(
           `UPDATE voice_participations SET left_at = now()
            WHERE user_id = $1 AND left_at IS NULL
              AND session_id IN (SELECT id FROM voice_sessions WHERE $2::text IS NULL OR livekit_sid = $2)`,
           [identity, sid]
         );
+        if ((left.rowCount ?? 0) > 0) voiceAnnouncer.left(identity);
       }
       break;
     case "room_finished":
