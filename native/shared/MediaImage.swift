@@ -1,7 +1,13 @@
 import SwiftUI
 
-/// Uploaded images (/api/media/…) need the member's token — the app has no web
-/// session — so they are fetched with the Bearer header and kept in memory.
+import ImageIO
+
+/// Post photos, avatars and custom emoji. Every image is decoded at the size it is
+/// shown, off the main thread (ImageIO thumbnails) — never the original: a phone
+/// photo is 4032×3024 = 48 MB once decoded, and UIImage(data:) decoded it on the
+/// main thread at first draw, which is what made scrolling stutter. The memory
+/// cache is bounded by bytes. Uploaded images (/api/media/…) need the member's
+/// token — the app has no web session — so they are fetched with the Bearer header.
 @MainActor
 final class MediaCache {
     static let shared = MediaCache()
@@ -9,17 +15,23 @@ final class MediaCache {
     private var inFlight: [String: Task<PlatformImage?, Never>] = [:]
     var token: String?
 
-    init() { cache.countLimit = 300 }
+    init() { cache.totalCostLimit = 64 * 1024 * 1024 }
 
     static func url(_ raw: String) -> URL? {
         raw.hasPrefix("http") ? URL(string: raw) : URL(string: raw, relativeTo: APIClient.baseURL)?.absoluteURL
     }
 
-    func cached(_ raw: String) -> PlatformImage? { cache.object(forKey: raw as NSString) }
+    private static func key(_ raw: String, _ maxPixel: Int) -> NSString { "\(raw)@\(maxPixel)" as NSString }
 
-    func image(for raw: String) async -> PlatformImage? {
-        if let hit = cached(raw) { return hit }
-        if let t = inFlight[raw] { return await t.value }
+    func cached(_ raw: String, maxPixel: Int = MediaImage.defaultPixels) -> PlatformImage? {
+        cache.object(forKey: Self.key(raw, maxPixel))
+    }
+
+    /// The image at most `maxPixel` pixels on its long side.
+    func image(for raw: String, maxPixel: Int = MediaImage.defaultPixels) async -> PlatformImage? {
+        let key = Self.key(raw, maxPixel)
+        if let hit = cache.object(forKey: key) { return hit }
+        if let t = inFlight[key as String] { return await t.value }
         let token = self.token
         let t = Task<PlatformImage?, Never> {
             guard let url = Self.url(raw) else { return nil }
@@ -31,19 +43,57 @@ final class MediaCache {
             }
             guard let (data, resp) = try? await URLSession.shared.data(for: req),
                   (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-            return PlatformImage(data: data)
+            guard let cg = await Task.detached(priority: .userInitiated, operation: { Self.decode(data, maxPixel: maxPixel) }).value
+            else { return nil }
+            return PlatformImage.decoded(cg)
         }
-        inFlight[raw] = t
+        inFlight[key as String] = t
         let img = await t.value
-        inFlight[raw] = nil
-        if let img { cache.setObject(img, forKey: raw as NSString) }
+        inFlight[key as String] = nil
+        if let img, let cg = img.cgImageForCost { cache.setObject(img, forKey: key, cost: cg.bytesPerRow * cg.height) }
         return img
+    }
+
+    /// Scaled while decoding (no full-size bitmap ever exists), EXIF rotation applied,
+    /// and fully decoded here — so drawing it later costs nothing on the main thread.
+    nonisolated static func decode(_ data: Data, maxPixel: Int) -> CGImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary)
+    }
+}
+
+extension PlatformImage {
+    static func decoded(_ cg: CGImage) -> PlatformImage {
+        #if os(macOS)
+        NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        #else
+        UIImage(cgImage: cg, scale: 1, orientation: .up)
+        #endif
+    }
+
+    fileprivate var cgImageForCost: CGImage? {
+        #if os(macOS)
+        cgImage(forProposedRect: nil, context: nil, hints: nil)
+        #else
+        cgImage
+        #endif
     }
 }
 
 struct MediaImage: View {
+    /// A wide photo across the screen (≈ 400 pt × 3).
+    static let defaultPixels = 1200
+
     let path: String
     var contentMode: ContentMode = .fill
+    /// Longest side it is decoded at.
+    var maxPixel: Int = MediaImage.defaultPixels
     @State private var image: PlatformImage?
     @State private var failed = false
 
@@ -57,8 +107,8 @@ struct MediaImage: View {
             }
         }
         .task(id: path) {
-            if let hit = MediaCache.shared.cached(path) { image = hit; return }
-            image = await MediaCache.shared.image(for: path)
+            if let hit = MediaCache.shared.cached(path, maxPixel: maxPixel) { image = hit; return }
+            image = await MediaCache.shared.image(for: path, maxPixel: maxPixel)
             failed = image == nil
         }
     }

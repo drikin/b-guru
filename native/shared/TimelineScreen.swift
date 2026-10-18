@@ -312,7 +312,7 @@ struct PostImages: View {
                     Button { onOpen(i) } label: {
                         Color.clear
                             .aspectRatio(1, contentMode: .fit)
-                            .overlay(MediaImage(path: path))
+                            .overlay(MediaImage(path: path, maxPixel: 600))
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .contentShape(Rectangle())
                     }
@@ -379,7 +379,7 @@ private struct ZoomableImage: View {
     @GestureState private var pinch: CGFloat = 1
 
     var body: some View {
-        MediaImage(path: path, contentMode: .fit)
+        MediaImage(path: path, contentMode: .fit, maxPixel: 2560)
             .scaleEffect(scale * pinch)
             .gesture(
                 MagnifyGesture()

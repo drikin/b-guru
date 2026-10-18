@@ -193,9 +193,27 @@ struct MessageRow: View {
     }
 
     /// Links become clickable; @mentions get a subtle tint.
+    private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+    private static let mentionRegex = try? NSRegularExpression(pattern: "@\\[[^\\]]+\\]|@[^\\s@\\[\\]]+")
+    private final class Box { let value: AttributedString; init(_ v: AttributedString) { value = v } }
+    private static let attributedCache: NSCache<NSString, Box> = {
+        let c = NSCache<NSString, Box>()
+        c.countLimit = 1000
+        return c
+    }()
+
+    /// Parsed once per text (rows re-render on every live update and scroll; making
+    /// an NSDataDetector each time was the costliest part of drawing a message).
     static func attributed(_ s: String) -> AttributedString {
+        if let hit = attributedCache.object(forKey: s as NSString) { return hit.value }
+        let a = parseAttributed(s)
+        attributedCache.setObject(Box(a), forKey: s as NSString)
+        return a
+    }
+
+    private static func parseAttributed(_ s: String) -> AttributedString {
         var a = AttributedString(s)
-        if let det = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+        if let det = linkDetector {
             let ns = s as NSString
             for match in det.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
                 guard let url = match.url, let r = Range(match.range, in: s),
@@ -203,7 +221,7 @@ struct MessageRow: View {
                 a[ar].link = url
             }
         }
-        if let re = try? NSRegularExpression(pattern: "@\\[[^\\]]+\\]|@[^\\s@\\[\\]]+") {
+        if let re = mentionRegex {
             for match in re.matches(in: s, range: NSRange(s.startIndex..., in: s)) {
                 guard let r = Range(match.range, in: s), let ar = Range(r, in: a) else { continue }
                 a[ar].foregroundColor = Color.accentGreen
@@ -305,10 +323,9 @@ struct ReactionGlyph: View {
     var body: some View {
         if emoji.hasPrefix(":"), emoji.hasSuffix(":"), emoji.count > 2,
            let url = EmojiCatalog.shared.url(for: String(emoji.dropFirst().dropLast())) {
-            AsyncImage(url: url) { img in
-                img.resizable().scaledToFit()
-            } placeholder: { Text(emoji).font(.caption2) }
-            .frame(width: 14, height: 14)
+            // Cached (AsyncImage refetched it every time a row scrolled back into view).
+            MediaImage(path: url.absoluteString, contentMode: .fit, maxPixel: 64)
+                .frame(width: 14, height: 14)
         } else {
             Text(emoji).font(.caption)
         }
@@ -361,17 +378,16 @@ struct AvatarView: View {
     }
 }
 
+/// Avatars: the same downscaled, off-main-thread decoding as post photos (some
+/// members' profile pictures are full-size photos), cached by MediaCache.
 @MainActor
 final class AvatarCache {
     static let shared = AvatarCache()
-    private var cache: [String: PlatformImage] = [:]
+    /// Largest avatar drawn (36 pt) at 3x, rounded up.
+    static let pixels = 128
 
     func image(for raw: String?) async -> PlatformImage? {
         guard let raw, !raw.isEmpty else { return nil }
-        if let hit = cache[raw] { return hit }
-        let url = raw.hasPrefix("http") ? URL(string: raw) : URL(string: raw, relativeTo: APIClient.baseURL)
-        guard let url, let (data, _) = try? await URLSession.shared.data(from: url), let img = PlatformImage(data: data) else { return nil }
-        cache[raw] = img
-        return img
+        return await MediaCache.shared.image(for: raw, maxPixel: Self.pixels)
     }
 }
