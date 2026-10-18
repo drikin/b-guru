@@ -28,6 +28,8 @@ android {
         targetSdk = 36
         versionCode = (findProperty("versionCode") as String?)?.toInt() ?: 1
         versionName = (findProperty("versionName") as String?) ?: "0.1.0"
+        // Phones only (arm): WebRTC's native code for x86 would double the APK for nobody.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
         for (k in listOf("apiKey", "appId", "projectId", "senderId")) {
             buildConfigField("String", "FCM_${k.uppercase()}", "\"${firebase.getProperty(k, "")}\"")
         }
@@ -79,6 +81,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
     implementation("com.google.firebase:firebase-messaging:25.1.3")
+    // Voice room (LiveKit, Apache-2.0, official SDK) — same server and rules as iOS/Mac.
+    implementation("io.livekit:livekit-android:2.29.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }

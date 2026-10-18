@@ -186,6 +186,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0),
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
+            VoiceBar(store.voice)
             store.update?.let { u ->
                 // Downloads need the member's B-guru login, so the browser (where they
                 // are signed in) fetches the APK; Android then offers to install it.

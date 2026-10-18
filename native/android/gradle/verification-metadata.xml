@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Dependency verification for the one artifact that does not come from Google or
+     Maven Central: LiveKit's audio routing library, built by JitPack from a pinned
+     commit. JitPack builds it itself, so the bytes are pinned here too — a rebuilt or
+     swapped artifact fails the build. Everything else is trusted as before. -->
+<verification-metadata xmlns="https://schema.gradle.org/dependency-verification"
+                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                       xsi:schemaLocation="https://schema.gradle.org/dependency-verification https://schema.gradle.org/dependency-verification/dependency-verification-1.3.xsd">
+   <configuration>
+      <verify-metadata>true</verify-metadata>
+      <verify-signatures>false</verify-signatures>
+      <trusted-artifacts>
+         <trust group="^(?!com[.]github[.]davidliu$).*$" regex="true" reason="Only the JitPack artifact is pinned"/>
+      </trusted-artifacts>
+   </configuration>
+   <components>
+      <component group="com.github.davidliu" name="audioswitch" version="039a35aefab7747c557242fa216c9ea11743b604">
+         <artifact name="audioswitch-039a35aefab7747c557242fa216c9ea11743b604.aar">
+            <sha256 value="c8240221daa9a96d4ea01a4dc6f6f6b10b4903d2a71f9b57f838bdfeb6c3fcbc" origin="JitPack, checked 2026-10-18"/>
+         </artifact>
+         <artifact name="audioswitch-039a35aefab7747c557242fa216c9ea11743b604.pom">
+            <sha256 value="b01278803fe0a007591a44143e1919a406c0c529794b13aa30e86a87532095fd" origin="JitPack, checked 2026-10-18"/>
+         </artifact>
+      </component>
+   </components>
+</verification-metadata>

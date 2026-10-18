@@ -12,7 +12,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val session = App.session(this)
-        if (BuildConfig.DEBUG && intent?.getBooleanExtra("demo", false) == true) session.startDemo()
+        if (BuildConfig.DEBUG && intent?.getBooleanExtra("demo", false) == true) {
+            session.startDemo()
+            // Debug: `--es voice_url ws://10.0.2.2:7880 --es voice_token <jwt>` joins a local LiveKit dev server.
+            val url = intent.getStringExtra("voice_url")
+            val token = intent.getStringExtra("voice_token")
+            if (url != null && token != null) session.store?.voice?.devDirect(url, token)
+        }
         handle(intent)
         setContent {
             BguruTheme {

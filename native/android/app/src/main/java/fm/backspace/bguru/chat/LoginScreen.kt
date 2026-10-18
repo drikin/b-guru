@@ -46,7 +46,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
 /** First run: sign in to B-guru in an embedded web view, then the app issues
- *  itself a device token (read / read_state / chat / post) with that page's session
+ *  itself a device token (read / read_state / chat / post / voice) with that page's session
  *  cookie and keeps only the token. The web session is wiped right after. No JS
  *  bridge is installed, and navigation is confined to bsm.backspace.fm. */
 @Composable
@@ -71,6 +71,9 @@ fun LoginScreen(onToken: (String) -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Column(Modifier.weight(1f)) {
+                    LoginNotice.message?.let {
+                        Text(it, style = MaterialTheme.typography.bodyMedium, color = AccentGreen)
+                    }
                     Text(
                         status ?: "B-guru にログインしてから「このアプリを接続」を押してください",
                         style = MaterialTheme.typography.bodyMedium,
@@ -87,6 +90,7 @@ fun LoginScreen(onToken: (String) -> Unit) {
                         try {
                             val token = issueToken(context)
                             clearWebSession()
+                            LoginNotice.message = null
                             onToken(token)
                         } catch (e: IssueError) {
                             status = e.message
@@ -102,6 +106,15 @@ fun LoginScreen(onToken: (String) -> Unit) {
             }
         }
     }
+}
+
+/** A one-off reason shown on the login screen (e.g. "sign in again for the voice room"). */
+object LoginNotice {
+    var message by mutableStateOf<String?>(null)
+    private const val PREFS = "login"
+
+    fun voiceReloginAsked(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("voiceReloginAsked", false)
+    fun markVoiceReloginAsked(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("voiceReloginAsked", true).apply()
 }
 
 private class IssueError(message: String, val isLimit: Boolean = false) : Exception(message)
@@ -146,7 +159,7 @@ private suspend fun issueToken(ctx: Context): String {
     if (cookie.isNullOrBlank()) throw IssueError("まだログインしていません。上の画面で B-guru にログインしてください")
     val body = buildJsonObject {
         put("device_name", deviceName(ctx))
-        putJsonArray("scopes") { add("read"); add("read_state"); add("chat"); add("post") }
+        putJsonArray("scopes") { add("read"); add("read_state"); add("chat"); add("post"); add("voice") }
         put("replace_same_device", true)
     }.toString().toRequestBody("application/json".toMediaType())
     // No Origin header (a direct API client) — the route accepts that; the

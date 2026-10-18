@@ -127,6 +127,25 @@ class ApiClient(val token: String) {
         runCatching { send(request("DELETE", "/api/agent/devices/push", buildJsonObject { put("token", fcmToken) })) }
     }
 
+    // MARK: voice room
+
+    suspend fun voiceState(): VoiceStateResponse = get("/api/agent/voice")
+
+    suspend fun voiceToken(): VoiceTokenResponse =
+        decode(send(request("POST", "/api/agent/voice/token", buildJsonObject {})))
+
+    suspend fun voiceReport(userId: String, reason: String) {
+        send(request("POST", "/api/agent/voice/report", buildJsonObject { put("user_id", userId); put("reason", reason) }))
+    }
+
+    /** Returns whether the mic was on (and is now off). */
+    suspend fun voiceMute(userId: String): Boolean =
+        decode<VoiceMuteResponse>(send(request("POST", "/api/agent/voice/mute", buildJsonObject { put("user_id", userId) }))).muted ?: false
+
+    suspend fun voiceKick(userId: String, ban: Boolean) {
+        send(request("POST", "/api/agent/voice/kick", buildJsonObject { put("user_id", userId); put("ban", ban) }))
+    }
+
     // MARK: timeline
 
     suspend fun posts(cursor: String? = null, limit: Int = 30): PostListResponse =

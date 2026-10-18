@@ -58,7 +58,14 @@ data class ChatRow(
 /** GET /api/agent/capabilities. A feature the server does not report is absent. */
 @Serializable
 data class Capabilities(val scopes: List<String> = emptyList(), val features: Features? = null) {
-    @Serializable data class Features(val chat: ChatFeatures? = null, val posts: PostFeatures? = null)
+    @Serializable data class Features(val chat: ChatFeatures? = null, val posts: PostFeatures? = null, val voice: VoiceFeatures? = null)
+    @Serializable data class VoiceFeatures(
+        val enabled: Boolean? = null,
+        val join: Boolean? = null,
+        val admin: Boolean? = null,
+        val maxParticipants: Int? = null,
+        val maxSpeakers: Int? = null,
+    )
     @Serializable data class PostFeatures(
         val read: Boolean? = null,
         val publish: Boolean? = null,
@@ -85,7 +92,31 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val canPublish get() = features?.posts?.publish ?: false
     val canReactPosts get() = features?.posts?.reactions ?: false
     val maxImages get() = features?.posts?.maxImages ?: 5
+    /** Voice room is on for this member (server configured + in the rollout). */
+    val voiceEnabled get() = features?.voice?.enabled ?: false
+    /** This token may join (has the "voice" scope — older tokens must sign in again). */
+    val canJoinVoice get() = features?.voice?.join ?: false
+    val isVoiceAdmin get() = features?.voice?.admin ?: false
+    val voiceMaxSpeakers get() = features?.voice?.maxSpeakers ?: 10
 }
+
+// MARK: voice room
+
+/** Who is in the voice room, as the server sees it (GET /api/agent/voice and the
+ *  stream's `voice` event). Shown to people who have not joined. */
+@Serializable
+data class VoiceRoomInfo(
+    val active: Boolean = false,
+    val openedBy: String? = null,
+    val startedAt: String? = null,
+    val participants: List<Member> = emptyList(),
+) {
+    @Serializable data class Member(val userId: String, val name: String? = null, val avatar: String? = null)
+}
+
+@Serializable data class VoiceStateResponse(val enabled: Boolean = false, val room: VoiceRoomInfo? = null)
+@Serializable data class VoiceTokenResponse(val url: String, val token: String, val room: String = "", val identity: String = "")
+@Serializable data class VoiceMuteResponse(val ok: Boolean = false, val muted: Boolean? = null)
 
 // MARK: timeline
 

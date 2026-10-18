@@ -20,7 +20,7 @@ import java.util.UUID
  *  optimistic: the bubble is on screen before the request leaves, and the stored
  *  message (POST response or the stream's create event, whichever lands first)
  *  replaces it in place by clientId — same rule as the web (chat-optimistic.ts). */
-class ChatStore(val api: ApiClient) {
+class ChatStore(val api: ApiClient, app: android.content.Context) {
     enum class Connection { CONNECTING, LIVE, OFFLINE }
 
     var rows by mutableStateOf<List<ChatRow>>(emptyList()); private set
@@ -37,6 +37,11 @@ class ChatStore(val api: ApiClient) {
     var update by mutableStateOf<AndroidReleaseInfo?>(null); private set
     /** The server revoked the token or membership ended. */
     var signedOut by mutableStateOf(false); private set
+
+    /** The voice room. Lives as long as the sign-in, so a call survives the chat
+     *  leaving the screen (the stream pauses; LiveKit has its own connection). */
+    val voice = VoiceStore(api, app)
+    private val voiceApp = app.applicationContext
 
     /** True while the chat is on screen: drives read marking. */
     var isVisible = false
@@ -105,12 +110,23 @@ class ChatStore(val api: ApiClient) {
     }
 
     fun stop() {
+        voice.close()
         scope.cancel()
     }
 
     private suspend fun loadCapabilities() {
         try {
-            capabilities = api.capabilities()
+            val caps = api.capabilities()
+            capabilities = caps
+            voice.configure(caps)
+            // Voice is on for me but this token predates the "voice" scope: send the member
+            // back to sign in once (a new sign-in gets the scope). Only once per install,
+            // so a server that still withholds it cannot loop us.
+            if (caps.voiceEnabled && !caps.canJoinVoice && !LoginNotice.voiceReloginAsked(voiceApp)) {
+                LoginNotice.markVoiceReloginAsked(voiceApp)
+                LoginNotice.message = "ボイスルームに対応しました。お手数ですが、一度ログインし直してください。"
+                signedOut = true
+            }
         } catch (e: ApiError.Unauthorized) {
             signedOut = true
         } catch (_: Exception) {
@@ -151,8 +167,10 @@ class ChatStore(val api: ApiClient) {
         when (ev.event) {
             "ready" -> {
                 connection = Connection.LIVE
+                if (voice.enabled) scope.launch { voice.loadState() } // resync after a reconnect
                 reload()
             }
+            "voice" -> runCatching { ApiJson.decodeFromString<VoiceRoomInfo>(ev.data) }.getOrNull()?.let(voice::apply)
             "chat" -> {
                 val e = runCatching { ApiJson.decodeFromString<ChatEvent>(ev.data) }.getOrNull() ?: return
                 when (e.action) {

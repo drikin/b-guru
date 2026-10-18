@@ -42,7 +42,7 @@ class Session(private val app: Context) {
     /** Debug builds only (`adb shell am start ... --ez demo true`): sample chat, no network. */
     fun startDemo() {
         if (!BuildConfig.DEBUG || store?.demo == true) return
-        store = ChatStore(ApiClient("demo")).also { it.loadDemo() }
+        store = ChatStore(ApiClient("demo"), app).also { it.loadDemo() }
         timeline = TimelineStore(ApiClient("demo")).also { it.loadDemo() }
         // Debug: print this emulator's FCM token so a test push can be sent to it.
         if (Push.configured) com.google.firebase.messaging.FirebaseMessaging.getInstance().token
@@ -71,7 +71,7 @@ class Session(private val app: Context) {
 
     private fun start(token: String) {
         val api = ApiClient(token)
-        val s = ChatStore(api)
+        val s = ChatStore(api, app)
         timeline = TimelineStore(api)
         ImageCache.token = token
         store = s // the stream connects when the chat comes on screen (ChatScreen)
