@@ -69,6 +69,7 @@ import {
 } from "@/lib/feed";
 import type { ChatMessage } from "@/lib/chat";
 import { type ChatRow, CHAT_BODY_LIMIT, newChatClientId, newChatTempId, reconcileChat, markChatFailed, markChatRetrying } from "@/lib/chat-optimistic";
+import { CHAT_MAX_PHOTOS, imageFiles, photoSlots, prepareChatPhoto, uploadChatPhotos } from "@/lib/chat-photos";
 import { normWs, isMentionedIn, mentionToken } from "@/lib/chat-mention";
 import MacAppCard from "@/components/MacAppCard";
 import AndroidAppCard from "@/components/AndroidAppCard";
@@ -324,6 +325,45 @@ function renderChatBody(
   }
   if (last < body.length) parts.push(body.slice(last));
   return parts.length ? parts : body;
+}
+
+/** Photos attached to a chat message: one image shows up to ~240px wide,
+ *  2–4 images become a grid of small squares. Clicking opens the lightbox. */
+function ChatImageGrid({ urls, onOpen }: { urls: string[]; onOpen: (src: string, group: string[]) => void }) {
+  if (urls.length === 0) return null;
+  const single = urls.length === 1;
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: single ? "1fr" : "repeat(2, 104px)",
+        gap: 4,
+        maxWidth: single ? "min(240px, 100%)" : undefined,
+      }}
+    >
+      {urls.map((src) => (
+        <UnstyledButton
+          key={src}
+          onClick={() => onOpen(src, urls)}
+          aria-label="写真を拡大"
+          style={{ display: "block", borderRadius: 10, overflow: "hidden", lineHeight: 0, background: "var(--bg-subtle)" }}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt="写真"
+            loading="lazy"
+            decoding="async"
+            style={
+              single
+                ? { display: "block", width: "100%", height: "auto", maxHeight: 320, objectFit: "cover" }
+                : { display: "block", width: 104, height: 104, objectFit: "cover" }
+            }
+          />
+        </UnstyledButton>
+      ))}
+    </div>
+  );
 }
 
 /* ---- Beagle bark sound (SE) ----
@@ -5261,6 +5301,19 @@ export default function Home() {
   const [chatEditText, setChatEditText] = useState("");
   const chatEditInputRef = useRef<HTMLTextAreaElement | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
+  // Photos attached in the composer (already resized; `preview` is an object URL).
+  const [chatPhotos, setChatPhotos] = useState<{ id: string; blob: Blob; preview: string }[]>([]);
+  const chatPhotosRef = useRef(chatPhotos);
+  chatPhotosRef.current = chatPhotos;
+  // Photos still being resized (they count toward the 4-photo cap).
+  const [chatPhotoBusy, setChatPhotoBusy] = useState(0);
+  const chatPhotoBusyRef = useRef(0);
+  const [chatPhotoError, setChatPhotoError] = useState<string | null>(null);
+  const [chatDragOver, setChatDragOver] = useState(false);
+  const chatFileRef = useRef<HTMLInputElement | null>(null);
+  // Photos of optimistic sends, by clientId: the resized blobs (for a retry),
+  // the bubble's object-URL previews, and the server urls once uploaded.
+  const chatPhotoJobsRef = useRef(new Map<string, { blobs: Blob[]; previews: string[]; urls?: string[] }>());
   const chatViewportRef = useRef<HTMLDivElement | null>(null);
   const chatViewRef = useRef(false); // ref so the SSE handler stays stable
   const chatListRef = useRef<HTMLDivElement>(null);
@@ -5393,7 +5446,94 @@ export default function Home() {
   // lands first) replaces it in place by clientId. drikin 2026-10-15: 「送信時の
   // レスポンスが悪い」— the old flow waited a full round-trip before showing
   // anything and blocked the composer meanwhile.
+  // Add picked / pasted / dropped images to the composer: resize each in the
+  // browser (≤1280 px JPEG, EXIF stripped) and keep at most CHAT_MAX_PHOTOS.
+  const addChatPhotos = useCallback(async (list: FileList | File[] | null | undefined) => {
+    const files = imageFiles(list);
+    if (files.length === 0) return;
+    setChatPhotoError(null);
+    const take = photoSlots(chatPhotosRef.current.length + chatPhotoBusyRef.current, files.length);
+    if (take < files.length) setChatPhotoError(`写真は${CHAT_MAX_PHOTOS}枚までです`);
+    if (take === 0) return;
+    chatPhotoBusyRef.current += take;
+    setChatPhotoBusy(chatPhotoBusyRef.current);
+    const ready: { id: string; blob: Blob; preview: string }[] = [];
+    let failed = 0;
+    for (const f of files.slice(0, take)) {
+      try {
+        const blob = await prepareChatPhoto(f);
+        ready.push({ id: newChatClientId(), blob, preview: URL.createObjectURL(blob) });
+      } catch {
+        failed += 1;
+      }
+    }
+    chatPhotoBusyRef.current -= take;
+    setChatPhotoBusy(chatPhotoBusyRef.current);
+    if (failed) setChatPhotoError("読み込めない画像がありました");
+    if (ready.length) setChatPhotos((prev) => [...prev, ...ready]);
+    requestAnimationFrame(() => chatInputRef.current?.focus());
+  }, []);
+
+  const removeChatPhoto = useCallback((id: string) => {
+    const p = chatPhotosRef.current.find((x) => x.id === id);
+    if (p) URL.revokeObjectURL(p.preview);
+    setChatPhotos((prev) => prev.filter((x) => x.id !== id));
+    setChatPhotoError(null);
+  }, []);
+
+  // Drop a send's photo job (sent or discarded) and free its previews. The
+  // delay lets the bubble swap to the server urls before the blobs go away.
+  const dropChatPhotoJob = useCallback((clientId: string) => {
+    const job = chatPhotoJobsRef.current.get(clientId);
+    if (!job) return;
+    chatPhotoJobsRef.current.delete(clientId);
+    window.setTimeout(() => job.previews.forEach((u) => URL.revokeObjectURL(u)), 5_000);
+  }, []);
+
+  // A send that cannot succeed: put its photos back into the composer (when the
+  // composer has none) so they are not lost silently.
+  const restoreChatPhotoJob = useCallback((clientId: string) => {
+    const job = chatPhotoJobsRef.current.get(clientId);
+    if (!job) return;
+    chatPhotoJobsRef.current.delete(clientId);
+    if (chatPhotosRef.current.length === 0 && chatPhotoBusyRef.current === 0) {
+      setChatPhotos(job.blobs.map((blob, i) => ({ id: newChatClientId(), blob, preview: job.previews[i] })));
+    } else {
+      job.previews.forEach((u) => URL.revokeObjectURL(u));
+    }
+  }, []);
+
   const postChat = useCallback(async (body: string, clientId: string) => {
+    // Photos go up first (/api/chat/upload); the urls are kept on the job so a
+    // retry after a failed POST does not upload them again.
+    const job = chatPhotoJobsRef.current.get(clientId);
+    let images: string[] | undefined;
+    if (job) {
+      if (!job.urls) {
+        const uac = new AbortController();
+        const utimer = setTimeout(() => uac.abort(), 60_000);
+        try {
+          job.urls = await uploadChatPhotos(job.blobs, uac.signal);
+        } catch (e) {
+          const status = (e as { status?: number }).status ?? 0;
+          if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+            // 再送しても通らない（大きすぎ・形式・ログイン切れ）: 行を消して入力欄に戻す。
+            setChatMessages((prev) => prev.filter((m) => !(m.id < 0 && m.clientId === clientId)));
+            setChatText((cur) => cur || body);
+            restoreChatPhotoJob(clientId);
+            const msg = status === 401 ? "ログインが切れました。再ログインしてください" : (e as Error).message || "写真を送れませんでした";
+            setChatPhotoError(msg);
+            mantineNotifications.show({ color: "red", message: msg });
+          } else {
+            setChatMessages((prev) => markChatFailed(prev, clientId));
+          }
+          return;
+        } finally {
+          clearTimeout(utimer);
+        }
+      }
+      images = job.urls;
+    }
     // 応答が返らないまま「送信中」で止まらないよう 15 秒で打ち切る（再送は
     // サーバーが clientId で重複を弾くので安全）。
     const ac = new AbortController();
@@ -5402,19 +5542,21 @@ export default function Home() {
       const r = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body, clientId }),
+        body: JSON.stringify(images ? { body, clientId, images } : { body, clientId }),
         cache: "no-store",
         signal: ac.signal,
       });
       const d = await r.json().catch(() => null);
       if (r.ok && d?.ok && d.message) {
         setChatMessages((prev) => reconcileChat(prev, { ...d.message, isAuthor: true }));
+        dropChatPhotoJob(clientId);
         return;
       }
       if (r.status >= 400 && r.status < 500 && r.status !== 408 && r.status !== 429) {
         // 再送しても通らない（ログイン切れ・本文不正）: 行を消して本文を入力欄に戻す。
         setChatMessages((prev) => prev.filter((m) => !(m.id < 0 && m.clientId === clientId)));
         setChatText((cur) => cur || body);
+        restoreChatPhotoJob(clientId);
         mantineNotifications.show({
           color: "red",
           message: r.status === 401 ? "ログインが切れました。再ログインしてください" : "送信できませんでした",
@@ -5427,13 +5569,21 @@ export default function Home() {
     } finally {
       clearTimeout(timer);
     }
-  }, []);
+  }, [dropChatPhotoJob, restoreChatPhotoJob]);
 
   const sendChat = useCallback(() => {
     const body = chatText.trim();
     const me = authRef.current;
-    if (!body || !me) return;
+    const photos = chatPhotosRef.current;
+    // Wait for photos still being resized (the send button is disabled meanwhile).
+    if ((!body && photos.length === 0) || !me || chatPhotoBusyRef.current > 0) return;
     const clientId = newChatClientId();
+    const previews = photos.map((p) => p.preview);
+    if (photos.length) {
+      chatPhotoJobsRef.current.set(clientId, { blobs: photos.map((p) => p.blob), previews });
+      setChatPhotos([]);
+    }
+    setChatPhotoError(null);
     setChatMessages((prev) => [
       ...prev,
       {
@@ -5447,6 +5597,7 @@ export default function Home() {
         edited: false,
         editedAt: null,
         clientId,
+        images: previews.length ? previews : undefined,
         pending: true,
       },
     ]);
@@ -5465,7 +5616,8 @@ export default function Home() {
 
   const discardChat = useCallback((row: ChatRow) => {
     setChatMessages((prev) => prev.filter((m) => !(m.id < 0 && m.clientId === row.clientId)));
-  }, []);
+    if (row.clientId) dropChatPhotoJob(row.clientId);
+  }, [dropChatPhotoJob]);
 
   // Reply to someone in chat: put `@name ` at the start of the composer (keeping
   // anything already typed) and focus it. drikin 2026-10-16「リプライしたい人の
@@ -11206,6 +11358,23 @@ export default function Home() {
                   key="chat-main"
                   ref={chatViewportRef}
                   className="bguru-chat-view bguru-main-fade"
+                  // Drag & drop photos anywhere on the chat to attach them.
+                  onDragOver={(e) => {
+                    if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "copy";
+                    if (!chatDragOver) setChatDragOver(true);
+                  }}
+                  onDragLeave={(e) => {
+                    const next = e.relatedTarget as Node | null;
+                    if (!next || !e.currentTarget.contains(next)) setChatDragOver(false);
+                  }}
+                  onDrop={(e) => {
+                    if (!Array.from(e.dataTransfer.types).includes("Files")) return;
+                    e.preventDefault();
+                    setChatDragOver(false);
+                    void addChatPhotos(Array.from(e.dataTransfer.files));
+                  }}
                   style={{
                     display: "flex",
                     flexDirection: "column",
@@ -11351,6 +11520,12 @@ export default function Home() {
                                       width: "100%",
                                     }}
                                   >
+                                    {/* Editing changes the text only; the photos stay. */}
+                                    {m.images?.length ? (
+                                      <div style={{ marginBottom: 6 }}>
+                                        <ChatImageGrid urls={m.images} onOpen={openPreview} />
+                                      </div>
+                                    ) : null}
                                     <Textarea
                                       ref={chatEditInputRef}
                                       value={chatEditText}
@@ -11406,9 +11581,24 @@ export default function Home() {
                                      * has reactions, which must stay visible). */}
                                     <Group gap={4} align="center" wrap="nowrap" justify={mine ? "flex-end" : "flex-start"}>
                                       {mine && chatActions}
-                                      <div style={bubbleStyle}>
-                                        {renderChatBody(m.body, mentionMembers, auth?.userId || "")}
-                                      </div>
+                                      {m.images?.length ? (
+                                        // Photo message: the photos sit inside the bubble above
+                                        // the text; with no text, only the photos are shown.
+                                        <div
+                                          style={
+                                            m.body
+                                              ? { ...bubbleStyle, display: "flex", flexDirection: "column", gap: 6, alignItems: mine ? "flex-end" : "flex-start" }
+                                              : { minWidth: 0 }
+                                          }
+                                        >
+                                          <ChatImageGrid urls={m.images} onOpen={openPreview} />
+                                          {m.body && <div>{renderChatBody(m.body, mentionMembers, auth?.userId || "")}</div>}
+                                        </div>
+                                      ) : (
+                                        <div style={bubbleStyle}>
+                                          {renderChatBody(m.body, mentionMembers, auth?.userId || "")}
+                                        </div>
+                                      )}
                                       {!mine && chatActions}
                                     </Group>
                                   </>
@@ -11421,19 +11611,106 @@ export default function Home() {
                     </div>
                   </ScrollArea.Autosize>
                   {/* Composer */}
+                  <div
+                    style={{
+                      borderTop: chatDragOver ? "1px dashed var(--mantine-color-green-6)" : "1px solid var(--border-green)",
+                      flexShrink: 0,
+                      background: chatDragOver ? "var(--bg-subtle)" : "var(--bg-surface)",
+                      borderBottomLeftRadius: 12,
+                      borderBottomRightRadius: 12,
+                    }}
+                  >
+                  {(chatPhotos.length > 0 || chatPhotoBusy > 0 || chatPhotoError || chatDragOver) && (
+                    <div style={{ padding: "8px 10px 0" }}>
+                      {chatDragOver && (
+                        <Text size="xs" c="green.7" mb={4}>ここにドロップして写真を添付（{CHAT_MAX_PHOTOS}枚まで）</Text>
+                      )}
+                      {(chatPhotos.length > 0 || chatPhotoBusy > 0) && (
+                        <Group gap={6} wrap="nowrap">
+                          {chatPhotos.map((p) => (
+                            <Box key={p.id} style={{ position: "relative", flexShrink: 0 }}>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={p.preview}
+                                alt="添付する写真"
+                                style={{ width: 52, height: 52, objectFit: "cover", borderRadius: 8, display: "block", border: "1px solid var(--border-green-soft)" }}
+                              />
+                              <ActionIcon
+                                size={18}
+                                variant="filled"
+                                color="dark"
+                                radius="xl"
+                                aria-label="写真を外す"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={() => removeChatPhoto(p.id)}
+                                style={{ position: "absolute", top: -6, right: -6, fontSize: 11 }}
+                              >
+                                ×
+                              </ActionIcon>
+                            </Box>
+                          ))}
+                          {Array.from({ length: chatPhotoBusy }, (_, i) => (
+                            <Box
+                              key={`busy-${i}`}
+                              style={{ width: 52, height: 52, borderRadius: 8, border: "1px dashed var(--border-green)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+                            >
+                              <Loader size="xs" />
+                            </Box>
+                          ))}
+                        </Group>
+                      )}
+                      {chatPhotoError && (
+                        <Text size="xs" c="red.7" mt={4}>{chatPhotoError}</Text>
+                      )}
+                    </div>
+                  )}
                   <Group
                     align="flex-end"
                     gap={8}
                     wrap="nowrap"
                     p="xs"
-                    style={{ borderTop: "1px solid var(--border-green)", flexShrink: 0, background: "var(--bg-surface)", borderBottomLeftRadius: 12, borderBottomRightRadius: 12 }}
                   >
+                    <input
+                      ref={chatFileRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      hidden
+                      onChange={(e) => {
+                        void addChatPhotos(e.currentTarget.files ? Array.from(e.currentTarget.files) : null);
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      size="md"
+                      aria-label="写真を添付"
+                      title={`写真を添付（${CHAT_MAX_PHOTOS}枚まで・貼り付け／ドロップも可）`}
+                      disabled={chatPhotos.length + chatPhotoBusy >= CHAT_MAX_PHOTOS}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => chatFileRef.current?.click()}
+                      style={{ flexShrink: 0, marginBottom: 4 }}
+                    >
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                        <circle cx="12" cy="13" r="4" />
+                      </svg>
+                    </ActionIcon>
                     <MentionTextarea
                       value={chatText}
                       onChange={(v) => setChatText(v)}
                       inputRef={chatInputRef}
                       maxLength={CHAT_BODY_LIMIT}
                       initialMention={chatMention}
+                      onPaste={(e) => {
+                        // ⌘V / Ctrl+V of an image (e.g. a screenshot) attaches it.
+                        const files = imagesFromPaste(e);
+                        if (files) {
+                          e.preventDefault();
+                          void addChatPhotos(Array.from(files));
+                        }
+                      }}
                       onKeyDown={(e) => {
                         if ((e.nativeEvent as any).isComposing) return;
                         if (e.key === "Enter" && !e.shiftKey) {
@@ -11504,7 +11781,7 @@ export default function Home() {
                       onPointerDown={(e) => {
                         if (e.pointerType !== "mouse") e.preventDefault();
                       }}
-                      disabled={!chatText.trim()}
+                      disabled={(!chatText.trim() && chatPhotos.length === 0) || chatPhotoBusy > 0}
                       aria-label="送信"
                       style={{ flexShrink: 0, marginBottom: 4 }}
                     >
@@ -11514,6 +11791,7 @@ export default function Home() {
                       </svg>
                     </ActionIcon>
                   </Group>
+                  </div>
                 </div>
               ) : (
               <>
