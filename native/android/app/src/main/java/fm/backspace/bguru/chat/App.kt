@@ -18,6 +18,7 @@ class App : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        ImageCache.init(this)
         session = Session(this)
         Push.init(this)
         session.restore()
@@ -39,11 +40,13 @@ class Session(private val app: Context) {
         TokenStore.load(app)?.let(::start)
     }
 
-    /** Debug builds only (`adb shell am start ... --ez demo true`): sample chat, no network. */
-    fun startDemo() {
-        if (!BuildConfig.DEBUG || store?.demo == true) return
-        store = ChatStore(ApiClient("demo"), app).also { it.loadDemo() }
-        timeline = TimelineStore(ApiClient("demo")).also { it.loadDemo() }
+    /** Debug / benchmark builds only (`adb shell am start ... --ez demo true`): sample chat,
+     *  no network. `--es demo_images http://10.0.2.2:8099` adds many posts with photos
+     *  served from this Mac, for measuring scrolling. */
+    fun startDemo(images: String? = null) {
+        if (!BuildConfig.DEMO || store?.demo == true) return
+        store = ChatStore(ApiClient("demo"), app).also { it.loadDemo(scale = images != null) }
+        timeline = TimelineStore(ApiClient("demo")).also { it.loadDemo(images) }
         // Debug: print this emulator's FCM token so a test push can be sent to it.
         if (Push.configured) com.google.firebase.messaging.FirebaseMessaging.getInstance().token
             .addOnSuccessListener { android.util.Log.d("BguruPush", "fcm token: $it") }

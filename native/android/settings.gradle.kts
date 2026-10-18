@@ -20,3 +20,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "BguruChat"
 include(":app")
+include(":baselineprofile")

@@ -101,7 +101,7 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
     private var dev: Pair<String, String>? = null
 
     fun devDirect(url: String, token: String) {
-        if (!BuildConfig.DEBUG) return
+        if (!BuildConfig.DEMO) return
         dev = url to token
         enabled = true
         canJoin = true

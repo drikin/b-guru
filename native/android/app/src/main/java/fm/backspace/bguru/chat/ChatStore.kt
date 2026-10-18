@@ -67,7 +67,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     /** Debug only: sample chat, sends "succeed" locally (no network). */
     var demo = false
 
-    fun loadDemo() {
+    fun loadDemo(scale: Boolean = false) {
         demo = true
         fun msg(id: Long, who: String, body: String, mine: Boolean = false, reactions: List<Reaction>? = null) =
             ChatRow(ChatMessage(id, authorId = if (mine) "me" else who, authorName = if (mine) "ドリキン" else who, body = body,
@@ -78,7 +78,15 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             msg(3, "ドリキン", "ありがとうございます！", mine = true, reactions = listOf(Reaction("❤️", 2, mine = true), Reaction("😂", 1))),
             msg(4, "takuto", "@ドリキン 通知も来ました"),
             msg(5, "takuto", "👍"),
-        )
+        ) + if (!scale) emptyList() else (6L..300L).map { i ->
+            val who = listOf("mazzo", "takuto", "NORIO TAKAHASHI", "coban", "ちい")[(i % 5).toInt()]
+            msg(i, who, when (i % 4) {
+                0L -> "@ドリキン これ見ました？ https://bsm.backspace.fm/#/post/$i"
+                1L -> "なるほど、それはいいですね。ボイスルームも試してみます $i"
+                2L -> "😂"
+                else -> "今日は長めのメッセージを書いてみます。スクロールが重くならないか確認するためのテキストで、改行もなく続きます。$i"
+            }, mine = i % 7 == 0L, reactions = if (i % 3 == 0L) listOf(Reaction("❤️", 2), Reaction("👍", 1, mine = true)) else null)
+        }
         members = listOf("ビーグル", "mazzo", "NORIO TAKAHASHI", "takuto", "coban", "ポンコツ散財王ドリキン").map { MentionMember(it, it) }
         capabilities = Capabilities(features = Capabilities.Features(Capabilities.ChatFeatures(send = true, editOwn = true, reactions = true, markRead = false), Capabilities.PostFeatures(read = true, publish = true, upload = true, reactions = true, maxImages = 5)))
         hasLoaded = true

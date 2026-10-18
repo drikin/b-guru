@@ -130,10 +130,18 @@ class TimelineStore(val api: ApiClient) {
     fun stop() = scope.cancel()
 
     /** Debug only: sample timeline for offline UI checks. */
-    fun loadDemo() {
+    fun loadDemo(images: String? = null) {
         demo = true
         val now = java.time.Instant.now()
-        posts = listOf(
+        val many = if (images == null) emptyList() else (10L..70L).map { i ->
+            val n = (i % 5).toInt() + 1
+            Post(i, authorName = listOf("mazzo", "takuto", "NORIO TAKAHASHI", "coban")[(i % 4).toInt()],
+                text = "写真のテスト $i 枚目まで。スクロールの重さを測るための投稿です https://bsm.backspace.fm",
+                images = (1..n).map { k -> "$images/photo${(i + k) % 8}.jpg?p=$i-$k" },
+                createdAt = now.minusSeconds(i * 600).toString(), replyCount = (i % 6).toInt(),
+                reactions = if (i % 2 == 0L) listOf(Reaction("❤️", 3), Reaction("😂", 1)) else null)
+        }
+        posts = many + listOf(
             Post(3, authorName = "mazzo", replyCount = 4, text = "うちの犬が今朝こんな顔してました 🐶 https://bsm.backspace.fm",
                 images = listOf("/api/media/demo-1.jpg"), createdAt = now.minusSeconds(300).toString(), club = "pet",
                 reactions = listOf(Reaction("❤️", 3, mine = true)), unread = true),

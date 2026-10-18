@@ -224,7 +224,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                             )
                         }
                     }
-                    itemsIndexed(reversed, key = { _, r -> r.key }) { i, row ->
+                    itemsIndexed(reversed, key = { _, r -> r.key }, contentType = { _, r -> if (r.message.isAuthor) "mine" else "theirs" }) { i, row ->
                         val prev = reversed.getOrNull(i + 1)?.message
                         val caps = store.capabilities
                         MessageRow(
@@ -479,11 +479,13 @@ private fun MessageRow(
                         Text("取り消す", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.clickable(onClick = onDiscard))
                     }
                     if (m.edited) Text("編集済み", style = MaterialTheme.typography.labelSmall, color = AccentGreen)
-                    Text(time(m.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    Text(remember(m.createdAt) { time(m.createdAt) }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 }
             }
             Box {
-                val emojiOnly = isEmojiOnly(m.body)
+                // Parsed once per message, not on every frame of a scroll.
+                val emojiOnly = remember(m.body) { isEmojiOnly(m.body) }
+                val text = remember(m.body) { linkified(m.body) }
                 val bubble = when {
                     emojiOnly -> Color.Transparent
                     mine -> AccentGreen.copy(alpha = 0.14f)
@@ -491,7 +493,7 @@ private fun MessageRow(
                     else -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
                 }
                 Text(
-                    linkified(m.body),
+                    text,
                     fontSize = if (emojiOnly) 34.sp else 16.sp,
                     modifier = Modifier
                         .background(bubble, RoundedCornerShape(12.dp))
@@ -553,8 +555,8 @@ internal fun ReactionChip(r: Reaction, enabled: Boolean, onTap: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        val custom = Regex("^:([\\w+-]+):$").find(r.emoji)?.groupValues?.get(1)?.let { EmojiCatalog.urls[it] }
-        if (custom != null) RemoteImage(custom, Modifier.size(16.dp), androidx.compose.ui.layout.ContentScale.Fit) { Text(r.emoji, fontSize = 12.sp) }
+        val custom = CUSTOM_EMOJI_RE.find(r.emoji)?.groupValues?.get(1)?.let { EmojiCatalog.urls[it] }
+        if (custom != null) RemoteImage(custom, Modifier.size(16.dp), androidx.compose.ui.layout.ContentScale.Fit, maxPx = 64) { Text(r.emoji, fontSize = 12.sp) }
         else Text(r.emoji, fontSize = 14.sp)
         Text("${r.count}", style = MaterialTheme.typography.labelSmall)
     }
@@ -572,6 +574,7 @@ private fun isEmojiOnly(s: String): Boolean {
     }
 }
 
+private val CUSTOM_EMOJI_RE = Regex("^:([\\w+-]+):$")
 private val URL_RE = Regex("""https?://[^\s<>"]+""")
 private val MENTION_RE = Regex("""@\[[^\]]+]|@[^\s@\[\]]+""")
 

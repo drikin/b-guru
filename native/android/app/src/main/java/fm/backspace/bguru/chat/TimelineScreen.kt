@@ -222,7 +222,7 @@ private fun TimelineList(
                     )
                 }
             }
-            items(posts, key = { it.id }) { post ->
+            items(posts, key = { it.id }, contentType = { if (it.images.isEmpty()) "text" else "photos" }) { post ->
                 LaunchedEffect(post.id, visible) { if (visible) timeline.sawPost(post.id) }
                 Column(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
                     PostRow(
@@ -278,7 +278,7 @@ fun PostRow(
                     Spacer(Modifier.weight(1f))
                     Text(relativeTime(post.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 }
-                if (post.text.isNotEmpty()) Text(linkified(post.text), fontSize = 16.sp)
+                if (post.text.isNotEmpty()) Text(remember(post.text) { linkified(post.text) }, fontSize = 16.sp)
                 if (post.images.isNotEmpty()) PostImages(post.images, onOpenImage)
                 if (post.videoUrl != null || post.audioUrl != null) {
                     Text(if (post.videoUrl != null) "▶︎ 動画（Web で再生）" else "♪ 音声（Web で再生）",
@@ -330,7 +330,7 @@ fun PostImages(images: List<String>, onOpen: (Int) -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 row.forEach { (i, path) ->
                     val m = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(8.dp))
-                    RemoteImage(path, m.clickable { onOpen(i) }) { Box(m.background(MaterialTheme.colorScheme.surfaceVariant)) }
+                    RemoteImage(path, m.clickable { onOpen(i) }, maxPx = 540) { Box(m.background(MaterialTheme.colorScheme.surfaceVariant)) }
                 }
                 repeat(cols - row.size) { Spacer(Modifier.weight(1f)) }
             }
@@ -347,9 +347,9 @@ fun ImageViewer(images: List<String>, start: Int, onClose: () -> Unit) {
             HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
                 var scale by remember { mutableStateOf(1f) }
                 val state = rememberTransformableState { zoom, _, _ -> scale = (scale * zoom).coerceIn(1f, 5f) }
-                RemoteImage(images[page], Modifier.fillMaxSize().transformable(state).graphicsLayer(scaleX = scale, scaleY = scale)
+                RemoteImage(images[page], maxPx = 2048, modifier = Modifier.fillMaxSize().transformable(state).graphicsLayer(scaleX = scale, scaleY = scale)
                     .pointerInput(Unit) { detectTapGestures(onDoubleTap = { scale = if (scale > 1f) 1f else 2.5f }) },
-                    ContentScale.Fit) { CircularProgressIndicator(Modifier.align(Alignment.Center)) }
+                    contentScale = ContentScale.Fit) { CircularProgressIndicator(Modifier.align(Alignment.Center)) }
             }
             IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
                 Icon(Icons.Default.Close, "閉じる", tint = Color.White)

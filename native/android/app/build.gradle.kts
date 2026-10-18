@@ -30,6 +30,8 @@ android {
         versionName = (findProperty("versionName") as String?) ?: "0.1.0"
         // Phones only (arm): WebRTC's native code for x86 would double the APK for nobody.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        // Sample data (`--ez demo true`): debug and the benchmark build only, never a release.
+        buildConfigField("boolean", "DEMO", "false")
         for (k in listOf("apiKey", "appId", "projectId", "senderId")) {
             buildConfigField("String", "FCM_${k.uppercase()}", "\"${firebase.getProperty(k, "")}\"")
         }
@@ -55,6 +57,25 @@ android {
         }
         debug {
             applicationIdSuffix = ".debug"
+            buildConfigField("boolean", "DEMO", "true")
+        }
+        // Release code and optimisation (R8, not debuggable) with the demo data, signed
+        // with the debug key — for measuring scrolling and generating the baseline profile.
+        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
+            applicationIdSuffix = ".bench"
+            isDebuggable = false
+            buildConfigField("boolean", "DEMO", "true")
+        }
+        // Same, without R8 renaming: the baseline-profile generator records real class
+        // names here, and the release build's R8 maps them to its own.
+        create("profile") {
+            initWith(getByName("benchmark"))
+            isMinifyEnabled = false
+            isShrinkResources = false
+            applicationIdSuffix = ".bench"
         }
     }
 
@@ -79,6 +100,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
     implementation("androidx.lifecycle:lifecycle-process:2.10.0")
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
+    // Installs the bundled baseline profile (src/main/baseline-prof.txt) on sideloaded installs too.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
     implementation("com.google.firebase:firebase-messaging:25.1.3")
     // Voice room (LiveKit, Apache-2.0, official SDK) — same server and rules as iOS/Mac.
