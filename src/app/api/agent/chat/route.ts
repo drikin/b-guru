@@ -1,6 +1,6 @@
 /* /api/agent/chat — チャット（全員で1部屋・24時間で消える）。
  *   GET  : 履歴（スコープ read）。?include=reactions でリアクションも同梱。
- *   POST : 送信（スコープ chat）。{ body, client_id? }。Web の POST /api/chat と
+ *   POST : 送信（スコープ chat）。{ body, client_id?, images? }（images は /api/agent/chat/upload の結果、4 枚まで。あれば body は空でよい）。Web の POST /api/chat と
  *          同じ lib（sendChatMessage）を通るので、検証・配信・既読の挙動が一致する。
  * DTO は lib/agent-chat.ts が正本（email を含めない）。 */
 import { NextRequest } from "next/server";
@@ -8,7 +8,7 @@ import {
   getLatestChatId,
   getUnreadCount,
   listChatMessages,
-  normalizeChatBody,
+  normalizeChatInput,
   normalizeClientId,
   sendChatMessage,
 } from "@/lib/chat";
@@ -56,18 +56,19 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const out = await withAgent(req, "POST /api/agent/chat", "chat", async (ctx) => {
-    let input: { body?: unknown; client_id?: unknown };
+    let input: { body?: unknown; client_id?: unknown; images?: unknown };
     try {
       input = await req.json();
     } catch {
       return { status: 400, body: { error: "JSON ボディが必要です", code: "invalid_request" }, headers: {} };
     }
-    const checked = normalizeChatBody(input?.body);
+    const checked = normalizeChatInput(input?.body, input?.images);
     if (!checked.ok) {
-      const error = checked.error === "empty" ? "body が空です" : "本文が長すぎます";
+      const error =
+        checked.error === "empty" ? "body が空です" : checked.error === "bad images" ? "写真が不正です（チャット用にアップロードしたものを 4 枚まで）" : "本文が長すぎます";
       return { status: 400, body: { error, code: "invalid_request" }, headers: {} };
     }
-    const message = await sendChatMessage(ctx.email, checked.body, normalizeClientId(input?.client_id));
+    const message = await sendChatMessage(ctx.email, checked.body, normalizeClientId(input?.client_id), checked.images);
     // 送信者の DTO は is_author=true が確定しているので名前解決は不要（往復を増やさない）。
     const dto = toAgentChatDto(message, { userId: ctx.userId, mentionNames: new Set() });
     return { status: 201, body: { apiVersion: AGENT_API_VERSION, message: dto }, headers: {} };

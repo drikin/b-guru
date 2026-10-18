@@ -6,6 +6,8 @@
  * This is the "ephemeral chat" counterpart to the timeline: chat messages
  * live in `chat_messages` and never appear in the feed.
  */
+import { readdir, rm, stat } from "fs/promises";
+import path from "path";
 import { pool } from "./db";
 import { gravatarUrl } from "./posts";
 import { resolveDisplayNames } from "./display-name";
@@ -31,6 +33,8 @@ export interface ChatMessage {
   avatar: string | null;
   edited: boolean; // author corrected a typo after posting
   editedAt: string | null; // ISO timestamp of the edit
+  /** Attached photos (/api/media/chat-…), at most CHAT_MAX_IMAGES. */
+  images?: string[];
   /** Only on the create event / POST response of the sender's own message:
    *  the client-generated id of the optimistic bubble it replaces. */
   clientId?: string;
@@ -67,6 +71,7 @@ export function ensureChatSweeper(): void {
       for (const id of ids) {
         emitLive({ type: "chat", action: "delete", message: { id } });
       }
+      await purgeExpiredChatFiles();
     } catch (e) {
       console.error("chat sweeper error:", (e as any)?.message);
     }
@@ -83,6 +88,7 @@ async function mapRow(
     edited: boolean;
     edited_at: Date | string | null;
     created_at: Date | string;
+    images?: string[] | null;
   },
   viewerEmail: string | null,
   authorId: string | null
@@ -97,6 +103,7 @@ async function mapRow(
     avatar: gravatarUrl(r.author_email),
     edited: r.edited,
     editedAt: r.edited_at ? new Date(r.edited_at).toISOString() : null,
+    images: r.images ?? [],
   };
 }
 
@@ -146,7 +153,7 @@ export async function createChatMessage(
   const res = await pool.query(
     `INSERT INTO chat_messages (author_email, author_name, body)
      VALUES ($1, $2, $3)
-     RETURNING id, author_email, author_name, body, edited, edited_at, created_at`,
+     RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images`,
     [email, name, body]
   );
   return mapRow(res.rows[0], viewerEmail, await emailToUserId(email));
@@ -158,6 +165,27 @@ const CLIENT_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 export function normalizeClientId(v: unknown): string | null {
   return typeof v === "string" && CLIENT_ID_RE.test(v) ? v : null;
+}
+
+/** Photos per chat message. */
+export const CHAT_MAX_IMAGES = 4;
+/** Only photos uploaded for the chat (/api/chat/upload, /api/agent/chat/upload). */
+export const CHAT_IMAGE_RE = /^\/api\/media\/chat-[A-Za-z0-9_-]+\.(jpg|jpeg|png|webp|gif)$/;
+
+/** Body + photos of a message to send. A message may be photos only (empty body).
+ *  Shared by the web route and the agent API so both accept exactly the same input. */
+export function normalizeChatInput(
+  rawBody: unknown,
+  rawImages: unknown
+): { ok: true; body: string; images: string[] } | { ok: false; error: "empty" | "too long" | "bad images" } {
+  const images = rawImages == null ? [] : Array.isArray(rawImages) ? rawImages : null;
+  if (!images || images.length > CHAT_MAX_IMAGES || images.some((u) => typeof u !== "string" || !CHAT_IMAGE_RE.test(u))) {
+    return { ok: false, error: "bad images" };
+  }
+  const body = normalizeChatBody(rawBody);
+  if (body.ok) return { ok: true, body: body.body, images: [...new Set(images as string[])] };
+  if (body.error === "empty" && images.length > 0) return { ok: true, body: "", images: [...new Set(images as string[])] };
+  return body;
 }
 
 /** Normalize + validate a chat body. Shared by the web route and the agent
@@ -205,15 +233,16 @@ function pruneRecentSends(now: number): void {
 export async function sendChatMessage(
   email: string,
   body: string,
-  clientId: string | null = null
+  clientId: string | null = null,
+  images: string[] = []
 ): Promise<ChatMessage> {
-  if (!clientId) return insertAndBroadcast(email, body, null);
+  if (!clientId) return insertAndBroadcast(email, body, null, images);
   const now = Date.now();
   pruneRecentSends(now);
   const key = `${email.trim().toLowerCase()}\u0000${clientId}`;
   const hit = recentSends.get(key);
   if (hit && now - hit.at < SEND_DEDUP_TTL_MS) return { ...(await hit.p) };
-  const p = insertAndBroadcast(email, body, clientId);
+  const p = insertAndBroadcast(email, body, clientId, images);
   recentSends.set(key, { at: now, p });
   try {
     return await p;
@@ -226,7 +255,8 @@ export async function sendChatMessage(
 async function insertAndBroadcast(
   email: string,
   body: string,
-  clientId: string | null
+  clientId: string | null,
+  images: string[] = []
 ): Promise<ChatMessage> {
   const res = await pool.query(
     `WITH nm AS MATERIALIZED (
@@ -242,19 +272,20 @@ async function insertAndBroadcast(
        -- cleanDisplayName in SQL. JS trim() also strips U+3000, so btrim does too.
        SELECT btrim(raw, E' \\t\\r\\n\\u3000') AS s FROM nm
      ), ins AS (
-       INSERT INTO chat_messages (author_email, author_name, body)
+       INSERT INTO chat_messages (author_email, author_name, body, images)
        SELECT $1,
               CASE WHEN strpos(s, '@') > 1
                    THEN NULLIF(btrim(substr(s, 1, strpos(s, '@') - 1), E' \\t\\r\\n\\u3000'), '')
                    ELSE NULLIF(s, '')
               END,
-              $2
+              $2,
+              $3::text[]
        FROM cleaned
-       RETURNING id, author_email, author_name, body, edited, edited_at, created_at
+       RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images
      )
      SELECT ins.*, u.user_id
      FROM ins LEFT JOIN users u ON u.email = lower(trim(ins.author_email))`,
-    [email, body]
+    [email, body, images]
   );
   const row = res.rows[0];
   const message = await mapRow(row, email, row.user_id ?? null);
@@ -285,7 +316,7 @@ export async function editChatMessage(
      SET body = $1, edited = true, edited_at = now()
      WHERE id = $2 AND author_email = $3
        AND created_at >= now() - ($4::text)::interval
-     RETURNING id, author_email, author_name, body, edited, edited_at, created_at`,
+     RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images`,
     [body, id, email, CHAT_TTL]
   );
   if (res.rowCount === 0) return null;
@@ -309,7 +340,7 @@ export async function editChatMessageAndBroadcast(
 /** One message (within the TTL), as seen by `viewerEmail`. */
 export async function getChatMessage(id: number, viewerEmail: string | null): Promise<ChatMessage | null> {
   const res = await pool.query(
-    `SELECT id, author_email, author_name, body, edited, edited_at, created_at FROM chat_messages
+    `SELECT id, author_email, author_name, body, edited, edited_at, created_at, images FROM chat_messages
      WHERE id = $1 AND created_at >= now() - ($2::text)::interval`,
     [id, CHAT_TTL]
   );
@@ -322,10 +353,52 @@ export async function getChatMessage(id: number, viewerEmail: string | null): Pr
   return m;
 }
 
-/** Delete a chat message (admin moderation). */
+/** Delete a chat message (admin moderation), and its photos with it. */
 export async function deleteChatMessage(id: number): Promise<void> {
-  await pool.query(`DELETE FROM chat_messages WHERE id = $1`, [id]);
+  const r = await pool.query(`DELETE FROM chat_messages WHERE id = $1 RETURNING images`, [id]);
+  await removeChatFiles((r.rows[0]?.images as string[] | undefined) ?? []);
 }
+
+const uploadsDir = () => path.join(process.cwd(), "public", "uploads");
+
+async function removeChatFiles(urls: string[]): Promise<void> {
+  await Promise.all(
+    urls
+      .filter((u) => CHAT_IMAGE_RE.test(u))
+      .map((u) => rm(path.join(uploadsDir(), u.slice("/api/media/".length)), { force: true }).catch(() => {}))
+  );
+}
+
+/** Chat photos live as long as chat messages: every chat-* file older than the
+ *  TTL (plus an hour of slack) goes — attached ones with their message, and ones
+ *  uploaded but never sent. No bookkeeping needed. Returns how many were removed. */
+export async function purgeExpiredChatFiles(now = Date.now()): Promise<number> {
+  const dir = uploadsDir();
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return 0;
+  }
+  const cutoff = now - CHAT_FILE_TTL_MS;
+  let removed = 0;
+  for (const name of names) {
+    if (!name.startsWith("chat-")) continue;
+    try {
+      const st = await stat(path.join(dir, name));
+      if (st.mtimeMs < cutoff) {
+        await rm(path.join(dir, name), { force: true });
+        removed++;
+      }
+    } catch {
+      /* gone already */
+    }
+  }
+  return removed;
+}
+
+/** 24 h (CHAT_TTL) + 1 h. */
+export const CHAT_FILE_TTL_MS = 25 * 60 * 60 * 1000;
 
 /** Latest chat message id (global max). 0 when empty. */
 export async function getLatestChatId(): Promise<number> {

@@ -240,6 +240,9 @@ export async function initSchema() {
     -- Author self-edits (typo fixes). Idempotent for pre-existing databases.
     ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS edited BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+    -- Photos attached to a chat message (/api/media/chat-… paths, at most 4). They
+    -- expire with the message (24 h); the sweeper removes the files too.
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS images TEXT[] NOT NULL DEFAULT '{}';
 
     -- Per-user read cursor for the chat unread badge.
     CREATE TABLE IF NOT EXISTS chat_read_state (

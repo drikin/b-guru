@@ -30,7 +30,8 @@ export interface PublishBody {
 }
 
 /** Uploaded images are served from /api/media/<name> (see /api/upload). */
-export const LOCAL_IMAGE_RE = /^\/api\/media\/[A-Za-z0-9._-]+$/;
+// Chat photos (chat-…) are deleted after 24 h, so a post may not borrow one.
+export const LOCAL_IMAGE_RE = /^\/api\/media\/(?!chat-)[A-Za-z0-9._-]+$/;
 
 export async function publishPost(
   email: string,

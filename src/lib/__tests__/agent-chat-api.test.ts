@@ -116,7 +116,7 @@ describe("POST /api/agent/chat", () => {
     sendChatMessage.mockResolvedValue({ id: 8, authorId: "uid_me", isAuthor: true, authorName: "ドリキン", body: "hi", createdAt: "t", avatar: null, edited: false, editedAt: null, clientId: "c1" });
     const res = await chatPOST(req("http://x/api/agent/chat", { method: "POST", headers: H, body: JSON.stringify({ body: " hi ", client_id: "c1" }) }));
     expect(res.status).toBe(201);
-    expect(sendChatMessage).toHaveBeenCalledWith("me@example.com", "hi", "c1");
+    expect(sendChatMessage).toHaveBeenCalledWith("me@example.com", "hi", "c1", []);
     const body = await res.json();
     expect(body.message).toMatchObject({ id: 8, is_author: true, client_id: "c1" });
     expect(JSON.stringify(body)).not.toContain("example.com");
@@ -128,7 +128,7 @@ describe("POST /api/agent/chat", () => {
     expect((await chatPOST(req("http://x/api/agent/chat", { method: "POST", headers: H, body: JSON.stringify({ body: "  " }) }))).status).toBe(400);
     sendChatMessage.mockResolvedValue({ id: 9, authorId: "uid_me", isAuthor: true, authorName: null, body: "a", createdAt: "t", avatar: null, edited: false, editedAt: null });
     await chatPOST(req("http://x/api/agent/chat", { method: "POST", headers: H, body: JSON.stringify({ body: "a", client_id: "<x>" }) }));
-    expect(sendChatMessage).toHaveBeenLastCalledWith("me@example.com", "a", null);
+    expect(sendChatMessage).toHaveBeenLastCalledWith("me@example.com", "a", null, []);
   });
 });
 

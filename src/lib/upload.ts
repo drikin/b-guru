@@ -53,17 +53,25 @@ const AUDIO_EXTS = new Set([
 //   fields: images[] (up to 5)  → returns { urls }
 //   fields: video (single)      → returns { videoUrl }
 //   fields: audio (single)      → returns { audioUrl }
+/** Chat photos: small (long side 1280 px, resized on the device), at most 4 a message.
+ *  Saved as chat-… so they can be found and deleted with the 24 h chat. */
+export const CHAT_UPLOAD = { prefix: "chat-", maxImages: 4, maxImageBytes: 4 * 1024 * 1024, maxTotalBytes: 17 * 1024 * 1024 };
+
 export async function handleUpload(
   req: Request,
   _email: string,
-  opts: { imagesOnly?: boolean } = {}
+  opts: { imagesOnly?: boolean; chat?: boolean } = {}
 ): Promise<NextResponse> {
+  const chat = !!opts.chat;
+  const maxImages = chat ? CHAT_UPLOAD.maxImages : MAX_IMAGES;
+  const maxImageBytes = chat ? CHAT_UPLOAD.maxImageBytes : MAX_BYTES;
   // Apps send phone photos resized to ~1 MB each: refuse anything far larger
   // before the multipart body is buffered in memory.
-  if (opts.imagesOnly) {
+  if (opts.imagesOnly || chat) {
+    const limit = chat ? CHAT_UPLOAD.maxTotalBytes : APP_UPLOAD_MAX_BYTES;
     const len = Number(req.headers.get("content-length") ?? "0");
-    if (!len || len > APP_UPLOAD_MAX_BYTES) {
-      return NextResponse.json({ error: "画像が大きすぎます（合計 50MB まで）" }, { status: 413 });
+    if (!len || len > limit) {
+      return NextResponse.json({ error: chat ? "写真が大きすぎます" : "画像が大きすぎます（合計 50MB まで）" }, { status: 413 });
     }
   }
   let form;
@@ -78,7 +86,7 @@ export async function handleUpload(
 
   const videoFile = toFile(form.get("video"));
   const audioFile = toFile(form.get("audio"));
-  if (opts.imagesOnly && (videoFile || audioFile)) {
+  if ((opts.imagesOnly || chat) && (videoFile || audioFile)) {
     return NextResponse.json({ error: "画像だけ送れます" }, { status: 400 });
   }
 
@@ -97,7 +105,7 @@ export async function handleUpload(
     makeFilename: () => string
   ): Promise<NextResponse | null> => {
     if (file.size > maxBytes) {
-      return NextResponse.json({ error: `${label}は100MBまでです` }, { status: 400 });
+      return NextResponse.json({ error: `${label}は${Math.round(maxBytes / 1048576)}MBまでです` }, { status: 400 });
     }
     const filename = makeFilename();
     let written = 0;
@@ -118,7 +126,7 @@ export async function handleUpload(
       // A rejected upload must never leave a partial file on disk.
       await rm(path.join(uploadDir, filename), { force: true });
       if (err instanceof Error && err.message.startsWith("LIMIT:")) {
-        return NextResponse.json({ error: `${label}は100MBまでです` }, { status: 400 });
+        return NextResponse.json({ error: `${label}は${Math.round(maxBytes / 1048576)}MBまでです` }, { status: 400 });
       }
       throw err;
     }
@@ -192,8 +200,8 @@ export async function handleUpload(
   if (files.length === 0) {
     return NextResponse.json({ error: "画像が選択されていません" }, { status: 400 });
   }
-  if (files.length > MAX_IMAGES) {
-    return NextResponse.json({ error: `画像は最大${MAX_IMAGES}枚までです` }, { status: 400 });
+  if (files.length > maxImages) {
+    return NextResponse.json({ error: `画像は最大${maxImages}枚までです` }, { status: 400 });
   }
 
   for (const file of files) {
@@ -210,9 +218,9 @@ export async function handleUpload(
   for (const file of files) {
     const ext = path.extname(file.name) || ".jpg";
     const safeExt = [".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext) ? ext : ".jpg";
-    const filename = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${safeExt}`;
+    const filename = `${chat ? CHAT_UPLOAD.prefix : ""}${Date.now()}-${crypto.randomBytes(6).toString("hex")}${safeExt}`;
     try {
-      const reject = await saveOrReject(file, "画像", MAX_BYTES, () => filename);
+      const reject = await saveOrReject(file, "画像", maxImageBytes, () => filename);
       if (reject) {
         await Promise.all(
           written.map((n) => rm(path.join(uploadDir, n), { force: true }))

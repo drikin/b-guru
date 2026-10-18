@@ -6,7 +6,7 @@ import {
   getLatestChatId,
   getUnreadCount,
   listChatMessages,
-  normalizeChatBody,
+  normalizeChatInput,
   normalizeClientId,
   sendChatMessage,
 } from "@/lib/chat";
@@ -49,7 +49,8 @@ export async function GET(req: NextRequest) {
 }
 
 // POST /api/chat — send a message to the global chat room.
-// Body: { body: string, clientId?: string }. Broadcasts the new message over
+// Body: { body: string, clientId?: string, images?: string[] } — images are
+// /api/media/chat-… paths from POST /api/chat/upload (at most 4; body may then be empty). Broadcasts the new message over
 // SSE (with clientId so the sender's optimistic bubble is reconciled). The
 // send path is one DB round-trip — see sendChatMessage in lib/chat.ts.
 export async function POST(req: NextRequest) {
@@ -62,15 +63,17 @@ export async function POST(req: NextRequest) {
   }
 
   let raw: unknown = "";
+  let rawImages: unknown = undefined;
   let clientId: string | null = null;
   try {
     const body = await req.json();
     raw = body?.body ?? "";
+    rawImages = body?.images;
     clientId = normalizeClientId(body?.clientId);
   } catch {
     /* ignore */
   }
-  const checked = normalizeChatBody(raw);
+  const checked = normalizeChatInput(raw, rawImages);
   if (!checked.ok) {
     return new Response(JSON.stringify({ error: checked.error }), {
       status: 400,
@@ -80,7 +83,7 @@ export async function POST(req: NextRequest) {
 
   let message: ChatMessage;
   try {
-    message = await sendChatMessage(email, checked.body, clientId);
+    message = await sendChatMessage(email, checked.body, clientId, checked.images);
   } catch (e) {
     console.error("chat create error:", (e as any)?.message);
     return new Response(JSON.stringify({ error: "db error" }), {

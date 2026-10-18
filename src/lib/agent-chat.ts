@@ -10,7 +10,7 @@
  * Compatibility policy: adding fields/capabilities is free; removing or
  * changing the meaning of one requires bumping AGENT_API_VERSION. */
 import type { ChatMessage } from "./chat";
-import { CHAT_MAX_BODY, CHAT_TTL } from "./chat";
+import { CHAT_MAX_BODY, CHAT_MAX_IMAGES, CHAT_TTL } from "./chat";
 import type { LiveEvent } from "./live";
 import type { Notification } from "./notifications";
 import type { ReactionSummary } from "./reactions";
@@ -37,7 +37,12 @@ export type AgentChatMessageDto = {
   mentions_me: boolean;
   client_id?: string;
   reactions?: ReactionSummary[];
+  /** Attached photos (/api/media/chat-…); always present (empty when none). */
+  images: string[];
 };
+
+/** The body apps get for a message that is photos only. */
+export const CHAT_PHOTO_ONLY_BODY = "📷 写真";
 
 export type ChatViewer = { userId: string | null; mentionNames: Set<string> };
 
@@ -53,13 +58,17 @@ export function toAgentChatDto(
     typeof m.isAuthor === "boolean"
       ? m.isAuthor
       : !!viewer.userId && !!m.authorId && m.authorId === viewer.userId;
-  const body = m.body ?? "";
+  const images = m.images ?? [];
+  // A photo-only message has an empty body: apps from before photos show this instead
+  // of an empty bubble (and notifications get a text). New apps hide it when images exist.
+  const body = m.body || (images.length > 0 ? CHAT_PHOTO_ONLY_BODY : "");
   const dto: AgentChatMessageDto = {
     id: m.id,
     author_id: m.authorId || null,
     author_name: m.authorName ?? null,
     avatar: m.avatar ?? null,
     body,
+    images,
     created_at: m.createdAt ?? "",
     edited: !!m.edited,
     edited_at: m.editedAt ?? null,
@@ -157,6 +166,12 @@ export function agentCapabilities(scopes: AgentScope[], opts: { voice?: boolean;
         max_body: CHAT_MAX_BODY,
         ttl_hours: ttlHours,
         reaction_events: true, // stream: event "chat", action "reactions" { id, reactions }
+        // Photos: POST upload (multipart images[]) → urls, then send them as `images`.
+        // Resize on the device to a long side of image_max_side px first.
+        images: can("chat"),
+        image_upload: "/api/agent/chat/upload",
+        max_images: CHAT_MAX_IMAGES,
+        image_max_side: 1280,
       },
       // Timeline for the native apps. publish/upload need the "post" scope (people
       // posting from the app); tokens issued before it existed must reconnect once.
