@@ -65,12 +65,30 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         if event.type == .scrollWheel, let step = swipe.handle(event) {
             withAnimation(.easeOut(duration: 0.18)) { pin.tab = step > 0 ? .timeline : .chat }
         }
+        // ⌘V with an image (and no text) on the pasteboard in the chat: attach it.
+        if event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers == "v", pin.tab == .chat, let data = Self.pastedImage() {
+            NotificationCenter.default.post(name: .chatPasteImage, object: data)
+            return
+        }
         // Mouse back button (button 4 = number 3): thread → timeline.
         if event.type == .otherMouseDown, event.buttonNumber == 3, pin.tab == .timeline {
             NotificationCenter.default.post(name: .timelineBack, object: nil)
             return
         }
         super.sendEvent(event)
+    }
+
+    /// Image bytes on the general pasteboard when it holds an image and no text
+    /// (copying text from a web page also puts an image there sometimes: text wins).
+    private static func pastedImage() -> Data? {
+        let pb = NSPasteboard.general
+        if pb.string(forType: .string) != nil { return nil }
+        if let png = pb.data(forType: .png) { return png }
+        if let tiff = pb.data(forType: .tiff), let rep = NSBitmapImageRep(data: tiff) { return rep.representation(using: .png, properties: [:]) }
+        if let url = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true])?.first as? URL,
+           let data = try? Data(contentsOf: url), NSImage(data: data) != nil { return data }
+        return nil
     }
 
     func present(below anchor: NSRect) {

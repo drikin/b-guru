@@ -22,6 +22,10 @@ struct ChatView: View {
         _draft = State(initialValue: initialDraft)
     }
     @State private var editingId: Int?
+    /// Photos attached to the next message (up to 4): file picker, drag & drop, ⌘V.
+    @State private var photos = PostDraft(maxImages: 4)
+    @State private var viewing: ImageViewerItem?
+    @State private var importing = false
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -34,6 +38,21 @@ struct ChatView: View {
             composer
         }
         .background(.regularMaterial)
+        .imageViewer($viewing)
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
+            if case let .success(urls) = result { photos.add(fileURLs: urls) }
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            guard store.capabilities?.canSendChatImages == true, editingId == nil else { return false }
+            photos.add(fileURLs: urls)
+            return true
+        }
+        // ⌘V of an image (a screenshot): sent here by the panel (ChatPanel.sendEvent),
+        // because the text field would otherwise swallow the paste.
+        .onReceive(NotificationCenter.default.publisher(for: .chatPasteImage)) { note in
+            guard store.capabilities?.canSendChatImages == true, editingId == nil, let data = note.object as? Data else { return }
+            photos.add(imageData: data)
+        }
         .onAppear { composerFocused = true }
         .onChange(of: pin.focusRequest) { _, _ in
             // Re-assert even if SwiftUI believes it is already focused.
@@ -121,7 +140,9 @@ struct ChatView: View {
                             onDiscard: { store.discard(row) },
                             onReplyMention: row.message.authorName.map { name in { replyTo(name) } },
                             highlighted: store.highlightId == row.message.id,
-                            editing: editingId == row.message.id
+                            editing: editingId == row.message.id,
+                            localImages: row.message.clientId.flatMap { store.outgoingPhotos[$0]?.previews } ?? [],
+                            onOpenImage: { i in viewing = ImageViewerItem(images: row.message.images ?? [], index: i) }
                         )
                         .id(row.id)
                     }
@@ -177,7 +198,19 @@ struct ChatView: View {
                     Button("キャンセル  Esc") { cancelEdit() }.buttonStyle(.borderless).font(.caption)
                 }
             }
+            if editingId == nil {
+                DraftImages(draft: photos)
+                if let e = photos.error { Text(e).font(.caption).foregroundStyle(.red) }
+            }
             HStack(alignment: .bottom, spacing: 8) {
+                if editingId == nil, store.capabilities?.canSendChatImages == true {
+                    Button { importing = true } label: { Image(systemName: "photo") }
+                        .buttonStyle(.borderless)
+                        .padding(.bottom, 7)
+                        .disabled(photos.images.count >= photos.maxImages)
+                        .help("写真を付ける（ドラッグ＆ドロップ・⌘V でも）")
+                        .accessibilityLabel("写真を付ける")
+                }
                 TextField(editingId == nil ? "メッセージ（Enter 送信・⇧Enter 改行）" : "編集内容（Enter 保存）",
                           text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -220,7 +253,7 @@ struct ChatView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.accentGreen)
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(store.capabilities?.canSend ?? true))
+                .disabled((draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (editingId != nil || photos.images.isEmpty)) || !(store.capabilities?.canSend ?? true))
                 .accessibilityLabel(editingId == nil ? "送信" : "保存")
             }
         }
@@ -233,14 +266,15 @@ struct ChatView: View {
             return
         }
         let text = draft
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let hasPhotos = editingId == nil && !photos.images.isEmpty
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || hasPhotos else { return }
         if let id = editingId {
             editingId = nil
             draft = ""
             Task { _ = await store.edit(id, body: text) }
         } else {
             draft = "" // the bubble is already on screen; clear at once
-            store.send(text, restore: { body in if draft.isEmpty { draft = body } })
+            store.send(text, photos: photos.takePhotos(), restore: { body in if draft.isEmpty { draft = body } })
         }
         composerFocused = true
     }
@@ -269,7 +303,7 @@ struct ChatView: View {
 
     private func beginEdit(_ m: ChatMessage) {
         editingId = m.id
-        draft = m.body
+        draft = m.displayBody
         composerFocused = true
     }
 
@@ -289,3 +323,9 @@ private struct OnlineLabelStyle: LabelStyle {
 }
 
 
+
+
+extension Notification.Name {
+    /// ⌘V with an image on the pasteboard while the chat is open (object: image Data).
+    static let chatPasteImage = Notification.Name("fm.backspace.bguru.chatPasteImage")
+}

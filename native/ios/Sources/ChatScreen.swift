@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 
 /// The chat on iPhone / iPad. Works in iPad Split View and Slide Over (put the
 /// chat beside Safari or a video) because the layout is a single column.
@@ -13,6 +14,9 @@ struct ChatScreen: View {
     @State private var notifyAll = PushCenter.shared.notifyMode == "all"
     @State private var quietHours = PushCenter.shared.quietHours
     @State private var editingId: Int?
+    /// Photos attached to the next message (up to 4).
+    @State private var photos = PostDraft(maxImages: 4)
+    @State private var viewing: ImageViewerItem?
     @State private var composerFocused = false
     /// Bumped on every send: a fresh text field drops any uncommitted dictation /
     /// IME text that would otherwise stay in (or come back into) the composer.
@@ -28,6 +32,7 @@ struct ChatScreen: View {
                 Divider()
                 composer
             }
+            .imageViewer($viewing)
             .navigationTitle("B-guru チャット")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -100,7 +105,9 @@ struct ChatScreen: View {
                             onDiscard: { store.discard(row) },
                             onReplyMention: row.message.authorName.map { name in { replyTo(name) } },
                             highlighted: store.highlightId == row.message.id,
-                            editing: editingId == row.message.id
+                            editing: editingId == row.message.id,
+                            localImages: row.message.clientId.flatMap { store.outgoingPhotos[$0]?.previews } ?? [],
+                            onOpenImage: { i in viewing = ImageViewerItem(images: row.message.images ?? [], index: i) }
                         )
                         .id(row.id)
                     }
@@ -171,7 +178,19 @@ struct ChatScreen: View {
                     Button("キャンセル") { cancelEdit() }.font(.caption)
                 }
             }
+            if editingId == nil {
+                DraftImages(draft: photos)
+                if let e = photos.error { Text(e).font(.caption).foregroundStyle(.red) }
+            }
             HStack(alignment: .bottom, spacing: 8) {
+                if editingId == nil, store.capabilities?.canSendChatImages == true {
+                    PhotosPicker(selection: $photos.picks, maxSelectionCount: max(1, photos.maxImages - photos.images.count), matching: .images) {
+                        Image(systemName: "photo").font(.system(size: 22))
+                            .frame(width: 30, height: 36)
+                    }
+                    .disabled(photos.images.count >= photos.maxImages)
+                    .accessibilityLabel("写真を付ける")
+                }
                 // Hardware keyboard (iPad): Return sends, Shift+Return is a newline, and the
                 // Return that confirms a Japanese conversion only confirms it (see
                 // ComposerTextView). The on-screen keyboard's return key inserts a newline.
@@ -205,7 +224,7 @@ struct ChatScreen: View {
                     Image(systemName: editingId == nil ? "arrow.up.circle.fill" : "checkmark.circle.fill")
                         .font(.system(size: 30))
                 }
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(store.capabilities?.canSend ?? true))
+                .disabled((draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (editingId != nil || photos.images.isEmpty)) || !(store.capabilities?.canSend ?? true))
                 .accessibilityLabel(editingId == nil ? "送信" : "保存")
             }
         }
@@ -222,14 +241,15 @@ struct ChatScreen: View {
             return
         }
         let text = draft
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let hasPhotos = editingId == nil && !photos.images.isEmpty
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || hasPhotos else { return }
         if let id = editingId {
             editingId = nil
             clearComposer(sent: text)
             Task { _ = await store.edit(id, body: text) }
         } else {
             clearComposer(sent: text)
-            store.send(text, restore: { body in if draft.isEmpty { draft = body } })
+            store.send(text, photos: photos.takePhotos(), restore: { body in if draft.isEmpty { draft = body } })
         }
     }
 
@@ -277,7 +297,7 @@ struct ChatScreen: View {
 
     private func beginEdit(_ m: ChatMessage) {
         editingId = m.id
-        draft = m.body
+        draft = m.displayBody
         composerFocused = true
     }
 

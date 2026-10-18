@@ -14,6 +14,10 @@ struct MessageRow: View {
     var highlighted = false
     /// This message is open in the composer for editing.
     var editing = false
+    /// Previews of photos still being sent (the stored message has their URLs instead).
+    var localImages: [PlatformImage] = []
+    /// Tap on a photo: open it full screen (index into `m.images`).
+    var onOpenImage: ((Int) -> Void)? = nil
 
     @State private var hovering = false
     @State private var pickerOpen = false
@@ -70,12 +74,24 @@ struct MessageRow: View {
         .accessibilityAction(named: "❤️ を付ける") { if canReact && m.id > 0 { onReact("❤️") } }
         .accessibilityAction(named: "編集") { if mine && canEdit && m.id > 0 { onEdit() } }
         .accessibilityAction(named: "返信") { if !mine { onReplyMention?() } }
-        .accessibilityLabel("\(mine ? "自分" : (m.authorName ?? ""))、\(m.body)\(m.mentionsMe ? "、あなたへのメンション" : "")\(row.state == .failed ? "、送信失敗" : "")")
+        .accessibilityLabel("\(mine ? "自分" : (m.authorName ?? ""))、\(m.displayBody)\((m.images ?? []).isEmpty ? "" : "、写真 \((m.images ?? []).count) 枚")\(m.mentionsMe ? "、あなたへのメンション" : "")\(row.state == .failed ? "、送信失敗" : "")")
     }
 
-    private var bubble: some View {
-        let emojiOnly = Self.isEmojiOnly(m.body)
-        return Text(Self.attributed(m.body))
+    @ViewBuilder private var bubble: some View {
+        let paths = m.images ?? []
+        if !paths.isEmpty || !localImages.isEmpty {
+            VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
+                ChatPhotos(paths: paths, local: paths.isEmpty ? localImages : [], onOpen: onOpenImage)
+                if !m.displayBody.isEmpty { textBubble }
+            }
+        } else {
+            textBubble
+        }
+    }
+
+    private var textBubble: some View {
+        let emojiOnly = Self.isEmojiOnly(m.displayBody)
+        return Text(Self.attributed(m.displayBody))
             .font(emojiOnly ? .system(size: 34) : .body)
             #if os(macOS)
             // macOS: select part of a message with the mouse. On iOS a long press
@@ -389,5 +405,45 @@ final class AvatarCache {
     func image(for raw: String?) async -> PlatformImage? {
         guard let raw, !raw.isEmpty else { return nil }
         return await MediaCache.shared.image(for: raw, maxPixel: Self.pixels)
+    }
+}
+
+
+/// Photos in a chat bubble: one is shown wide, two to four as a 2-column grid of
+/// squares. Decoded small (MediaImage), tap for full screen.
+struct ChatPhotos: View {
+    let paths: [String]
+    /// Previews while the message is still being sent.
+    var local: [PlatformImage] = []
+    var onOpen: ((Int) -> Void)?
+
+    private var count: Int { paths.isEmpty ? local.count : paths.count }
+
+    var body: some View {
+        if count == 1 {
+            cell(0, width: 220, height: 165)
+        } else {
+            LazyVGrid(columns: [GridItem(.fixed(108), spacing: 4), GridItem(.fixed(108), spacing: 4)], spacing: 4) {
+                ForEach(0..<count, id: \.self) { i in cell(i, width: 108, height: 108) }
+            }
+            .frame(width: 220, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder private func cell(_ i: Int, width: CGFloat, height: CGFloat) -> some View {
+        Group {
+            if paths.isEmpty {
+                Image(platformImage: local[i]).resizable().scaledToFill()
+            } else {
+                MediaImage(path: paths[i], maxPixel: count == 1 ? 720 : 400)
+            }
+        }
+        .frame(width: width, height: height)
+        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contentShape(Rectangle())
+        .onTapGesture { if !paths.isEmpty { onOpen?(i) } }
+        .accessibilityLabel("写真 \(i + 1)")
+        .accessibilityAddTraits(.isButton)
     }
 }

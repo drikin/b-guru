@@ -16,6 +16,14 @@ struct ChatMessage: Codable, Equatable, Sendable {
     var mentionsMe: Bool
     var clientId: String?
     var reactions: [Reaction]?
+    /// Attached photos (/api/media/chat-…).
+    var images: [String]? = nil
+
+    /// The server gives a photo-only message the body "📷 写真" (for apps that predate
+    /// photos and for notifications); this app shows the photos instead.
+    var displayBody: String {
+        (images?.isEmpty == false && body == "📷 写真") ? "" : body
+    }
 }
 
 struct Reaction: Codable, Equatable, Sendable, Hashable {
@@ -83,6 +91,10 @@ struct Capabilities: Decodable, Sendable {
         var markRead: Bool?
         var maxBody: Int?
         var ttlHours: Int?
+        var images: Bool?
+        var imageUpload: String?
+        var maxImages: Int?
+        var imageMaxSide: Int?
     }
     struct PostFeatures: Decodable, Sendable {
         var read: Bool?
@@ -109,6 +121,10 @@ struct Capabilities: Decodable, Sendable {
     var features: Features?
 
     var canSend: Bool { features?.chat?.send ?? false }
+    /// Photos in the chat (servers from before them say nothing → off).
+    var canSendChatImages: Bool { features?.chat?.images ?? false }
+    var maxChatImages: Int { features?.chat?.maxImages ?? 4 }
+    var chatImageMaxSide: Int { features?.chat?.imageMaxSide ?? 1280 }
     var canEdit: Bool { features?.chat?.editOwn ?? false }
     var canReact: Bool { features?.chat?.reactions ?? false }
     var canMarkRead: Bool { features?.chat?.markRead ?? false }

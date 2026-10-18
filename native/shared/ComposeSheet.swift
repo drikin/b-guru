@@ -89,6 +89,23 @@ final class PostDraft {
         }
     }
 
+    /// A pasted image (macOS ⌘V of a screenshot).
+    func add(imageData data: Data) {
+        Task {
+            if !(await append(data)) { error = "画像を読み込めませんでした" } else { error = nil }
+        }
+    }
+
+    /// Hands the attached photos to a chat message and empties the tray.
+    func takePhotos() -> OutgoingPhotos? {
+        guard !originals.isEmpty else { return nil }
+        let p = OutgoingPhotos(previews: images, originals: originals)
+        images = []
+        originals = []
+        error = nil
+        return p
+    }
+
     func remove(_ i: Int) {
         guard images.indices.contains(i) else { return }
         images.remove(at: i)
@@ -127,6 +144,21 @@ final class PostDraft {
             self.error = "投稿できませんでした"
         }
         return nil
+    }
+}
+
+/// Photos on their way into a chat message: the previews show in the pending bubble,
+/// the originals become small JPEGs when it is sent, and the uploaded URLs are kept so
+/// a retry does not upload again.
+@MainActor
+final class OutgoingPhotos {
+    let previews: [PlatformImage]
+    let originals: [Data]
+    var urls: [String]?
+
+    init(previews: [PlatformImage], originals: [Data]) {
+        self.previews = previews
+        self.originals = originals
     }
 }
 

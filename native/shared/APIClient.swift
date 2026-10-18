@@ -122,8 +122,10 @@ final class APIClient: Sendable {
         return try await send(req)
     }
 
-    func post(body: String, clientId: String) async throws -> ChatMessage {
-        let r: ChatSendResponse = try await send(request("POST", "/api/agent/chat", json: ["body": body, "client_id": clientId]))
+    func post(body: String, clientId: String, images: [String] = []) async throws -> ChatMessage {
+        var json: [String: Any] = ["body": body, "client_id": clientId]
+        if !images.isEmpty { json["images"] = images }
+        let r: ChatSendResponse = try await send(request("POST", "/api/agent/chat", json: json))
         return r.message
     }
 
@@ -201,7 +203,8 @@ final class APIClient: Sendable {
     }
 
     /// JPEG data for each image (already resized by the caller). Returns /api/media/… URLs.
-    func upload(images: [Data]) async throws -> [String] {
+    /// `path`: the timeline's upload, or the chat's (/api/agent/chat/upload).
+    func upload(images: [Data], path: String = "/api/agent/upload") async throws -> [String] {
         let boundary = "bguru-\(UUID().uuidString)"
         var body = Data()
         for (i, data) in images.enumerated() {
@@ -210,7 +213,7 @@ final class APIClient: Sendable {
             body.append(Data("\r\n".utf8))
         }
         body.append(Data("--\(boundary)--\r\n".utf8))
-        var req = request("POST", "/api/agent/upload")
+        var req = request("POST", path)
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
         req.timeoutInterval = 120

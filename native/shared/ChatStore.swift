@@ -264,10 +264,14 @@ final class ChatStore {
 
     // MARK: - Actions
 
-    /// Optimistic send. Returns immediately; the bubble is already visible.
-    func send(_ raw: String, restore: @escaping (String) -> Void) {
+    /// Photos of messages still being sent, by clientId (previews for the bubble).
+    private(set) var outgoingPhotos: [String: OutgoingPhotos] = [:]
+
+    /// Optimistic send. Returns immediately; the bubble is already visible (with the
+    /// photos' previews). Photos are made small (long side 1280 px) and uploaded first.
+    func send(_ raw: String, photos: OutgoingPhotos? = nil, restore: @escaping (String) -> Void) {
         let body = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty else { return }
+        guard !body.isEmpty || photos != nil else { return }
         let clientId = UUID().uuidString
         tempSeq += 1
         let pending = ChatMessage(
@@ -275,6 +279,7 @@ final class ChatStore {
             createdAt: ISO8601DateFormatter().string(from: Date()), edited: false, editedAt: nil,
             isAuthor: true, mentionsMe: false, clientId: clientId, reactions: []
         )
+        if let photos { outgoingPhotos[clientId] = photos }
         rows.append(ChatRow(pending, state: .pending))
         unreadCount = 0
         mentionCount = 0
@@ -289,6 +294,7 @@ final class ChatStore {
 
     func discard(_ row: ChatRow) {
         rows.removeAll { $0.message.id < 0 && $0.message.clientId == row.message.clientId }
+        if let cid = row.message.clientId { outgoingPhotos[cid] = nil }
     }
 
     private func post(body: String, clientId: String, restore: @escaping (String) -> Void) {
@@ -301,16 +307,34 @@ final class ChatStore {
         }
         #endif
         Task {
+            let photos = outgoingPhotos[clientId]
             do {
-                let m = try await api.post(body: body, clientId: clientId)
+                var urls: [String] = []
+                if let photos {
+                    if let done = photos.urls {
+                        urls = done
+                    } else {
+                        let side = capabilities?.chatImageMaxSide ?? 1280
+                        let originals = photos.originals
+                        let jpegs = await Task.detached(priority: .userInitiated) {
+                            originals.compactMap { PostDraft.uploadJPEG($0, maxSide: side, quality: 0.8) }
+                        }.value
+                        urls = try await api.upload(images: jpegs, path: "/api/agent/chat/upload")
+                        photos.urls = urls
+                    }
+                }
+                let m = try await api.post(body: body, clientId: clientId, images: urls)
                 myUserId = m.authorId ?? myUserId
                 latestId = max(latestId, m.id)
                 rows = Self.reconcile(rows, with: m)
-            } catch let e as APIError where e.isPermanent {
+                outgoingPhotos[clientId] = nil
+            } catch let e as APIError where e.isPermanent && photos == nil {
                 rows.removeAll { $0.message.id < 0 && $0.message.clientId == clientId }
                 restore(body)
                 if case .unauthorized = e { signedOut = true }
             } catch {
+                // With photos the bubble stays (再送 / 取り消す) so the photos are not lost.
+                if let e = error as? APIError, case .unauthorized = e { signedOut = true }
                 setState(.failed, clientId: clientId)
             }
         }
@@ -370,12 +394,20 @@ final class ChatStore {
         }
         rows = [msg(1, "NORIO TAKAHASHI", "おはようございます"), msg(2, "mazzo", "iPhone 版いい感じ"),
                 msg(3, "ドリキン", "ありがとうございます！", mine: true), msg(4, "takuto", "通知も来ました")]
+        // BGURU_DEMO_PHOTOS=http://127.0.0.1:8099 adds photo messages (served from this Mac).
+        if let base = ProcessInfo.processInfo.environment["BGURU_DEMO_PHOTOS"] {
+            var one = msg(5, "mazzo", "📷 写真")
+            one.message.images = ["\(base)/photo1.jpg"]
+            var three = msg(6, "ドリキン", "スクショです", mine: true)
+            three.message.images = ["\(base)/photo2.jpg", "\(base)/photo3.jpg", "\(base)/photo4.jpg"]
+            rows += [one, three]
+        }
         members = ["ビーグル", "mazzo", "NORIO TAKAHASHI", "takuto", "coban", "ポンコツ散財王ドリキン", "りとる"]
             .map { MentionMember(userId: $0, name: $0, avatar: nil) }
         hasLoaded = true
         connection = .live
         onlineCount = 12
-        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5}}}"#
+        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5}}}"#
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
         capabilities = try? dec.decode(Capabilities.self, from: Data(caps.utf8))
