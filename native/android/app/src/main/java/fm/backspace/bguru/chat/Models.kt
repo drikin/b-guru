@@ -62,7 +62,8 @@ data class ChatRow(
     val localImages: List<androidx.compose.ui.graphics.ImageBitmap> = emptyList(),
 )
 
-@Serializable data class ChatListResponse(val unreadCount: Int = 0, val latestId: Long = 0, val messages: List<ChatMessage> = emptyList())
+/** `lastReadId`: the member's read cursor (servers before 2026-10-19 omit it). */
+@Serializable data class ChatListResponse(val unreadCount: Int = 0, val latestId: Long = 0, val lastReadId: Long? = null, val messages: List<ChatMessage> = emptyList())
 @Serializable data class ChatSendResponse(val message: ChatMessage)
 @Serializable data class ReactionToggleResponse(val added: Boolean = false, val reactions: List<Reaction> = emptyList())
 @Serializable data class SummaryResponse(val onlineCount: Int = 0)

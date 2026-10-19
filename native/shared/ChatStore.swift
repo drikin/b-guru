@@ -44,10 +44,40 @@ final class ChatStore {
     var isVisible = false {
         didSet {
             if isVisible {
+                if !oldValue { beginViewing() }
                 markReadSoon()
                 if !oldValue { onBecameVisible?() }
             }
         }
+    }
+
+    /// The first message the member had not read when the chat came on screen
+    /// (drawn as a "ここから未読" line). The list opens there instead of jumping to
+    /// the bottom. Nothing new: it stays, and the list stays where they were (drikin 2026-10-19).
+    private(set) var unreadMarkerId: Int?
+    /// Bumped each time the chat comes on screen with something to open at.
+    private(set) var openSeq = 0
+    /// Last message read here or on another device (the server's cursor).
+    private var readCursor: Int?
+    /// Came on screen moments ago and found nothing unread yet: the list that the
+    /// reconnect brings (coming back from the background) may still have some.
+    private var openPendingSince: Date?
+
+    private func beginViewing() {
+        openPendingSince = Date() // the old line stays until something new is unread
+        findUnreadMarker()
+    }
+
+    private func findUnreadMarker() {
+        guard let since = openPendingSince else { return }
+        guard Date().timeIntervalSince(since) < 15 else { openPendingSince = nil; return }
+        guard hasLoaded, let cursor = readCursor else { return }
+        guard let first = rows.first(where: { r in
+            r.message.id > cursor && r.message.id > 0 && !r.message.isAuthor && !r.message.isNotice
+        }) else { return }
+        unreadMarkerId = first.message.id
+        openPendingSince = nil
+        openSeq += 1
     }
 
     var onMention: ((ChatMessage) -> Void)?
@@ -221,6 +251,7 @@ final class ChatStore {
         do {
             let r = try await api.chat()
             latestId = max(latestId, r.latestId)
+            if let c = r.lastReadId { readCursor = max(readCursor ?? 0, c) }
             unreadCount = isVisible ? 0 : r.unreadCount
             if isVisible { mentionCount = 0 }
             if let mine = r.messages.first(where: { $0.isAuthor }) { myUserId = mine.authorId }
@@ -239,7 +270,11 @@ final class ChatStore {
             next.append(contentsOf: local)
             rows = next
             hasLoaded = true
-            if isVisible { markReadSoon() }
+            if isVisible {
+                findUnreadMarker()
+                openPendingSince = nil
+                markReadSoon()
+            }
             if let s = try? await api.summary() { onlineCount = s.onlineCount }
         } catch APIError.unauthorized {
             signedOut = true
@@ -413,8 +448,22 @@ final class ChatStore {
             three.message.images = ["\(base)/photo2.jpg", "\(base)/photo3.jpg", "\(base)/photo4.jpg"]
             rows += [one, three]
         }
+        // BGURU_DEMO_UNREAD=1: a long backlog, read up to #4 (opens at the "ここから未読" line),
+        // and one more message arriving 8 s later (the "↓ 新着" button when scrolled up).
+        if ProcessInfo.processInfo.environment["BGURU_DEMO_UNREAD"] != nil {
+            let who = ["mazzo", "takuto", "coban", "りとる"]
+            rows += (10..<50).map { i in msg(i, who[i % who.count], "未読のメッセージ \(i - 9) 件目。ここまでの話の続きです。") }
+            readCursor = 4
+            Task {
+                try? await Task.sleep(for: .seconds(8))
+                received(ChatMessage(id: 60, authorId: "coban", authorName: "coban", avatar: nil, body: "あとから届いた新着です",
+                                     createdAt: "2026-10-16T09:00:00Z", edited: false, editedAt: nil,
+                                     isAuthor: false, mentionsMe: false, clientId: nil, reactions: nil))
+            }
+        }
         members = ["ビーグル", "mazzo", "NORIO TAKAHASHI", "takuto", "coban", "ポンコツ散財王ドリキン", "りとる"]
             .map { MentionMember(userId: $0, name: $0, avatar: nil) }
+        latestId = rows.map(\.message.id).max() ?? 0
         hasLoaded = true
         connection = .live
         onlineCount = 12
@@ -467,6 +516,7 @@ final class ChatStore {
     private func markReadSoon() {
         unreadCount = 0
         mentionCount = 0
+        if readCursor != nil { readCursor = max(readCursor ?? 0, latestId) }
         guard capabilities?.canMarkRead ?? true, latestId > 0 else { return }
         readTask?.cancel()
         let upTo = latestId

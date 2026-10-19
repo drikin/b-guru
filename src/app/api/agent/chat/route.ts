@@ -7,6 +7,7 @@ import { NextRequest } from "next/server";
 import {
   getLatestChatId,
   getUnreadCount,
+  getChatLastReadId,
   listChatMessages,
   normalizeChatInput,
   normalizeClientId,
@@ -29,11 +30,12 @@ export async function GET(req: NextRequest) {
     const before = Number.isInteger(beforeRaw) && beforeRaw > 0 ? beforeRaw : undefined;
     const withReactions = (sp.get("include") ?? "").split(",").includes("reactions");
 
-    const [messages, unreadCount, latestId, viewer] = await Promise.all([
+    const [messages, unreadCount, latestId, viewer, lastReadId] = await Promise.all([
       listChatMessages({ limit, before, viewerEmail: ctx.email }),
       getUnreadCount(ctx.email),
       getLatestChatId(),
       chatViewerFor(ctx.email, ctx.userId),
+      getChatLastReadId(ctx.email),
     ]);
     const reactions = withReactions
       ? await getReactions("chat", messages.map((m) => m.id), ctx.email)
@@ -44,6 +46,7 @@ export async function GET(req: NextRequest) {
         apiVersion: AGENT_API_VERSION,
         unread_count: unreadCount,
         latest_id: latestId,
+        last_read_id: lastReadId,
         messages: messages.map((m) =>
           toAgentChatDto(m, viewer, reactions ? reactions.get(m.id) ?? [] : undefined)
         ),

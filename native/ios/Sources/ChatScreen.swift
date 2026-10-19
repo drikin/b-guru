@@ -8,6 +8,8 @@ struct ChatScreen: View {
     let onSignOut: () -> Void
     /// iPhone: the chat / timeline switch shown in place of the title.
     var tabPicker: AnyView? = nil
+    /// iPhone: false while the timeline page is showing (the chat is not being read).
+    var onScreen = true
 
     @Environment(\.scenePhase) private var scenePhase
     @State private var draft = ""
@@ -17,6 +19,8 @@ struct ChatScreen: View {
     /// Photos attached to the next message (up to 4).
     @State private var photos = PostDraft(maxImages: 4)
     @State private var viewing: ImageViewerItem?
+    @State private var atBottom = true
+    @State private var newBelow = 0
     @State private var composerFocused = false
     /// Bumped on every send: a fresh text field drops any uncommitted dictation /
     /// IME text that would otherwise stay in (or come back into) the composer.
@@ -55,7 +59,10 @@ struct ChatScreen: View {
             }
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
-            store.isVisible = phase == .active
+            store.isVisible = phase == .active && onScreen
+        }
+        .onChange(of: onScreen) { _, on in
+            store.isVisible = scenePhase == .active && on
         }
     }
 
@@ -107,6 +114,7 @@ struct ChatScreen: View {
                     }
                     ForEach(Array(store.rows.enumerated()), id: \.element.id) { idx, row in
                         let prev = idx > 0 ? store.rows[idx - 1].message : nil
+                        if store.unreadMarkerId == row.message.id { UnreadDivider() }
                         MessageRow(
                             row: row,
                             showHeader: prev == nil || prev?.authorId != row.message.authorId || row.message.isAuthor != prev?.isAuthor,
@@ -124,7 +132,7 @@ struct ChatScreen: View {
                         )
                         .id(row.id)
                     }
-                    Color.clear.frame(height: 1).id("bottom")
+                    ChatBottomSentinel(atBottom: $atBottom)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -134,7 +142,7 @@ struct ChatScreen: View {
                 .frame(maxWidth: .infinity)
             }
             .defaultScrollAnchor(.bottom)
-            .keepsBottomOnResize()
+            .chatScrolling(store: store, proxy: proxy, atBottom: $atBottom, newBelow: $newBelow)
             .scrollDismissesKeyboard(.interactively)
             .dismissesKeyboardOnTap()
             // A LazyVStack only estimates the height of rows it hasn't drawn, so the
@@ -142,13 +150,9 @@ struct ChatScreen: View {
             // blank area with the newest messages below the fold). Jump once more
             // after the first list has been laid out.
             .onChange(of: store.hasLoaded) { _, loaded in
-                guard loaded else { return }
+                guard loaded, store.unreadMarkerId == nil else { return } // else it opens at the unread line
                 proxy.scrollTo("bottom", anchor: .bottom)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { proxy.scrollTo("bottom", anchor: .bottom) }
-            }
-            .onChange(of: store.rows.last?.id) { _, _ in
-                guard store.scrollTarget == nil else { return }
-                scrollToBottom(proxy)
             }
             .onChange(of: store.scrollTarget) { _, target in
                 // A notification tap: jump to that message (highlighted by the store).
@@ -164,15 +168,6 @@ struct ChatScreen: View {
             }
             .refreshable { await store.reload() }
         }
-    }
-
-    /// Sending also shrinks the composer (and a LazyVStack only estimates rows it
-    /// hasn't drawn), so one scroll can land short of the bottom. Scroll now, then
-    /// again once the layout has settled.
-    private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { proxy.scrollTo("bottom", anchor: .bottom) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { proxy.scrollTo("bottom", anchor: .bottom) }
     }
 
     // MARK: Composer

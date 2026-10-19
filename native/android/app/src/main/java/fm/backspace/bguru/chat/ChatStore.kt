@@ -50,9 +50,41 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     /** True while the chat is on screen: drives read marking. */
     var isVisible = false
         set(v) {
+            val was = field
             field = v
+            if (v && !was) beginViewing()
             if (v) markReadSoon()
         }
+
+    /** The first message the member had not read when the chat came on screen (drawn
+     *  as a "ここから未読" line). The list opens there instead of jumping to the bottom;
+     *  nothing new: it stays, and the list stays where they were (drikin 2026-10-19). */
+    var unreadMarkerId by mutableStateOf<Long?>(null); private set
+    /** Bumped each time the chat comes on screen with something to open at. */
+    var openSeq by mutableIntStateOf(0); private set
+    /** Last message read here or on another device (the server's cursor). */
+    private var readCursor: Long? = null
+    /** Came on screen moments ago and found nothing unread yet: the list that the
+     *  reconnect brings (coming back from the background) may still have some. */
+    private var openPendingSince: Long? = null
+
+    private fun beginViewing() {
+        openPendingSince = System.currentTimeMillis() // the old line stays until something new is unread
+        findUnreadMarker()
+    }
+
+    private fun findUnreadMarker() {
+        val since = openPendingSince ?: return
+        if (System.currentTimeMillis() - since > 15_000) { openPendingSince = null; return }
+        val cursor = readCursor
+        if (!hasLoaded || cursor == null) return
+        val first = rows.firstOrNull { r ->
+            r.message.id > cursor && r.message.id > 0 && !r.message.isAuthor && !r.message.isNotice
+        } ?: return
+        unreadMarkerId = first.message.id
+        openPendingSince = null
+        openSeq += 1
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var streamJob: Job? = null
@@ -113,6 +145,9 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         hasLoaded = true
         connection = Connection.LIVE
         onlineCount = 12
+        // The big demo opens at a "ここから未読" line (read up to #250).
+        if (scale) readCursor = 250
+        latestId = rows.maxOf { it.message.id }
     }
 
     /** Photo messages for the demo, served from this Mac (`--es demo_images`); none without it. */
@@ -249,6 +284,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         try {
             val r = api.chat()
             latestId = maxOf(latestId, r.latestId)
+            r.lastReadId?.let { c -> readCursor = maxOf(readCursor ?: 0L, c) }
             unreadCount = if (isVisible) 0 else r.unreadCount
             r.messages.firstOrNull { it.isAuthor }?.let { myUserId = it.authorId }
             // Keep rows still sending / failed; keep the stable key of rows we sent.
@@ -259,7 +295,11 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
                 ChatRow(m, key = keys[m.id] ?: (m.clientId ?: "id-${m.id}"), localImages = previews[m.id] ?: emptyList())
             } + local
             hasLoaded = true
-            if (isVisible) markReadSoon()
+            if (isVisible) {
+                findUnreadMarker()
+                openPendingSince = null
+                markReadSoon()
+            }
             runCatching { onlineCount = api.summary().onlineCount }
         } catch (e: ApiError.Unauthorized) {
             signedOut = true
@@ -388,6 +428,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
 
     private fun markReadSoon() {
         unreadCount = 0
+        readCursor?.let { readCursor = maxOf(it, latestId) }
         if (capabilities?.canMarkRead == false || latestId <= 0) return
         readJob?.cancel()
         readJob = scope.launch {

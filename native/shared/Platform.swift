@@ -44,10 +44,11 @@ extension Color {
 extension View {
     /// When content height changes, keep the bottom edge fixed (chat reads
     /// bottom-up), so a row growing never pushes the latest messages out of view.
+    /// Only while at the bottom: reading further up, new rows must not move the view.
     /// (macOS 15 / iOS 18+; older systems fall back to explicit scrolling.)
-    @ViewBuilder func keepsBottomOnResize() -> some View {
+    @ViewBuilder func keepsBottomOnResize(_ enabled: Bool = true) -> some View {
         if #available(macOS 15.0, iOS 18.0, *) {
-            self.defaultScrollAnchor(.bottom, for: .sizeChanges)
+            self.defaultScrollAnchor(enabled ? .bottom : nil, for: .sizeChanges)
         } else {
             self
         }

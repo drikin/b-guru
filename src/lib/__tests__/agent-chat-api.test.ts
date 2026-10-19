@@ -44,6 +44,7 @@ vi.mock("@/lib/chat", async (orig) => {
     ],
     getUnreadCount: async () => 3,
     getLatestChatId: async () => 7,
+    getChatLastReadId: async () => 4,
     sendChatMessage: (...a: unknown[]) => sendChatMessage(...a),
     editChatMessageAndBroadcast: (...a: unknown[]) => editChat(...a),
     markChatRead: (...a: unknown[]) => markChatRead(...a),
@@ -138,7 +139,7 @@ describe("GET /api/agent/chat", () => {
     const res = await chatGET(req("http://x/api/agent/chat?include=reactions", { headers: H }));
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toMatchObject({ unread_count: 3, latest_id: 7 });
+    expect(body).toMatchObject({ unread_count: 3, latest_id: 7, last_read_id: 4 });
     expect(body.messages[0]).toMatchObject({ id: 7, is_author: false, mentions_me: true });
     expect(body.messages[0].reactions[0].emoji).toBe("❤️");
     expect(JSON.stringify(body)).not.toContain("example.com");

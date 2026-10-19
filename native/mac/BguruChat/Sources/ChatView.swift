@@ -25,6 +25,8 @@ struct ChatView: View {
     /// Photos attached to the next message (up to 4): file picker, drag & drop, ⌘V.
     @State private var photos = PostDraft(maxImages: 4)
     @State private var viewing: ImageViewerItem?
+    @State private var atBottom = true
+    @State private var newBelow = 0
     @State private var importing = false
     @FocusState private var composerFocused: Bool
 
@@ -140,6 +142,7 @@ struct ChatView: View {
                     }
                     ForEach(Array(store.rows.enumerated()), id: \.element.id) { idx, row in
                         let prev = idx > 0 ? store.rows[idx - 1].message : nil
+                        if store.unreadMarkerId == row.message.id { UnreadDivider() }
                         MessageRow(
                             row: row,
                             showHeader: prev == nil || prev?.authorId != row.message.authorId || row.message.isAuthor != prev?.isAuthor,
@@ -157,23 +160,19 @@ struct ChatView: View {
                         )
                         .id(row.id)
                     }
-                    Color.clear.frame(height: 1).id("bottom")
+                    ChatBottomSentinel(atBottom: $atBottom)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
             }
             .defaultScrollAnchor(.bottom)
-            .keepsBottomOnResize()
+            .chatScrolling(store: store, proxy: proxy, atBottom: $atBottom, newBelow: $newBelow)
             // Reacting to / editing the LAST message makes its row taller (chips
             // appear under the bubble). Without this the new chips land below the
             // viewport and the list looks like it jumped (drikin 2026-10-15).
             .onChange(of: lastRowSignature) { _, _ in
-                guard store.scrollTarget == nil else { return }
+                guard store.scrollTarget == nil, atBottom else { return }
                 proxy.scrollTo("bottom", anchor: .bottom)
-            }
-            .onChange(of: store.rows.last?.id) { _, _ in
-                guard store.scrollTarget == nil else { return }
-                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             .onChange(of: store.scrollTarget) { _, target in
                 guard let target, let row = store.rows.first(where: { $0.message.id == target }) else { return }

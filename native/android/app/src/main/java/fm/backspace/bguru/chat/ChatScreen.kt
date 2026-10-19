@@ -59,6 +59,9 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -149,9 +152,46 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
     // index 0 is the newest message and "scroll to bottom" is scroll to 0.
     val reversed = remember(rows) { rows.asReversed() }
 
-    LaunchedEffect(rows.lastOrNull()?.key) {
-        if (store.scrollTarget == null && rows.isNotEmpty()) listState.animateScrollToItem(0)
+    // Where the list scrolls (drikin 2026-10-19, from member feedback): it follows new
+    // messages only while at the bottom (or after sending); reading further up it stays
+    // put and a "↓ 新着 N" button appears. Coming on screen with unread messages, it
+    // opens at the first one, at the top of the view (or the bottom when they all fit).
+    val atBottom by remember {
+        derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset < 24 }
     }
+    var newBelow by remember { mutableIntStateOf(0) }
+    var prevLastKey by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(rows.lastOrNull()?.key) {
+        val last = rows.lastOrNull() ?: return@LaunchedEffect
+        val before = prevLastKey
+        prevLastKey = last.key
+        // First list: a bottom-up list already starts at the bottom (or opens at the unread line).
+        if (before == null || store.scrollTarget != null) return@LaunchedEffect
+        // The list keeps the item that was at the bottom in place, so the new one is below it.
+        val first = listState.layoutInfo.visibleItemsInfo.firstOrNull()
+        val wasAtBottom = first == null || atBottom ||
+            (first.key == before && listState.firstVisibleItemScrollOffset < 24)
+        val mineSending = last.message.isAuthor && last.message.id < 0
+        if (wasAtBottom || mineSending) listState.animateScrollToItem(0)
+        else if (!last.message.isAuthor && !last.message.isNotice) newBelow += 1
+    }
+    LaunchedEffect(store.openSeq) {
+        if (store.openSeq == 0) return@LaunchedEffect
+        val id = store.unreadMarkerId ?: return@LaunchedEffect
+        val i = reversed.indexOfFirst { it.message.id == id }
+        if (i < 0) return@LaunchedEffect
+        val unread = rows.count { it.message.id >= id && !it.message.isAuthor && !it.message.isNotice }
+        // Bottom-up list: scrollToItem puts it at the bottom edge; then bring it up to the top.
+        listState.scrollToItem(i)
+        val info = listState.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == i }
+        if (item != null) {
+            val room = info.viewportEndOffset - info.viewportStartOffset - info.beforeContentPadding - info.afterContentPadding - item.size
+            if (room > 0) listState.scrollBy(-room.toFloat())
+        }
+        newBelow = if (atBottom) 0 else unread
+    }
+    LaunchedEffect(atBottom) { if (atBottom) newBelow = 0 }
     LaunchedEffect(store.scrollTarget, rows.size) {
         val target = store.scrollTarget ?: return@LaunchedEffect
         val i = reversed.indexOfFirst { it.message.id == target }
@@ -259,6 +299,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                             }) { i, row ->
                                 val prev = reversed.getOrNull(i + 1)?.message
                                 val caps = store.capabilities
+                                val bubble = @Composable {
                                 MessageRow(
                                     row = row,
                                     showHeader = prev == null || prev.authorId != row.message.authorId || prev.isAuthor != row.message.isAuthor,
@@ -275,6 +316,16 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                                     onOpenImage = { urls, at -> viewing = urls to at },
                                     modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth(),
                                 )
+                                }
+                                // One child per item: a reversed list would put a second one below.
+                                if (store.unreadMarkerId == row.message.id) {
+                                    Column(Modifier.widthIn(max = 760.dp).fillMaxWidth()) { UnreadDivider(); bubble() }
+                                } else bubble()
+                            }
+                        }
+                        if (!atBottom) {
+                            JumpToLatest(newBelow, Modifier.align(Alignment.BottomEnd).padding(10.dp)) {
+                                scope.launch { listState.animateScrollToItem(0) }
                             }
                         }
                     }
@@ -762,3 +813,34 @@ private class Draft {
 
 private fun lifecycleIsResumed(context: android.content.Context): Boolean =
     (context as? androidx.lifecycle.LifecycleOwner)?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) ?: true
+
+/** "ここから未読" — drawn above the first message that was unread on opening. */
+@Composable
+private fun UnreadDivider() {
+    val green = Color(0xFF16A34A)
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        HorizontalDivider(Modifier.weight(1f), color = green.copy(alpha = 0.5f))
+        Text("ここから未読", style = MaterialTheme.typography.labelSmall, color = green, modifier = Modifier.padding(horizontal = 8.dp))
+        HorizontalDivider(Modifier.weight(1f), color = green.copy(alpha = 0.5f))
+    }
+}
+
+/** Shown while reading further up: back to the newest message ("↓ 新着 N" when some arrived). */
+@Composable
+private fun JumpToLatest(count: Int, modifier: Modifier, onClick: () -> Unit) {
+    val fresh = count > 0
+    androidx.compose.material3.Surface(
+        onClick = onClick,
+        shape = androidx.compose.foundation.shape.CircleShape,
+        color = if (fresh) Color(0xFF16A34A) else MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = if (fresh) Color.White else MaterialTheme.colorScheme.onSurface,
+        shadowElevation = 3.dp,
+        modifier = modifier,
+    ) {
+        Text(
+            if (fresh) "↓ 新着 $count" else "↓ 最新へ",
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+    }
+}

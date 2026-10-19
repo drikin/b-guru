@@ -61,6 +61,8 @@ struct ChatRow: Identifiable, Equatable, Sendable {
 struct ChatListResponse: Decodable, Sendable {
     var unreadCount: Int
     var latestId: Int
+    /// The member's read cursor (servers before 2026-10-19 omit it).
+    var lastReadId: Int?
     var messages: [ChatMessage]
 }
 

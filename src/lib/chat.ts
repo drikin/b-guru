@@ -434,6 +434,16 @@ export async function getLatestChatId(): Promise<number> {
   return res.rows[0].id;
 }
 
+/** A user's read cursor (0 when they never read): the apps open the chat at the
+ *  first message after it (drikin 2026-10-19). */
+export async function getChatLastReadId(email: string): Promise<number> {
+  const res = await pool.query(
+    `SELECT COALESCE((SELECT last_read_id FROM chat_read_state WHERE email = $1), 0)::int AS last_read`,
+    [email]
+  );
+  return res.rows[0].last_read;
+}
+
 /** Unread count for a user = messages with id strictly greater than their
  *  read cursor. Never returns negative. */
 export async function getUnreadCount(email: string): Promise<number> {

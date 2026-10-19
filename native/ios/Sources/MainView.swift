@@ -23,7 +23,7 @@ struct MainView: View {
                 timelineScreen(picker: AnyView(picker))
                     .environment(\.timelineOnScreen, tab == .timeline)
                     .tag(MainTab.timeline)
-                ChatScreen(store: store, onSignOut: onSignOut, tabPicker: AnyView(picker)).tag(MainTab.chat)
+                ChatScreen(store: store, onSignOut: onSignOut, tabPicker: AnyView(picker), onScreen: tab == .chat).tag(MainTab.chat)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea(.container, edges: .bottom)
