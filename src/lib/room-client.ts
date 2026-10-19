@@ -88,7 +88,7 @@ let snap: RoomSnapshot = {
   members: [],
   reactions: ["👋", "❤️", "😂", "👏", "🎉", "🍻"],
   view: "text",
-  wantListening: true,
+  wantListening: readListening(),
   busy: false,
   notice: null,
 };
@@ -366,10 +366,11 @@ async function toText() {
   set({ busy: false, view: "text" });
 }
 
-/** 🎧 聞いている ⇄ 👀 見るだけ. */
+/** 🎧 聞いている ⇄ 👀 見るだけ (remembered per browser, like the apps). */
 export async function setListening(listening: boolean): Promise<void> {
   if (snap.busy) return;
   set({ wantListening: listening });
+  saveListening(listening);
   if (!roomActive()) return;
   set({ busy: true, notice: null });
   if (!listening) {
@@ -392,6 +393,22 @@ export async function setListening(listening: boolean): Promise<void> {
 async function joinVoiceForRoom() {
   await joinVoice();
   if (expectVoice && roomActive() && getVoiceSnapshot().phase === "idle") voiceDropped();
+}
+
+const LS_LISTENING = "bguru-room-listening";
+function readListening(): boolean {
+  try {
+    return typeof localStorage === "undefined" || localStorage.getItem(LS_LISTENING) !== "0";
+  } catch {
+    return true;
+  }
+}
+function saveListening(on: boolean) {
+  try {
+    localStorage.setItem(LS_LISTENING, on ? "1" : "0");
+  } catch {
+    /* private mode: just not remembered */
+  }
 }
 
 function voiceDropped() {
