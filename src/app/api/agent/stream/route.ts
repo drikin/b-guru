@@ -16,6 +16,7 @@ import { liveBus, type LiveEvent } from "@/lib/live";
 import { personalBus, personalKey, type PersonalEvent } from "@/lib/personal-live";
 import { ensureChatSweeper, getLatestChatId, getUnreadCount } from "@/lib/chat";
 import { ensurePresenceSweeper } from "@/lib/presence";
+import { roomConnect, roomDisconnect } from "@/lib/room";
 import { AgentAuthError, verifyAgentToken, withAgent, type AgentContext } from "@/lib/agent-auth";
 import {
   AGENT_API_VERSION,
@@ -108,6 +109,7 @@ export async function GET(req: NextRequest) {
     closed = true;
     liveBus.off("change", onLive);
     personalBus.off(key, onPersonal);
+    roomDisconnect(agent.email);
     for (const t of timers) clearInterval(t);
     release();
     try {
@@ -122,6 +124,7 @@ export async function GET(req: NextRequest) {
       controllerRef = controller;
       liveBus.on("change", onLive);
       personalBus.on(key, onPersonal);
+      void roomConnect(agent.email).catch((e) => console.error("[room] connect:", (e as Error)?.message));
 
       void Promise.all([getUnreadCount(agent.email), getLatestChatId()]).then(
         ([unread, latest]) =>

@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { toAgentVoiceDto } from "@/lib/agent-chat";
+import { roomConnect, roomDisconnect } from "@/lib/room";
 import { liveBus, LiveEvent } from "@/lib/live";
 import { getSessionEmail } from "@/lib/session";
 import {
@@ -37,7 +38,10 @@ export async function GET(req: NextRequest) {
   const disconnect = () => {
     if (disconnected) return;
     disconnected = true;
-    if (email) markOffline(email);
+    if (email) {
+      markOffline(email);
+      roomDisconnect(email);
+    }
     liveBus.off("change", send);
     if (heartbeat) clearInterval(heartbeat);
   };
@@ -66,6 +70,7 @@ export async function GET(req: NextRequest) {
 
       if (email) {
         markOnline(email);
+        void roomConnect(email).catch((e) => console.error("[room] connect:", (e as Error)?.message));
         // Send the current online list to this freshly-connected client so the
         // panel renders immediately without waiting for the next change.
         // Opaque user ids only — this used to ship every online member's email

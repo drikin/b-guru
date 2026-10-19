@@ -3,6 +3,7 @@ import { EventEmitter } from "events";
 import type { ChatMessage } from "./chat";
 import type { UrlPreview } from "./urlpreview";
 import type { VoiceState } from "./voice";
+import type { RoomMember } from "./room";
 
 // Chat delete events only carry the message id; create events carry the full
 // message. A chat event's `message` always has at least `id`.
@@ -43,7 +44,10 @@ export type LiveEvent =
    *  emails) so each receiver can mark its own chips; `reactors` are display names. */
   | { type: "chat_reaction"; messageId: number; reactions: ChatReactionLive[] }
   /** Who is in the voice room (user_id / display name / avatar only — no email). */
-  | { type: "voice"; state: VoiceState };
+  | { type: "voice"; state: VoiceState }
+  // The club room (lib/room.ts): someone came in / changed / left, or a reaction.
+  | { type: "room"; action: "join" | "update" | "leave"; member: RoomMember }
+  | { type: "room"; action: "react"; userId: string; emoji: string; to: string | null };
 
 export type ChatReactionLive = { emoji: string; count: number; reactors: string[]; userIds: string[] };
 

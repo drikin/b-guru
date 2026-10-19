@@ -583,6 +583,13 @@ export async function initSchema() {
       reason TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    -- ルーム（部室）で最後にいた場所（次に入ったときにそこへ戻る）。
+    CREATE TABLE IF NOT EXISTS room_positions (
+      email TEXT PRIMARY KEY,
+      x INT NOT NULL,
+      y INT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     -- 管理者が入室禁止にした会員（解除は行を消す）。
     CREATE TABLE IF NOT EXISTS voice_bans (
       email TEXT PRIMARY KEY,

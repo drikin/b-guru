@@ -16,6 +16,7 @@ import type { Notification } from "./notifications";
 import type { ReactionSummary } from "./reactions";
 import type { AgentScope } from "./agent-auth";
 import type { VoiceState } from "./voice";
+import type { RoomMember } from "./room";
 import { isMentionedIn, mentionNamesFor } from "./chat-mention";
 import { apnsEnabled } from "./apns";
 import { fcmEnabled } from "./fcm";
@@ -129,10 +130,19 @@ export function liveToStreamEvent(ev: LiveEvent, viewer: ChatViewer): StreamEven
       },
     };
   }
+  if (ev.type === "room") {
+    if (ev.action === "react") return { event: "room", data: { action: "react", user_id: ev.userId, emoji: ev.emoji, to: ev.to } };
+    return { event: "room", data: { action: ev.action, member: toAgentRoomMemberDto(ev.member) } };
+  }
   if (ev.type === "voice") {
     return { event: "voice", data: toAgentVoiceDto(ev.state) };
   }
   return null;
+}
+
+/** A member of the club room for the apps (snake_case like the rest of /api/agent). */
+export function toAgentRoomMemberDto(m: RoomMember) {
+  return { user_id: m.userId, name: m.name, avatar: m.avatar, x: m.x, y: m.y, mode: m.mode, listening: m.listening, mic: m.mic, away: m.away };
 }
 
 /** Voice room state for the native apps (snake_case like the rest of /api/agent). */
@@ -147,7 +157,7 @@ export function toAgentVoiceDto(s: VoiceState) {
 
 /** The capabilities document for GET /api/agent/capabilities. `scopes` are the
  *  calling token's, so a client knows up front which actions will be refused. */
-export function agentCapabilities(scopes: AgentScope[], opts: { voice?: boolean; voiceAdmin?: boolean } = {}) {
+export function agentCapabilities(scopes: AgentScope[], opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean } = {}) {
   const ttlHours = parseInt(CHAT_TTL, 10) || 24;
   const can = (s: AgentScope) => scopes.includes(s);
   return {
@@ -195,6 +205,8 @@ export function agentCapabilities(scopes: AgentScope[], opts: { voice?: boolean;
       summary: { path: "/api/agent/summary" },
       // Voice room (LiveKit). `enabled` = configured and this member is in the rollout;
       // `join` = this token has the "voice" scope (apps issued before it must sign in again).
+      // The club room (8-bit room view + proximity voice), behind a rollout flag.
+      room: { enabled: !!opts.room, path: "/api/agent/room" },
       voice: {
         enabled: !!opts.voice,
         join: !!opts.voice && can("voice"),

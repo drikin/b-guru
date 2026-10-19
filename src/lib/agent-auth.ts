@@ -423,7 +423,10 @@ export async function withAgent(
   req: Request,
   endpoint: string,
   scope: AgentScope | AgentScope[] | null,
-  handler: (ctx: AgentContext) => Promise<{ status: number; body: unknown; headers?: Record<string, string> }>
+  handler: (ctx: AgentContext) => Promise<{ status: number; body: unknown; headers?: Record<string, string> }>,
+  /** High-frequency endpoints with their own limits (walking in the club room: a
+   *  request per step) skip the hourly scope bucket and the per-request audit row. */
+  opts: { ownRateLimit?: boolean } = {}
 ): Promise<{ status: number; body: unknown; headers?: Record<string, string> }> {
   let ctx: AgentContext | null = null;
   let ip: string | null = null;
@@ -434,14 +437,14 @@ export async function withAgent(
     const c = ctx;
     const need = Array.isArray(scope) ? scope.find((s) => c.scopes.includes(s)) ?? scope[0] : scope;
     if (need) requireScope(ctx, need);
-    if (need) {
+    if (need && !opts.ownRateLimit) {
       const rate = await checkRateLimit(ctx.tokenId, need);
       if (!rate.allowed) {
         throw err(429, "rate_limited", "レート制限に達しました", `${rate.retryAfter} 秒後に再試行してください`);
       }
     }
     const out = await handler(ctx);
-    await recordAudit(ctx.tokenId, endpoint, out.status, ip);
+    if (!opts.ownRateLimit) await recordAudit(ctx.tokenId, endpoint, out.status, ip);
     return out;
   } catch (e) {
     const status = e instanceof AgentAuthError ? e.status : 500;
