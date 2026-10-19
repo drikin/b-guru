@@ -50,6 +50,16 @@ struct ChatView: View {
         }
         .background(.regularMaterial)
         .imageViewer($viewing)
+        #if DEBUG
+        // -demoViewer: open the picture viewer at once (UI checks).
+        .onAppear {
+            if CommandLine.arguments.contains("-demoViewer") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    viewing = ImageViewerItem(images: ["https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png"], index: 0)
+                }
+            }
+        }
+        #endif
         .fileImporter(isPresented: $importing, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
             if case let .success(urls) = result { photos.add(fileURLs: urls) }
         }

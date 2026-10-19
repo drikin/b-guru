@@ -373,7 +373,14 @@ struct ImageViewer: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
+            #if os(iOS)
             Color.black.ignoresSafeArea()
+            #else
+            // A click outside the picture closes it, as does Esc (Ryu 2026-10-18).
+            Color.black.ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { dismiss() }
+            #endif
             #if os(iOS)
             TabView(selection: $index) {
                 ForEach(Array(item.images.enumerated()), id: \.offset) { i, path in
@@ -383,7 +390,9 @@ struct ImageViewer: View {
             .tabViewStyle(.page(indexDisplayMode: item.images.count > 1 ? .automatic : .never))
             #else
             if item.images.indices.contains(index) {
+                // Centred; the empty space around it lets clicks through to the background.
                 ZoomableImage(path: item.images[index]).id(index)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if item.images.count > 1 {
                 HStack {
@@ -403,12 +412,31 @@ struct ImageViewer: View {
                 .frame(maxHeight: .infinity, alignment: .bottom)
             }
             #endif
+            #if os(macOS)
+            // Easy to find: a labelled button (the bare ✕ was easy to miss, Ryu 2026-10-18).
+            Button { dismiss() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "xmark").font(.system(size: 12, weight: .bold))
+                    Text("閉じる").font(.system(size: 13, weight: .semibold))
+                    Text("esc").font(.system(size: 10, weight: .medium)).foregroundStyle(.black.opacity(0.45))
+                }
+                .foregroundStyle(.black)
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(Capsule().fill(.white.opacity(0.92)))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+            .padding(12)
+            .accessibilityLabel("閉じる")
+            #else
             Button { dismiss() } label: {
                 Image(systemName: "xmark.circle.fill").font(.system(size: 30)).symbolRenderingMode(.palette)
                     .foregroundStyle(.white, .white.opacity(0.25))
             }
             .padding()
             .accessibilityLabel("閉じる")
+            #endif
         }
         .onAppear { index = item.index }
     }
