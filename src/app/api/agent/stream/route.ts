@@ -16,7 +16,7 @@ import { liveBus, type LiveEvent } from "@/lib/live";
 import { personalBus, personalKey, type PersonalEvent } from "@/lib/personal-live";
 import { ensureChatSweeper, getLatestChatId, getUnreadCount } from "@/lib/chat";
 import { ensurePresenceSweeper } from "@/lib/presence";
-import { roomConnect, roomDisconnect } from "@/lib/room";
+import { roomConnect, roomDisconnect, roomEnabledFor } from "@/lib/room";
 import { AgentAuthError, verifyAgentToken, withAgent, type AgentContext } from "@/lib/agent-auth";
 import {
   AGENT_API_VERSION,
@@ -94,7 +94,9 @@ export async function GET(req: NextRequest) {
   };
   const send = (ev: StreamEvent) => write(`event: ${ev.event}\ndata: ${JSON.stringify(ev.data)}\n\n`);
 
+  const roomOn = roomEnabledFor(agent.email);
   const onLive = (ev: LiveEvent) => {
+    if (ev.type === "room" && !roomOn) return; // the club room: only for members who have it
     const out = liveToStreamEvent(ev, viewer);
     if (out) send(out);
   };

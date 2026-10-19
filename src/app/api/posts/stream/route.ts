@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { toAgentVoiceDto } from "@/lib/agent-chat";
-import { roomConnect, roomDisconnect } from "@/lib/room";
+import { roomConnect, roomDisconnect, roomEnabledFor } from "@/lib/room";
 import { liveBus, LiveEvent } from "@/lib/live";
 import { getSessionEmail } from "@/lib/session";
 import {
@@ -27,6 +27,7 @@ export async function GET(req: NextRequest) {
   ensureChatSweeper();
   ensureTrendSweeper();
   const email = await getSessionEmail();
+  const roomOn = roomEnabledFor(email);
 
   let send: (event: LiveEvent | { type: "ping" }) => void = () => {};
   let heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -51,6 +52,8 @@ export async function GET(req: NextRequest) {
       send = (event) => {
         // Who is in the voice room goes to signed-in members only (this stream is
         // also open to signed-out visitors). Same DTO as the apps: user_id / name / avatar.
+        // The club room likewise: signed-in members who have it (rollout flag).
+        if (event.type === "room" && !roomOn) return;
         if (event.type === "voice") {
           if (!email) return;
           try {
