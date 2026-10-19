@@ -29,8 +29,10 @@ struct ChatScreen: View {
             VStack(spacing: 0) {
                 if store.room.enabled {
                     // The club room: テキスト｜ルーム (the ルーム tab shows who is in the voice) replaces the voice bar.
-                    HStack { RoomModePicker(room: store.room); Spacer() }
-                        .padding(.horizontal, 12).padding(.top, 6)
+                    // Centred under the timeline｜chat switch.
+                    RoomModePicker(room: store.room)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
                     if store.room.mode == .room {
                         RoomView(room: store.room)
                             .padding(.horizontal, 8)

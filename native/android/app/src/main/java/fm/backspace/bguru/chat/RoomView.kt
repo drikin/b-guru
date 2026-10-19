@@ -38,6 +38,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
@@ -129,13 +130,13 @@ fun RoomModeSwitch(room: RoomStore, voice: VoiceStore) {
     val inVoice = room.members.count { it.inRoom && it.listening }
     val talking = voice.phase == VoiceStore.Phase.CONNECTED && voice.members.any { it.speaking }
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        SingleChoiceSegmentedButtonRow(Modifier.width(240.dp)) {
+        SingleChoiceSegmentedButtonRow(Modifier.width(196.dp).height(32.dp)) {
             SegmentedButton(selected = !room.roomView, onClick = { room.toText() }, shape = SegmentedButtonDefaults.itemShape(0, 2), icon = {}) {
-                Text("テキスト", style = MaterialTheme.typography.labelMedium)
+                Text("テキスト", style = MaterialTheme.typography.labelSmall)
             }
             SegmentedButton(selected = room.roomView, onClick = { actions.enter() }, shape = SegmentedButtonDefaults.itemShape(1, 2), icon = {}) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(if (inVoice > 0) "ルーム 🎧$inVoice" else "ルーム", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                    Text(if (inVoice > 0) "ルーム 🎧$inVoice" else "ルーム", style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     if (talking) Box(Modifier.size(7.dp).background(AccentGreen, CircleShape))
                 }
             }

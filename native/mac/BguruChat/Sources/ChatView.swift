@@ -33,9 +33,7 @@ struct ChatView: View {
             header
             Divider()
             if store.room.enabled {
-                // The club room: テキスト｜ルーム (the ルーム tab shows who is in the voice) replaces the voice bar.
-                HStack { RoomModePicker(room: store.room); Spacer() }
-                    .padding(.horizontal, 12).padding(.top, 6)
+                // The club room (its テキスト｜ルーム sits in the header) replaces the voice bar.
                 if store.room.mode == .room {
                     RoomView(room: store.room)
                         .padding(.horizontal, 8)
@@ -78,6 +76,7 @@ struct ChatView: View {
         HStack(spacing: 8) {
             if let tabPicker {
                 tabPicker
+                if store.room.enabled { RoomModeIcons(room: store.room) }
             } else {
                 Image(systemName: store.unreadCount > 0 ? "dog.fill" : "dog")
                     .foregroundStyle(Color.accentGreen)
@@ -91,6 +90,7 @@ struct ChatView: View {
             if store.onlineCount > 0 {
                 Label("\(store.onlineCount)", systemImage: "circle.fill")
                     .labelStyle(OnlineLabelStyle())
+                    .fixedSize()
                     .help("いま B-guru を開いている人")
                     .accessibilityLabel("オンライン \(store.onlineCount) 人")
             }

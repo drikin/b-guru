@@ -447,6 +447,58 @@ struct RoomModePicker: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
-        .frame(maxWidth: 220)
+        .controlSize(.small)
+        .fixedSize()
+    }
+}
+
+
+/// The compact テキスト｜ルーム for a tight header (the Mac panel's top row): a speech
+/// bubble and a house, with how many are in the room's voice. Drawn by hand — the
+/// system segmented control drops symbols embedded in text.
+struct RoomModeIcons: View {
+    let room: RoomStore
+
+    var body: some View {
+        let n = room.inVoice.count
+        let talking = room.voice.members.contains { $0.speaking }
+        let inRoom = room.mode == .room
+        HStack(spacing: 2) {
+            segment(selected: !inRoom, help: "テキスト") {
+                Image(systemName: "text.bubble")
+            } action: {
+                Task { await room.toText() }
+            }
+            segment(selected: inRoom, help: n > 0 ? "ルーム（部室のボイスに \(n) 人）" : "ルーム（部室）") {
+                HStack(spacing: 3) {
+                    Image(systemName: "house")
+                    if n > 0 { Text("\(n)").monospacedDigit() }
+                    if talking { Circle().fill(Color.accentGreen).frame(width: 5, height: 5) }
+                }
+            } action: {
+                Task { await room.enter() }
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.08)))
+        .fixedSize()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(n > 0 ? "表示：テキストかルーム。部室のボイスに \(n) 人" : "表示：テキストかルーム")
+    }
+
+    private func segment<L: View>(selected: Bool, help: String, @ViewBuilder label: () -> L, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            label()
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(selected ? Color.white : Color.primary)
+                .padding(.horizontal, 9)
+                .frame(height: 20)
+                .background(RoundedRectangle(cornerRadius: 5).fill(selected ? Color.accentColor : Color.clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
