@@ -268,7 +268,7 @@ export async function handleWebhookEvent(ev: LkWebhookEvent): Promise<void> {
       if (sid) await closeOpenSessions(sid);
       // The first person into an empty room opens a session. The unique index on open
       // sessions makes a simultaneous second insert a no-op.
-      const opened = await pool.query(
+      await pool.query(
         `INSERT INTO voice_sessions (livekit_sid, opened_by) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
         [sid, identity]
       );
@@ -283,7 +283,7 @@ export async function handleWebhookEvent(ev: LkWebhookEvent): Promise<void> {
           [identity]
         );
         // A new participation (not a repeat of one already open): tell the chat.
-        if ((joined.rowCount ?? 0) > 0) voiceAnnouncer.joined(identity, (opened.rowCount ?? 0) > 0);
+        if ((joined.rowCount ?? 0) > 0) voiceAnnouncer.joined(identity);
       }
       break;
     }
