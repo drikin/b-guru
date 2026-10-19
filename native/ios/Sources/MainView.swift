@@ -13,20 +13,24 @@ struct MainView: View {
     @State private var leftTab: MainTab = .timeline
 
     var body: some View {
-        layout
-            // Playing on: the record under every screen (not on the jukebox itself).
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if (hSize == .regular ? leftTab : tab) != .jukebox {
-                    JukeboxMiniPlayer(jukebox: store.jukebox) {
-                        if hSize == .regular { leftTab = .jukebox } else { tab = .jukebox }
-                    }
+        // Playing on: the record under every screen (not on the jukebox itself). Stacked
+        // below, not an inset: the pages ignore the bottom safe area and would slide the
+        // chat's composer under it.
+        VStack(spacing: 0) {
+            layout
+            if (hSize == .regular ? leftTab : tab) != .jukebox {
+                JukeboxMiniPlayer(jukebox: store.jukebox) {
+                    if hSize == .regular { leftTab = .jukebox } else { tab = .jukebox }
                 }
             }
+        }
             .environment(\.jukebox, jukeboxOn ? store.jukebox : nil)
             .task(id: jukeboxOn) { if jukeboxOn { await store.jukebox.load(path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox") } }
             .onChange(of: jukeboxOn) { _, on in
                 if !on { if tab == .jukebox { tab = .chat }; leftTab = .timeline }
             }
+            // iPad: a notification opening a thread brings the timeline back to the left column.
+            .onChange(of: timeline.openThread) { _, id in if id != nil { leftTab = .timeline } }
     }
 
     private var jukeboxOn: Bool { store.capabilities?.jukeboxEnabled ?? false }

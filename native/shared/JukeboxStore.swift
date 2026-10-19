@@ -127,18 +127,36 @@ final class JukeboxStore {
         return min(1, p / Double(d))
     }
 
-    private func saveProgress(force: Bool = false) {
+    /// `markFinished`: only while listening (a seek near the end is not "聴いた").
+    private func saveProgress(force: Bool = false, markFinished: Bool = false) {
         guard let c = current else { return }
         guard force || abs(position - lastSaved) >= 10 else { return }
         lastSaved = position
         progress[c.id] = position
-        if let d = c.durationSec, Double(d) - position < 30 { finished.insert(c.id) }
+        if markFinished, let d = c.durationSec, Double(d) - position < 30 { finished.insert(c.id) }
         UserDefaults.standard.set(progress, forKey: Self.progressKey)
         UserDefaults.standard.set(Array(finished), forKey: Self.finishedKey)
         UserDefaults.standard.set(c.id, forKey: Self.lastKey)
     }
 
     // MARK: Playing
+
+    /// Says whether the member is in (or joining) the voice room: no records then — the
+    /// call owns the audio (on iOS the jukebox's audio session would break the call's).
+    var voiceBusy: () -> Bool = { false }
+    /// Shown for a moment when play was refused (in a call).
+    private(set) var notice: String?
+
+    private func refusedForVoice() -> Bool {
+        guard voiceBusy() else { return false }
+        pausedForVoice = true
+        notice = "ボイスに入っているあいだは聴けません"
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            self?.notice = nil
+        }
+        return true
+    }
 
     /// Put a record on and play it (from where it was left off).
     func play(_ e: Episode) {
@@ -151,7 +169,9 @@ final class JukeboxStore {
         current = e
         pausedForVoice = false
         retriedExpired = false
+        // Listened to before: hear it again from the top (it is marked again at the end).
         let resumeAt = finished.contains(e.id) ? 0 : (progress[e.id] ?? 0)
+        finished.remove(e.id)
         position = resumeAt
         lastSaved = resumeAt
         startPlayer(at: resumeAt)
@@ -166,8 +186,15 @@ final class JukeboxStore {
     func toggle() { isPlaying ? pause() : resume() }
 
     func resume() {
-        guard current != nil else { return }
-        if player == nil { startPlayer(at: position) }
+        guard let c = current else { return }
+        if refusedForVoice() { updateNowPlaying(); return }
+        // At the very end: from the top again.
+        if let d = c.durationSec, position >= Double(d) - 1 { position = 0; player?.seek(to: .zero) }
+        // A failed item (network, an expired address): build it again at the same place.
+        if player == nil || player?.currentItem?.status == .failed {
+            stopPlayer()
+            startPlayer(at: position)
+        }
         activateSession()
         pausedForVoice = false
         player?.playImmediately(atRate: rate)
@@ -189,12 +216,25 @@ final class JukeboxStore {
         pausedForVoice = true
     }
 
+    /// Signed out: stop and forget what is on the lock screen.
+    func shutdown() {
+        if isPlaying { pause() }
+        sleepTask?.cancel()
+        stopPlayer()
+        current = nil
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        #if os(macOS)
+        MPNowPlayingInfoCenter.default().playbackState = .stopped
+        #endif
+    }
+
     func skip(_ seconds: Double) { seek(to: position + seconds) }
 
     func seek(to seconds: Double) {
         let maxT = Double(current?.durationSec ?? Int.max)
         let t = max(0, min(seconds, maxT))
         position = t
+        seekingUntil = Date().addingTimeInterval(1.5)
         player?.seek(to: CMTime(seconds: t, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         saveProgress(force: true)
         updateNowPlaying()
@@ -217,6 +257,7 @@ final class JukeboxStore {
 
     func setSleep(minutes: Int?) {
         sleepTask?.cancel()
+        player?.volume = 1
         sleepAtEnd = false
         sleepAt = minutes.map { Date().addingTimeInterval(Double($0) * 60) }
         guard let at = sleepAt else { return }
@@ -229,6 +270,7 @@ final class JukeboxStore {
 
     func setSleepAtEnd() {
         sleepTask?.cancel()
+        player?.volume = 1
         sleepAt = nil
         sleepAtEnd = true
     }
@@ -236,6 +278,7 @@ final class JukeboxStore {
     private func fadeOutAndPause() async {
         guard let player else { return }
         for step in stride(from: 1.0, through: 0, by: -0.1) {
+            if Task.isCancelled { player.volume = 1; return }
             player.volume = Float(step)
             try? await Task.sleep(for: .milliseconds(500))
         }
@@ -245,6 +288,12 @@ final class JukeboxStore {
     }
 
     // MARK: AVPlayer
+
+    /// While a seek (or the first jump to the saved place) settles, the clock may still
+    /// say an old time: do not save that.
+    private var seekingUntil = Date.distantPast
+    private var failObserver: NSObjectProtocol?
+    private var wasPlayingBeforeInterruption = false
 
     private func startPlayer(at seconds: Double) {
         guard let c = current, let url = URL(string: c.audioUrl) else { return }
@@ -257,6 +306,7 @@ final class JukeboxStore {
         p.defaultRate = rate
         player = p
         if seconds > 0 {
+            seekingUntil = Date().addingTimeInterval(3)
             p.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         }
         timeObserver = p.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] t in
@@ -265,22 +315,55 @@ final class JukeboxStore {
         endObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.didEnd() }
         }
-        statusObservation = item.observe(\.status) { [weak self] item, _ in
-            let failed = item.status == .failed
-            Task { @MainActor in if failed { self?.didFail() } }
+        // A dropped connection often arrives as this, not as a failed status.
+        failObserver = NotificationCenter.default.addObserver(forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: item, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.didFail() }
         }
-        bufferObservation = p.observe(\.timeControlStatus) { [weak self] p, _ in
-            let waiting = p.timeControlStatus == .waitingToPlayAtSpecifiedRate
-            Task { @MainActor in self?.isBuffering = waiting }
-        }
+        let (status, control) = Self.observe(item: item, player: p, store: self)
+        statusObservation = status
+        bufferObservation = control
         setUpRemoteCommands()
+    }
+
+    /// KVO calls back on any thread: the closures live outside the main actor and hop to it.
+    private nonisolated static func observe(item: AVPlayerItem, player: AVPlayer, store: JukeboxStore) -> (NSKeyValueObservation, NSKeyValueObservation) {
+        nonisolated(unsafe) weak var weakStore = store
+        let status = item.observe(\.status) { _, _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { weakStore?.itemStatusChanged() } }
+        }
+        let control = player.observe(\.timeControlStatus) { _, _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { weakStore?.controlStatusChanged() } }
+        }
+        return (status, control)
+    }
+
+    private func itemStatusChanged() {
+        switch player?.currentItem?.status {
+        case .readyToPlay: retriedExpired = false
+        case .failed: didFail()
+        default: break
+        }
+    }
+
+    /// The player stopped by itself (headphones out, the session ended, the network gave
+    /// up): the record stops too, and the place is kept.
+    private func controlStatusChanged() {
+        guard let p = player else { return }
+        isBuffering = p.timeControlStatus == .waitingToPlayAtSpecifiedRate
+        if p.timeControlStatus == .paused, p.rate == 0, isPlaying {
+            isPlaying = false
+            saveProgress(force: true)
+            updateNowPlaying()
+        }
     }
 
     private func stopPlayer() {
         if let timeObserver { player?.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        if let failObserver { NotificationCenter.default.removeObserver(failObserver) }
         timeObserver = nil
         endObserver = nil
+        failObserver = nil
         statusObservation = nil
         bufferObservation = nil
         player?.pause()
@@ -290,24 +373,31 @@ final class JukeboxStore {
     }
 
     private func tick(_ seconds: Double) {
-        guard seconds.isFinite, isPlaying else { return }
+        guard seconds.isFinite, isPlaying, Date() > seekingUntil else { return }
         position = seconds
-        saveProgress()
+        saveProgress(markFinished: true)
         updateNowPlaying(elapsedOnly: true)
     }
 
     private func didEnd() {
         position = Double(current?.durationSec ?? Int(position))
-        saveProgress(force: true)
+        saveProgress(force: true, markFinished: true)
         isPlaying = false
         if sleepAtEnd { sleepAtEnd = false }
         updateNowPlaying()
     }
 
-    /// Paused for long, the signed address it was redirected to expires: start again
-    /// from the feed's URL, at the same place (once).
+    /// The signed address it was redirected to expires after a long pause (or the network
+    /// dropped): start again from the feed's URL, at the same place. Once per failure; a
+    /// successful start (readyToPlay) allows the next one.
     private func didFail() {
-        guard !retriedExpired, current != nil else { isPlaying = false; return }
+        guard current != nil else { return }
+        guard !retriedExpired else {
+            isPlaying = false
+            notice = "再生できませんでした。もう一度押してください"
+            updateNowPlaying()
+            return
+        }
         retriedExpired = true
         let wasPlaying = isPlaying
         let at = position
@@ -319,6 +409,8 @@ final class JukeboxStore {
     private func activateSession() {
         #if os(iOS)
         let s = AVAudioSession.sharedInstance()
+        // Never take the session from a call (LiveKit uses play-and-record).
+        guard s.category != .playAndRecord else { return }
         try? s.setCategory(.playback, mode: .spokenAudio)
         try? s.setActive(true)
         #endif
@@ -327,8 +419,10 @@ final class JukeboxStore {
     #if os(iOS)
     private func interrupted(began: Bool, shouldResume: Bool) {
         if began {
+            wasPlayingBeforeInterruption = isPlaying
             if isPlaying { player?.pause(); isPlaying = false; saveProgress(force: true); updateNowPlaying() }
-        } else if shouldResume, !pausedForVoice, current != nil {
+        } else if shouldResume, wasPlayingBeforeInterruption, !pausedForVoice, current != nil {
+            wasPlayingBeforeInterruption = false
             resume()
         }
     }
@@ -339,26 +433,35 @@ final class JukeboxStore {
     private func setUpRemoteCommands() {
         guard !remoteReady else { return }
         remoteReady = true
-        let c = MPRemoteCommandCenter.shared()
-        c.playCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.resume() }; return .success }
-        c.pauseCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.pause() }; return .success }
-        c.togglePlayPauseCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.toggle() }; return .success }
-        c.skipForwardCommand.preferredIntervals = [30]
-        c.skipForwardCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.skip(30) }; return .success }
-        c.skipBackwardCommand.preferredIntervals = [15]
-        c.skipBackwardCommand.addTarget { [weak self] _ in MainActor.assumeIsolated { self?.skip(-15) }; return .success }
-        c.changePlaybackPositionCommand.addTarget { [weak self] e in
-            guard let e = e as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            let t = e.positionTime
-            MainActor.assumeIsolated { self?.seek(to: t) }
+        Self.registerRemoteCommands(store: self, rates: Self.rates)
+    }
+
+    /// MediaPlayer may call these on its own queue: the closures are not tied to the main
+    /// actor (one that was crashed the app) and hop to it.
+    private nonisolated static func registerRemoteCommands(store: JukeboxStore, rates: [Float]) {
+        nonisolated(unsafe) weak var weakStore = store
+        func onMain(_ f: @escaping @MainActor (JukeboxStore) -> Void) -> MPRemoteCommandHandlerStatus {
+            DispatchQueue.main.async { MainActor.assumeIsolated { if let s = weakStore { f(s) } } }
             return .success
         }
-        c.changePlaybackRateCommand.supportedPlaybackRates = Self.rates.map { NSNumber(value: $0) }
-        c.changePlaybackRateCommand.addTarget { [weak self] e in
+        let c = MPRemoteCommandCenter.shared()
+        c.playCommand.addTarget { _ in onMain { $0.resume() } }
+        c.pauseCommand.addTarget { _ in onMain { $0.pause() } }
+        c.togglePlayPauseCommand.addTarget { _ in onMain { $0.toggle() } }
+        c.skipForwardCommand.preferredIntervals = [30]
+        c.skipForwardCommand.addTarget { _ in onMain { $0.skip(30) } }
+        c.skipBackwardCommand.preferredIntervals = [15]
+        c.skipBackwardCommand.addTarget { _ in onMain { $0.skip(-15) } }
+        c.changePlaybackPositionCommand.addTarget { e in
+            guard let e = e as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            let t = e.positionTime
+            return onMain { $0.seek(to: t) }
+        }
+        c.changePlaybackRateCommand.supportedPlaybackRates = rates.map { NSNumber(value: $0) }
+        c.changePlaybackRateCommand.addTarget { e in
             guard let e = e as? MPChangePlaybackRateCommandEvent else { return .commandFailed }
             let r = e.playbackRate
-            MainActor.assumeIsolated { self?.setRate(r) }
-            return .success
+            return onMain { $0.setRate(r) }
         }
         c.nextTrackCommand.isEnabled = false
         c.previousTrackCommand.isEnabled = false

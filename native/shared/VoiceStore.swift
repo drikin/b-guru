@@ -121,9 +121,9 @@ final class VoiceStore {
     var onWillJoin: (() -> Void)?
 
     func join() async {
-        onWillJoin?()
         if let d = devDirect { await joinDirect(url: d.url, token: d.token); return }
         guard phase == .idle, canJoin else { return }
+        onWillJoin?()
         notice = nil
         phase = .connecting
         attempt += 1
@@ -147,8 +147,8 @@ final class VoiceStore {
 
     /// Dev only: connect straight to a LiveKit server with a token (no B-guru API).
     func joinDirect(url: String, token: String) async {
-        onWillJoin?()
         guard phase == .idle else { return }
+        onWillJoin?()
         phase = .connecting
         attempt += 1
         do { try await connectRetrying(url: url, token: token, attempt: attempt) } catch {

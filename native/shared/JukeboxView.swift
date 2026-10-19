@@ -132,10 +132,12 @@ enum RecordColors {
 }
 
 /// The record itself: grooves, a sheen and the label. `angle` turns it.
-struct RecordDisc: View {
+/// Equatable: the turntable turns it from outside, so it is not redrawn every frame.
+struct RecordDisc: View, Equatable {
     let episode: Episode?
     var angle: Double = 0
     var showText = true
+    var showSheen = true
 
     var body: some View {
         GeometryReader { g in
@@ -176,16 +178,22 @@ struct RecordDisc: View {
             }
             .rotationEffect(.degrees(angle))
             .overlay {
-                // The light does not turn with the record.
-                Circle().fill(AngularGradient(
-                    colors: [.white.opacity(0), .white.opacity(0.09), .white.opacity(0), .white.opacity(0), .white.opacity(0.07), .white.opacity(0)],
-                    center: .center, startAngle: .degrees(20), endAngle: .degrees(380)))
-                    .allowsHitTesting(false)
+                if showSheen { RecordSheen() }
             }
             .frame(width: side, height: side)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .aspectRatio(1, contentMode: .fit)
+    }
+}
+
+/// The light on the record: it does not turn with it.
+struct RecordSheen: View {
+    var body: some View {
+                Circle().fill(AngularGradient(
+                    colors: [.white.opacity(0), .white.opacity(0.09), .white.opacity(0), .white.opacity(0), .white.opacity(0.07), .white.opacity(0)],
+                    center: .center, startAngle: .degrees(20), endAngle: .degrees(380)))
+                    .allowsHitTesting(false)
     }
 }
 
@@ -220,7 +228,10 @@ struct Turntable: View {
                         .shadow(color: .black.opacity(0.45), radius: 6, y: 4)
                     TimelineView(.animation(paused: !spinning)) { tl in
                         let turned = spinning ? tl.date.timeIntervalSince(spinStart) / Self.secondsPerTurn * 360 : 0
-                        RecordDisc(episode: jukebox.current, angle: restAngle + turned)
+                        RecordDisc(episode: jukebox.current, showSheen: false)
+                            .equatable()
+                            .rotationEffect(.degrees(restAngle + turned))
+                            .overlay { RecordSheen() }
                             .padding(side * 0.085)
                     }
                     Tonearm(down: jukebox.isPlaying)
@@ -330,7 +341,6 @@ struct NowPlayingCard: View {
                 .frame(width: 54, height: 54)
             }
             .buttonStyle(.plain)
-            .keyboardShortcut(.space, modifiers: [])
             .accessibilityLabel(jukebox.isPlaying ? "一時停止" : "再生")
             RoundButton(text: "30⟳", label: "30 秒進む") { jukebox.skip(30) }
             RoundButton(text: JukeboxFormat.rate(jukebox.rate), label: "再生速度") { jukebox.cycleRate() }
@@ -358,14 +368,18 @@ private struct ProgressSlider: View {
     let jukebox: JukeboxStore
     let duration: Double
     @State private var dragging: Double?
+    @State private var editing = false
 
     var body: some View {
         VStack(spacing: 4) {
             Slider(value: Binding(
                 get: { dragging ?? jukebox.position },
-                set: { dragging = $0 }
-            ), in: 0...max(duration, 1)) { editing in
-                if !editing, let d = dragging { jukebox.seek(to: d); dragging = nil }
+                // A drag shows where it will land and seeks on release; VoiceOver and the
+                // arrow keys (no drag) seek at once.
+                set: { v in if editing { dragging = v } else { jukebox.seek(to: v) } }
+            ), in: 0...max(duration, jukebox.position + 1, 1)) { isEditing in
+                editing = isEditing
+                if !isEditing, let d = dragging { jukebox.seek(to: d); dragging = nil }
             }
             .tint(.accentGreen)
             .accessibilityLabel("再生位置")
@@ -512,7 +526,7 @@ struct JukeboxMiniPlayer: View {
                         }
                         VStack(alignment: .leading, spacing: 1) {
                             Text(e.title).font(.caption).lineLimit(1)
-                            Text(jukebox.pausedForVoice ? "ボイスに入ったので一時停止中" : "\(e.dateText) ・ \(JukeboxFormat.time(jukebox.position))")
+                            Text(jukebox.notice ?? (jukebox.pausedForVoice ? "ボイスに入ったので一時停止中" : "\(e.dateText) ・ \(JukeboxFormat.time(jukebox.position))"))
                                 .font(.caption2).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
                         }
                         Spacer(minLength: 0)
@@ -520,7 +534,7 @@ struct JukeboxMiniPlayer: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                if jukebox.pausedForVoice {
+                if jukebox.pausedForVoice && !jukebox.voiceBusy() {
                     Button("続きを再生") { jukebox.resume() }
                         .font(.caption.weight(.semibold))
                         .buttonStyle(.borderless)

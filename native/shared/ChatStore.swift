@@ -107,6 +107,7 @@ final class ChatStore {
         let jukebox = JukeboxStore(api: api)
         self.jukebox = jukebox
         voice.onWillJoin = { [weak jukebox] in jukebox?.pauseForVoice() }
+        jukebox.voiceBusy = { [weak voice] in (voice?.phase ?? .idle) != .idle }
     }
 
     private static let voiceReloginKey = "voiceReloginAsked"
@@ -126,6 +127,7 @@ final class ChatStore {
     }
 
     func stop() {
+        jukebox.shutdown()
         streamTask?.cancel()
         streamTask = nil
         Task { await voice.leave() }
