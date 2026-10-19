@@ -46,6 +46,7 @@ final class Session {
             let s = ChatStore(api: APIClient(token: "demo"))
             s.debugOffline = true
             s.debugLoadDemo()
+            if ProcessInfo.processInfo.environment["BGURU_DEMO_ROOM"] == "1" { s.room.debugLoadDemo() }
             store = s
             let t = TimelineStore(api: APIClient(token: "demo"))
             t.debugLoadDemo()

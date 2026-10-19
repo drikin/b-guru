@@ -64,10 +64,13 @@ final class ChatStore {
     /// The voice room. Lives as long as the chat, so a call survives switching
     /// tabs or closing the Mac panel.
     let voice: VoiceStore
+    /// The club room (8-bit room view + proximity voice), when the server has it on.
+    let room: RoomStore
 
     init(api: APIClient) {
         self.api = api
         self.voice = VoiceStore(api: api)
+        self.room = RoomStore(api: api, voice: voice)
     }
 
     private static let voiceReloginKey = "voiceReloginAsked"
@@ -100,6 +103,7 @@ final class ChatStore {
         do {
             capabilities = try await api.capabilities()
             voice.configure(with: capabilities)
+            room.configure(enabled: capabilities?.roomEnabled ?? false)
             // Voice is on for me but this token predates the "voice" scope: send the
             // member back to sign in once (a new sign-in gets the scope). Only once per
             // install, so a server that still withholds it cannot loop us.
@@ -151,13 +155,17 @@ final class ChatStore {
         case "ready":
             connection = .live
             if voice.enabled { Task { await voice.loadState() } } // resync after a reconnect
+            if room.enabled { Task { await room.load() } }
             await reload()
         case "chat":
             struct ChatEvent: Decodable { var action: String; var message: ChatMessage?; var id: Int?; var reactions: [Reaction]? }
             guard let e = try? dec.decode(ChatEvent.self, from: ev.data) else { return }
             switch e.action {
             case "create":
-                if let m = e.message { received(m) }
+                if let m = e.message {
+                    received(m)
+                    room.chatSaid(m.authorId, m.displayBody, photos: !(m.images ?? []).isEmpty)
+                }
             case "edit":
                 if let m = e.message, let i = rows.firstIndex(where: { $0.message.id == m.id }) {
                     var updated = m
@@ -178,6 +186,8 @@ final class ChatStore {
         case "presence":
             struct P: Decodable { var userIds: [String] }
             if let p = try? dec.decode(P.self, from: ev.data) { onlineCount = p.userIds.count }
+        case "room":
+            room.apply(ev.data)
         case "voice":
             if let v = try? dec.decode(VoiceRoomInfo.self, from: ev.data) { voice.apply(v) }
         case "revoked":

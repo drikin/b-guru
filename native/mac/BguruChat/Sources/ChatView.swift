@@ -32,7 +32,20 @@ struct ChatView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            VoiceBar(voice: store.voice)
+            if store.room.enabled {
+                // The club room: テキスト｜ルーム. The room's banner replaces the voice bar.
+                HStack { RoomModePicker(room: store.room); Spacer() }
+                    .padding(.horizontal, 12).padding(.top, 6)
+                if store.room.mode == .room {
+                    RoomView(room: store.room)
+                        .padding(.horizontal, 8)
+                        .containerRelativeFrame(.vertical) { h, _ in h * 0.5 }
+                } else {
+                    RoomEnterBanner(room: store.room)
+                }
+            } else {
+                VoiceBar(voice: store.voice)
+            }
             messages
             Divider()
             composer

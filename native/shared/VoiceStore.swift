@@ -54,6 +54,11 @@ final class VoiceStore {
 
     private let api: APIClient
     private var room: Room?
+    /// The club room listens for changes in the call (people joining get their volume
+    /// and permission at once).
+    @ObservationIgnored var onParticipantsChanged: (() -> Void)?
+    /// Last set of people allowed to receive my mic (participant sids), nil = everyone.
+    @ObservationIgnored private var allowedSids: Set<String>?
     private var observer: Observer?
     private var meter: MicMeter?
 
@@ -266,6 +271,7 @@ final class VoiceStore {
 
     private func teardown() async {
         attempt += 1
+        allowedSids = nil
         let r = room
         room = nil
         observer = nil
@@ -354,7 +360,31 @@ final class VoiceStore {
         Task { await teardown() }
     }
 
+    // MARK: Club room proximity
+
+    /// Room view: each person's volume (0…1 by distance / zone) and who may receive my
+    /// microphone. The permission is what keeps the meeting table private — LiveKit
+    /// refuses my track to anyone not listed, whatever their app asks for.
+    func applyProximity(volumes: [String: Double], allowed: Set<String>) async {
+        guard let room else { return }
+        for p in room.remoteParticipants.values {
+            guard let id = p.identity?.stringValue else { continue }
+            let v = volumes[id] ?? 0
+            for pub in p.audioTracks {
+                if let t = pub.track as? RemoteAudioTrack, abs(t.volume - v) > 0.02 { t.volume = v }
+            }
+        }
+        let sids = Set(room.remoteParticipants.values.filter { allowed.contains($0.identity?.stringValue ?? "") }.compactMap { $0.sid?.stringValue })
+        guard sids != allowedSids else { return }
+        allowedSids = sids
+        try? await room.localParticipant.setTrackSubscriptionPermissions(
+            allParticipantsAllowed: false,
+            trackPermissions: sids.sorted().map { ParticipantTrackPermission(participantSid: $0, allTracksAllowed: true) }
+        )
+    }
+
     private func refreshMembers() {
+        defer { onParticipantsChanged?() }
         guard let room else { members = []; return }
         let known = Dictionary((roomInfo?.participants ?? []).map { ($0.userId, $0) }, uniquingKeysWith: { a, _ in a })
         func member(_ p: Participant, isMe: Bool) -> Member? {

@@ -88,6 +88,17 @@ final class APIClient: Sendable {
         try await send(request("GET", "/api/agent/capabilities"))
     }
 
+    // MARK: Club room
+
+    func room() async throws -> RoomResponse {
+        try await send(request("GET", "/api/agent/room"))
+    }
+
+    /// POST /api/agent/room { action, … } — enter / text / move / voice / react.
+    func roomAction(_ body: [String: Any]) async throws -> RoomActionResponse {
+        try await send(request("POST", "/api/agent/room", json: body))
+    }
+
     // MARK: Voice room
 
     func voiceState() async throws -> VoiceStateResponse {

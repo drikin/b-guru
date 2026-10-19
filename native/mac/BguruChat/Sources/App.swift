@@ -68,6 +68,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if CommandLine.arguments.contains("-demoPanel") {
             let store = ChatStore(api: APIClient(token: "demo"))
             store.debugLoadDemo()
+            // -demoRoom: the club room with sample members (offline).
+            if CommandLine.arguments.contains("-demoRoom") {
+                store.room.debugLoadDemo()
+                if CommandLine.arguments.contains("-demoRoomEnter") { Task { await store.room.enter() } }
+            }
             let timeline = TimelineStore(api: APIClient(token: "demo"))
             timeline.debugLoadDemo()
             self.store = store

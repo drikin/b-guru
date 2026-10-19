@@ -104,6 +104,10 @@ struct Capabilities: Decodable, Sendable {
         var markRead: Bool?
         var maxImages: Int?
     }
+    struct RoomFeatures: Decodable, Sendable {
+        var enabled: Bool?
+        var path: String?
+    }
     struct VoiceFeatures: Decodable, Sendable {
         var enabled: Bool?
         var join: Bool?
@@ -115,6 +119,7 @@ struct Capabilities: Decodable, Sendable {
         var chat: ChatFeatures?
         var posts: PostFeatures?
         var voice: VoiceFeatures?
+        var room: RoomFeatures?
     }
     var apiVersion: Int
     var scopes: [String]?
@@ -137,6 +142,8 @@ struct Capabilities: Decodable, Sendable {
     var maxImages: Int { features?.posts?.maxImages ?? 5 }
     /// Voice room is on for this member (server configured + in the rollout).
     var voiceEnabled: Bool { features?.voice?.enabled ?? false }
+    /// The club room (8-bit room view + proximity voice) is on for this member.
+    var roomEnabled: Bool { features?.room?.enabled ?? false }
     /// This token may join (has the "voice" scope — older tokens must sign in again).
     var canJoinVoice: Bool { features?.voice?.join ?? false }
     var isVoiceAdmin: Bool { features?.voice?.admin ?? false }
@@ -236,4 +243,56 @@ struct PostReactionToggleResponse: Decodable, Sendable {
 struct ClubInfo: Decodable, Sendable, Hashable {
     var key: String
     var name: String
+}
+
+
+// MARK: - Club room (ルーム)
+
+/// GET /api/agent/room — see docs/room-client-spec.md.
+struct RoomMapInfo: Codable, Equatable, Sendable {
+    struct Zone: Codable, Equatable, Sendable {
+        var kind: String
+        var name: String
+        var x: Int, y: Int, w: Int, h: Int
+        func contains(_ px: Int, _ py: Int) -> Bool { px >= x && px < x + w && py >= y && py < y + h }
+    }
+    struct Spot: Codable, Equatable, Sendable { var x: Int; var y: Int }
+    struct Label: Codable, Equatable, Sendable { var name: String; var x: Int; var y: Int }
+    var w: Int
+    var h: Int
+    var tiles: [String]
+    var zones: [Zone]
+    var door: Spot
+    var seats: [Spot]
+    var labels: [Label]
+    var hearRadius: Int
+}
+
+struct RoomMember: Codable, Equatable, Sendable, Identifiable {
+    var userId: String
+    var name: String
+    var avatar: String?
+    var x: Int
+    var y: Int
+    var mode: String   // "room" | "text"
+    var listening: Bool
+    var mic: Bool
+    var away: Bool
+    var id: String { userId }
+    var inRoom: Bool { mode == "room" }
+}
+
+struct RoomResponse: Decodable, Sendable {
+    var map: RoomMapInfo
+    var members: [RoomMember]
+    var me: String
+    var reactions: [String]?
+}
+
+struct RoomActionResponse: Decodable, Sendable {
+    var ok: Bool?
+    var member: RoomMember?
+    var from: RoomMapInfo.Spot?
+    var to: RoomMapInfo.Spot?
+    var error: String?
 }
