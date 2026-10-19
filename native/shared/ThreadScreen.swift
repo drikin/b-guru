@@ -52,7 +52,7 @@ struct ThreadScreen: View {
                     .frame(maxWidth: 760)
                     .frame(maxWidth: .infinity)
                 }
-                .refreshable { await load() }
+                .pullToRefresh { await load() }
                 .scrollDismissesKeyboard(.interactively)
                 .dismissesKeyboardOnTap()
                 .onChange(of: replies.last?.id) { _, last in

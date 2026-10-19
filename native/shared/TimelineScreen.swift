@@ -149,7 +149,7 @@ struct TimelineScreen: View {
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
         }
-        .refreshable { await timeline.refresh() }
+        .pullToRefresh { await timeline.refresh() }
         .scrollDismissesKeyboard(.immediately)
         .dismissesKeyboardOnTap()
     }

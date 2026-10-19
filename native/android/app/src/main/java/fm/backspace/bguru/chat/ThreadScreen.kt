@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
 /** One thread: the post and its replies, with a reply bar (text + photos). */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ThreadScreen(
     id: Long,
@@ -59,25 +61,29 @@ fun ThreadScreen(
     val pick = rememberPhotoPicker(draft)
     val canReact = capabilities?.canReactPosts ?: false
 
-    LaunchedEffect(id) {
+    var refreshing by remember(id) { mutableStateOf(false) }
+
+    suspend fun load() {
         if (timeline.demo) {
             root = timeline.posts.firstOrNull { it.id == id }
             replies = listOf(
                 Post(100, authorName = "takuto", parentId = id, text = "かわいい！", createdAt = root?.createdAt ?: "", unread = true),
                 Post(101, authorName = "ドリキン", isAuthor = true, parentId = id, text = "名前なんでしたっけ", createdAt = root?.createdAt ?: ""),
             )
-            return@LaunchedEffect
+            return
         }
         try {
             val t = timeline.api.thread(id)
             root = t.post
             replies = t.replies
+            failed = false
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (_: Exception) {
             failed = root == null
         }
     }
+    LaunchedEffect(id) { load() }
 
     // New replies (and an unread root) stay highlighted until each has been on screen for a second.
     fun read(p: Post, isRoot: Boolean) {
@@ -111,29 +117,36 @@ fun ThreadScreen(
     }
 
     Column(Modifier.fillMaxSize().imePadding()) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth().pointerInput(Unit) { detectTapGestures(onTap = { focus.clearFocus() }) },
-            horizontalAlignment = Alignment.CenterHorizontally,
+        // Pull down to reload the thread (new replies, reactions).
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = { scope.launch { refreshing = true; load(); refreshing = false } },
+            modifier = Modifier.weight(1f).fillMaxWidth(),
         ) {
-            val r = root
-            if (r == null) {
-                item { Text(if (failed) "読み込めませんでした" else "読み込み中…", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 40.dp)) }
-            } else {
-                item(key = "root") {
-                    ReadWhenSeen(listState, "root", active = r.unread == true) { read(r, isRoot = true) }
-                    Column(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
-                        PostRow(r, timeline.clubName(r.club), canReact, { react(r.id, it) }, { onOpenImage(r.images, it) }, showReplyCount = false)
-                        HorizontalDivider()
-                        if (replies.isEmpty()) Text("まだ返信はありません", color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.fillMaxWidth().padding(24.dp))
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = { focus.clearFocus() }) },
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                val r = root
+                if (r == null) {
+                    item { Text(if (failed) "読み込めませんでした" else "読み込み中…", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 40.dp)) }
+                } else {
+                    item(key = "root") {
+                        ReadWhenSeen(listState, "root", active = r.unread == true) { read(r, isRoot = true) }
+                        Column(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
+                            PostRow(r, timeline.clubName(r.club), canReact, { react(r.id, it) }, { onOpenImage(r.images, it) }, showReplyCount = false)
+                            HorizontalDivider()
+                            if (replies.isEmpty()) Text("まだ返信はありません", color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.fillMaxWidth().padding(24.dp))
+                        }
                     }
-                }
-                items(replies, key = { it.id }) { p ->
-                    ReadWhenSeen(listState, p.id, active = p.unread == true) { read(p, isRoot = false) }
-                    Column(Modifier.widthIn(max = 760.dp).fillMaxWidth().padding(start = 20.dp)) {
-                        PostRow(p, null, canReact, { react(p.id, it) }, { onOpenImage(p.images, it) }, showReplyCount = false)
-                        HorizontalDivider()
+                    items(replies, key = { it.id }) { p ->
+                        ReadWhenSeen(listState, p.id, active = p.unread == true) { read(p, isRoot = false) }
+                        Column(Modifier.widthIn(max = 760.dp).fillMaxWidth().padding(start = 20.dp)) {
+                            PostRow(p, null, canReact, { react(p.id, it) }, { onOpenImage(p.images, it) }, showReplyCount = false)
+                            HorizontalDivider()
+                        }
                     }
                 }
             }

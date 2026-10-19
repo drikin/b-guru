@@ -54,6 +54,17 @@ extension View {
         }
     }
 
+    /// Pull down at the top of the list to reload. iPhone / iPad: the system's
+    /// .refreshable. Mac: SwiftUI has no pull there, so a trackpad pull past the top
+    /// (the rubber band) does it, with a small spinner (macOS 15+).
+    @ViewBuilder func pullToRefresh(_ action: @escaping @MainActor () async -> Void) -> some View {
+        #if os(macOS)
+        self.modifier(MacPullToRefresh(action: action))
+        #else
+        self.refreshable { await action() }
+        #endif
+    }
+
     /// A small text-link button (macOS has .link; iOS uses a borderless tinted button).
     @ViewBuilder func linkButton() -> some View {
         #if os(macOS)
@@ -189,3 +200,45 @@ struct PostTextInput: View {
         #endif
     }
 }
+
+#if os(macOS)
+/// The Mac's pull-to-reload: pulling the list past its top by this much reloads once
+/// (again only after it has gone back).
+struct MacPullToRefresh: ViewModifier {
+    let action: @MainActor () async -> Void
+    @State private var pull: CGFloat = 0
+    @State private var refreshing = false
+    @State private var armed = true
+    private let threshold: CGFloat = 56
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content
+                .onScrollGeometryChange(for: CGFloat.self) { g in
+                    -(g.contentOffset.y + g.contentInsets.top)
+                } action: { _, over in
+                    pull = max(0, over)
+                    if over <= 1 { armed = true }
+                    guard over > threshold, armed, !refreshing else { return }
+                    armed = false
+                    refreshing = true
+                    Task { @MainActor in
+                        await action()
+                        refreshing = false
+                    }
+                }
+                .overlay(alignment: .top) {
+                    if refreshing || pull > 6 {
+                        ProgressView()
+                            .controlSize(.small)
+                            .padding(.top, 6)
+                            .opacity(refreshing ? 1 : min(1, pull / threshold))
+                            .allowsHitTesting(false)
+                    }
+                }
+        } else {
+            content
+        }
+    }
+}
+#endif
