@@ -8,7 +8,7 @@
  *   止めるときは JUKEBOX_DAILY_POST=0。
  * 単一プロセス（pm2 1 本）前提のタイマー。日付ごとの投稿は jukebox_daily の主キーで 1 本に保つ。 */
 import { pool } from "./db";
-import { ART19_FEED_URL, jstDay, parseArt19, pickForDay, dailyPostText, yearsAgo, type FeedEpisode } from "./jukebox-feed";
+import { ART19_FEED_URL, clip, jstDay, parseArt19, pickForDay, dailyPostText, yearsAgo, type FeedEpisode } from "./jukebox-feed";
 
 const SYSTEM_EMAIL = "system@backspace.fm";
 const SYSTEM_NAME = "ビーグル";
@@ -89,7 +89,7 @@ export function toAgentEpisodeDto(r: Row) {
     duration_sec: r.duration_sec,
     series: r.series,
     number: r.number,
-    summary: r.summary.length > 160 ? `${r.summary.slice(0, 160)}…` : r.summary,
+    summary: clip(r.summary, 160),
     web_url: r.web_url,
   };
 }

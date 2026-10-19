@@ -171,6 +171,13 @@ export function yearsAgo(publishedAt: string, day: string): number {
   return parseInt(day.slice(0, 4), 10) - jstMonthDay(publishedAt).y;
 }
 
+/** The first `n` characters, never cutting an emoji in half (a lone surrogate makes the
+ *  JSON unreadable for Apple's decoder — the jukebox showed 0 records, 2026-10-19). */
+export function clip(s: string, n: number): string {
+  const chars = Array.from(s);
+  return chars.length > n ? `${chars.slice(0, n).join("")}…` : s;
+}
+
 export function formatDuration(sec: number | null): string {
   if (!sec) return "";
   const h = Math.floor(sec / 3600);
@@ -190,7 +197,7 @@ export function dailyPostText(
   const date = jstDay(new Date(e.publishedAt)).replaceAll("-", ".");
   const dur = formatDuration(e.durationSec);
   const summary = e.summary.replace(/\s+/g, " ").trim();
-  const short = summary.length > 140 ? `${summary.slice(0, 140)}…` : summary;
+  const short = clip(summary, 140);
   return [
     `📅 ${n} 年前の${sameDay ? "今日" : "今ごろ"}の backspace.fm`,
     "",

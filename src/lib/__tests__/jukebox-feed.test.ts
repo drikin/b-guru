@@ -1,6 +1,6 @@
 /** The jukebox's reading of the Art19 feed and the daily "N 年前の今日" pick (lib/jukebox-feed.ts). */
 import { describe, it, expect } from "vitest";
-import { dailyPostText, jstDay, numberOf, parseArt19, parseDuration, pickForDay, seriesOf, summaryOf } from "../jukebox-feed";
+import { clip, dailyPostText, jstDay, numberOf, parseArt19, parseDuration, pickForDay, seriesOf, summaryOf } from "../jukebox-feed";
 
 const item = (o: { guid: string; title: string; date: string; dur?: string; desc?: string; url?: string }) => `
   <item>
@@ -105,5 +105,16 @@ describe("dailyPostText", () => {
     expect(t.trim().endsWith("https://backspace.fm/episode/283/")).toBe(true);
     expect(dailyPostText({ title: "x", publishedAt: "2019-10-22T09:00:00Z", durationSec: null, summary: "", webUrl: null }, "2026-10-20").split("\n")[0])
       .toBe("📅 7 年前の今ごろの backspace.fm");
+  });
+});
+
+describe("clip", () => {
+  it("never cuts an emoji in half", () => {
+    const s = "あ".repeat(159) + "🎧" + "い";
+    const c = clip(s, 160);
+    expect(c).toBe("あ".repeat(159) + "🎧…");
+    expect(() => JSON.parse(JSON.stringify(c))).not.toThrow();
+    expect(/[\ud800-\udbff](?![\udc00-\udfff])/.test(clip("🎧🎧🎧", 2))).toBe(false);
+    expect(clip("短い", 160)).toBe("短い");
   });
 });
