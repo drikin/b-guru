@@ -81,7 +81,10 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val posts: PostFeatures? = null,
         val voice: VoiceFeatures? = null,
         val room: RoomFeatures? = null,
+        val jukebox: JukeboxFeatures? = null,
     )
+    /** The jukebox (backspace.fm back catalogue), behind a rollout list. */
+    @Serializable data class JukeboxFeatures(val enabled: Boolean? = null, val path: String? = null)
     /** The club room (ルーム): 8-bit room view + proximity voice, behind a rollout flag. */
     @Serializable data class RoomFeatures(val enabled: Boolean? = null, val path: String? = null)
     @Serializable data class VoiceFeatures(
@@ -137,6 +140,10 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val roomEnabled get() = features?.room?.enabled ?: false
     /** Only paths on our own server (the request carries the token). */
     val roomPath get() = features?.room?.path?.takeIf { it.startsWith("/api/") } ?: "/api/agent/room"
+    /** The jukebox tab is on for this member. */
+    val jukeboxEnabled get() = features?.jukebox?.enabled ?: false
+    /** Only paths on our own server (the request carries the token). */
+    val jukeboxPath get() = features?.jukebox?.path?.takeIf { it.startsWith("/api/") } ?: "/api/agent/jukebox"
 }
 
 // MARK: voice room
@@ -268,3 +275,24 @@ data class UrlPreview(
 @Serializable data class PostReactionToggle(val added: Boolean = false, val reactions: List<Count> = emptyList()) {
     @Serializable data class Count(val emoji: String, val count: Int)
 }
+
+// MARK: jukebox — docs/jukebox-client-spec.md
+
+/** One episode of backspace.fm (GET /api/agent/jukebox). `audioUrl` is used exactly as
+ *  given: the redirects through it are how the show counts downloads. */
+@Serializable
+data class JukeboxEpisode(
+    val id: String,
+    val title: String = "",
+    val publishedAt: String = "",
+    val audioUrl: String = "",
+    val durationSec: Int? = null,
+    val series: String = "本編",
+    val number: Int? = null,
+    val summary: String = "",
+    val webUrl: String? = null,
+)
+
+/** "N 年前の今日" (posted to the timeline at 7:00 JST; post_id is null before that). */
+@Serializable data class JukeboxToday(val id: String, val yearsAgo: Int = 0, val postId: Long? = null)
+@Serializable data class JukeboxResponse(val apiVersion: Int = 1, val episodes: List<JukeboxEpisode> = emptyList(), val today: JukeboxToday? = null)

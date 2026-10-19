@@ -161,6 +161,11 @@ class ApiClient(val token: String) {
     suspend fun roomAction(body: JsonObject, path: String = "/api/agent/room"): RoomActionResponse =
         decode(send(request("POST", path, body)))
 
+    // MARK: jukebox
+
+    /** The whole catalogue as text (it is cached on disk as is). */
+    suspend fun jukeboxText(path: String = "/api/agent/jukebox"): String = send(request("GET", path))
+
     // MARK: timeline
 
     suspend fun posts(cursor: String? = null, limit: Int = 30): PostListResponse =

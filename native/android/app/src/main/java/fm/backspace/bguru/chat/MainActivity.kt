@@ -13,7 +13,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val session = App.session(this)
         if (BuildConfig.DEMO && intent?.getBooleanExtra("demo", false) == true) {
-            session.startDemo(intent.getStringExtra("demo_images"))
+            session.startDemo(intent.getStringExtra("demo_images"), intent.getStringExtra("demo_jukebox"))
             // Debug: `--es voice_url ws://10.0.2.2:7880 --es voice_token <jwt>` joins a local LiveKit dev server.
             val url = intent.getStringExtra("voice_url")
             val token = intent.getStringExtra("voice_token")
@@ -26,7 +26,7 @@ class MainActivity : ComponentActivity() {
                 val timeline = session.timeline
                 if (store != null && timeline != null) {
                     LaunchedEffect(store) { Push.askPermissionIfNeeded(this@MainActivity) }
-                    MainScreen(store, timeline, onSignOut = session::signOut)
+                    MainScreen(store, timeline, session.jukebox, onSignOut = session::signOut)
                 } else {
                     LoginScreen(onToken = session::signIn)
                 }
@@ -45,5 +45,7 @@ class MainActivity : ComponentActivity() {
         if (id > 0) App.session(this).store?.reveal(id)
         val post = intent?.getLongExtra(Push.EXTRA_POST_ID, 0L) ?: 0L
         if (post > 0) App.session(this).timeline?.openThread = post
+        // The jukebox's playback notification.
+        if (intent?.getBooleanExtra(JukeboxService.EXTRA_OPEN_JUKEBOX, false) == true) App.session(this).jukebox?.showTab = true
     }
 }

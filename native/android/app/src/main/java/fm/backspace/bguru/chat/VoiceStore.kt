@@ -199,6 +199,8 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
     fun join() {
         if (phase != Phase.IDLE || !canJoin) return
         notice = null
+        // The jukebox stops while you are in the room (the mini player offers 続きを再生 afterwards).
+        App.session(app).jukebox?.voiceStarted()
         phase = Phase.CONNECTING
         val mine = ++attempt
         scope.launch {

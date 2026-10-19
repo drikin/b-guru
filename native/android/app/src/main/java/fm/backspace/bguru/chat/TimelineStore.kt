@@ -136,7 +136,7 @@ class TimelineStore(val api: ApiClient) {
     fun stop() = scope.cancel()
 
     /** Debug only: sample timeline for offline UI checks. */
-    fun loadDemo(images: String? = null) {
+    fun loadDemo(images: String? = null, jukeboxAudio: String? = null) {
         demo = true
         val now = java.time.Instant.now()
         val many = if (images == null) emptyList() else (10L..70L).map { i ->
@@ -148,7 +148,10 @@ class TimelineStore(val api: ApiClient) {
                 reactions = if (i % 2 == 0L) listOf(Reaction("❤️", 3), Reaction("😂", 1)) else null,
                 unread = i % 3 == 0L, unreadReplies = if (i % 6 == 5L) 2 else 0)
         }
-        posts = listOf(Post(9001, authorName = "ビーグル", club = "chat", createdAt = now.minusSeconds(60).toString(), text = DEMO_MARKDOWN)) + many + listOf(
+        val anniversary = if (jukeboxAudio == null) emptyList() else listOf(
+            Post(9002, authorName = "ジュークボックス", createdAt = now.minusSeconds(30).toString(), audioUrl = jukeboxAudio, replyCount = 3,
+                text = "📅 7 年前の今日の backspace.fm\n#313:Galaxy ＆ 樋口監督ドヤ vs. GoPro 8ドヤ（デモ）"))
+        posts = anniversary + listOf(Post(9001, authorName = "ビーグル", club = "chat", createdAt = now.minusSeconds(60).toString(), text = DEMO_MARKDOWN)) + many + listOf(
             Post(4, authorName = "NORIO TAKAHASHI", text = "https://share.google/BM8clX7MsYzuIrrCf", createdAt = now.minusSeconds(120).toString(), club = "car",
                 urlPreview = UrlPreview("https://www.webcg.net/articles/-/50000", title = "ポルシェが未来のミドシップスーパースポーツカー「ミッションS」を発表 【ニュース】 - webCG",
                     description = "ポルシェは未来のミドシップスーパースポーツカーのコンセプトを発表した。",

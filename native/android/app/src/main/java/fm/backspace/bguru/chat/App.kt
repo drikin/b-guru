@@ -33,6 +33,9 @@ class App : Application() {
 class Session(private val app: Context) {
     var store by mutableStateOf<ChatStore?>(null); private set
     var timeline by mutableStateOf<TimelineStore?>(null); private set
+    /** The jukebox (catalogue + player). Created with the sign-in; the tab shows only when
+     *  the server turns it on for this member (capabilities.jukebox). */
+    var jukebox by mutableStateOf<JukeboxStore?>(null); private set
     val api: ApiClient? get() = store?.api
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -42,11 +45,16 @@ class Session(private val app: Context) {
 
     /** Debug / benchmark builds only (`adb shell am start ... --ez demo true`): sample chat,
      *  no network. `--es demo_images http://10.0.2.2:8099` adds many posts with photos
-     *  served from this Mac, for measuring scrolling. */
-    fun startDemo(images: String? = null) {
+     *  served from this Mac, for measuring scrolling. The jukebox gets fake episodes whose
+     *  audio is one local test file (`--es demo_jukebox http://10.0.2.2:8098` serves
+     *  test.mp3 from this Mac) — never the real audio hosts. */
+    fun startDemo(images: String? = null, jukeboxBase: String? = null) {
         if (!BuildConfig.DEMO || store?.demo == true) return
+        val base = jukeboxBase ?: "http://10.0.2.2:8098"
+        jukebox?.stop()
         store = ChatStore(ApiClient("demo"), app).also { it.loadDemo(scale = images != null, images = images) }
-        timeline = TimelineStore(ApiClient("demo")).also { it.loadDemo(images) }
+        timeline = TimelineStore(ApiClient("demo")).also { it.loadDemo(images, jukeboxAudio = JukeboxStore.demoAudioUrl(base)) }
+        jukebox = JukeboxStore(app, ApiClient("demo"), demoBase = base)
         // Debug: print this emulator's FCM token so a test push can be sent to it.
         if (Push.configured) com.google.firebase.messaging.FirebaseMessaging.getInstance().token
             .addOnSuccessListener { android.util.Log.d("BguruPush", "fcm token: $it") }
@@ -64,6 +72,8 @@ class Session(private val app: Context) {
         store = null
         timeline?.stop()
         timeline = null
+        jukebox?.stop()
+        jukebox = null
         ImageCache.token = null
         TokenStore.delete(app)
         scope.launch {
@@ -76,6 +86,7 @@ class Session(private val app: Context) {
         val api = ApiClient(token)
         val s = ChatStore(api, app)
         timeline = TimelineStore(api)
+        jukebox = JukeboxStore(app, api)
         ImageCache.token = token
         store = s // the stream connects when the chat comes on screen (ChatScreen)
         Push.register(app, s.api)

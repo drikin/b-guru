@@ -106,6 +106,10 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging:25.1.3")
     // Voice room (LiveKit, Apache-2.0, official SDK) — same server and rules as iOS/Mac.
     implementation("io.livekit:livekit-android:2.29.0")
+    // Jukebox (backspace.fm back catalogue): ExoPlayer + a MediaSessionService for
+    // background playback, the notification, lock screen and Bluetooth buttons (Google, Apache-2.0).
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-session:1.11.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }

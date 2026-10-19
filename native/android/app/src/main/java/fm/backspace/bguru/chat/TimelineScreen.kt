@@ -314,7 +314,18 @@ fun PostRow(
                 if (post.text.isNotEmpty() && !post.isBareLink) PostText(post.text)
                 if (post.images.isNotEmpty()) PostImages(post.images, onOpenImage)
                 if (post.images.isEmpty()) post.urlPreview?.let { LinkCard(it) }
-                if (post.videoUrl != null || post.audioUrl != null) {
+                // An episode of the jukebox (e.g. the daily "N 年前の今日"): play it here.
+                val session = if (post.audioUrl != null && post.videoUrl == null) App.session(context) else null
+                val jukebox = session?.jukebox?.takeIf { session.store?.capabilities?.jukeboxEnabled == true }
+                val episode = jukebox?.episodeForUrl(post.audioUrl)
+                if (jukebox != null && episode != null) {
+                    val nowPlaying = jukebox.current?.id == episode.id && jukebox.playing
+                    Text(if (nowPlaying) "❚❚ ジュークボックスで再生中" else "▶︎ ジュークボックスで聴く",
+                        style = MaterialTheme.typography.labelLarge, color = AccentGreen,
+                        modifier = Modifier.clip(CircleShape).background(AccentGreen.copy(alpha = 0.12f))
+                            .clickable { if (nowPlaying) jukebox.pause() else jukebox.play(episode) }
+                            .padding(horizontal = 10.dp, vertical = 5.dp))
+                } else if (post.videoUrl != null || post.audioUrl != null) {
                     Text(if (post.videoUrl != null) "▶︎ 動画（Web で再生）" else "♪ 音声（Web で再生）",
                         style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
