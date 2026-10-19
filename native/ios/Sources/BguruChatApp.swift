@@ -47,6 +47,9 @@ final class Session {
             s.debugOffline = true
             s.debugLoadDemo()
             if ProcessInfo.processInfo.environment["BGURU_DEMO_ROOM"] == "1" { s.room.debugLoadDemo() }
+            if ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil {
+                s.jukebox.debugLoadDemo(base: ProcessInfo.processInfo.environment["BGURU_DEMO_AUDIO"])
+            }
             store = s
             let t = TimelineStore(api: APIClient(token: "demo"))
             t.debugLoadDemo()

@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 /// Chat or timeline (iPhone pages, the Mac panel switch).
-enum MainTab: Hashable { case timeline, chat }
+enum MainTab: Hashable { case timeline, chat, jukebox }
 
 /// The timeline (root posts, newest activity first) for the native apps.
 /// Read-mostly: list + reactions + unread, open a thread, reply / post with images.
@@ -177,6 +177,10 @@ final class TimelineStore {
         let now = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-300))
         let old = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-7200))
         posts = [
+            Post(id: 6, authorId: "g", authorName: "ビーグル", isAuthor: false, replyCount: 2,
+                 text: "📅 7 年前の今日の backspace.fm\n\n**#313:Galaxy ＆ 樋口監督ドヤ vs. GoPro 8ドヤ**\n2019.10.20 ・ 2:30:21\n\n🎧 下の再生ボタンで聴けます。感想はこのスレッドへどうぞ",
+                 audioUrl: (ProcessInfo.processInfo.environment["BGURU_DEMO_AUDIO"] ?? "http://127.0.0.1:8097") + "/tone.mp3",
+                 createdAt: now),
             Post(id: 5, authorId: "g", authorName: "ビーグル", isAuthor: false, replyCount: 0,
                  text: Self.demoMarkdown, createdAt: now, club: "chat"),
             Post(id: 4, authorId: "n", authorName: "NORIO TAKAHASHI", isAuthor: false, replyCount: 0,

@@ -237,6 +237,7 @@ struct PostRow: View {
     let onReact: (String) -> Void
     let onOpenImage: (Int) -> Void
     var showReplyCount = true
+    @Environment(\.jukebox) private var jukebox
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -262,7 +263,18 @@ struct PostRow: View {
                 if let images = post.images, !images.isEmpty {
                     PostImages(images: images, onOpen: onOpenImage)
                 }
-                if post.videoUrl != nil || post.audioUrl != nil {
+                if let audio = post.audioUrl, post.videoUrl == nil, let jb = jukebox, let ep = jb.episode(forAudioURL: audio) {
+                    // The daily "N 年前の今日" post: play it in the jukebox.
+                    Button { jb.play(ep) } label: {
+                        Label(jb.current?.id == ep.id && jb.isPlaying ? "ジュークボックスで再生中" : "ジュークボックスで聴く",
+                              systemImage: jb.current?.id == ep.id && jb.isPlaying ? "waveform" : "play.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .foregroundStyle(.white)
+                            .background(Capsule().fill(Color.accentGreen))
+                    }
+                    .buttonStyle(.plain)
+                } else if post.videoUrl != nil || post.audioUrl != nil {
                     Label(post.videoUrl != nil ? "動画（Web で再生）" : "音声（Web で再生）", systemImage: post.videoUrl != nil ? "play.rectangle" : "waveform")
                         .font(.caption).foregroundStyle(.secondary)
                 }

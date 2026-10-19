@@ -99,6 +99,20 @@ final class APIClient: Sendable {
         try await send(request("POST", "/api/agent/room", json: body))
     }
 
+    // MARK: Jukebox
+
+    /// GET /api/agent/jukebox — every past episode and today's pick (raw bytes, cached by the store).
+    func jukeboxData(path: String) async throws -> Data {
+        let (data, resp): (Data, URLResponse)
+        do { (data, resp) = try await session.data(for: request("GET", path)) } catch {
+            throw APIError.transport(error.localizedDescription)
+        }
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 401 { throw APIError.unauthorized(code: nil) }
+        guard (200..<300).contains(status) else { throw APIError.http(status: status, code: nil, message: nil) }
+        return data
+    }
+
     // MARK: Voice room
 
     func voiceState() async throws -> VoiceStateResponse {

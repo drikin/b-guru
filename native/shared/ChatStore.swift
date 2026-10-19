@@ -96,11 +96,17 @@ final class ChatStore {
     let voice: VoiceStore
     /// The club room (8-bit room view + proximity voice), when the server has it on.
     let room: RoomStore
+    /// Past backspace.fm episodes and their player (lives as long as the sign-in, so it
+    /// plays on with the panel closed / the phone locked).
+    let jukebox: JukeboxStore
 
     init(api: APIClient) {
         self.api = api
         self.voice = VoiceStore(api: api)
         self.room = RoomStore(api: api, voice: voice)
+        let jukebox = JukeboxStore(api: api)
+        self.jukebox = jukebox
+        voice.onWillJoin = { [weak jukebox] in jukebox?.pauseForVoice() }
     }
 
     private static let voiceReloginKey = "voiceReloginAsked"
@@ -467,7 +473,7 @@ final class ChatStore {
         hasLoaded = true
         connection = .live
         onlineCount = 12
-        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5}}}"#
+        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5},"jukebox":{"enabled":\#(ProcessInfo.processInfo.arguments.contains("-demoJukebox") || ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil),"path":"/api/agent/jukebox"}}}"#
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
         capabilities = try? dec.decode(Capabilities.self, from: Data(caps.utf8))

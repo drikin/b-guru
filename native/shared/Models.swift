@@ -121,11 +121,16 @@ struct Capabilities: Decodable, Sendable {
         var maxParticipants: Int?
         var maxSpeakers: Int?
     }
+    struct JukeboxFeatures: Decodable, Sendable {
+        var enabled: Bool?
+        var path: String?
+    }
     struct Features: Decodable, Sendable {
         var chat: ChatFeatures?
         var posts: PostFeatures?
         var voice: VoiceFeatures?
         var room: RoomFeatures?
+        var jukebox: JukeboxFeatures?
     }
     var apiVersion: Int
     var scopes: [String]?
@@ -150,6 +155,13 @@ struct Capabilities: Decodable, Sendable {
     var voiceEnabled: Bool { features?.voice?.enabled ?? false }
     /// The club room (8-bit room view + proximity voice) is on for this member.
     var roomEnabled: Bool { features?.room?.enabled ?? false }
+    /// The jukebox (past backspace.fm episodes) is on for this member.
+    var jukeboxEnabled: Bool { features?.jukebox?.enabled ?? false }
+    /// Only paths on our own server (the request carries the token).
+    var jukeboxPath: String {
+        if let p = features?.jukebox?.path, p.hasPrefix("/api/") { return p }
+        return "/api/agent/jukebox"
+    }
     /// This token may join (has the "voice" scope — older tokens must sign in again).
     var canJoinVoice: Bool { features?.voice?.join ?? false }
     var isVoiceAdmin: Bool { features?.voice?.admin ?? false }
@@ -331,4 +343,59 @@ struct UrlPreview: Codable, Equatable, Sendable {
         c?.queryItems = [URLQueryItem(name: "u", value: image)]
         return c?.url?.absoluteString
     }
+}
+
+// MARK: - Jukebox (docs/jukebox-client-spec.md)
+
+/// One past episode of backspace.fm (GET /api/agent/jukebox).
+struct Episode: Codable, Equatable, Sendable, Identifiable {
+    /// The feed's guid: tells episodes apart and keys the saved position.
+    var id: String
+    var title: String
+    var publishedAt: String
+    /// Play exactly this URL (it goes through download counters; never cache where it leads).
+    var audioUrl: String
+    var durationSec: Int?
+    var series: String
+    var number: Int?
+    var summary: String
+    var webUrl: String?
+
+    var year: String { String(publishedAt.prefix(4)) }
+    /// "2019.10.20" in Japan.
+    var dateText: String {
+        guard let d = Episode.isoParser.date(from: publishedAt) ?? ISO8601DateFormatter().date(from: publishedAt) else {
+            return String(publishedAt.prefix(10)).replacingOccurrences(of: "-", with: ".")
+        }
+        return Episode.dayFormatter.string(from: d)
+    }
+    /// "#313" / "ep666" / "特別回" for the record's label.
+    var label: String {
+        guard let number else { return "特別回" }
+        if title.range(of: #"ep\s?\d"#, options: [.regularExpression, .caseInsensitive]) != nil { return "ep\(number)" }
+        return "#" + String(format: "%03d", number)
+    }
+
+    nonisolated(unsafe) private static let isoParser: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    nonisolated(unsafe) private static let dayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "Asia/Tokyo")
+        f.dateFormat = "yyyy.MM.dd"
+        return f
+    }()
+}
+
+struct JukeboxResponse: Codable, Sendable {
+    struct Today: Codable, Sendable, Equatable {
+        var id: String
+        var yearsAgo: Int
+        var postId: Int?
+    }
+    var episodes: [Episode]
+    var today: Today?
 }

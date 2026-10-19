@@ -73,6 +73,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 store.room.debugLoadDemo()
                 if CommandLine.arguments.contains("-demoRoomEnter") { Task { await store.room.enter() } }
             }
+            // -demoJukebox: the jukebox with sample records; the sound is a test tone from
+            // BGURU_DEMO_AUDIO (default http://127.0.0.1:8097), never the real feed.
+            if CommandLine.arguments.contains("-demoJukebox") {
+                store.jukebox.debugLoadDemo(base: ProcessInfo.processInfo.environment["BGURU_DEMO_AUDIO"] ?? "http://127.0.0.1:8097")
+            }
             let timeline = TimelineStore(api: APIClient(token: "demo"))
             timeline.debugLoadDemo()
             self.store = store
@@ -81,6 +86,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.showPanel()
                 // -demoTimelineTab: open on the timeline (UI checks).
+                if CommandLine.arguments.contains("-demoJukeboxTab") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.panel?.pin.tab = .jukebox }
+                }
+                if CommandLine.arguments.contains("-demoJukeboxPlay"), let e = store.jukebox.todayEpisode {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { store.jukebox.play(e) }
+                }
                 if CommandLine.arguments.contains("-demoTimelineTab") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.panel?.pin.tab = .timeline }
                 }
