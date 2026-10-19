@@ -291,7 +291,7 @@ fun PostRow(
                     Spacer(Modifier.weight(1f))
                     Text(relativeTime(post.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 }
-                if (post.text.isNotEmpty() && !post.isBareLink) Text(remember(post.text) { linkified(post.text) }, fontSize = 16.sp)
+                if (post.text.isNotEmpty() && !post.isBareLink) PostText(post.text)
                 if (post.images.isNotEmpty()) PostImages(post.images, onOpenImage)
                 if (post.images.isEmpty()) post.urlPreview?.let { LinkCard(it) }
                 if (post.videoUrl != null || post.audioUrl != null) {

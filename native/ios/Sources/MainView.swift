@@ -39,7 +39,7 @@ struct MainView: View {
 
     private var picker: some View {
         Picker("表示", selection: $tab.animation(.easeOut(duration: 0.2))) {
-            Text(timeline.unreadCount > 0 ? "タイムライン ●" : "タイムライン").tag(MainTab.timeline)
+            Text("タイムライン").tag(MainTab.timeline)
             Text(store.unreadCount > 0 ? "チャット ●" : "チャット").tag(MainTab.chat)
         }
         .pickerStyle(.segmented)

@@ -231,10 +231,7 @@ struct PostRow: View {
                     Text(PostRow.relative(post.createdAt)).font(.caption).foregroundStyle(.tertiary).monospacedDigit()
                 }
                 if !post.text.isEmpty && !post.isBareLink {
-                    Text(MessageRow.attributed(post.text))
-                        .font(.body)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
+                    PostText(text: post.text)
                 }
                 if let pv = post.urlPreview, (post.images ?? []).isEmpty {
                     LinkCard(preview: pv)

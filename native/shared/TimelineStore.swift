@@ -149,10 +149,36 @@ final class TimelineStore {
 
     #if DEBUG
     /// Sample timeline for offline UI checks (no network).
+    static let demoMarkdown = """
+    ## 🐾 ビーグル更新情報（10/14〜10/19）
+
+    今週は **101 コミット**・追加 **57,704 行**／削除 **2,661 行**。`baseline-prof.txt` は生成ファイルだわん。
+
+    ---
+
+    ### ✨ 今週の新機能
+
+    - **ボイスルーム（LiveKit）が動き出した** — Web・iPhone・Mac・Android
+    - **ルーム（部室）** — 詳しくは [仕様](https://bsm.backspace.fm) を見てね
+      - 入れ子の項目
+    1. 番号付き
+    2. ~~取り消し~~ と *斜体*
+
+    > 引用です
+    > 2 行目
+
+    ```
+    let x = 1
+    ```
+    @ドリキン さん https://bsm.backspace.fm/#/post/1
+    """
+
     func debugLoadDemo() {
         let now = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-300))
         let old = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-7200))
         posts = [
+            Post(id: 5, authorId: "g", authorName: "ビーグル", isAuthor: false, replyCount: 0,
+                 text: Self.demoMarkdown, createdAt: now, club: "chat"),
             Post(id: 4, authorId: "n", authorName: "NORIO TAKAHASHI", isAuthor: false, replyCount: 0,
                  text: "https://share.google/BM8clX7MsYzuIrrCf", createdAt: now, club: "car",
                  urlPreview: UrlPreview(url: "https://www.webcg.net/articles/-/50000", title: "ポルシェが未来のミドシップスーパースポーツカー「ミッションS」を発表 【ニュース】 - webCG",
@@ -166,7 +192,7 @@ final class TimelineStore {
             Post(id: 1, authorId: "me", authorName: "ドリキン", isAuthor: true, replyCount: 12,
                  text: "ビーグルのアプリにタイムラインを追加しています", createdAt: old, club: "improve", unread: false),
         ]
-        clubs = ["pet": "ペット部", "apple": "リンゴ部", "improve": "機能改善"]
+        clubs = ["chat": "雑談", "pet": "ペット部", "apple": "リンゴ部", "improve": "機能改善"]
         hasLoaded = true
     }
     #endif

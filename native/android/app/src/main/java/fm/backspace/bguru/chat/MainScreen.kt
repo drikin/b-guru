@@ -49,7 +49,7 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, onSignOut: () -> Unit)
         SingleChoiceSegmentedButtonRow(Modifier.width(250.dp)) {
             SegmentedButton(selected = pager.currentPage == 0, onClick = { scope.launch { pager.animateScrollToPage(0) } },
                 shape = SegmentedButtonDefaults.itemShape(0, 2), icon = {}) {
-                Text(if (timeline.unreadCount > 0) "タイムライン•" else "タイムライン", maxLines = 1, softWrap = false,
+                Text("タイムライン", maxLines = 1, softWrap = false,
                     style = androidx.compose.material3.MaterialTheme.typography.labelMedium)
             }
             SegmentedButton(selected = pager.currentPage == 1, onClick = { scope.launch { pager.animateScrollToPage(1) } },

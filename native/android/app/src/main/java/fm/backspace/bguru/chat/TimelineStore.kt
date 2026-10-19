@@ -148,7 +148,7 @@ class TimelineStore(val api: ApiClient) {
                 reactions = if (i % 2 == 0L) listOf(Reaction("❤️", 3), Reaction("😂", 1)) else null,
                 unread = i % 3 == 0L, unreadReplies = if (i % 6 == 5L) 2 else 0)
         }
-        posts = many + listOf(
+        posts = listOf(Post(9001, authorName = "ビーグル", club = "chat", createdAt = now.minusSeconds(60).toString(), text = DEMO_MARKDOWN)) + many + listOf(
             Post(4, authorName = "NORIO TAKAHASHI", text = "https://share.google/BM8clX7MsYzuIrrCf", createdAt = now.minusSeconds(120).toString(), club = "car",
                 urlPreview = UrlPreview("https://www.webcg.net/articles/-/50000", title = "ポルシェが未来のミドシップスーパースポーツカー「ミッションS」を発表 【ニュース】 - webCG",
                     description = "ポルシェは未来のミドシップスーパースポーツカーのコンセプトを発表した。",
@@ -172,3 +172,26 @@ class TimelineStore(val api: ApiClient) {
         }
     }
 }
+
+/** Debug only: a post that uses every kind of Markdown the timeline draws. */
+private const val DEMO_MARKDOWN = """## 🐾 ビーグル更新情報（10/14〜10/19）
+
+今週は **101 コミット**・追加 **57,704 行**／削除 **2,661 行**。`baseline-prof.txt` は生成ファイルだわん。
+
+---
+
+### ✨ 今週の新機能
+
+- **ボイスルーム（LiveKit）が動き出した** — Web・iPhone・Mac・Android
+- **ルーム（部室）** — 詳しくは [仕様](https://bsm.backspace.fm) を見てね
+  - 入れ子の項目
+1. 番号付き
+2. ~~取り消し~~ と *斜体*
+
+> 引用です
+> 2 行目
+
+```
+let x = 1
+```
+@ドリキン さん https://bsm.backspace.fm/#/post/1"""

@@ -78,7 +78,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self.store = store
             self.timeline = timeline
             panel = ChatPanel(store: store, timeline: timeline, onSignOut: {})
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.showPanel() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.showPanel()
+                // -demoTimelineTab: open on the timeline (UI checks).
+                if CommandLine.arguments.contains("-demoTimelineTab") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.panel?.pin.tab = .timeline }
+                }
+            }
             return
         }
         // Dev only: BGURU_DEV_TOKEN=bga_… runs against a token without touching the Keychain.

@@ -46,7 +46,7 @@ struct MainPanelView: View {
     private var picker: some View {
         Picker("表示", selection: $pin.tab) {
             Text(store.unreadCount > 0 ? "チャット ●" : "チャット").tag(MainTab.chat)
-            Text(timeline.unreadCount > 0 ? "タイムライン ●" : "タイムライン").tag(MainTab.timeline)
+            Text("タイムライン").tag(MainTab.timeline)
         }
         .pickerStyle(.segmented)
         .labelsHidden()
