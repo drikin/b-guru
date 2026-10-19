@@ -120,52 +120,27 @@ private fun rememberRoomActions(room: RoomStore, voice: VoiceStore): RoomActions
     }
 }
 
-/** テキスト｜ルーム, at the top of the chat. */
+/** テキスト｜ルーム, at the top of the chat. The ルーム tab shows how many are in the
+ *  room's voice (and a green dot while someone talks) — the text view's way in. */
 @Composable
 fun RoomModeSwitch(room: RoomStore, voice: VoiceStore) {
     val actions = rememberRoomActions(room, voice)
     BackHandler(enabled = room.roomView) { room.toText() }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.Center) {
-        SingleChoiceSegmentedButtonRow(Modifier.width(220.dp)) {
+    val inVoice = room.members.count { it.inRoom && it.listening }
+    val talking = voice.phase == VoiceStore.Phase.CONNECTED && voice.members.any { it.speaking }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        SingleChoiceSegmentedButtonRow(Modifier.width(240.dp)) {
             SegmentedButton(selected = !room.roomView, onClick = { room.toText() }, shape = SegmentedButtonDefaults.itemShape(0, 2), icon = {}) {
                 Text("テキスト", style = MaterialTheme.typography.labelMedium)
             }
             SegmentedButton(selected = room.roomView, onClick = { actions.enter() }, shape = SegmentedButtonDefaults.itemShape(1, 2), icon = {}) {
-                Text("ルーム", style = MaterialTheme.typography.labelMedium)
-            }
-        }
-    }
-}
-
-/** In the text view, in place of the voice bar:
- *  🎧 部室で N 人がボイスに入っています（M 人が話し中） [ルームへ ▶] + a few faces. */
-@Composable
-fun RoomBanner(room: RoomStore, voice: VoiceStore) {
-    val actions = rememberRoomActions(room, voice)
-    val inVoice = room.members.filter { it.inRoom && it.listening }
-    val talking = if (voice.phase == VoiceStore.Phase.CONNECTED) voice.members.count { it.speaking } else 0
-    Surface(color = AccentGreen.copy(alpha = 0.06f), modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "🎧 部室で ${inVoice.size} 人がボイスに入っています" + (if (talking > 0) "（$talking 人が話し中）" else ""),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    if (inVoice.isNotEmpty()) {
-                        Row(horizontalArrangement = Arrangement.spacedBy((-6).dp), modifier = Modifier.padding(top = 2.dp)) {
-                            inVoice.take(5).forEach { Avatar(it.avatar, it.name, size = 22.dp) }
-                        }
-                    }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(if (inVoice > 0) "ルーム 🎧$inVoice" else "ルーム", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                    if (talking) Box(Modifier.size(7.dp).background(AccentGreen, CircleShape))
                 }
-                Button(
-                    onClick = actions.enter,
-                    colors = ButtonDefaults.buttonColors(containerColor = AccentGreen),
-                    contentPadding = ButtonDefaults.TextButtonContentPadding,
-                ) { Text("ルームへ ▶", fontWeight = FontWeight.Bold) }
             }
-            room.notice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
         }
+        if (!room.roomView) room.notice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
     }
 }
 

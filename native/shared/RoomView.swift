@@ -425,40 +425,17 @@ private struct DPad: View {
 }
 #endif
 
-/// The text view's way in (where the voice bar used to be): who is in the voice, and
-/// a button into the room.
-struct RoomEnterBanner: View {
-    let room: RoomStore
-
-    var body: some View {
-        let people = room.inVoice
-        let talking = Set(room.voice.members.filter { $0.speaking }.map(\.userId))
-        Button {
-            Task { await room.enter() }
-        } label: {
-            HStack(spacing: 10) {
-                HStack(spacing: -6) {
-                    ForEach(people.prefix(5)) { m in AvatarView(url: m.avatar, name: m.name, size: 22) }
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(people.isEmpty ? "🎧 部室のボイスには誰もいません" : "🎧 部室で \(people.count) 人がボイスに入っています\(talking.isEmpty ? "" : "（\(talking.count) 人が話し中）")")
-                        .font(.subheadline).foregroundStyle(.primary)
-                    Text("入るとマイクはオフのまま、近くの人の声が聞こえます").font(.caption2).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 4)
-                Text("ルームへ ▶").font(.subheadline.bold()).foregroundStyle(Color.accentGreen)
-            }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(Color.accentGreen.opacity(0.10))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("ルームへ入る。部室のボイスに \(people.count) 人")
-    }
-}
-
-/// テキスト｜ルーム inside the chat.
+/// テキスト｜ルーム inside the chat. The ルーム tab shows how many are in the room's
+/// voice (🟢 while someone talks) — the text view's way in, no separate banner.
 struct RoomModePicker: View {
     let room: RoomStore
+
+    private var roomLabel: String {
+        let n = room.inVoice.count
+        guard n > 0 else { return "ルーム" }
+        let talking = room.voice.members.contains { $0.speaking }
+        return "ルーム 🎧\(n)" + (talking ? " 🟢" : "")
+    }
 
     var body: some View {
         Picker("表示", selection: Binding(
@@ -466,7 +443,7 @@ struct RoomModePicker: View {
             set: { on in Task { if on { await room.enter() } else { await room.toText() } } }
         )) {
             Text("テキスト").tag(false)
-            Text("ルーム").tag(true)
+            Text(roomLabel).tag(true)
         }
         .pickerStyle(.segmented)
         .labelsHidden()

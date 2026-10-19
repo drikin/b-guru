@@ -210,7 +210,6 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             // banner in place of the voice bar. Otherwise the voice bar exactly as before.
             if (store.room.enabled) {
                 RoomModeSwitch(store.room, store.voice)
-                if (!store.room.roomView) RoomBanner(store.room, store.voice)
             } else {
                 VoiceBar(store.voice)
             }

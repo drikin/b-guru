@@ -28,15 +28,13 @@ struct ChatScreen: View {
         NavigationStack {
             VStack(spacing: 0) {
                 if store.room.enabled {
-                    // The club room: テキスト｜ルーム. The room's banner replaces the voice bar.
+                    // The club room: テキスト｜ルーム (the ルーム tab shows who is in the voice) replaces the voice bar.
                     HStack { RoomModePicker(room: store.room); Spacer() }
                         .padding(.horizontal, 12).padding(.top, 6)
                     if store.room.mode == .room {
                         RoomView(room: store.room)
                             .padding(.horizontal, 8)
                             .containerRelativeFrame(.vertical) { h, _ in h * 0.5 }
-                    } else {
-                        RoomEnterBanner(room: store.room)
                     }
                 } else {
                     VoiceBar(voice: store.voice)

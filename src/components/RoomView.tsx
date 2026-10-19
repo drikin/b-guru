@@ -10,7 +10,7 @@
  * State lives in lib/room-client.ts (outside React); the map draws the animated
  * actors from there every frame. Voice proximity is applied by the store. */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { Avatar, Button, CloseButton, Group, Popover, SegmentedControl, Text, Tooltip, UnstyledButton } from "@mantine/core";
+import { Button, CloseButton, Group, Popover, SegmentedControl, Text, Tooltip } from "@mantine/core";
 import {
   clearRoomNotice,
   getActors,
@@ -109,13 +109,12 @@ function RoomChrome({ s }: { s: RoomSnapshot }) {
             onChange={(val) => void setRoomView(val as "text" | "room")}
             data={[
               { value: "text", label: "テキスト" },
-              { value: "room", label: "ルーム" },
+              { value: "room", label: <RoomTabLabel s={s} speaking={speaking} /> },
             ]}
             aria-label="表示の切り替え"
           />
           {inRoom && <RoomControls s={s} v={v} me={me} speaking={speaking} />}
         </Group>
-        {!inRoom && <EnterBanner s={s} speaking={speaking} connected={v.phase !== "idle"} />}
         {inRoom && v.needsAudioUnlock && (
           <Button size="compact-xs" variant="light" color="green" onClick={() => void unlockAudio()}>
             🔈 クリックして音を出す
@@ -241,50 +240,21 @@ function HearPopover({ s, me, speaking }: { s: RoomSnapshot; me: RoomMember | nu
   );
 }
 
-/** Text view: 「🎧 部室で N 人がボイスに入っています（M 人が話し中）［ルームへ ▶］」. */
-function EnterBanner({ s, speaking, connected }: { s: RoomSnapshot; speaking: Set<string>; connected: boolean }) {
+/** The ルーム tab: how many are in the room's voice, and a green dot while someone
+ *  talks — the way in for the text view (no separate banner). */
+function RoomTabLabel({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
   const { inVoice, talking } = voiceCounts(s.members, speaking);
-  const here = s.members.length;
   return (
-    <UnstyledButton
-      onClick={() => void setRoomView("room")}
-      disabled={s.busy}
-      aria-label="ルームへ入る"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        width: "100%",
-        padding: "8px 10px",
-        borderRadius: 10,
-        border: `1px solid ${GREEN}`,
-        background: `color-mix(in srgb, ${GREEN} 8%, transparent)`,
-      }}
+    <span
+      style={{ display: "inline-flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}
+      aria-label={inVoice.length ? `ルーム（ボイスに ${inVoice.length} 人${talking ? `、${talking} 人が話し中` : ""}）` : "ルーム"}
     >
-      {inVoice.length > 0 && (
-        <Avatar.Group spacing={6}>
-          {inVoice.slice(0, 5).map((m) => (
-            <Avatar key={m.userId} src={m.avatar || undefined} size={24} radius="xl" color="green" title={m.name}>
-              {m.name.charAt(0).toUpperCase()}
-            </Avatar>
-          ))}
-        </Avatar.Group>
+      ルーム
+      {inVoice.length > 0 && <span style={{ fontVariantNumeric: "tabular-nums" }}>🎧{inVoice.length}</span>}
+      {talking > 0 && (
+        <span aria-hidden style={{ width: 7, height: 7, borderRadius: "50%", background: GREEN, display: "inline-block" }} />
       )}
-      <span style={{ flex: 1, minWidth: 0, fontSize: 13, lineHeight: 1.4 }}>
-        {inVoice.length > 0 ? (
-          <>
-            🎧 部室で <b>{inVoice.length} 人</b>がボイスに入っています
-            {connected && talking > 0 ? `（${talking} 人が話し中）` : ""}
-          </>
-        ) : (
-          <>🏠 部室に {here} 人（ボイスにはまだ誰もいません）</>
-        )}
-        <Text component="span" size="xs" c="dimmed" display="block">
-          入るとマイクはオフのまま、近くの人の声が聞こえます
-        </Text>
-      </span>
-      <span style={{ color: GREEN, fontWeight: 700, whiteSpace: "nowrap", fontSize: 13 }}>ルームへ ▶</span>
-    </UnstyledButton>
+    </span>
   );
 }
 
