@@ -157,12 +157,20 @@ extension View {
     /// iOS: unchanged here (the on-screen keyboard's return key is a newline).
     @ViewBuilder func returnSends(_ action: @escaping () -> Void) -> some View {
         #if os(macOS)
+        // Return is handled here, not by .onSubmit: on a multi-line (vertical) TextField
+        // onSubmit sometimes did not fire and the message just stayed (drikin 2026-10-19
+        // "Enter でチャットが送信できないときがある"). During a Japanese conversion the
+        // Return belongs to the input method (it confirms the conversion).
         self
-            .onSubmit(action)
             .onKeyPress(keys: [.return], phases: .down) { press in
-                guard press.modifiers.contains(.shift), !TextComposition.isActive,
-                      let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return .ignored }
-                editor.insertNewlineIgnoringFieldEditor(nil)
+                guard !TextComposition.isActive else { return .ignored }
+                if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
+                    guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return .ignored }
+                    editor.insertNewlineIgnoringFieldEditor(nil)
+                    return .handled
+                }
+                guard press.modifiers.isDisjoint(with: [.command, .control]) else { return .ignored }
+                action()
                 return .handled
             }
         #else

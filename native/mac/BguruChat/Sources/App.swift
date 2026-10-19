@@ -68,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if CommandLine.arguments.contains("-demoPanel") {
             let store = ChatStore(api: APIClient(token: "demo"))
             store.debugLoadDemo()
+            store.debugOffline = true // sends "succeed" (there is no server)
             // -demoRoom: the club room with sample members (offline).
             if CommandLine.arguments.contains("-demoRoom") {
                 store.room.debugLoadDemo()
