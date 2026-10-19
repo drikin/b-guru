@@ -481,6 +481,13 @@ final class ChatStore {
         capabilities = try? dec.decode(Capabilities.self, from: Data(caps.utf8))
     }
 
+    /// A message from someone else, as if it came on the stream.
+    func debugReceive(_ body: String, id: Int) {
+        received(ChatMessage(id: id, authorId: "coban", authorName: "coban", avatar: nil, body: body,
+                             createdAt: ISO8601DateFormatter().string(from: Date()), edited: false, editedAt: nil,
+                             isAuthor: false, mentionsMe: false, clientId: nil, reactions: nil))
+    }
+
     func debugAddReactionToLast() {
         guard let i = rows.indices.last else { return }
         rows[i].message.reactions = [Reaction(emoji: "❤️", count: 2, mine: true, reactors: []),

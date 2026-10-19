@@ -86,6 +86,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.showPanel()
                 // -demoTimelineTab: open on the timeline (UI checks).
+                // -demoSendTest: my long messages and others' arriving in turn (the list must follow).
+                if CommandLine.arguments.contains("-demoSendTest") {
+                    store.debugOffline = true
+                    for i in 0..<6 {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2 + Double(i) * 1.5) {
+                            if i % 2 == 0 {
+                                store.send("送信テスト \(i)：長めの文章を送ったときに一番下まで追従するかを確かめるための投稿です。改行もなく続く文章で、行が折り返して高さが変わります。", restore: { _ in })
+                            } else {
+                                store.debugReceive("ほかの人の発言 \(i)", id: 900 + i)
+                            }
+                        }
+                    }
+                }
                 if CommandLine.arguments.contains("-demoJukeboxTab") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.panel?.pin.tab = .jukebox }
                 }

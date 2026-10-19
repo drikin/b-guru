@@ -28,10 +28,17 @@ struct ChatScrolling: ViewModifier {
     func body(content: Content) -> some View {
         content
             .keepsBottomOnResize(atBottom)
+            .modifier(BottomTracker(atBottom: $atBottom))
             .onChange(of: store.rows.last?.id) { _, _ in
                 guard store.scrollTarget == nil, let last = store.rows.last?.message else { return }
-                if (last.isAuthor && last.id < 0) || atBottom {
-                    // At the bottom, or my own message just went out: show it.
+                if last.isAuthor && last.id < 0 {
+                    // My own message just went out: show it, and keep following while it
+                    // settles (sending → sent, photos loading) — drikin 2026-10-19
+                    // "投稿した時にスクロール位置が更新されない時がある".
+                    atBottom = true
+                    toBottom(animated: store.isVisible)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { if atBottom { proxy.scrollTo("bottom", anchor: .bottom) } }
+                } else if atBottom {
                     toBottom(animated: store.isVisible)
                 } else if !last.isAuthor && !last.isNotice {
                     newBelow += 1
@@ -92,13 +99,51 @@ struct JumpButton: View {
     }
 }
 
-/// The last row of the list: tells the list whether the member is at the bottom.
+/// Whether the member is at the bottom, from where the list is scrolled to (macOS 15 /
+/// iOS 18+). Only scrolling (or the view changing size) moves it: a new row growing the
+/// content must not count as "scrolled up" — that made the list stop following right
+/// after one's own message went out.
+private struct BottomTracker: ViewModifier {
+    @Binding var atBottom: Bool
+
+    private struct Metrics: Equatable {
+        /// Where the visible part starts (moves only when scrolled) and how tall it is.
+        var top: CGFloat
+        var height: CGFloat
+        /// How far the visible part's bottom is from the end of the content.
+        var below: CGFloat
+    }
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, iOS 18.0, *) {
+            content.onScrollGeometryChange(for: Metrics.self) { g in
+                Metrics(top: g.visibleRect.minY, height: g.visibleRect.height,
+                        below: g.contentSize.height - g.visibleRect.maxY)
+            } action: { old, new in
+                guard new.top != old.top || new.height != old.height else { return }
+                // Near the end counts: a scroll to the bottom can land a little short while
+                // rows the lazy stack only estimated get their real height.
+                let bottom = new.below < 120
+                if bottom != atBottom { atBottom = bottom }
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// The last row of the list (the scroll target "bottom"). On systems without scroll
+/// geometry it also tells whether the member is at the bottom.
 struct ChatBottomSentinel: View {
     @Binding var atBottom: Bool
     var body: some View {
-        Color.clear.frame(height: 1).id("bottom")
-            .onAppear { atBottom = true }
-            .onDisappear { atBottom = false }
+        if #available(macOS 15.0, iOS 18.0, *) {
+            Color.clear.frame(height: 1).id("bottom")
+        } else {
+            Color.clear.frame(height: 1).id("bottom")
+                .onAppear { atBottom = true }
+                .onDisappear { atBottom = false }
+        }
     }
 }
 
