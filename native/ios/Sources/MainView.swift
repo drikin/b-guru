@@ -76,19 +76,19 @@ struct MainView: View {
     private var leftPicker: some View {
         Picker("表示", selection: $leftTab.animation(.easeOut(duration: 0.2))) {
             Text("タイムライン").tag(MainTab.timeline)
-            Text("ジュークボックス").tag(MainTab.jukebox)
+            Text("💿 ジュークボックス").tag(MainTab.jukebox)
         }
         .pickerStyle(.segmented)
-        .frame(width: 240)
+        .frame(width: 260)
     }
 
     private var picker: some View {
         Picker("表示", selection: $tab.animation(.easeOut(duration: 0.2))) {
             Text("タイムライン").tag(MainTab.timeline)
             Text(store.unreadCount > 0 ? "チャット ●" : "チャット").tag(MainTab.chat)
-            if jukeboxOn { Text("ジュークボックス").tag(MainTab.jukebox) }
+            if jukeboxOn { Text("💿").accessibilityLabel("ジュークボックス").tag(MainTab.jukebox) }
         }
         .pickerStyle(.segmented)
-        .frame(width: jukeboxOn ? 300 : 240)
+        .frame(width: jukeboxOn ? 280 : 240)
     }
 }

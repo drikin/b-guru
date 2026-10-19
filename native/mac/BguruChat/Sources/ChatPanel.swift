@@ -51,13 +51,33 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         delegate = self
         animationBehavior = .utilityWindow
         let root = MainPanelView(store: store, timeline: timeline, pin: pin, onClose: { [weak self] in self?.dismiss() }, onSignOut: onSignOut)
-        contentView = NSHostingView(rootView: root)
+        let host = NSHostingView(rootView: root)
+        // Only keep the content's minimum: growing to its ideal size made the panel wide
+        // (the jukebox's sideways chip rows, three long tabs — drikin 2026-10-19).
+        host.sizingOptions = [.minSize]
+        contentView = host
+        pin.wantsHeight = { [weak self] h in self?.grow(toHeight: h) }
         pin.onChange = { [weak self] pinned in self?.applyPin(pinned) }
         pin.openEmoji = { [weak self] in self?.openEmojiPalette() }
         if UserDefaults.standard.bool(forKey: "pinned") { pin.pinned = true }
     }
 
     override var canBecomeKey: Bool { true }
+
+    /// Taller for the jukebox (the turntable and the shelf), never wider; keeps the top
+    /// edge where it is and stays on the screen. Never shrinks what the member set.
+    private func grow(toHeight h: CGFloat) {
+        guard let screen = screen ?? NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        var f = frame
+        let target = min(h, visible.height)
+        guard f.height < target else { return }
+        let top = f.maxY
+        f.size.height = target
+        f.origin.y = max(visible.minY, top - target)
+        if f.maxY > visible.maxY { f.origin.y = visible.maxY - target }
+        setFrame(f, display: true, animate: true)
+    }
 
     private var swipe = SwipeTracker()
 
@@ -380,6 +400,8 @@ final class PinState {
     /// Opens the emoji & symbols palette for the message box (set by the panel).
     @ObservationIgnored var openEmoji: (() -> Void)?
     @ObservationIgnored var onChange: ((Bool) -> Void)?
+    /// Asks the panel to be at least this tall (set by the panel).
+    @ObservationIgnored var wantsHeight: ((CGFloat) -> Void)?
 }
 
 /// Two-finger horizontal swipe on the trackpad → switch chat ⇄ timeline, like

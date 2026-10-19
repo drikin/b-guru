@@ -46,6 +46,7 @@ struct MainPanelView: View {
         .environment(\.jukebox, jukeboxOn ? store.jukebox : nil)
         .task(id: jukeboxOn) { if jukeboxOn { await store.jukebox.load(path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox") } }
         .onChange(of: jukeboxOn) { _, on in if !on && tab == .jukebox { tab = .chat } }
+        .onChange(of: pin.tab) { _, t in if t == .jukebox { pin.wantsHeight?(660) } }
         // ⌃⌥B / the menu-bar icon always comes back to the chat input.
         .onChange(of: pin.focusRequest) { _, _ in tab = .chat }
         .onChange(of: timeline.openThread) { _, id in if id != nil { tab = .timeline } }
@@ -58,15 +59,55 @@ struct MainPanelView: View {
 
     private var jukeboxOn: Bool { store.capabilities?.jukeboxEnabled ?? false }
 
-    private var picker: some View {
-        Picker("表示", selection: $pin.tab) {
-            Text(store.unreadCount > 0 ? "チャット ●" : "チャット").tag(MainTab.chat)
-            Text("タイムライン").tag(MainTab.timeline)
-            if jukeboxOn { Text("ジュークボックス").tag(MainTab.jukebox) }
+    @ViewBuilder private var picker: some View {
+        if jukeboxOn {
+            // Three tabs: segments sized to their words (the system control makes them all
+            // as wide as the widest and widened the panel). A record for the jukebox keeps it
+            // narrow and stays apart from the chat's own 💬｜🏠 (text｜room) switch.
+            PanelTabs(selection: $pin.tab, items: [
+                (.chat, store.unreadCount > 0 ? "チャット ●" : "チャット", "チャット（⌘1）"),
+                (.timeline, "タイムライン", "タイムライン（⌘2）"),
+                (.jukebox, "💿", "ジュークボックス（⌘3）"),
+            ])
+        } else {
+            Picker("表示", selection: $pin.tab) {
+                Text(store.unreadCount > 0 ? "チャット ●" : "チャット").tag(MainTab.chat)
+                Text("タイムライン").tag(MainTab.timeline)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help("チャット（⌘1）／タイムライン（⌘2）")
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
+    }
+}
+
+/// A segmented switch whose segments are as wide as their labels.
+private struct PanelTabs: View {
+    @Binding var selection: MainTab
+    let items: [(MainTab, String, String)]
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items, id: \.0) { tab, label, help in
+                let on = selection == tab
+                Button { selection = tab } label: {
+                    Text(label)
+                        .font(.system(size: 12, weight: on ? .semibold : .regular))
+                        .foregroundStyle(on ? Color.white : Color.primary)
+                        .padding(.horizontal, 10)
+                        .frame(height: 20)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(on ? Color.accentColor : Color.clear))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(help)
+                .accessibilityLabel(help)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.07)))
         .fixedSize()
-        .help(jukeboxOn ? "チャット（⌘1）／タイムライン（⌘2）／ジュークボックス（⌘3）" : "チャット（⌘1）／タイムライン（⌘2）")
     }
 }
