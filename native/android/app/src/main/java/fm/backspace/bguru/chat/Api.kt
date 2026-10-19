@@ -153,6 +153,14 @@ class ApiClient(val token: String) {
         send(request("POST", "/api/agent/voice/kick", buildJsonObject { put("user_id", userId); put("ban", ban) }))
     }
 
+    // MARK: club room (ルーム)
+
+    suspend fun room(path: String = "/api/agent/room"): RoomStateResponse = get(path)
+
+    /** POST { action: "enter" | "text" | "move" | "voice" | "react", … }. */
+    suspend fun roomAction(body: JsonObject, path: String = "/api/agent/room"): RoomActionResponse =
+        decode(send(request("POST", path, body)))
+
     // MARK: timeline
 
     suspend fun posts(cursor: String? = null, limit: Int = 30): PostListResponse =

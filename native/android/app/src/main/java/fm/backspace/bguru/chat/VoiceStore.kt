@@ -22,6 +22,8 @@ import io.livekit.android.room.Room
 import io.livekit.android.room.participant.AudioPresets
 import io.livekit.android.room.participant.AudioTrackPublishDefaults
 import io.livekit.android.room.participant.Participant
+import io.livekit.android.room.participant.ParticipantTrackPermission
+import io.livekit.android.room.track.RemoteAudioTrack
 import io.livekit.android.room.track.LocalAudioTrack
 import io.livekit.android.room.track.LocalAudioTrackOptions
 import io.livekit.android.room.track.Track
@@ -96,6 +98,57 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
     /** Bumped by every join and leave, so an in-flight join that was overtaken by a
      *  leave (or a newer join) gives up instead of connecting. */
     private var attempt = 0
+
+    // MARK: club room (ルーム) proximity — set by RoomStore while the room is on for this member.
+    // With both unset (room disabled) nothing here changes the plain voice room.
+
+    /** How loud each remote participant (identity = user_id) is for me, 0…1. */
+    var proximity: ((String) -> Double)? = null
+    /** Who may receive my microphone (identities). The meeting table's privacy rests on this. */
+    var allowedListeners: (() -> Set<String>)? = null
+    /** The room decides who may talk (server limits), not the plain room's speaker cap. */
+    val roomMode get() = proximity != null
+    private var sentAllowed: Set<String>? = null
+    private var permJob: Job? = null
+
+    /** The room changed (someone moved, came, left, …): volumes now, permissions batched. */
+    fun proximityChanged() {
+        if (room == null || !roomMode) return
+        applyVolumes()
+        if (permJob?.isActive != true) permJob = scope.launch {
+            delay(300)
+            sendPermissions(force = false)
+        }
+    }
+
+    private fun applyVolumes() {
+        val r = room ?: return
+        val f = proximity ?: return
+        for (p in r.remoteParticipants.values) {
+            val id = p.identity?.value ?: continue
+            val v = f(id).coerceIn(0.0, 1.0)
+            for ((_, track) in p.audioTrackPublications) (track as? RemoteAudioTrack)?.setVolume(v)
+        }
+    }
+
+    /** Only the people allowed to hear me may subscribe to my mic track. Sent when the set
+     *  changes, and always right after connecting (before the mic can be turned on). */
+    private fun sendPermissions(force: Boolean) {
+        val r = room ?: return
+        val f = allowedListeners ?: return
+        val ids = f()
+        if (!force && ids == sentAllowed) return
+        try {
+            r.localParticipant.setTrackSubscriptionPermissions(
+                false,
+                ids.map { ParticipantTrackPermission(participantIdentity = it, allTracksAllowed = true) },
+            )
+            sentAllowed = ids
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) android.util.Log.d("BguruVoice", "track permissions failed", e)
+            sentAllowed = null
+        }
+    }
 
     /** Debug builds only: a LiveKit server and token to join directly (demo mode, no B-guru API). */
     private var dev: Pair<String, String>? = null
@@ -211,6 +264,11 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
         }
         if (myUserId == null) myUserId = r.localParticipant.identity?.value
         micOn = false
+        // Room mode: restrict who receives my mic before it can ever be published.
+        if (roomMode) {
+            sendPermissions(force = true)
+            applyVolumes()
+        }
         phase = Phase.CONNECTED
         VoiceService.start(app, mic = false)
         refreshMembers()
@@ -234,7 +292,7 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
     fun setMic(on: Boolean) {
         val r = room ?: return
         if ((phase != Phase.CONNECTED && phase != Phase.RECONNECTING) || micBusy) return
-        if (on && members.count { !it.isMe && !it.muted } >= maxSpeakers) {
+        if (on && !roomMode && members.count { !it.isMe && !it.muted } >= maxSpeakers) {
             notice = "話せるのは同時に $maxSpeakers 人までです。誰かがミュートするまでお待ちください"
             return
         }
@@ -303,6 +361,9 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
         room = null
         events?.cancel()
         events = null
+        permJob?.cancel()
+        permJob = null
+        sentAllowed = null
         meterTrack?.let { t -> meter?.let(t::removeSink) }
         meter = null
         meterTrack = null
@@ -351,7 +412,10 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
         if (r == null || r !== from) return // late event from an earlier room
         when (e) {
             is RoomEvent.Reconnecting -> phase = Phase.RECONNECTING
-            is RoomEvent.Reconnected -> if (phase != Phase.IDLE) phase = Phase.CONNECTED
+            is RoomEvent.Reconnected -> {
+                if (phase != Phase.IDLE) phase = Phase.CONNECTED
+                if (roomMode) sendPermissions(force = true)
+            }
             is RoomEvent.Disconnected -> {
                 if (BuildConfig.DEBUG) android.util.Log.d("BguruVoice", "disconnected: ${e.reason}", e.error)
                 // We hung up ourselves (leave) — nothing to tell.
@@ -369,12 +433,17 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
             notice = "マイクがオフにされました（管理者の操作か、話せる人数の上限のため）"
         }
         refreshMembers()
+        // A newly subscribed track starts at full volume: set it for where they stand.
+        if (roomMode) applyVolumes()
         // Participant state (mic on/off, subscribed track) settles a moment after the
         // event itself — read it again once it has, so a face never stays stale.
         settle?.cancel()
         settle = scope.launch {
             delay(400)
-            if (room === r) refreshMembers()
+            if (room === r) {
+                refreshMembers()
+                if (roomMode) applyVolumes()
+            }
         }
     }
 

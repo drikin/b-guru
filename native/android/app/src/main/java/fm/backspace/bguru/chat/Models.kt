@@ -71,7 +71,14 @@ data class ChatRow(
 /** GET /api/agent/capabilities. A feature the server does not report is absent. */
 @Serializable
 data class Capabilities(val scopes: List<String> = emptyList(), val features: Features? = null) {
-    @Serializable data class Features(val chat: ChatFeatures? = null, val posts: PostFeatures? = null, val voice: VoiceFeatures? = null)
+    @Serializable data class Features(
+        val chat: ChatFeatures? = null,
+        val posts: PostFeatures? = null,
+        val voice: VoiceFeatures? = null,
+        val room: RoomFeatures? = null,
+    )
+    /** The club room (ルーム): 8-bit room view + proximity voice, behind a rollout flag. */
+    @Serializable data class RoomFeatures(val enabled: Boolean? = null, val path: String? = null)
     @Serializable data class VoiceFeatures(
         val enabled: Boolean? = null,
         val join: Boolean? = null,
@@ -121,6 +128,10 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val canJoinVoice get() = features?.voice?.join ?: false
     val isVoiceAdmin get() = features?.voice?.admin ?: false
     val voiceMaxSpeakers get() = features?.voice?.maxSpeakers ?: 10
+    /** The club room is on for this member. */
+    val roomEnabled get() = features?.room?.enabled ?: false
+    /** Only paths on our own server (the request carries the token). */
+    val roomPath get() = features?.room?.path?.takeIf { it.startsWith("/api/") } ?: "/api/agent/room"
 }
 
 // MARK: voice room
@@ -140,6 +151,56 @@ data class VoiceRoomInfo(
 @Serializable data class VoiceStateResponse(val enabled: Boolean = false, val room: VoiceRoomInfo? = null)
 @Serializable data class VoiceTokenResponse(val url: String, val token: String, val room: String = "", val identity: String = "")
 @Serializable data class VoiceMuteResponse(val ok: Boolean = false, val muted: Boolean? = null)
+
+// MARK: club room (ルーム) — docs/room-client-spec.md
+
+@Serializable data class RoomPoint(val x: Int, val y: Int)
+@Serializable data class RoomZone(val kind: String, val name: String, val x: Int, val y: Int, val w: Int, val h: Int) {
+    fun contains(px: Int, py: Int) = px >= x && px < x + w && py >= y && py < y + h
+}
+@Serializable data class RoomLabel(val name: String, val x: Int, val y: Int)
+
+/** The map (src/lib/room-map.ts roomMapDto). Tiles: one character per tile, h rows of w. */
+@Serializable
+data class RoomMap(
+    val w: Int = 32,
+    val h: Int = 20,
+    val tiles: List<String> = emptyList(),
+    val zones: List<RoomZone> = emptyList(),
+    val door: RoomPoint = RoomPoint(15, 18),
+    val seats: List<RoomPoint> = emptyList(),
+    val labels: List<RoomLabel> = emptyList(),
+    val hearRadius: Int = 4,
+)
+
+/** Someone in the house: in the room view (mode "room") or at a chat seat ("text"). */
+@Serializable
+data class RoomMember(
+    val userId: String,
+    val name: String = "",
+    val avatar: String? = null,
+    val x: Int = 0,
+    val y: Int = 0,
+    val mode: String = "text",
+    val listening: Boolean = false,
+    val mic: Boolean = false,
+    val away: Boolean = false,
+) {
+    val inRoom get() = mode == "room"
+}
+
+@Serializable
+data class RoomStateResponse(
+    val map: RoomMap = RoomMap(),
+    val members: List<RoomMember> = emptyList(),
+    val me: String = "",
+    val reactions: List<String> = emptyList(),
+)
+
+@Serializable data class RoomActionResponse(val ok: Boolean = false, val member: RoomMember? = null, val from: RoomPoint? = null, val to: RoomPoint? = null)
+
+/** The stream's `room` event: join / update / leave carry `member`; react carries user_id, emoji, to. */
+@Serializable data class RoomEventData(val action: String, val member: RoomMember? = null, val userId: String? = null, val emoji: String? = null, val to: String? = null)
 
 // MARK: timeline
 

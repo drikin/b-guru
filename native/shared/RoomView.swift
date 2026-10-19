@@ -104,17 +104,25 @@ enum RoomArt {
     }
 
     struct Look { var skin, hair, shirt, pants: UInt32 }
-    private static let skins: [UInt32] = [0xf1c7a0, 0xe8b48c, 0xf4cfaa, 0xe2ac82, 0xf6d4b5]
-    private static let hairs: [UInt32] = [0x3a2a20, 0x6b6b6b, 0x1e1a22, 0xcfcfcf, 0x5a3a22, 0x2b2b44, 0x8a4a2a, 0xc46a3a]
-    private static let shirts: [UInt32] = [0xf2b24c, 0x4f81bd, 0x9bbb59, 0x8064a2, 0xc0504d, 0x4bacc6, 0xf3e9d8, 0x3ccf74, 0xe07a5f]
-    private static let pants: [UInt32] = [0x2f3e5c, 0x333344, 0x3b3b46, 0x2a2a33, 0x3a2f2a, 0x6b4a8c]
+    // Same palettes and hash as the web and Android (src/lib/room-logic.ts lookFor), so
+    // a member looks the same on every device.
+    private static let skins: [UInt32] = [0xf1c7a0, 0xe8b48c, 0xf4cfaa, 0xe2ac82, 0xf6d4b5, 0xc98e66, 0xa8714e]
+    private static let hairs: [UInt32] = [0x3a2a20, 0x6b6b6b, 0x1e1a22, 0xcfcfcf, 0x5a3a22, 0x2b2b44, 0x8a4a2a, 0xc46a3a, 0xd9b25a]
+    private static let shirts: [UInt32] = [0xf2b24c, 0x4f81bd, 0x9bbb59, 0x8064a2, 0xc0504d, 0x4bacc6, 0xf3e9d8, 0xe07a9a, 0x3ccf74]
+    private static let pants: [UInt32] = [0x2f3e5c, 0x333344, 0x3b3b46, 0x2a2a33, 0x3a2f2a, 0x6b4a8c, 0x43384a, 0x4a5a3a]
+
+    /// FNV-1a over UTF-16 code units (JavaScript's charCodeAt).
+    static func hashId(_ id: String) -> UInt32 {
+        var h: UInt32 = 0x811c9dc5
+        for u in id.utf16 { h ^= UInt32(u); h = h &* 0x01000193 }
+        return h
+    }
 
     /// A stable look per member, from their user id.
     static func look(_ userId: String) -> Look {
-        var h: UInt64 = 1469598103934665603
-        for b in userId.utf8 { h = (h ^ UInt64(b)) &* 1099511628211 }
-        func pick(_ a: [UInt32], _ shift: UInt64) -> UInt32 { a[Int((h >> shift) % UInt64(a.count))] }
-        return Look(skin: pick(skins, 3), hair: pick(hairs, 11), shirt: pick(shirts, 19), pants: pick(pants, 27))
+        let h = hashId(userId)
+        return Look(skin: skins[Int(h % UInt32(skins.count))], hair: hairs[Int((h >> 5) % UInt32(hairs.count))],
+                    shirt: shirts[Int((h >> 10) % UInt32(shirts.count))], pants: pants[Int((h >> 15) % UInt32(pants.count))])
     }
 
     /// A member at art-pixel (x, y): 16×16, 3 facings, 2-step walk, sitting.

@@ -165,7 +165,10 @@ final class RoomStore {
     /// Someone said something in the chat: show it over their head.
     func chatSaid(_ userId: String?, _ text: String, photos: Bool) {
         guard let userId, members[userId] != nil else { return }
-        let t = text.isEmpty && photos ? "📷" : String(text.prefix(40))
+        // Same as the web (room-logic.ts bubbleText).
+        let flat = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !flat.isEmpty || photos else { return }
+        let t = flat.isEmpty ? "📷" : (flat.count > 48 ? String(flat.prefix(47)) + "…" : flat)
         bubbles[userId] = (t, Date().addingTimeInterval(4.5))
         revision += 1
     }

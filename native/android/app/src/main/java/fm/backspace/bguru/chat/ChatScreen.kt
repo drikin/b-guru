@@ -206,7 +206,14 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0),
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
-            VoiceBar(store.voice)
+            // The club room, when on for this member: テキスト｜ルーム, and in the text view its
+            // banner in place of the voice bar. Otherwise the voice bar exactly as before.
+            if (store.room.enabled) {
+                RoomModeSwitch(store.room, store.voice)
+                if (!store.room.roomView) RoomBanner(store.room, store.voice)
+            } else {
+                VoiceBar(store.voice)
+            }
             store.update?.let { u ->
                 // Downloads need the member's B-guru login, so the browser (where they
                 // are signed in) fetches the APK; Android then offers to install it.
@@ -222,80 +229,103 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                     }
                 }
             }
-            PullToRefreshBox(
-                isRefreshing = refreshing,
-                onRefresh = { scope.launch { refreshing = true; store.reload(); refreshing = false } },
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-            ) {
-                LazyColumn(
-                    state = listState,
-                    reverseLayout = true,
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom),
-                ) {
-                    if (rows.isEmpty()) {
-                        item {
-                            Text(
-                                if (store.hasLoaded) "今日はまだ静かだわん" else "読み込み中…",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 40.dp),
-                            )
+            // Everything below the bars: the messages and the composer (beside or under the room).
+            val chatPane: @Composable (Modifier) -> Unit = { paneModifier ->
+                Column(paneModifier) {
+                    PullToRefreshBox(
+                        isRefreshing = refreshing,
+                        onRefresh = { scope.launch { refreshing = true; store.reload(); refreshing = false } },
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                    ) {
+                        LazyColumn(
+                            state = listState,
+                            reverseLayout = true,
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom),
+                        ) {
+                            if (rows.isEmpty()) {
+                                item {
+                                    Text(
+                                        if (store.hasLoaded) "今日はまだ静かだわん" else "読み込み中…",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(top = 40.dp),
+                                    )
+                                }
+                            }
+                            itemsIndexed(reversed, key = { _, r -> r.key }, contentType = { _, r ->
+                                val photo = r.message.images.isNotEmpty() || r.localImages.isNotEmpty()
+                                (if (r.message.isAuthor) "mine" else "theirs") + if (photo) "-photo" else ""
+                            }) { i, row ->
+                                val prev = reversed.getOrNull(i + 1)?.message
+                                val caps = store.capabilities
+                                MessageRow(
+                                    row = row,
+                                    showHeader = prev == null || prev.authorId != row.message.authorId || prev.isAuthor != row.message.isAuthor,
+                                    canReact = caps?.canReact ?: false,
+                                    canEdit = caps?.canEdit ?: false,
+                                    highlighted = store.highlightId == row.message.id,
+                                    editing = editingId == row.message.id,
+                                    onReact = { store.toggleReaction(row.message.id, it) },
+                                    onEdit = { beginEdit(row.message) },
+                                    onReply = row.message.authorName?.let { n -> { replyTo(n) } },
+                                    onRetry = { store.retry(row) },
+                                    onDiscard = { store.discard(row) },
+                                    onSelect = { selecting = row.message },
+                                    onOpenImage = { urls, at -> viewing = urls to at },
+                                    modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth(),
+                                )
+                            }
                         }
                     }
-                    itemsIndexed(reversed, key = { _, r -> r.key }, contentType = { _, r ->
-                        val photo = r.message.images.isNotEmpty() || r.localImages.isNotEmpty()
-                        (if (r.message.isAuthor) "mine" else "theirs") + if (photo) "-photo" else ""
-                    }) { i, row ->
-                        val prev = reversed.getOrNull(i + 1)?.message
-                        val caps = store.capabilities
-                        MessageRow(
-                            row = row,
-                            showHeader = prev == null || prev.authorId != row.message.authorId || prev.isAuthor != row.message.isAuthor,
-                            canReact = caps?.canReact ?: false,
-                            canEdit = caps?.canEdit ?: false,
-                            highlighted = store.highlightId == row.message.id,
-                            editing = editingId == row.message.id,
-                            onReact = { store.toggleReaction(row.message.id, it) },
-                            onEdit = { beginEdit(row.message) },
-                            onReply = row.message.authorName?.let { n -> { replyTo(n) } },
-                            onRetry = { store.retry(row) },
-                            onDiscard = { store.discard(row) },
-                            onSelect = { selecting = row.message },
-                            onOpenImage = { urls, at -> viewing = urls to at },
-                            modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth(),
-                        )
-                    }
+                    HorizontalDivider()
+                    Composer(
+                        store = store,
+                        field = d.value,
+                        onField = { v ->
+                            val s = justSent
+                            val t = v.text.trim()
+                            val echo = s != null && d.text.isEmpty() && System.currentTimeMillis() - s.second < 2000 &&
+                                t.length >= 2 && s.first.contains(t)
+                            val limit = store.capabilities?.maxBody ?: 1000
+                            when {
+                                echo -> d.text = ""
+                                v.text.length > limit -> d.text = v.text.take(limit)
+                                else -> d.value = v
+                            }
+                        },
+                        editing = editingId != null,
+                        photos = photos,
+                        focus = focus,
+                        onSubmit = ::submit,
+                        onCancelEdit = { editingId = null; d.text = "" },
+                        onEditLast = {
+                            val m = store.lastOwnMessage
+                            if (d.text.isEmpty() && editingId == null && m != null && store.capabilities?.canEdit == true) { beginEdit(m); true } else false
+                        },
+                        onPickMention = { m -> d.text = Mention.complete(d.text, m.name); runCatching { focus.requestFocus() } },
+                    )
                 }
             }
-            HorizontalDivider()
-            Composer(
-                store = store,
-                field = d.value,
-                onField = { v ->
-                    val s = justSent
-                    val t = v.text.trim()
-                    val echo = s != null && d.text.isEmpty() && System.currentTimeMillis() - s.second < 2000 &&
-                        t.length >= 2 && s.first.contains(t)
-                    val limit = store.capabilities?.maxBody ?: 1000
-                    when {
-                        echo -> d.text = ""
-                        v.text.length > limit -> d.text = v.text.take(limit)
-                        else -> d.value = v
+            val room = store.room
+            if (room.enabled && room.roomView) {
+                androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                    if (maxWidth >= 700.dp && maxWidth > maxHeight) {
+                        Row(Modifier.fillMaxSize()) {
+                            RoomPanel(room, store.voice, Modifier.weight(1f).fillMaxSize())
+                            chatPane(Modifier.width(400.dp).fillMaxSize())
+                        }
+                    } else {
+                        Column(Modifier.fillMaxSize()) {
+                            RoomPanel(room, store.voice, Modifier.weight(1f).fillMaxWidth())
+                            chatPane(Modifier.weight(1f).fillMaxWidth())
+                        }
                     }
-                },
-                editing = editingId != null,
-                photos = photos,
-                focus = focus,
-                onSubmit = ::submit,
-                onCancelEdit = { editingId = null; d.text = "" },
-                onEditLast = {
-                    val m = store.lastOwnMessage
-                    if (d.text.isEmpty() && editingId == null && m != null && store.capabilities?.canEdit == true) { beginEdit(m); true } else false
-                },
-                onPickMention = { m -> d.text = Mention.complete(d.text, m.name); runCatching { focus.requestFocus() } },
-            )
+                }
+            } else {
+                chatPane(Modifier.weight(1f).fillMaxWidth())
+            }
         }
     }
 

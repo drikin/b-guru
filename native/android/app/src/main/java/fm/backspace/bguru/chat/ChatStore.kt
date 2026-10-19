@@ -43,6 +43,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     /** The voice room. Lives as long as the sign-in, so a call survives the chat
      *  leaving the screen (the stream pauses; LiveKit has its own connection). */
     val voice = VoiceStore(api, app)
+    /** The club room (ルーム) — only when the server turns it on for this member. */
+    val room = RoomStore(api, voice)
     private val voiceApp = app.applicationContext
 
     /** True while the chat is on screen: drives read marking. */
@@ -96,7 +98,18 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             }, mine = i % 7 == 0L, reactions = if (i % 3 == 0L) listOf(Reaction("❤️", 2), Reaction("👍", 1, mine = true)) else null)
         }) + demoPhotos(images)
         members = listOf("ビーグル", "mazzo", "NORIO TAKAHASHI", "takuto", "coban", "ポンコツ散財王ドリキン").map { MentionMember(it, it) }
-        capabilities = Capabilities(features = Capabilities.Features(Capabilities.ChatFeatures(send = true, editOwn = true, reactions = true, markRead = false, images = true, maxImages = 4), Capabilities.PostFeatures(read = true, publish = true, upload = true, reactions = true, maxImages = 5)))
+        capabilities = Capabilities(features = Capabilities.Features(
+            Capabilities.ChatFeatures(send = true, editOwn = true, reactions = true, markRead = false, images = true, maxImages = 4),
+            Capabilities.PostFeatures(read = true, publish = true, upload = true, reactions = true, maxImages = 5),
+            room = Capabilities.RoomFeatures(enabled = true),
+        ))
+        // A local fake room: its people talk in the chat too (bubbles come from these rows).
+        room.loadDemo { id, name, text ->
+            val next = (rows.maxOfOrNull { it.message.id } ?: 0L) + 1
+            val m = ChatMessage(next, authorId = id, authorName = name, body = text, createdAt = Instant.now().toString())
+            rows = rows + ChatRow(m)
+            room.onChat(m)
+        }
         hasLoaded = true
         connection = Connection.LIVE
         onlineCount = 12
@@ -134,6 +147,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     }
 
     fun stop() {
+        room.close()
         voice.close()
         scope.cancel()
     }
@@ -143,6 +157,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             val caps = api.capabilities()
             capabilities = caps
             voice.configure(caps)
+            room.configure(caps)
             // Voice is on for me but this token predates the "voice" scope: send the member
             // back to sign in once (a new sign-in gets the scope). Only once per install,
             // so a server that still withholds it cannot loop us.
@@ -192,8 +207,10 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             "ready" -> {
                 connection = Connection.LIVE
                 if (voice.enabled) scope.launch { voice.loadState() } // resync after a reconnect
+                if (room.enabled) scope.launch { room.reload() }
                 reload()
             }
+            "room" -> room.apply(ev.data)
             "voice" -> runCatching { ApiJson.decodeFromString<VoiceRoomInfo>(ev.data) }.getOrNull()?.let(voice::apply)
             "chat" -> {
                 val e = runCatching { ApiJson.decodeFromString<ChatEvent>(ev.data) }.getOrNull() ?: return
@@ -222,6 +239,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         if (m.isAuthor) myUserId = m.authorId
         val alreadyShown = rows.any { it.message.id == m.id }
         rows = reconcile(rows, m)
+        if (!alreadyShown) room.onChat(m)
         if (m.isAuthor || alreadyShown) return
         if (isVisible) markReadSoon() else unreadCount += 1
     }
@@ -292,7 +310,9 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         if (demo) {
             outbox.remove(clientId)
             val m = rows.last { it.message.clientId == clientId }.message
-            rows = reconcile(rows, m.copy(id = (rows.maxOf { it.message.id }) + 1, authorName = "ドリキン"))
+            val stored = m.copy(id = (rows.maxOf { it.message.id }) + 1, authorName = "ドリキン", authorId = m.authorId ?: "me")
+            rows = reconcile(rows, stored)
+            room.onChat(stored)
             return
         }
         scope.launch {
@@ -304,7 +324,9 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
                 outbox.remove(clientId)
                 myUserId = m.authorId ?: myUserId
                 latestId = maxOf(latestId, m.id)
+                val shown = rows.any { it.message.id == m.id }
                 rows = reconcile(rows, m)
+                if (!shown) room.onChat(m)
             } catch (e: ApiError) {
                 if (e.isPermanent) {
                     outbox.remove(clientId)
