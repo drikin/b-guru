@@ -195,6 +195,9 @@ struct ChatView: View {
 
     // MARK: Composer
 
+    /// One line of the message field; the photo and send buttons match it.
+    static let composerHeight: CGFloat = 32
+
     private var composer: some View {
         VStack(alignment: .leading, spacing: 4) {
             let matches = mentionMatches
@@ -214,10 +217,14 @@ struct ChatView: View {
                 if let e = photos.error { Text(e).font(.caption).foregroundStyle(.red) }
             }
             HStack(alignment: .bottom, spacing: 8) {
+                // [📷] [message … 😊] [send], one height, bottoms aligned (a long draft grows upwards).
                 if editingId == nil, store.capabilities?.canSendChatImages == true {
-                    Button { importing = true } label: { Image(systemName: "photo") }
+                    Button { importing = true } label: {
+                        Image(systemName: "photo").font(.system(size: 15))
+                            .frame(width: 26, height: Self.composerHeight)
+                            .contentShape(Rectangle())
+                    }
                         .buttonStyle(.borderless)
-                        .padding(.bottom, 7)
                         .disabled(photos.images.count >= photos.maxImages)
                         .help("写真を付ける（ドラッグ＆ドロップ・⌘V でも）")
                         .accessibilityLabel("写真を付ける")
@@ -248,22 +255,36 @@ struct ChatView: View {
                         if v.count > limit { draft = String(v.prefix(limit)) }
                     }
                     .padding(.vertical, 7)
-                    .padding(.horizontal, 10)
+                    .padding(.leading, 10)
+                    .padding(.trailing, 28) // room for the emoji button
+                    .frame(minHeight: Self.composerHeight)
+                    // The emoji button sits inside the field, on the right.
+                    .overlay(alignment: .bottomTrailing) {
+                        Button {
+                            composerFocused = true
+                            pin.openEmoji?()
+                        } label: {
+                            Image(systemName: "face.smiling").font(.system(size: 14))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 28, height: Self.composerHeight)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                        .help("絵文字と記号（⌃⌘Space）")
+                        .accessibilityLabel("絵文字を入力")
+                    }
                     .background(RoundedRectangle(cornerRadius: 9).fill(Color(nsColor: .textBackgroundColor)))
                     .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.12)))
-                Button {
-                    composerFocused = true
-                    pin.openEmoji?()
-                } label: { Image(systemName: "face.smiling") }
-                .buttonStyle(.borderless)
-                .help("絵文字と記号（⌃⌘Space）")
-                .accessibilityLabel("絵文字を入力")
+                let canSubmit = !((draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (editingId != nil || photos.images.isEmpty)) || !(store.capabilities?.canSend ?? true))
                 Button(action: submit) {
                     Image(systemName: editingId == nil ? "paperplane.fill" : "checkmark")
-                        .frame(width: 18, height: 18)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: Self.composerHeight)
+                        .background(RoundedRectangle(cornerRadius: 9).fill(Color.accentGreen.opacity(canSubmit ? 1 : 0.4)))
+                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(Color.accentGreen)
+                .buttonStyle(.plain)
                 .disabled((draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (editingId != nil || photos.images.isEmpty)) || !(store.capabilities?.canSend ?? true))
                 .accessibilityLabel(editingId == nil ? "送信" : "保存")
             }
