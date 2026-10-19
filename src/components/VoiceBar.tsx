@@ -13,7 +13,6 @@ import {
   getSnapshot,
   joinVoice,
   kickVoice,
-  leaveVoice,
   muteVoice,
   reportVoice,
   fetchVoiceBans,
@@ -23,7 +22,8 @@ import {
   micActive,
   selectInput,
   selectOutput,
-  setMic,
+  userSetMic,
+  userLeaveVoice,
   subscribe,
   unlockAudio,
   voiceLoaded,
@@ -90,7 +90,7 @@ function MicButton({ s }: { s: VoiceSnapshot }) {
   return (
     <Tooltip label={label} openDelay={400}>
       <UnstyledButton
-        onClick={() => void setMic(!s.micOn)}
+        onClick={() => void userSetMic(!s.micOn)}
         disabled={s.phase !== "connected"}
         aria-label={label}
         aria-pressed={s.micOn}
@@ -196,7 +196,7 @@ export default function VoiceBar() {
           )}
           <MicButton s={s} />
           <DeviceMenu s={s} />
-          <Button size="compact-sm" variant="light" color="red" onClick={() => void leaveVoice()}>
+          <Button size="compact-sm" variant="light" color="red" onClick={() => void userLeaveVoice()}>
             退出
           </Button>
         </Group>
@@ -484,7 +484,7 @@ export function VoiceMini({ hidden, onOpenChat }: { hidden: boolean; onOpenChat:
         </Text>
       </UnstyledButton>
       <MicButton s={s} />
-      <Button size="compact-xs" variant="light" color="red" onClick={() => void leaveVoice()}>
+      <Button size="compact-xs" variant="light" color="red" onClick={() => void userLeaveVoice()}>
         退出
       </Button>
     </div>

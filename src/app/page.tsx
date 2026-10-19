@@ -78,6 +78,9 @@ import type { DuplicateCandidate } from "@/lib/duplicates";
 import { DuplicateWarning } from "@/components/DuplicateWarning";
 import VoiceBar, { VoiceMini } from "@/components/VoiceBar";
 import { applyVoiceEvent, loadVoice, type VoiceRoomInfo } from "@/lib/voice-client";
+import RoomPanel from "@/components/RoomView";
+import { applyRoomEvent, reloadRoomIfOn, roomChatBubble } from "@/lib/room-client";
+import { bubbleText } from "@/lib/room-logic";
 
 /** Decode a base64url VAPID public key into a Uint8Array for pushManager.subscribe. */
 function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
@@ -6630,6 +6633,8 @@ export default function Home() {
         const isMine = !!authRef.current?.userId && msg.authorId === authRef.current.userId;
         // 自分の楽観送信（clientId 付き）は pending 行をその場で置き換える。
         setChatMessages((prev) => reconcileChat(prev, { ...msg, isAuthor: isMine }));
+        // Club room: a speech bubble over the author on the map (📷 for photos only).
+        roomChatBubble(msg.authorId, bubbleText(msg.body, msg.images?.length ?? 0));
         if (chatViewRef.current) {
           setChatUnread(0);
           fetch("/api/chat/read", { method: "POST" }).catch(() => {});
@@ -6688,6 +6693,14 @@ export default function Home() {
         /* ignore a malformed event */
       }
     });
+    // Club room (ルーム): members joining / moving / leaving and reactions.
+    es.addEventListener("room", (e: MessageEvent) => {
+      try {
+        applyRoomEvent(JSON.parse(e.data));
+      } catch {
+        /* ignore a malformed event */
+      }
+    });
     // onopen fires on the FIRST connection too, not just on reconnects. The auth
     // effect already loads all of these panels on mount, so reloading them here
     // made every page load fire the same ~9 APIs twice (measured: 16 unique
@@ -6711,6 +6724,7 @@ export default function Home() {
       L.loadPollWidget();
       L.loadChat(chatViewRef.current); // recover chat missed during a disconnect
       void loadVoice(); // and who is in the voice room
+      reloadRoomIfOn(); // and the club room
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) L.silentRefreshFeed();
     };
     es.onerror = () => {
@@ -11390,7 +11404,8 @@ export default function Home() {
                     overscrollBehavior: "contain",
                   }}
                 >
-                  <VoiceBar />
+                  {/* Club room on: テキスト｜ルーム switch + map; off: the voice bar as before. */}
+                  <RoomPanel fallback={<VoiceBar />} />
                   {/* Message list */}
                   <ScrollArea.Autosize
                     type="auto"

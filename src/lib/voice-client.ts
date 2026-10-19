@@ -8,6 +8,7 @@
  * a local level meter drives the "talking" look, my own face gets no ring.
  * livekit-client is loaded only when someone joins, so it costs nothing until then. */
 import type { Room as LkRoom, Participant, LocalAudioTrack } from "livekit-client";
+import { sameIds } from "./room-logic";
 
 export interface VoiceRoomInfo {
   active: boolean;
@@ -192,7 +193,11 @@ async function connect(url: string, token: string, mine: number) {
     .on(lk.RoomEvent.TrackUnsubscribed, (track) => {
       track.detach().forEach((el) => el.remove());
     })
-    .on(lk.RoomEvent.ParticipantConnected, changed)
+    .on(lk.RoomEvent.ParticipantConnected, () => {
+      if (room !== r) return;
+      applyRoomVolumes();
+      refreshMembers();
+    })
     .on(lk.RoomEvent.ParticipantDisconnected, changed)
     .on(lk.RoomEvent.ActiveSpeakersChanged, changed)
     .on(lk.RoomEvent.TrackMuted, (pub, participant) => {
@@ -207,7 +212,13 @@ async function connect(url: string, token: string, mine: number) {
     .on(lk.RoomEvent.TrackPublished, changed)
     .on(lk.RoomEvent.TrackUnpublished, changed)
     .on(lk.RoomEvent.Reconnecting, () => room === r && set({ phase: "reconnecting" }))
-    .on(lk.RoomEvent.Reconnected, () => room === r && set({ phase: "connected" }))
+    .on(lk.RoomEvent.Reconnected, () => {
+      if (room !== r) return;
+      set({ phase: "connected" });
+      // Send the club-room permissions again after a reconnect, to be sure.
+      sentAllowed = null;
+      flushRoomPermissions();
+    })
     .on(lk.RoomEvent.AudioPlaybackStatusChanged, () => room === r && set({ needsAudioUnlock: !r.canPlaybackAudio }))
     .on(lk.RoomEvent.MediaDevicesChanged, () => room === r && void refreshDevices())
     .on(lk.RoomEvent.Disconnected, (reason) => {
@@ -231,6 +242,10 @@ async function connect(url: string, token: string, mine: number) {
     await r.disconnect().catch(() => {});
     return;
   }
+  // Club room: restrict who may receive my mic before it can ever be turned on.
+  sentAllowed = null;
+  flushRoomPermissions();
+  applyRoomVolumes();
   // The join click is our user gesture; most browsers then allow playback.
   await r.startAudio().catch(() => {});
   set({ phase: "connected", micOn: false, needsAudioUnlock: !r.canPlaybackAudio });
@@ -247,6 +262,11 @@ async function teardown() {
   attempt++;
   const r = room;
   room = null;
+  sentAllowed = null;
+  if (permTimer != null) {
+    clearTimeout(permTimer);
+    permTimer = null;
+  }
   stopMeter();
   set({ phase: "idle", micOn: false, micBusy: false, micLevel: 0, members: [], needsAudioUnlock: false });
   audioBox?.replaceChildren();
@@ -266,7 +286,10 @@ export async function unlockAudio() {
 export async function setMic(on: boolean): Promise<void> {
   const r = room;
   if (!r || (snap.phase !== "connected" && snap.phase !== "reconnecting") || snap.micBusy) return;
-  if (on && snap.members.filter((m) => !m.isMe && !m.muted).length >= snap.maxSpeakers) {
+  // In the club room the server decides who may talk (POST /api/room voice) and the
+  // track permissions decide who hears it; the old whole-room cap does not apply.
+  if (on && proximity) flushRoomPermissions();
+  else if (on && snap.members.filter((m) => !m.isMe && !m.muted).length >= snap.maxSpeakers) {
     set({ notice: `話せるのは同時に ${snap.maxSpeakers} 人までです。誰かがミュートするまでお待ちください` });
     return;
   }
@@ -485,4 +508,93 @@ function ensureAudioBox(): HTMLDivElement {
     document.body.appendChild(audioBox);
   }
   return audioBox;
+}
+
+// ---- club room (ルーム): proximity voice ----
+//
+// While the room view is on, the room client hands us, on every room change,
+// the volume for each LiveKit identity (= user id) and the sorted list of people
+// allowed to receive my microphone. Volumes apply at once; the permission set is
+// sent only when it changes, batched (~300 ms), and right after connecting.
+// null = not in the room view (the old voice bar behaviour, nothing restricted).
+
+export interface RoomProximity {
+  volumes: Map<string, number>;
+  /** Sorted identities allowed to subscribe to my mic. */
+  allowed: string[];
+}
+
+const PERM_BATCH_MS = 300;
+let proximity: RoomProximity | null = null;
+let sentAllowed: string[] | null = null;
+let permTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function setRoomProximity(p: RoomProximity | null): void {
+  proximity = p;
+  if (!p) {
+    if (permTimer != null) clearTimeout(permTimer);
+    permTimer = null;
+    return;
+  }
+  applyRoomVolumes();
+  if (!room || sameIds(p.allowed, sentAllowed) || permTimer != null) return;
+  permTimer = setTimeout(() => {
+    permTimer = null;
+    flushRoomPermissions();
+  }, PERM_BATCH_MS);
+}
+
+function applyRoomVolumes(): void {
+  const r = room;
+  const p = proximity;
+  if (!r || !p) return;
+  for (const rp of r.remoteParticipants.values()) {
+    try {
+      rp.setVolume(p.volumes.get(rp.identity) ?? 0);
+    } catch {
+      /* participant going away */
+    }
+  }
+}
+
+function flushRoomPermissions(): void {
+  const r = room;
+  const p = proximity;
+  if (!r || !p) return;
+  if (permTimer != null) {
+    clearTimeout(permTimer);
+    permTimer = null;
+  }
+  if (sameIds(p.allowed, sentAllowed)) return;
+  try {
+    r.localParticipant.setTrackSubscriptionPermissions(
+      false,
+      p.allowed.map((id) => ({ participantIdentity: id, allowAll: true }))
+    );
+    sentAllowed = [...p.allowed];
+  } catch (e) {
+    console.warn("[voice] track permissions", e);
+  }
+}
+
+/** The mic / leave buttons outside the room view (VoiceMini) go through the room
+ *  client while it is active, so the server's mic state stays in step. */
+export interface VoiceHooks {
+  mic: (on: boolean) => Promise<void>;
+  leave: () => Promise<void>;
+}
+let hooks: VoiceHooks | null = null;
+export function setVoiceHooks(h: VoiceHooks | null): void {
+  hooks = h;
+}
+export function userSetMic(on: boolean): Promise<void> {
+  return hooks ? hooks.mic(on) : setMic(on);
+}
+export function userLeaveVoice(): Promise<void> {
+  return hooks ? hooks.leave() : leaveVoice();
+}
+
+/** Show a line in the voice notice (room errors such as the speaker limit). */
+export function setVoiceNotice(notice: string | null): void {
+  set({ notice });
 }

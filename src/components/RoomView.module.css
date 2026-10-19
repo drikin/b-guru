@@ -1,0 +1,160 @@
+/* Club room (ルーム) chrome inside the chat column. The pixel map has its own
+ * night palette (like the prototype); the rest follows the site theme. */
+
+.mapBox {
+  position: relative;
+  flex: 0 0 auto;
+  height: clamp(220px, 48%, 560px);
+  background: #120e14;
+  overflow: hidden;
+  touch-action: none;
+  border-bottom: 1px solid var(--border-green, var(--mantine-color-default-border));
+}
+
+.canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  cursor: pointer;
+}
+
+.overlay {
+  position: absolute;
+  font-size: 12px;
+  line-height: 1.3;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(29, 24, 32, 0.85);
+  color: #f3e9d8;
+  border: 1px solid #43384a;
+  pointer-events: none;
+}
+
+.zone {
+  right: 8px;
+  top: 8px;
+  color: #3ccf74;
+  border-color: #3ccf74;
+  max-width: 60%;
+}
+
+.hint {
+  left: 8px;
+  top: 8px;
+  max-width: calc(100% - 16px);
+}
+
+.react {
+  position: absolute;
+  left: max(8px, env(safe-area-inset-left, 0px));
+  bottom: 8px;
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  max-width: calc(100% - 158px);
+}
+
+.react button {
+  font-size: 15px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: rgba(42, 34, 48, 0.9);
+  border: 1px solid #43384a;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.react button:active {
+  transform: scale(0.92);
+}
+
+.pad {
+  position: absolute;
+  right: max(8px, env(safe-area-inset-right, 0px));
+  bottom: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, 44px);
+  grid-template-rows: repeat(3, 44px);
+  gap: 4px;
+  opacity: 0.85;
+}
+
+.pad button {
+  font-size: 18px;
+  background: rgba(42, 34, 48, 0.9);
+  color: #f3e9d8;
+  border: 1px solid #43384a;
+  border-radius: 10px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  padding: 0;
+}
+
+.padUp { grid-column: 2; grid-row: 1; }
+.padLeft { grid-column: 1; grid-row: 2; }
+.padRight { grid-column: 3; grid-row: 2; }
+.padDown { grid-column: 2; grid-row: 3; }
+
+@media (hover: hover) and (pointer: fine) {
+  .pad { display: none; }
+  .react { max-width: none; gap: 4px; }
+  .react button { font-size: 18px; width: 38px; height: 38px; }
+}
+
+.menu {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  gap: 4px;
+  min-width: 140px;
+  padding: 6px;
+  border-radius: 8px;
+  background: #2a2230;
+  border: 1px solid #f2b24c;
+  color: #f3e9d8;
+  font-size: 13px;
+}
+
+.menuName {
+  color: #f2b24c;
+  padding: 2px 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
+.menu button {
+  font: inherit;
+  text-align: left;
+  background: #1d1820;
+  color: #f3e9d8;
+  border: 1px solid #43384a;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.react button:focus-visible,
+.pad button:focus-visible,
+.menu button:focus-visible {
+  outline: 2px solid #f2b24c;
+  outline-offset: 2px;
+}
+
+.bar {
+  height: 6px;
+  flex: 1;
+  background: var(--mantine-color-default-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.bar > i {
+  display: block;
+  height: 100%;
+  background: var(--text-green, #2b8a3e);
+}
