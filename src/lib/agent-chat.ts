@@ -160,7 +160,7 @@ export function toAgentVoiceDto(s: VoiceState) {
 
 /** The capabilities document for GET /api/agent/capabilities. `scopes` are the
  *  calling token's, so a client knows up front which actions will be refused. */
-export function agentCapabilities(scopes: AgentScope[], opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean } = {}) {
+export function agentCapabilities(scopes: AgentScope[], opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean } = {}) {
   const ttlHours = parseInt(CHAT_TTL, 10) || 24;
   const can = (s: AgentScope) => scopes.includes(s);
   return {
@@ -210,6 +210,8 @@ export function agentCapabilities(scopes: AgentScope[], opts: { voice?: boolean;
       // `join` = this token has the "voice" scope (apps issued before it must sign in again).
       // The club room (8-bit room view + proximity voice), behind a rollout flag.
       room: { enabled: !!opts.room, path: "/api/agent/room" },
+      // Past backspace.fm episodes to listen to (Art19), behind a rollout flag.
+      jukebox: { enabled: !!opts.jukebox, path: "/api/agent/jukebox" },
       voice: {
         enabled: !!opts.voice,
         join: !!opts.voice && can("voice"),

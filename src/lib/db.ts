@@ -593,6 +593,30 @@ export async function initSchema() {
       y INT NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    -- ジュークボックス: backspace.fm の過去回（Art19 の公開 RSS から。lib/jukebox.ts）。
+    CREATE TABLE IF NOT EXISTS podcast_episodes (
+      id SERIAL PRIMARY KEY,
+      guid TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      published_at TIMESTAMPTZ NOT NULL,
+      audio_url TEXT NOT NULL,
+      audio_bytes BIGINT NOT NULL DEFAULT 0,
+      duration_sec INT,
+      summary TEXT NOT NULL DEFAULT '',
+      series TEXT NOT NULL DEFAULT '本編',
+      number INT,
+      web_url TEXT,
+      hidden BOOLEAN NOT NULL DEFAULT false,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS podcast_episodes_published_idx ON podcast_episodes (published_at DESC);
+    -- 毎朝の「N 年前の今日」の投稿（日本時間の日付ごとに 1 本）。
+    CREATE TABLE IF NOT EXISTS jukebox_daily (
+      day DATE PRIMARY KEY,
+      episode_id INT NOT NULL,
+      post_id INT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     -- 管理者が入室禁止にした会員（解除は行を消す）。
     CREATE TABLE IF NOT EXISTS voice_bans (
       email TEXT PRIMARY KEY,

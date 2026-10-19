@@ -10,6 +10,8 @@ export async function register() {
       console.log("[bsm] DB schema initialized + clubs seeded");
       const { ensureHousekeeping } = await import("@/lib/housekeeping");
       ensureHousekeeping();
+      const { ensureJukebox } = await import("@/lib/jukebox");
+      ensureJukebox();
     } catch (e) {
       console.error("[bsm] initSchema failed:", e);
     }

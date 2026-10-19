@@ -1902,7 +1902,9 @@ function PostCard({
           <audio
             src={post.audioUrl}
             controls
-            preload="metadata"
+            // Outside audio (the daily jukebox episode) goes through download counters:
+            // fetch it only when someone presses play, not on every timeline view.
+            preload={post.audioUrl.startsWith("/") ? "metadata" : "none"}
             onClick={(e) => e.stopPropagation()}
             style={{ width: "100%", display: "block", borderRadius: 12 }}
           />
