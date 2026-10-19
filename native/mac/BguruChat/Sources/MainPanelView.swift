@@ -62,12 +62,12 @@ struct MainPanelView: View {
     @ViewBuilder private var picker: some View {
         if jukeboxOn {
             // Three tabs: segments sized to their words (the system control makes them all
-            // as wide as the widest and widened the panel). A record for the jukebox keeps it
+            // as wide as the widest and widened the panel). A radio (📻, drikin 2026-10-19) keeps it
             // narrow and stays apart from the chat's own 💬｜🏠 (text｜room) switch.
             PanelTabs(selection: $pin.tab, items: [
                 (.chat, store.unreadCount > 0 ? "チャット ●" : "チャット", "チャット（⌘1）"),
                 (.timeline, "タイムライン", "タイムライン（⌘2）"),
-                (.jukebox, "💿", "ジュークボックス（⌘3）"),
+                (.jukebox, "📻", "ジュークボックス（⌘3）"),
             ])
         } else {
             Picker("表示", selection: $pin.tab) {

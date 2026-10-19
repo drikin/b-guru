@@ -109,7 +109,7 @@ private fun Pages(
     // The playback notification / the mini player: show the jukebox.
     LaunchedEffect(jb?.showTab, count) { if (jb?.showTab == true && count == 3) { pager.animateScrollToPage(2); jb.showTab = false; jb.revealTick++ } }
 
-    val labels = if (jb != null) listOf("タイムライン", if (store.unreadCount > 0) "チャット•" else "チャット", "💿")
+    val labels = if (jb != null) listOf("タイムライン", if (store.unreadCount > 0) "チャット•" else "チャット", "📻")
                  else listOf("タイムライン", if (store.unreadCount > 0) "チャット•" else "チャット")
     val switch: @Composable () -> Unit = {
         segments(labels, pager.currentPage) { i -> scope.launch { pager.animateScrollToPage(i) } }
