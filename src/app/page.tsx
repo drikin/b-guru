@@ -6633,6 +6633,8 @@ export default function Home() {
         const isMine = !!authRef.current?.userId && msg.authorId === authRef.current.userId;
         // 自分の楽観送信（clientId 付き）は pending 行をその場で置き換える。
         setChatMessages((prev) => reconcileChat(prev, { ...msg, isAuthor: isMine }));
+        // A quiet note (room comings and goings): shown in the list, but no unread, no bark, no bubble.
+        if (msg.kind === "notice") return;
         // Club room: a speech bubble over the author on the map (📷 for photos only).
         roomChatBubble(msg.authorId, bubbleText(msg.body, msg.images?.length ?? 0));
         if (chatViewRef.current) {
@@ -11428,6 +11430,14 @@ export default function Home() {
                         </Text>
                       ) : (
                         chatMessages.map((m) => {
+                          // A quiet note from B-guru (who came into / left the room): one small grey line.
+                          if (m.kind === "notice") {
+                            return (
+                              <Text key={m.id} size="xs" c="dimmed" ta="center" py={2} style={{ lineHeight: 1.4 }}>
+                                {m.body}
+                              </Text>
+                            );
+                          }
                           const mine = !!auth && m.isAuthor;
                           const editing = chatEditingId === m.id;
                           const name = m.authorName ?? "";

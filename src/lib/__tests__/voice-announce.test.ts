@@ -42,10 +42,43 @@ describe("voice room announcements in the chat", () => {
     expect(posted).toEqual([{ kind: "leave", userId: "u1" }]);
   });
 
-  it("writes plain names (never an @mention, so nobody gets pinged)", () => {
-    expect(announcementText("open", "mazzo")).toBe("🎙️ mazzo さんがボイスルームを開きました");
-    expect(announcementText("join", "NORIO TAKAHASHI")).toBe("🎙️ NORIO TAKAHASHI さんがボイスルームに入りました");
-    expect(announcementText("leave", "takuto")).toBe("takuto さんがボイスルームを出ました");
-    expect(announcementText("join", "x")).not.toContain("@");
+  it("writes plain names (never an @mention, so nobody gets pinged), gathered with ・", () => {
+    expect(announcementText("open", ["mazzo"])).toBe("🎧 mazzo さんが部室に入りました");
+    expect(announcementText("join", ["NORIO TAKAHASHI", "takuto"])).toBe("🎧 NORIO TAKAHASHI さん・takuto さんが部室に入りました");
+    expect(announcementText("leave", ["takuto"])).toBe("takuto さんが部室を出ました");
+    expect(announcementText("join", ["x"])).not.toContain("@");
+  });
+});
+
+describe("the quiet notice line", () => {
+  it("comings within a few minutes with nothing said in between share one line; a message starts a new one", async () => {
+    vi.useRealTimers();
+    vi.resetModules();
+    let latest = 0;
+    const lines: { id: number; body: string }[] = [];
+    vi.doMock("../chat", () => ({
+      getLatestChatId: async () => latest,
+      postChatNotice: async (body: string, updateId: number | null = null) => {
+        if (updateId) {
+          lines.find((l) => l.id === updateId)!.body = body;
+          return { id: updateId };
+        }
+        const id = ++latest;
+        lines.push({ id, body });
+        return { id };
+      },
+    }));
+    vi.doMock("../voice", () => ({ describeParticipants: async (ids: string[]) => ids.map((id) => ({ userId: id, name: id.toUpperCase() })) }));
+    const mod = await import("../voice-announce");
+    mod.voiceAnnouncer.joined("a", true);
+    mod.voiceAnnouncer.joined("b", false);
+    await mod.__announceSettled();
+    expect(lines).toEqual([{ id: 1, body: "🎧 A さん・B さんが部室に入りました" }]);
+    latest = 5; // someone said something
+    mod.voiceAnnouncer.joined("c", false);
+    await mod.__announceSettled();
+    expect(lines.at(-1)).toEqual({ id: 6, body: "🎧 C さんが部室に入りました" });
+    vi.doUnmock("../chat");
+    vi.doUnmock("../voice");
   });
 });

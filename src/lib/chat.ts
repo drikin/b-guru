@@ -9,7 +9,7 @@
 import { readdir, rm, stat } from "fs/promises";
 import path from "path";
 import { pool } from "./db";
-import { gravatarUrl } from "./posts";
+import { gravatarUrl, SYSTEM_EMAIL } from "./posts";
 import { resolveDisplayNames } from "./display-name";
 import { emailToUserId, emailToUserIds } from "./user";
 import { emitLive } from "./live";
@@ -35,6 +35,8 @@ export interface ChatMessage {
   editedAt: string | null; // ISO timestamp of the edit
   /** Attached photos (/api/media/chat-…), at most CHAT_MAX_IMAGES. */
   images?: string[];
+  /** "notice": a quiet one-line note from B-guru (room comings and goings). */
+  kind?: "notice" | null;
   /** Only on the create event / POST response of the sender's own message:
    *  the client-generated id of the optimistic bubble it replaces. */
   clientId?: string;
@@ -89,6 +91,7 @@ async function mapRow(
     edited_at: Date | string | null;
     created_at: Date | string;
     images?: string[] | null;
+    kind?: string | null;
   },
   viewerEmail: string | null,
   authorId: string | null
@@ -104,6 +107,7 @@ async function mapRow(
     edited: r.edited,
     editedAt: r.edited_at ? new Date(r.edited_at).toISOString() : null,
     images: r.images ?? [],
+    ...(r.kind === "notice" ? { kind: "notice" as const } : {}),
   };
 }
 
@@ -143,6 +147,28 @@ export async function listChatMessages(opts: {
   );
 }
 
+/** A quiet one-line note from B-guru (kind "notice"), or an update of one (several
+ *  comings and goings gathered into one line). Broadcast like any chat message. */
+export async function postChatNotice(body: string, updateId: number | null = null): Promise<ChatMessage | null> {
+  const res = updateId
+    ? await pool.query(
+        `UPDATE chat_messages SET body = $1 WHERE id = $2 AND kind = 'notice'
+         RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind`,
+        [body, updateId]
+      )
+    : await pool.query(
+        `INSERT INTO chat_messages (author_email, author_name, body, kind) VALUES ($1, 'B-guru', $2, 'notice')
+         RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind`,
+        [SYSTEM_EMAIL, body]
+      );
+  const row = res.rows[0];
+  if (!row) return null;
+  const message = await mapRow(row, null, await emailToUserId(SYSTEM_EMAIL));
+  const { isAuthor: _perReceiver, ...broadcast } = message;
+  emitLive({ type: "chat", message: broadcast, action: updateId ? "edit" : "create" });
+  return message;
+}
+
 /** Insert a new chat message. Returns the created message. */
 export async function createChatMessage(
   email: string,
@@ -153,7 +179,7 @@ export async function createChatMessage(
   const res = await pool.query(
     `INSERT INTO chat_messages (author_email, author_name, body)
      VALUES ($1, $2, $3)
-     RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images`,
+     RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind`,
     [email, name, body]
   );
   return mapRow(res.rows[0], viewerEmail, await emailToUserId(email));
@@ -281,7 +307,7 @@ async function insertAndBroadcast(
               $2,
               $3::text[]
        FROM cleaned
-       RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images
+       RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind
      )
      SELECT ins.*, u.user_id
      FROM ins LEFT JOIN users u ON u.email = lower(trim(ins.author_email))`,
@@ -316,7 +342,7 @@ export async function editChatMessage(
      SET body = $1, edited = true, edited_at = now()
      WHERE id = $2 AND author_email = $3
        AND created_at >= now() - ($4::text)::interval
-     RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images`,
+     RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind`,
     [body, id, email, CHAT_TTL]
   );
   if (res.rowCount === 0) return null;
@@ -340,7 +366,7 @@ export async function editChatMessageAndBroadcast(
 /** One message (within the TTL), as seen by `viewerEmail`. */
 export async function getChatMessage(id: number, viewerEmail: string | null): Promise<ChatMessage | null> {
   const res = await pool.query(
-    `SELECT id, author_email, author_name, body, edited, edited_at, created_at, images FROM chat_messages
+    `SELECT id, author_email, author_name, body, edited, edited_at, created_at, images, kind FROM chat_messages
      WHERE id = $1 AND created_at >= now() - ($2::text)::interval`,
     [id, CHAT_TTL]
   );
@@ -418,7 +444,7 @@ export async function getUnreadCount(email: string): Promise<number> {
   const lastRead = res.rows[0].last_read;
   const cnt = await pool.query(
     `SELECT count(*)::int AS c FROM chat_messages
-     WHERE id > $1 AND created_at >= now() - ($2::text)::interval`,
+     WHERE id > $1 AND created_at >= now() - ($2::text)::interval AND kind IS DISTINCT FROM 'notice'`,
     [lastRead, CHAT_TTL]
   );
   return cnt.rows[0].c;

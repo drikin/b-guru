@@ -29,6 +29,20 @@ struct MessageRow: View {
     private var mine: Bool { m.isAuthor }
 
     var body: some View {
+        if m.isNotice {
+            // A quiet note from B-guru (who came into / left the room): one small grey line.
+            Text(m.body)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .multilineTextAlignment(.center)
+                .padding(.vertical, 1)
+        } else {
+            bubbleRow
+        }
+    }
+
+    private var bubbleRow: some View {
         HStack(alignment: .top, spacing: 6) {
             if mine { Spacer(minLength: 40) }
             if !mine {

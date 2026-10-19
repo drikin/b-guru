@@ -18,6 +18,10 @@ struct ChatMessage: Codable, Equatable, Sendable {
     var reactions: [Reaction]?
     /// Attached photos (/api/media/chat-…).
     var images: [String]? = nil
+    /// "notice": a quiet one-line note from B-guru (who came into / left the room).
+    var kind: String? = nil
+
+    var isNotice: Bool { kind == "notice" }
 
     /// The server gives a photo-only message the body "📷 写真" (for apps that predate
     /// photos and for notifications); this app shows the photos instead.

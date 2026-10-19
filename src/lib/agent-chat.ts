@@ -40,6 +40,8 @@ export type AgentChatMessageDto = {
   reactions?: ReactionSummary[];
   /** Attached photos (/api/media/chat-…); always present (empty when none). */
   images: string[];
+  /** "notice": a quiet line from B-guru (room comings and goings), not a message to answer. */
+  kind?: "notice";
 };
 
 /** The body apps get for a message that is photos only. */
@@ -70,6 +72,7 @@ export function toAgentChatDto(
     avatar: m.avatar ?? null,
     body,
     images,
+    ...(m.kind === "notice" ? { kind: "notice" } : {}),
     created_at: m.createdAt ?? "",
     edited: !!m.edited,
     edited_at: m.editedAt ?? null,

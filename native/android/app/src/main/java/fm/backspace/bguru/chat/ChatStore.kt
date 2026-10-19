@@ -239,8 +239,9 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         if (m.isAuthor) myUserId = m.authorId
         val alreadyShown = rows.any { it.message.id == m.id }
         rows = reconcile(rows, m)
-        if (!alreadyShown) room.onChat(m)
-        if (m.isAuthor || alreadyShown) return
+        // A quiet note (room comings and goings): in the list, but no bubble, never unread.
+        if (!alreadyShown && !m.isNotice) room.onChat(m)
+        if (m.isAuthor || alreadyShown || m.isNotice) return
         if (isVisible) markReadSoon() else unreadCount += 1
     }
 

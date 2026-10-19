@@ -164,7 +164,7 @@ final class ChatStore {
             case "create":
                 if let m = e.message {
                     received(m)
-                    room.chatSaid(m.authorId, m.displayBody, photos: !(m.images ?? []).isEmpty)
+                    if !m.isNotice { room.chatSaid(m.authorId, m.displayBody, photos: !(m.images ?? []).isEmpty) }
                 }
             case "edit":
                 if let m = e.message, let i = rows.firstIndex(where: { $0.message.id == m.id }) {
@@ -202,7 +202,8 @@ final class ChatStore {
         if m.isAuthor { myUserId = m.authorId }
         let alreadyShown = rows.contains { $0.message.id == m.id }
         rows = Self.reconcile(rows, with: m)
-        guard !m.isAuthor, !alreadyShown else { return }
+        // A quiet note (room comings and goings): in the list, but never unread or notified.
+        guard !m.isAuthor, !alreadyShown, !m.isNotice else { return }
         if isVisible {
             markReadSoon()
         } else {

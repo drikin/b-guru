@@ -243,6 +243,9 @@ export async function initSchema() {
     -- Photos attached to a chat message (/api/media/chat-… paths, at most 4). They
     -- expire with the message (24 h); the sweeper removes the files too.
     ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS images TEXT[] NOT NULL DEFAULT '{}';
+    -- 'notice' = a quiet line from B-guru (who came into / left the room): shown small,
+    -- never counted as unread.
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS kind TEXT;
 
     -- Per-user read cursor for the chat unread badge.
     CREATE TABLE IF NOT EXISTS chat_read_state (

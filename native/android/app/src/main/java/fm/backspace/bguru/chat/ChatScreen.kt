@@ -529,6 +529,17 @@ private fun MessageRow(
     modifier: Modifier,
 ) {
     val m = row.message
+    if (m.isNotice) {
+        // A quiet note from B-guru: one small grey line.
+        Text(
+            m.body,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = modifier.padding(vertical = 1.dp),
+        )
+        return
+    }
     val mine = m.isAuthor
     val stored = m.id > 0 && row.state == SendState.SENT
     var menu by remember { mutableStateOf(false) }

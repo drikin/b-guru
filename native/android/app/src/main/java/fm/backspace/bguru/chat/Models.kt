@@ -32,7 +32,11 @@ data class ChatMessage(
     val reactions: List<Reaction>? = null,
     /** /api/media/… URLs of attached photos (always sent by new servers; empty when none). */
     val images: List<String> = emptyList(),
+    /** "notice": a quiet one-line note from B-guru (who came into / left the room). */
+    val kind: String? = null,
 ) {
+    val isNotice: Boolean get() = kind == "notice"
+
     /** The text to show: a photo-only message carries "📷 写真" for apps that predate
      *  photos, which this app replaces with the photos themselves. */
     val visibleBody: String get() = if (images.isNotEmpty() && body == PHOTO_PLACEHOLDER) "" else body
