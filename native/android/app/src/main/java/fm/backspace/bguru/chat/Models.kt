@@ -229,7 +229,33 @@ data class Post(
     val unread: Boolean? = null,
     /** Root posts: replies by others this member has not read yet. */
     val unreadReplies: Int? = null,
-)
+    /** The page a link in the post points to (title / image), filled in by the server. */
+    val urlPreview: UrlPreview? = null,
+) {
+    /** The post is just one link that has a preview: show the card, not the bare URL. */
+    val isBareLink: Boolean
+        get() {
+            if (urlPreview == null) return false
+            val t = text.trim()
+            return t.isNotEmpty() && t.none { it.isWhitespace() } && (t.startsWith("http://") || t.startsWith("https://"))
+        }
+}
+
+/** Link preview (posts.url_preview — the same object the web uses, camelCase inside). */
+@Serializable
+data class UrlPreview(
+    val url: String,
+    val title: String? = null,
+    val description: String? = null,
+    val image: String? = null,
+    @kotlinx.serialization.SerialName("siteName") val siteName: String? = null,
+    /** YouTube video id: a play mark over the image. */
+    @kotlinx.serialization.SerialName("videoId") val videoId: String? = null,
+) {
+    /** The preview image through our server (/api/img): the site never sees the member. */
+    val proxiedImage: String?
+        get() = image?.let { if (it.startsWith("http")) "${Net.BASE}/api/img?u=" + java.net.URLEncoder.encode(it, "UTF-8") else it }
+}
 
 @Serializable data class PostListResponse(val posts: List<Post> = emptyList(), val nextCursor: String? = null)
 @Serializable data class ThreadResponse(val post: Post, val replies: List<Post> = emptyList())

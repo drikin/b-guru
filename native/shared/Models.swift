@@ -215,6 +215,15 @@ struct Post: Codable, Identifiable, Equatable, Sendable {
     var unread: Bool?
     /// Root posts: replies by others this member has not read yet.
     var unreadReplies: Int?
+    /// The page a link in the post points to (title / image), filled in by the server.
+    var urlPreview: UrlPreview?
+
+    /// The post is just one link that has a preview: show the card, not the bare URL.
+    var isBareLink: Bool {
+        guard urlPreview != nil else { return false }
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !t.isEmpty && !t.contains(where: \.isWhitespace) && (t.hasPrefix("http://") || t.hasPrefix("https://"))
+    }
 
     var mine: Bool { isAuthor ?? false }
 }
@@ -299,4 +308,25 @@ struct RoomActionResponse: Decodable, Sendable {
     var from: RoomMapInfo.Spot?
     var to: RoomMapInfo.Spot?
     var error: String?
+}
+
+
+/// Link preview (posts.url_preview — same object the web uses).
+struct UrlPreview: Codable, Equatable, Sendable {
+    var url: String
+    var title: String?
+    var description: String?
+    var image: String?
+    var siteName: String?
+    /// YouTube video id (a play mark goes over the image).
+    var videoId: String?
+
+    /// The preview image through our server (/api/img) — the third-party site never
+    /// sees the member, and the server caches it.
+    var proxiedImage: String? {
+        guard let image, image.hasPrefix("http") else { return image }
+        var c = URLComponents(url: APIClient.baseURL.appendingPathComponent("/api/img"), resolvingAgainstBaseURL: false)
+        c?.queryItems = [URLQueryItem(name: "u", value: image)]
+        return c?.url?.absoluteString
+    }
 }

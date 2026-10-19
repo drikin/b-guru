@@ -149,6 +149,10 @@ class TimelineStore(val api: ApiClient) {
                 unread = i % 3 == 0L, unreadReplies = if (i % 6 == 5L) 2 else 0)
         }
         posts = many + listOf(
+            Post(4, authorName = "NORIO TAKAHASHI", text = "https://share.google/BM8clX7MsYzuIrrCf", createdAt = now.minusSeconds(120).toString(), club = "car",
+                urlPreview = UrlPreview("https://www.webcg.net/articles/-/50000", title = "ポルシェが未来のミドシップスーパースポーツカー「ミッションS」を発表 【ニュース】 - webCG",
+                    description = "ポルシェは未来のミドシップスーパースポーツカーのコンセプトを発表した。",
+                    image = "https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png", siteName = "webCG")),
             Post(3, authorName = "mazzo", replyCount = 4, text = "うちの犬が今朝こんな顔してました 🐶 https://bsm.backspace.fm",
                 images = listOf("/api/media/demo-1.jpg"), createdAt = now.minusSeconds(300).toString(), club = "pet",
                 reactions = listOf(Reaction("❤️", 3, mine = true)), unread = true, unreadReplies = 2),

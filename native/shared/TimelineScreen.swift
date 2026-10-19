@@ -230,11 +230,14 @@ struct PostRow: View {
                     Spacer(minLength: 4)
                     Text(PostRow.relative(post.createdAt)).font(.caption).foregroundStyle(.tertiary).monospacedDigit()
                 }
-                if !post.text.isEmpty {
+                if !post.text.isEmpty && !post.isBareLink {
                     Text(MessageRow.attributed(post.text))
                         .font(.body)
                         .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                if let pv = post.urlPreview, (post.images ?? []).isEmpty {
+                    LinkCard(preview: pv)
                 }
                 if let images = post.images, !images.isEmpty {
                     PostImages(images: images, onOpen: onOpenImage)
@@ -457,5 +460,52 @@ private struct ReadWhenSeen: ViewModifier {
                 onRead()
             }
         }
+    }
+}
+
+
+/// A link's page as a card: image, title, a line of description, the site. Opens the
+/// page in the browser. (The web shows the same card under a post.)
+struct LinkCard: View {
+    let preview: UrlPreview
+
+    var body: some View {
+        Button {
+            if let url = URL(string: preview.url) { Platform.open(url) }
+        } label: {
+            VStack(alignment: .leading, spacing: 0) {
+                if let img = preview.proxiedImage {
+                    MediaImage(path: img, maxPixel: 900)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 170)
+                        .clipped()
+                        .overlay {
+                            if preview.videoId != nil {
+                                Image(systemName: "play.fill").font(.system(size: 20)).foregroundStyle(.white)
+                                    .frame(width: 48, height: 48).background(Circle().fill(.black.opacity(0.7)))
+                            }
+                        }
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    if let t = preview.title, !t.isEmpty {
+                        Text(t).font(.subheadline.bold()).foregroundStyle(.primary).lineLimit(2).multilineTextAlignment(.leading)
+                    }
+                    if let d = preview.description, !d.isEmpty {
+                        Text(d).font(.caption).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.leading)
+                    }
+                    Text(preview.siteName ?? URL(string: preview.url)?.host ?? preview.url)
+                        .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.1)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("リンク：\(preview.title ?? preview.url)")
+        .accessibilityHint("ブラウザで開きます")
     }
 }

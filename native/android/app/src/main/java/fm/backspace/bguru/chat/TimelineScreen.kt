@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -290,8 +291,9 @@ fun PostRow(
                     Spacer(Modifier.weight(1f))
                     Text(relativeTime(post.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 }
-                if (post.text.isNotEmpty()) Text(remember(post.text) { linkified(post.text) }, fontSize = 16.sp)
+                if (post.text.isNotEmpty() && !post.isBareLink) Text(remember(post.text) { linkified(post.text) }, fontSize = 16.sp)
                 if (post.images.isNotEmpty()) PostImages(post.images, onOpenImage)
+                if (post.images.isEmpty()) post.urlPreview?.let { LinkCard(it) }
                 if (post.videoUrl != null || post.audioUrl != null) {
                     Text(if (post.videoUrl != null) "▶︎ 動画（Web で再生）" else "♪ 音声（Web で再生）",
                         style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -517,4 +519,44 @@ private fun androidx.compose.foundation.lazy.LazyListState.isShown(key: Any): Bo
     val start = maxOf(item.offset, info.viewportStartOffset)
     val end = minOf(item.offset + item.size, info.viewportEndOffset)
     return end - start >= item.size / 4
+}
+
+/** A link's page as a card: image, title, a line of description, the site. Opens the
+ *  page in the browser (the web shows the same card under a post). */
+@Composable
+fun LinkCard(preview: UrlPreview) {
+    val context = LocalContext.current
+    val shape = RoundedCornerShape(12.dp)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f))
+            .clickable { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(preview.url))) } }
+            .semantics { contentDescription = "リンク：" + (preview.title ?: preview.url) },
+    ) {
+        preview.proxiedImage?.let { img ->
+            Box(contentAlignment = Alignment.Center) {
+                RemoteImage(img, Modifier.fillMaxWidth().height(170.dp), maxPx = 900) {
+                    Box(Modifier.fillMaxWidth().height(170.dp).background(MaterialTheme.colorScheme.surfaceVariant))
+                }
+                if (preview.videoId != null) {
+                    Box(Modifier.size(48.dp).background(Color.Black.copy(alpha = 0.7f), CircleShape), contentAlignment = Alignment.Center) {
+                        Text("▶", color = Color.White, fontSize = 18.sp)
+                    }
+                }
+            }
+        }
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            preview.title?.takeIf { it.isNotBlank() }?.let {
+                Text(it, style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            preview.description?.takeIf { it.isNotBlank() }?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Text(preview.siteName ?: (Uri.parse(preview.url).host ?: preview.url), style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
 }
