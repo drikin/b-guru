@@ -58,25 +58,37 @@ struct ChatScrolling: ViewModifier {
             }
             .overlay(alignment: .bottomTrailing) {
                 if !atBottom {
-                    Button {
+                    JumpButton(arrow: "↓", count: newBelow) {
                         withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
-                    } label: {
-                        Text(newBelow > 0 ? "↓ 新着 \(newBelow)" : "↓ 最新へ")
-                            .font(.caption.weight(.semibold))
-                            .monospacedDigit()
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .foregroundStyle(newBelow > 0 ? Color.white : Color.primary)
-                            .background(newBelow > 0 ? AnyShapeStyle(Color.accentGreen) : AnyShapeStyle(.regularMaterial), in: Capsule())
-                            .overlay(Capsule().strokeBorder(.separator.opacity(newBelow > 0 ? 0 : 1)))
-                            .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
                     }
-                    .buttonStyle(.plain)
-                    .padding(10)
-                    .transition(.opacity)
-                    .accessibilityLabel(newBelow > 0 ? "新着 \(newBelow) 件、最新へ移動" : "最新へ移動")
                 }
             }
             .animation(.easeOut(duration: 0.15), value: atBottom)
+    }
+}
+
+/// "↓ 最新へ" / "↓ 新着 N" (chat) and "↑ 最新へ" / "↑ 新着 N" (timeline): back to the newest.
+struct JumpButton: View {
+    let arrow: String
+    let count: Int
+    let action: () -> Void
+
+    var body: some View {
+        let fresh = count > 0
+        Button(action: action) {
+            Text(fresh ? "\(arrow) 新着 \(count)" : "\(arrow) 最新へ")
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .foregroundStyle(fresh ? Color.white : Color.primary)
+                .background(fresh ? AnyShapeStyle(Color.accentGreen) : AnyShapeStyle(.regularMaterial), in: Capsule())
+                .overlay(Capsule().strokeBorder(.separator.opacity(fresh ? 0 : 1)))
+                .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+        }
+        .buttonStyle(.plain)
+        .padding(10)
+        .transition(.opacity)
+        .accessibilityLabel(fresh ? "新着 \(count) 件、最新へ移動" : "最新へ移動")
     }
 }
 

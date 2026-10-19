@@ -67,6 +67,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -205,6 +207,19 @@ private fun TimelineList(
             .collect { last -> if (last >= timeline.posts.size - 3) timeline.loadMore() }
     }
 
+    // Reading further down: a way back to the newest, like the chat's (drikin 2026-10-19).
+    val atTop by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset < 24 } }
+    var newAbove by remember { mutableIntStateOf(0) }
+    var prevIds by remember { mutableStateOf<List<Long>>(emptyList()) }
+    LaunchedEffect(posts) {
+        val old = prevIds
+        prevIds = posts.map { it.id }
+        val first = old.firstOrNull() ?: return@LaunchedEffect
+        val i = posts.indexOfFirst { it.id == first }
+        if (!atTop && i > 0) newAbove += posts.take(i).count { !it.isAuthor }
+    }
+    LaunchedEffect(atTop) { if (atTop) newAbove = 0 }
+
     PullToRefreshBox(
         isRefreshing = refreshing,
         onRefresh = { scope.launch { refreshing = true; timeline.refresh(); refreshing = false } },
@@ -243,6 +258,11 @@ private fun TimelineList(
                 }
             }
             if (timeline.loadingMore) item { CircularProgressIndicator(Modifier.padding(16.dp).size(24.dp)) }
+        }
+        if (!atTop) {
+            JumpToLatest(newAbove, Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(10.dp), arrow = "↑") {
+                scope.launch { listState.animateScrollToItem(0) }
+            }
         }
     }
 }

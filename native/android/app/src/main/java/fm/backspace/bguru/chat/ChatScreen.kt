@@ -825,9 +825,9 @@ private fun UnreadDivider() {
     }
 }
 
-/** Shown while reading further up: back to the newest message ("↓ 新着 N" when some arrived). */
+/** Back to the newest: "↓ 最新へ" / "↓ 新着 N" in the chat, "↑ …" in the timeline. */
 @Composable
-private fun JumpToLatest(count: Int, modifier: Modifier, onClick: () -> Unit) {
+internal fun JumpToLatest(count: Int, modifier: Modifier, arrow: String = "↓", onClick: () -> Unit) {
     val fresh = count > 0
     androidx.compose.material3.Surface(
         onClick = onClick,
@@ -838,7 +838,7 @@ private fun JumpToLatest(count: Int, modifier: Modifier, onClick: () -> Unit) {
         modifier = modifier,
     ) {
         Text(
-            if (fresh) "↓ 新着 $count" else "↓ 最新へ",
+            if (fresh) "$arrow 新着 $count" else "$arrow 最新へ",
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
         )

@@ -17,6 +17,10 @@ struct TimelineScreen: View {
     @State private var composing = false
     @State private var needsReconnect = false
     @State private var viewing: ImageViewerItem?
+    /// The top of the list (the newest posts) is on screen.
+    @State private var atTop = true
+    /// Posts that arrived above while reading further down.
+    @State private var newAbove = 0
 
     var body: some View {
         content
@@ -123,8 +127,12 @@ struct TimelineScreen: View {
     }
 
     private var posts: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                Color.clear.frame(height: 1).id("top")
+                    .onAppear { atTop = true }
+                    .onDisappear { atTop = false }
                 if timeline.posts.isEmpty {
                     Text(timeline.hasLoaded ? (timeline.failed ? "読み込めませんでした。引っ張って再読み込み" : "まだ投稿がありません") : "読み込み中…")
                         .font(.callout).foregroundStyle(.secondary)
@@ -152,6 +160,21 @@ struct TimelineScreen: View {
         .pullToRefresh { await timeline.refresh() }
         .scrollDismissesKeyboard(.immediately)
         .dismissesKeyboardOnTap()
+        // Reading further down: a way back to the newest, like the chat's (drikin 2026-10-19).
+        .onChange(of: timeline.posts.map(\.id)) { old, new in
+            guard !atTop, let first = old.first, let i = new.firstIndex(of: first) else { return }
+            newAbove += new[..<i].filter { id in timeline.posts.first { $0.id == id }?.isAuthor != true }.count
+        }
+        .onChange(of: atTop) { _, top in if top { newAbove = 0 } }
+        .overlay(alignment: .bottomTrailing) {
+            if !atTop {
+                JumpButton(arrow: "↑", count: newAbove) {
+                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("top", anchor: .top) }
+                }
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: atTop)
+        }
     }
 }
 
