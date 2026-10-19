@@ -3,7 +3,7 @@
 ユーザーと合意した仕様（memory: project-bguru-room-design）を、クライアントの実装に落としたもの。
 サーバは実装済み（src/lib/room.ts・room-map.ts・room-api.ts、テスト src/lib/__tests__/room.test.ts）。
 見た目と操作の基準は試作: https://claude.ai/artifact/Xq8FHgkfT71HZJCfLvrHKy
-（元ファイル: /private/tmp/claude-501/-Users-koh-Dev-b-guru/949a23c8-f455-43bb-92d1-7716b2131311/scratchpad/bguru-room/bguru-room.html — タイル・キャラクター・ビーグルの描画、BFS、吹き出し、リアクションの浮き方はここから移植する）。
+（元ファイル: docs/room-prototype/bguru-room.html — タイル・キャラクター・ビーグルの描画、BFS、吹き出し、リアクションの浮き方はここから移植する）。
 
 ## 有効かどうか
 - Web: `GET /api/room` が 200 なら有効、404（code: room_disabled）なら無効。

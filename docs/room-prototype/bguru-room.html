@@ -1,0 +1,565 @@
+<title>B-guru 部室</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap">
+<style>
+/* Layout: a night-time club room. Pixel map on top (phone) or left (desktop),
+   "who can I hear" + chat log beside it. One committed dark look, like a game screen. */
+:root {
+  --bg: #1d1820;        /* room at night, plum-brown */
+  --panel: #2a2230;     /* side panels */
+  --line: #43384a;      /* hairlines */
+  --fg: #f3e9d8;        /* warm paper */
+  --muted: #b3a6b8;     /* secondary text */
+  --amber: #f2b24c;     /* warm lamp accent */
+  --voice: #3ccf74;     /* B-guru green: voice / speaking */
+  --bubble: #fffaf0;    /* speech bubbles */
+  --ink: #1d1820;       /* text on bubbles */
+  --pixel: "DotGothic16", "Hiragino Maru Gothic ProN", "Osaka", monospace;
+  --body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 14px;
+  display: flex; flex-direction: column;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 10px;
+  box-sizing: border-box; gap: 10px; overflow: hidden;
+}
+header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+h1 { font-family: var(--pixel); font-weight: 400; font-size: 20px; margin: 0; letter-spacing: .04em; text-wrap: balance; }
+h1 small { font-size: 12px; color: var(--muted); margin-left: 6px; }
+.spacer { flex: 1; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { font-family: var(--pixel); font-size: 13px; background: transparent; color: var(--muted); border: 0; padding: 6px 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--amber); color: var(--ink); }
+.btn { font-family: var(--pixel); font-size: 13px; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+.btn[aria-pressed="true"] { border-color: var(--voice); color: var(--voice); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+main { flex: 1; min-height: 0; display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) 300px; }
+@media (max-width: 760px) { main { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1.25fr) minmax(0, 1fr); } }
+main.text { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+main.text #stage { display: none; }
+
+#stage { position: relative; min-height: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #120e14; touch-action: none; }
+#map { display: block; width: 100%; height: 100%; image-rendering: pixelated; cursor: pointer; }
+.hint { position: absolute; left: 10px; top: 10px; font-family: var(--pixel); font-size: 12px; color: var(--fg); background: rgba(29,24,32,.78); border: 1px solid var(--line); padding: 4px 8px; border-radius: 6px; pointer-events: none; }
+.zone { position: absolute; right: 10px; top: 10px; font-family: var(--pixel); font-size: 12px; padding: 4px 8px; border-radius: 6px; background: rgba(29,24,32,.85); border: 1px solid var(--voice); color: var(--voice); pointer-events: none; max-width: 60%; }
+.pad { position: absolute; right: max(8px, env(safe-area-inset-right, 0px)); bottom: 8px; display: grid; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(3, 44px); gap: 4px; opacity: .85; }
+.pad button { font-family: var(--pixel); font-size: 18px; background: rgba(42,34,48,.9); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; touch-action: none; user-select: none; -webkit-user-select: none; }
+.pad .u { grid-column: 2; grid-row: 1; } .pad .l { grid-column: 1; grid-row: 2; } .pad .r { grid-column: 3; grid-row: 2; } .pad .d { grid-column: 2; grid-row: 3; }
+@media (hover: hover) and (pointer: fine) { .pad { display: none; } }
+
+.react { position: absolute; left: max(8px, env(safe-area-inset-left, 0px)); bottom: 8px; display: flex; gap: 3px; flex-wrap: wrap; max-width: calc(100% - 158px); }
+.react button { font-size: 15px; width: 30px; height: 30px; background: rgba(42,34,48,.9); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; padding: 0; }
+.react button:active { transform: scale(.92); }
+@media (hover: hover) and (pointer: fine) { .react { max-width: none; bottom: 10px; left: 10px; gap: 4px; } .react button { font-size: 18px; width: 38px; height: 38px; } }
+.menu { position: absolute; z-index: 2; background: var(--panel); border: 1px solid var(--amber); border-radius: 8px; padding: 6px; display: grid; gap: 4px; min-width: 130px; font-family: var(--pixel); font-size: 13px; }
+.menu-name { color: var(--amber); padding: 2px 4px; }
+.menu button { font: inherit; text-align: left; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; cursor: pointer; }
+.legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--muted); margin-top: 6px; }
+#count { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.enter { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; font: inherit; color: var(--fg); background: linear-gradient(90deg, rgba(60,207,116,.18), rgba(60,207,116,.06)); border: 1px solid var(--voice); border-radius: 10px; padding: 10px 12px; cursor: pointer; }
+.enter-faces { display: flex; }
+.enter-faces i { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--panel); margin-left: -6px; display: inline-block; }
+.enter-faces i:first-child { margin-left: 0; }
+.enter-text { flex: 1; min-width: 0; font-size: 13px; }
+.enter-text small { display: block; color: var(--muted); font-size: 11px; }
+.enter-go { font-family: var(--pixel); color: var(--voice); white-space: nowrap; }
+main.text .card:first-child { display: none; }
+aside { min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.card h2 { font-family: var(--pixel); font-weight: 400; font-size: 13px; margin: 0 0 6px; color: var(--amber); letter-spacing: .06em; }
+#hear { display: grid; gap: 6px; }
+.who { display: grid; grid-template-columns: 70px 1fr 34px; align-items: center; gap: 8px; font-size: 12px; }
+.who .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--voice); }
+.vol { font-variant-numeric: tabular-nums; color: var(--muted); text-align: right; font-size: 11px; }
+.empty { color: var(--muted); font-size: 12px; }
+#rule { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+.log { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#log { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; }
+.msg { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.msg b { font-weight: 700; margin-right: 6px; }
+.msg.sys { color: var(--muted); font-size: 12px; }
+form { display: flex; gap: 6px; margin-top: 8px; }
+#say { flex: 1; min-width: 0; font: inherit; font-size: 16px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.note { font-size: 11px; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<header>
+  <h1>B-guru 部室 <small>試作</small></h1>
+  <div class="spacer"></div>
+  <div class="seg" role="group" aria-label="表示">
+    <button id="modeText" type="button" aria-pressed="false">テキスト</button>
+    <button id="modeRoom" type="button" aria-pressed="true">ルーム</button>
+  </div>
+  <button id="listen" class="btn" type="button" aria-pressed="true" title="ルームにいる間、近くの人の声を聞く">🎧 聞いている</button>
+  <button id="mic" class="btn" type="button" aria-pressed="false">🎙 マイク オフ</button>
+</header>
+
+<main id="main">
+  <section id="stage" aria-label="部室のマップ">
+    <canvas id="map"></canvas>
+    <div class="hint" id="hint">タップした所へ歩く・人をタップで手を振る・矢印キー / WASD・1〜6 でリアクション</div>
+    <div class="zone" id="zone" hidden></div>
+    <div class="react" role="group" aria-label="リアクション">
+      <button type="button" data-e="👋" aria-label="手を振る（1）">👋</button>
+      <button type="button" data-e="❤️" aria-label="ハート（2）">❤️</button>
+      <button type="button" data-e="😂" aria-label="笑う（3）">😂</button>
+      <button type="button" data-e="👏" aria-label="拍手（4）">👏</button>
+      <button type="button" data-e="🎉" aria-label="お祝い（5）">🎉</button>
+      <button type="button" data-e="🍻" aria-label="乾杯（6）">🍻</button>
+    </div>
+    <div class="menu" id="menu" hidden>
+      <div class="menu-name" id="menuName"></div>
+      <button type="button" id="menuWave">👋 手を振る</button>
+      <button type="button" id="menuGo">そばへ行く</button>
+    </div>
+    <div class="pad" aria-label="移動">
+      <button class="u" type="button" data-d="up" aria-label="上へ">▲</button>
+      <button class="l" type="button" data-d="left" aria-label="左へ">◀</button>
+      <button class="r" type="button" data-d="right" aria-label="右へ">▶</button>
+      <button class="d" type="button" data-d="down" aria-label="下へ">▼</button>
+    </div>
+  </section>
+  <aside>
+    <div class="card">
+      <h2>聞こえている人</h2>
+      <div id="count"></div>
+      <div id="hear"></div>
+      <div id="rule"></div>
+      <div class="legend"><span>⌨️ テキストで参加</span><span>🎧 聞いている</span><span>🔊 話している</span><span>👀 見るだけ</span></div>
+    </div>
+    <button class="enter" id="enter" type="button" hidden>
+      <span class="enter-faces" id="enterFaces"></span>
+      <span class="enter-text" id="enterText"></span>
+      <span class="enter-go">ルームへ ▶</span>
+    </button>
+    <div class="card log">
+      <h2>チャット</h2>
+      <div id="log" aria-live="polite"></div>
+      <form id="form">
+        <input id="say" autocomplete="off" placeholder="話しかける（Enter で送信）" maxlength="80">
+        <button class="btn" type="submit">送信</button>
+      </form>
+      <div class="note">試作：ほかの人は動きのサンプルです。音声はまだつながっていません。</div>
+    </div>
+  </aside>
+</main>
+
+<script>
+(() => {
+  // ---------- map (28 × 18 tiles of 16 px, all drawn in code) ----------
+  const T = 16, W = 28, H = 18;
+  const ZONES = {
+    table: { x: 2, y: 9, w: 8, h: 6, name: "会議テーブル", rule: "テーブルの中の人とだけ話せます（外には聞こえません）" },
+    stage: { x: 19, y: 1, w: 8, h: 4, name: "ステージ", rule: "ステージの声は部室の全員に届きます" },
+  };
+  const inZone = (z, x, y) => x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h;
+  const zoneAt = (x, y) => Object.keys(ZONES).find(k => inZone(ZONES[k], x, y)) || null;
+
+  const grid = [];
+  for (let y = 0; y < H; y++) { grid.push([]); for (let x = 0; x < W; x++) grid[y].push((x === 0 || y === 0 || x === W - 1 || y === H - 1) ? "wall" : "floor"); }
+  const put = (x, y, t) => { grid[y][x] = t; };
+  [3, 4, 9, 10, 15, 16].forEach(x => put(x, 0, "window"));
+  put(13, H - 1, "door"); put(14, H - 1, "door");
+  for (let x = 1; x <= 4; x++) put(x, 1, "shelf");
+  for (let x = ZONES.stage.x; x < ZONES.stage.x + ZONES.stage.w; x++) for (let y = 1; y < 5; y++) put(x, y, "stage");
+  put(22, 2, "mic");
+  for (let x = 4; x <= 7; x++) for (let y = 11; y <= 12; y++) put(x, y, "table");
+  [[4,10],[5,10],[6,10],[7,10],[4,13],[5,13],[6,13],[7,13],[3,11],[3,12],[8,11],[8,12]].forEach(([x,y]) => put(x, y, "chair"));
+  for (let x = 12; x <= 17; x++) for (let y = 10; y <= 14; y++) put(x, y, "rug");
+  for (let x = 13; x <= 16; x++) put(x, 15, "sofa");
+  put(26, 8, "vending"); put(26, 9, "vending");
+  [[1,16],[26,16],[1,6],[11,1]].forEach(([x,y]) => put(x, y, "plant"));
+  put(23, 14, "bed"); put(24, 14, "bed");
+  // チャット席: a counter under the windows where people in text view sit.
+  for (let x = 6; x <= 10; x++) { put(x, 2, "counter"); put(x, 3, "stool"); }
+  const LABELS = [{ name: "チャット席", x: 6, y: 1 }];
+  const SOLID = new Set(["wall", "window", "shelf", "table", "mic", "vending", "plant", "sofa", "door", "counter"]);
+  const walkable = (x, y) => x >= 0 && y >= 0 && x < W && y < H && !SOLID.has(grid[y][x]);
+
+  // ---------- pixel helpers ----------
+  const px = (c, col, x, y, w = 1, h = 1) => { c.fillStyle = col; c.fillRect(x, y, w, h); };
+
+  function drawTile(c, t, X, Y) {
+    const x = X * T, y = Y * T;
+    // floor under everything that is not wall
+    const floor = () => { px(c, "#7a5236", x, y, T, T); for (let i = 0; i < 4; i++) { px(c, i % 2 ? "#845b3c" : "#70492f", x, y + i * 4, T, 3); px(c, "#5c3b25", x + ((X * 7 + i * 5) % 14), y + i * 4, 1, 3); } };
+    switch (t) {
+      case "wall": px(c, "#3b3046", x, y, T, T); for (let r = 0; r < 4; r++) { px(c, "#4a3d57", x, y + r * 4, T, 1); px(c, "#2e2538", x + ((r % 2) * 8 + 3), y + r * 4 + 1, 1, 3); px(c, "#2e2538", x + ((r % 2) * 8 + 11) % 16, y + r * 4 + 1, 1, 3); } break;
+      case "window": px(c, "#3b3046", x, y, T, T); px(c, "#1b2a4a", x + 2, y + 3, 12, 11); px(c, "#26406e", x + 2, y + 3, 12, 4); px(c, "#f7e7a1", x + 10, y + 5, 2, 2); px(c, "#d7c6e0", x + 7, y + 3, 1, 11); px(c, "#d7c6e0", x + 2, y + 8, 12, 1); px(c, "#5d4c6b", x + 1, y + 14, 14, 1); break;
+      case "door": px(c, "#2a1c14", x, y, T, T); px(c, "#5a3a22", x + 1, y, 14, T); px(c, "#f2b24c", x + (X === 13 ? 12 : 3), y + 8, 1, 2); break;
+      case "shelf": floor(); px(c, "#4b2f1d", x, y, T, T); ["#c0504d","#4f81bd","#9bbb59","#f2b24c","#8064a2","#4bacc6"].forEach((col, i) => { px(c, col, x + 1 + i * 2 + (i > 2 ? 1 : 0), y + 2, 2, 5); px(c, col, x + 2 + ((i + 3) % 6) * 2, y + 9, 2, 5); }); px(c, "#2e1c11", x, y + 7, T, 2); break;
+      case "stage": px(c, "#5b3f7a", x, y, T, T); px(c, "#6a4b8c", x, y, T, 1); px(c, "#4c3366", x, y + 8, T, 1); if (Y === 4) { px(c, "#2b1d3a", x, y + 13, T, 3); px(c, "#f2b24c", x + 3, y + 14, 2, 1); px(c, "#f2b24c", x + 11, y + 14, 2, 1); } break;
+      case "mic": drawTile(c, "stage", X, Y); px(c, "#cfcfd6", x + 7, y + 5, 2, 9); px(c, "#55555f", x + 5, y + 14, 6, 1); px(c, "#2b2b33", x + 6, y + 2, 4, 4); px(c, "#8a8a96", x + 7, y + 3, 1, 1); break;
+      case "rug": floor(); px(c, "#8c2f39", x, y, T, T); px(c, "#a8404a", x + 1, y + 1, T - 2, T - 2); if ((X + Y) % 2) px(c, "#f2b24c", x + 7, y + 7, 2, 2); else { px(c, "#d9a441", x + 3, y + 3, 1, 1); px(c, "#d9a441", x + 12, y + 12, 1, 1); } break;
+      case "table": floor(); px(c, "#c9925b", x, y, T, T); px(c, "#e0ab73", x, y, T, 2); px(c, "#a4743f", x, y + 14, T, 2); if (X === 5 && Y === 11) { px(c, "#f3e9d8", x + 4, y + 5, 7, 5); px(c, "#43384a", x + 5, y + 6, 5, 1); px(c, "#43384a", x + 5, y + 8, 4, 1); } if (X === 6 && Y === 12) { px(c, "#ffffff", x + 5, y + 4, 4, 5); px(c, "#6b3f22", x + 6, y + 5, 2, 2); } break;
+      case "chair": floor(); px(c, "#3c6e71", x + 3, y + 3, 10, 10); px(c, "#4f8a8d", x + 3, y + 3, 10, 2); px(c, "#2b5052", x + 3, y + 12, 10, 1); break;
+      case "sofa": floor(); px(c, "#2f5d8a", x, y + 2, T, 13); px(c, "#3f73a8", x, y + 2, T, 4); px(c, "#24496d", x, y + 13, T, 2); if (X === 13) px(c, "#24496d", x, y + 2, 2, 13); if (X === 16) px(c, "#24496d", x + 14, y + 2, 2, 13); break;
+      case "vending": floor(); px(c, "#c43d3d", x + 1, y, 14, T); if (Y === 8) { px(c, "#2a2a33", x + 3, y + 2, 10, 12); ["#3ccf74","#f2b24c","#4bacc6","#f3e9d8"].forEach((col, i) => px(c, col, x + 4 + (i % 2) * 5, y + 3 + Math.floor(i / 2) * 5, 3, 4)); } else { px(c, "#f3e9d8", x + 3, y + 2, 6, 2); px(c, "#1b1b22", x + 3, y + 8, 10, 4); px(c, "#8e2a2a", x + 1, y + 14, 14, 2); } break;
+      case "plant": floor(); px(c, "#9b5a34", x + 4, y + 10, 8, 6); px(c, "#7d4425", x + 4, y + 10, 8, 1); px(c, "#2f8f4e", x + 3, y + 3, 10, 8); px(c, "#3fb065", x + 5, y + 1, 6, 6); px(c, "#24703c", x + 2, y + 7, 3, 3); px(c, "#24703c", x + 11, y + 6, 3, 3); break;
+      case "counter": floor(); px(c, "#5a3d6e", x, y + 2, T, 12); px(c, "#7a5a92", x, y + 2, T, 3); px(c, "#43305a", x, y + 13, T, 1); if (X % 2 === 0) { px(c, "#2b2b33", x + 4, y + 6, 8, 5); px(c, "#4bacc6", x + 5, y + 7, 6, 3); px(c, "#55555f", x + 7, y + 11, 2, 2); } else { px(c, "#f3e9d8", x + 6, y + 7, 4, 4); px(c, "#6b3f22", x + 7, y + 8, 2, 2); } break;
+      case "stool": floor(); px(c, "#2b5052", x + 4, y + 9, 8, 6); px(c, "#3c6e71", x + 3, y + 7, 10, 3); break;
+      case "bed": floor(); px(c, "#6b4a8c", x, y + 3, T, 12); px(c, "#8a67ab", x + 1, y + 5, T - 2, 8); break;
+      default: floor();
+    }
+  }
+
+  // Characters: 16×16, drawn from a look (skin, hair, shirt, pants), 3 facings, 2-step walk.
+  function drawPerson(c, x, y, look, dir, step, sitting) {
+    const { skin, hair, shirt, pants } = look;
+    px(c, "rgba(0,0,0,.28)", x + 3, y + 14, 10, 2);
+    const lift = sitting ? 2 : 0;
+    // legs
+    if (!sitting) {
+      const a = step === 1 ? -1 : 0, b = step === 2 ? -1 : 0;
+      px(c, pants, x + 5, y + 12 + a, 2, 3); px(c, pants, x + 9, y + 12 + b, 2, 3);
+      px(c, "#1e1a22", x + 5, y + 15 + a, 2, 1); px(c, "#1e1a22", x + 9, y + 15 + b, 2, 1);
+    } else { px(c, pants, x + 4, y + 12, 8, 2); }
+    // body + arms
+    px(c, shirt, x + 4, y + 8 + lift, 8, 5 - lift);
+    px(c, "rgba(0,0,0,.18)", x + 4, y + 12, 8, 1);
+    const sw = step === 1 ? 1 : step === 2 ? -1 : 0;
+    if (dir !== "side") { px(c, skin, x + 3, y + 9 + lift + sw, 1, 3); px(c, skin, x + 12, y + 9 + lift - sw, 1, 3); }
+    else { px(c, skin, x + 7 + sw, y + 9 + lift, 2, 3); }
+    // head
+    px(c, skin, x + 4, y + 2 + lift, 8, 7);
+    px(c, hair, x + 4, y + 1 + lift, 8, 3);
+    if (dir === "up") px(c, hair, x + 4, y + 1 + lift, 8, 6);
+    else if (dir === "side") { px(c, hair, x + 4, y + 1 + lift, 4, 6); px(c, "#1e1a22", x + 10, y + 5 + lift, 1, 2); }
+    else { px(c, hair, x + 4, y + 4 + lift, 1, 2); px(c, hair, x + 11, y + 4 + lift, 1, 2); px(c, "#1e1a22", x + 6, y + 5 + lift, 1, 2); px(c, "#1e1a22", x + 9, y + 5 + lift, 1, 2); px(c, "#e08a7a", x + 5, y + 7 + lift, 1, 1); px(c, "#e08a7a", x + 10, y + 7 + lift, 1, 1); }
+  }
+
+  // The club beagle: tricolour, long ears, white-tipped tail.
+  function drawBeagle(c, x, y, frame, flip) {
+    c.save(); if (flip) { c.translate(x * 2 + 16, 0); c.scale(-1, 1); }
+    px(c, "rgba(0,0,0,.25)", x + 2, y + 14, 12, 2);
+    px(c, "#c97a3a", x + 3, y + 7, 9, 5);        // body
+    px(c, "#2a1f1a", x + 5, y + 7, 6, 2);        // black saddle
+    px(c, "#f6efe4", x + 4, y + 11, 7, 1);       // belly
+    const l = frame ? 1 : 0;
+    [[3, 12], [5, 12 - l], [9, 12], [11, 12 - (1 - l)]].forEach(([lx, ly]) => { px(c, "#f6efe4", x + lx, y + ly, 1, 3); });
+    px(c, "#c97a3a", x + 11, y + 3, 4, 5);       // head
+    px(c, "#f6efe4", x + 13, y + 6, 3, 2);       // muzzle
+    px(c, "#2a1f1a", x + 15, y + 6, 1, 1);       // nose
+    px(c, "#2a1f1a", x + 13, y + 4, 1, 1);       // eye
+    px(c, "#7a4520", x + 10, y + 4, 2, 5);       // ear
+    px(c, "#c97a3a", x + 1, y + 5 + l, 1, 3); px(c, "#f6efe4", x + 0, y + 4 + l, 1, 1); // tail
+    c.restore();
+  }
+
+  // ---------- state ----------
+  const looks = {
+    me:    { skin: "#f1c7a0", hair: "#3a2a20", shirt: "#f2b24c", pants: "#2f3e5c" },
+    mazzo: { skin: "#e8b48c", hair: "#6b6b6b", shirt: "#4f81bd", pants: "#333344" },
+    takuto:{ skin: "#f4cfaa", hair: "#1e1a22", shirt: "#9bbb59", pants: "#3b3b46" },
+    norio: { skin: "#e2ac82", hair: "#cfcfcf", shirt: "#8064a2", pants: "#2a2a33" },
+    tochi: { skin: "#f1c7a0", hair: "#5a3a22", shirt: "#c0504d", pants: "#2f3e5c" },
+    ryu:   { skin: "#f4cfaa", hair: "#2b2b44", shirt: "#4bacc6", pants: "#3a2f2a" },
+    chii:  { skin: "#f6d4b5", hair: "#8a4a2a", shirt: "#f3e9d8", pants: "#6b4a8c" },
+    eiko:  { skin: "#f1c7a0", hair: "#c46a3a", shirt: "#9bbb59", pants: "#43384a" },
+    shoichi: { skin: "#e8b48c", hair: "#1e1a22", shirt: "#f2b24c", pants: "#2f3e5c" },
+  };
+  const mk = (id, name, x, y, extra = {}) => ({ id, name, look: looks[id], x, y, fx: x, fy: y, dir: "down", step: 0, moving: null, path: [], speaking: false, bubble: null, ...extra });
+  const me = mk("me", "あなた", 8, 3, { dir: "up" });
+  const SEAT = [8, 3], DOOR = [13, 16];
+  let lastPos = [13, 12]; // where I was last time in the room
+  const people = [
+    mk("mazzo", "mazzo", 5, 10, { home: "table" }),
+    mk("takuto", "takuto", 6, 13, { home: "table" }),
+    mk("norio", "NORIO TAKAHASHI", 22, 3, { home: "stage" }),
+    mk("tochi", "tochi", 15, 11, { home: "lounge" }),
+    mk("ryu", "リュー", 17, 13, { home: "lounge" }),
+    mk("chii", "ちい", 21, 9, { home: "free" }),
+    // In text view: shown sitting at the chat seats, not walking; one of them also joined the voice.
+    mk("eiko", "EIKO", 6, 3, { home: "text", text: true, dir: "up" }),
+    mk("shoichi", "Shoichi", 10, 3, { home: "text", text: true, voice: true, dir: "up" }),
+  ];
+  people.forEach(p => { if (p.voice === undefined) p.voice = !p.text; p.reacts = []; });
+  me.reacts = []; me.voice = false; me.text = true;
+  const beagle = { x: 23, y: 13, fx: 23, fy: 13, frame: 0, flip: false, bubble: null };
+  let micOn = false, listening = true;
+  const HEAR = 4; // tiles
+
+  const lines = {
+    table: ["次のオフ会、どこにします？", "議題 1：部活の名前", "それ賛成です", "資料はタイムラインに貼りますね"],
+    stage: ["みなさん聞こえますかー", "乾杯しましょう！", "今日は集まってくれてありがとう"],
+    lounge: ["このソファいいね", "新しいカメラ買った？", "わかる〜", "あとで写真送ります"],
+    free: ["自販機なに売ってるんだろう", "こんばんは！", "ビーグルかわいい"],
+    text: ["仕事しながら見てます", "テキストで失礼します〜", "その話気になる！", "あとで写真あげます"],
+  };
+
+  // ---------- canvas, camera ----------
+  const stage = document.getElementById("stage"), canvas = document.getElementById("map"), ctx = canvas.getContext("2d");
+  const base = document.createElement("canvas"); base.width = W * T; base.height = H * T;
+  const bctx = base.getContext("2d");
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) drawTile(bctx, grid[y][x], x, y);
+  // zone floor marks
+  Object.values(ZONES).forEach(z => { bctx.strokeStyle = "rgba(60,207,116,.55)"; bctx.setLineDash([3, 3]); bctx.lineWidth = 1; bctx.strokeRect(z.x * T + .5, z.y * T + .5, z.w * T - 1, z.h * T - 1); });
+  bctx.setLineDash([]);
+
+  let zoom = 3, camX = 0, camY = 0, dpr = 1;
+  function resize() {
+    dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    const r = stage.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.round(r.width * dpr)); canvas.height = Math.max(1, Math.round(r.height * dpr));
+    // about 13 tiles across on a phone, more on a desk; always an integer scale
+    zoom = Math.max(2, Math.floor(canvas.width / (T * Math.min(W, Math.max(13, r.width / 46)))));
+  }
+  new ResizeObserver(resize).observe(stage);
+
+  // ---------- movement ----------
+  const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+  const occupied = (x, y, who) => [me, ...people].some(p => p !== who && p.x === x && p.y === y);
+  function stepTo(p, d) {
+    const [dx, dy] = DIRS[d];
+    p.dir = d === "up" ? "up" : d === "down" ? "down" : "side"; p.flip = d === "left";
+    const nx = p.x + dx, ny = p.y + dy;
+    if (!walkable(nx, ny) || occupied(nx, ny, p)) return false;
+    p.moving = { from: [p.x, p.y], t: 0 }; p.x = nx; p.y = ny; return true;
+  }
+  function bfs(sx, sy, tx, ty, who) {
+    if (!walkable(tx, ty)) return [];
+    const prev = new Map(), q = [[sx, sy]], key = (x, y) => x + "," + y; prev.set(key(sx, sy), null);
+    while (q.length) {
+      const [x, y] = q.shift(); if (x === tx && y === ty) break;
+      for (const [d, [dx, dy]] of Object.entries(DIRS)) {
+        const nx = x + dx, ny = y + dy, k = key(nx, ny);
+        if (prev.has(k) || !walkable(nx, ny) || (occupied(nx, ny, who) && !(nx === tx && ny === ty))) continue;
+        prev.set(k, [x, y, d]); q.push([nx, ny]);
+      }
+    }
+    const out = []; let k = key(tx, ty); if (!prev.has(k)) return [];
+    while (prev.get(k)) { const [x, y, d] = prev.get(k); out.unshift(d); k = key(x, y); }
+    return out;
+  }
+
+  // keyboard
+  const held = new Set();
+  const KEYS = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", w: "up", s: "down", a: "left", d: "right", W: "up", S: "down", A: "left", D: "right" };
+  addEventListener("keydown", e => { if (document.activeElement === sayInput) return; const d = KEYS[e.key]; if (d) { held.add(d); me.path = []; e.preventDefault(); hideHint(); } });
+  addEventListener("keyup", e => { const d = KEYS[e.key]; if (d) held.delete(d); });
+  // on-screen pad (press and hold)
+  document.querySelectorAll(".pad button").forEach(b => {
+    const d = b.dataset.d;
+    b.addEventListener("pointerdown", e => { e.preventDefault(); held.add(d); me.path = []; hideHint(); b.setPointerCapture(e.pointerId); });
+    ["pointerup", "pointercancel", "lostpointercapture"].forEach(ev => b.addEventListener(ev, () => held.delete(d)));
+  });
+  // tap / click: walk there
+  canvas.addEventListener("pointerdown", e => {
+    const r = canvas.getBoundingClientRect();
+    const sx = (e.clientX - r.left) * dpr, sy = (e.clientY - r.top) * dpr;
+    const tx = Math.floor((sx / zoom + camX) / T), ty = Math.floor((sy / zoom + camY) / T);
+    const who = people.find(p => p.x === tx && p.y === ty);
+    if (who) { openMenu(who, e.clientX - r.left, e.clientY - r.top); return; }
+    closeMenu();
+    let target = [tx, ty];
+    if (!walkable(tx, ty)) { // tapped furniture: go next to it
+      const near = Object.values(DIRS).map(([dx, dy]) => [tx + dx, ty + dy]).filter(([x, y]) => walkable(x, y));
+      if (!near.length) return; near.sort((a, b) => Math.hypot(a[0] - me.x, a[1] - me.y) - Math.hypot(b[0] - me.x, b[1] - me.y)); target = near[0];
+    }
+    me.path = bfs(me.x, me.y, target[0], target[1], me); hideHint();
+  });
+  const menu = document.getElementById("menu"); let menuFor = null;
+  function openMenu(p, x, y) {
+    menuFor = p; document.getElementById("menuName").textContent = p.name + (p.text ? "（テキストで参加）" : "");
+    menu.hidden = false; const r = stage.getBoundingClientRect();
+    menu.style.left = Math.min(x, r.width - 150) + "px"; menu.style.top = Math.min(y, r.height - 110) + "px"; hideHint();
+  }
+  function closeMenu() { menu.hidden = true; menuFor = null; }
+  document.getElementById("menuWave").onclick = () => { if (menuFor) { react(me, "👋"); const t = menuFor; t.waved = performance.now(); addLog("", `${t.name} さんに手を振りました`, true); setTimeout(() => react(t, "👋"), 1200); } closeMenu(); };
+  document.getElementById("menuGo").onclick = () => { if (menuFor) { const t = menuFor; const near = Object.values(DIRS).map(([dx, dy]) => [t.x + dx, t.y + dy]).filter(([x, y]) => walkable(x, y) && !occupied(x, y, me)); near.sort((a, b) => Math.hypot(a[0] - me.x, a[1] - me.y) - Math.hypot(b[0] - me.x, b[1] - me.y)); if (near.length) me.path = bfs(me.x, me.y, near[0][0], near[0][1], me); } closeMenu(); };
+  const hint = document.getElementById("hint"); let hintTimer = setTimeout(hideHint, 9000);
+  function hideHint() { hint.hidden = true; clearTimeout(hintTimer); }
+
+  // ---------- NPCs ----------
+  function homeTarget(p) {
+    const pick = (cands) => cands[Math.floor(Math.random() * cands.length)];
+    if (p.home === "table") return pick([[4,10],[5,10],[6,10],[7,10],[4,13],[5,13],[6,13],[7,13],[3,11],[8,12]]);
+    if (p.home === "stage") return pick([[20,2],[21,3],[23,3],[24,2],[22,4]]);
+    if (p.home === "lounge") return pick([[12,11],[14,12],[16,13],[17,11],[13,14],[15,10]]);
+    return [Math.floor(Math.random() * 24) + 2, Math.floor(Math.random() * 12) + 5];
+  }
+  const EMOJI = ["👋", "❤️", "😂", "👏", "🎉", "🍻"];
+  function npcTick(p) {
+    if (Math.random() < .0012) react(p, EMOJI[Math.floor(Math.random() * EMOJI.length)]);
+    if (p.text) { if (Math.random() < .0012) say(p, lines.text[Math.floor(Math.random() * lines.text.length)]); if (p.voice && Math.random() < .002) p.speaking = !p.speaking; return; }
+    if (!p.path.length && Math.random() < .012) { const [x, y] = homeTarget(p); p.path = bfs(p.x, p.y, x, y, p).slice(0, 12); }
+    if (Math.random() < .004) { p.speaking = !p.speaking; }
+    if (Math.random() < .0016) {
+      say(p, lines[p.home][Math.floor(Math.random() * lines[p.home].length)]);
+      if (p.home === "stage") people.forEach(q => { if (q !== p && Math.random() < .5) setTimeout(() => react(q, Math.random() < .5 ? "👏" : "🍻"), 300 + Math.random() * 900); });
+    }
+  }
+
+  // ---------- voice (sample): who can I hear and how loud ----------
+  function volumeFor(p) {
+    if (!listening || !p.voice || !me.voice) return 0;
+    const myZone = zoneAt(me.x, me.y), theirZone = zoneAt(p.x, p.y);
+    if (theirZone === "stage") return 1;                         // the stage reaches everyone
+    if (myZone === "table" || theirZone === "table") return myZone === theirZone ? 1 : 0; // the table is private
+    const d = Math.hypot(p.x - me.x, p.y - me.y);
+    return d > HEAR ? 0 : Math.max(0, 1 - (d - 1) / HEAR);
+  }
+  const hear = document.getElementById("hear"), rule = document.getElementById("rule"), zoneBadge = document.getElementById("zone");
+  function renderHear() {
+    const list = people.map(p => ({ p, v: volumeFor(p) })).filter(o => o.v > 0).sort((a, b) => b.v - a.v);
+    const nText = people.filter(p => p.text).length;
+    document.getElementById("count").textContent = `部室に ${people.length + 1} 人（うちテキストで参加 ${nText} 人）`;
+    hear.innerHTML = list.length ? "" : (listening ? '<div class="empty">近くに誰もいません。誰かのそばへ歩いてみてください。</div>' : '<div class="empty">見るだけにしています。上の「👀 見るだけ」を押すと、近くの声が聞こえます。</div>');
+    for (const { p, v } of list) {
+      const row = document.createElement("div"); row.className = "who";
+      row.innerHTML = `<span class="name">${p.speaking ? "🔊 " : ""}${esc(p.name)}</span><span class="bar"><i style="width:${Math.round(v * 100)}%"></i></span><span class="vol">${Math.round(v * 100)}%</span>`;
+      hear.appendChild(row);
+    }
+    const z = zoneAt(me.x, me.y);
+    rule.textContent = z ? ZONES[z].rule : `まわり ${HEAR} マスの人の声が聞こえます。離れるほど小さく、ステージの声は全員に届きます。`;
+    zoneBadge.hidden = !z; if (z) zoneBadge.textContent = `${ZONES[z].name}にいます`;
+  }
+  const enterBtn = document.getElementById("enter");
+  function renderEnter() {
+    const inVoice = people.filter(p => p.voice), talking = inVoice.filter(p => p.speaking).length;
+    document.getElementById("enterText").innerHTML = `🎧 部室で <b>${inVoice.length} 人</b>がボイスに入っています${talking ? `（${talking} 人が話し中）` : ""}<small>入るとマイクはオフのまま、近くの人の声が聞こえます</small>`;
+    document.getElementById("enterFaces").innerHTML = inVoice.slice(0, 5).map(p => `<i style="background:${p.look.shirt}"></i>`).join("");
+  }
+  setInterval(() => { renderHear(); if (!enterBtn.hidden) renderEnter(); }, 250);
+  enterBtn.onclick = () => setMode(true);
+
+  // ---------- status + reactions ----------
+  function statusOf(p) {
+    if (p === me && me.text) return "⌨️";
+    if (p === me) return !listening ? "👀" : (micOn ? (p.speaking ? "🔊" : "🎙") : "🎧");
+    if (p.text && !p.voice) return "⌨️";
+    return p.speaking ? "🔊" : "🎧";
+  }
+  function react(p, e) { (p.reacts || (p.reacts = [])).push({ e, t0: performance.now() }); }
+  document.querySelectorAll(".react button").forEach(b => b.addEventListener("click", () => { react(me, b.dataset.e); hideHint(); }));
+  addEventListener("keydown", e => { if (document.activeElement === sayInput) return; const i = "123456".indexOf(e.key); if (i >= 0) react(me, EMOJI[i]); });
+
+  // ---------- chat ----------
+  const log = document.getElementById("log"), form = document.getElementById("form"), sayInput = document.getElementById("say");
+  const esc = s => s.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  function addLog(name, text, sys) {
+    const d = document.createElement("div"); d.className = "msg" + (sys ? " sys" : "");
+    d.innerHTML = sys ? esc(text) : `<b>${esc(name)}</b>${esc(text)}`;
+    log.appendChild(d); while (log.children.length > 80) log.firstChild.remove(); log.scrollTop = log.scrollHeight;
+  }
+  function say(p, text) { p.bubble = { text, until: performance.now() + 4500 }; addLog(p.name, text); }
+  form.addEventListener("submit", e => { e.preventDefault(); const t = sayInput.value.trim(); if (!t) return; say(me, t); sayInput.value = ""; sayInput.blur(); });
+  addLog("", "テキスト表示です。上の「ルームへ」で部室に入れます（試作では音は出ません）。", true);
+  addLog("mazzo", "会議テーブルで次のオフ会の相談中です");
+  addLog("NORIO TAKAHASHI", "ステージから失礼します！");
+
+  // mode + mic
+  const main = document.getElementById("main"), mText = document.getElementById("modeText"), mRoom = document.getElementById("modeRoom");
+  function setMode(room, quiet) {
+    const changed = room === main.classList.contains("text");
+    if (changed && room) {
+      // Enter: come in through the door and walk to where I was last time. Mic off, listening.
+      me.text = false; me.voice = listening; me.x = DOOR[0]; me.y = DOOR[1]; me.fx = me.x; me.fy = me.y; me.moving = null; me.dir = "up";
+      me.path = bfs(me.x, me.y, lastPos[0], lastPos[1], me);
+      hint.hidden = false; clearTimeout(hintTimer); hintTimer = setTimeout(hideHint, 9000);
+      addLog("", listening ? "部室に入りました。マイクはオフのまま、近くの人の声が聞こえます。" : "部室に入りました（見るだけ）。", true);
+      beagle.bubble = { text: "わん！", until: performance.now() + 2500 };
+    } else if (changed && !room) {
+      // Leave: out of the voice, back to the chat seat (people in the room still see me there).
+      if (!me.text) lastPos = [me.x, me.y]; if (micOn) mic.click();
+      me.text = true; me.voice = false; me.path = []; me.moving = null; me.x = SEAT[0]; me.y = SEAT[1]; me.fx = me.x; me.fy = me.y; me.dir = "up";
+      if (!quiet) addLog("", "テキスト表示にしました。ボイスから抜け、部室ではチャット席に座っています。", true);
+    }
+    enterBtn.hidden = room; if (!room) renderEnter();
+    main.classList.toggle("text", !room); mRoom.setAttribute("aria-pressed", room); mText.setAttribute("aria-pressed", !room); if (room) resize(); try { localStorage.setItem("bguru-room-mode", room ? "room" : "text"); } catch {} }
+  mText.onclick = () => setMode(false); mRoom.onclick = () => setMode(true);
+  setMode(false, true); // the demo starts in text view, so the way in can be tried
+  const mic = document.getElementById("mic");
+  const listenBtn = document.getElementById("listen");
+  listenBtn.onclick = () => { listening = !listening; me.voice = listening && !me.text; if (!listening && micOn) mic.click(); listenBtn.setAttribute("aria-pressed", listening); listenBtn.textContent = listening ? "🎧 聞いている" : "👀 見るだけ"; addLog("", listening ? "ボイスに入りました（マイクはオフ。近くの人の声が聞こえます）" : "ボイスから抜けました（見るだけ。音は出ません）", true); renderHear(); };
+  mic.onclick = () => { if (!listening && !micOn) listenBtn.click(); micOn = !micOn; mic.setAttribute("aria-pressed", micOn); mic.textContent = micOn ? "🎙 マイク オン" : "🎙 マイク オフ"; addLog("", micOn ? "マイクをオンにしました（試作：音は送られません）" : "マイクをオフにしました", true); };
+
+  // ---------- loop ----------
+  const STEP_MS = 170;
+  let last = performance.now(), dogT = 0;
+  function update(dt) {
+    for (const p of [me, ...people]) {
+      if (p.moving) { p.moving.t += dt / STEP_MS; if (p.moving.t >= 1) p.moving = null; }
+      if (!p.moving) {
+        let d = null;
+        if (p === me && held.size) d = [...held][held.size - 1];
+        else if (p.path.length) d = p.path.shift();
+        if (d && !stepTo(p, d) && p !== me) p.path = [];
+      }
+      const m = p.moving;
+      p.fx = m ? m.from[0] + (p.x - m.from[0]) * m.t : p.x; p.fy = m ? m.from[1] + (p.y - m.from[1]) * m.t : p.y;
+      p.step = m ? (m.t < .5 ? 1 : 2) : 0;
+      if (p !== me) npcTick(p);
+    }
+    me.speaking = micOn && !!me.bubble && me.bubble.until > performance.now();
+    // beagle pads around its bed
+    dogT += dt;
+    if (dogT > 900) { dogT = 0; const nx = beagle.x + (Math.random() < .5 ? -1 : 1); if (nx >= 21 && nx <= 25 && walkable(nx, 13)) { beagle.flip = nx < beagle.x; beagle.x = nx; } beagle.frame ^= 1; if (Math.random() < .08) beagle.bubble = { text: "わん！", until: performance.now() + 1800 }; }
+    beagle.fx += (beagle.x - beagle.fx) * .2;
+  }
+
+  function draw() {
+    const vw = canvas.width / zoom, vh = canvas.height / zoom;
+    const cx = (me.fx + .5) * T - vw / 2, cy = (me.fy + .5) * T - vh / 2;
+    camX = Math.round(Math.max(Math.min(cx, W * T - vw), Math.min(0, (W * T - vw) / 2)));
+    camY = Math.round(Math.max(Math.min(cy, H * T - vh), Math.min(0, (H * T - vh) / 2)));
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = "#120e14"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(zoom, 0, 0, zoom, -camX * zoom, -camY * zoom);
+    ctx.drawImage(base, 0, 0);
+    // hearing range around me (outside zones)
+    if (!zoneAt(me.x, me.y)) { ctx.fillStyle = "rgba(60,207,116,.08)"; ctx.strokeStyle = "rgba(60,207,116,.45)"; ctx.lineWidth = 1 / zoom * 2; ctx.beginPath(); ctx.arc((me.fx + .5) * T, (me.fy + .5) * T, HEAR * T, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+    // zone labels
+    ctx.font = "8px DotGothic16, monospace"; ctx.textBaseline = "top";
+    Object.values(ZONES).forEach(z => { label(z.name, z.x * T + 3, z.y * T + 2, "rgba(18,14,20,.75)", "#3ccf74"); });
+    LABELS.forEach(l => label(l.name, l.x * T + 2, l.y * T + 3, "rgba(18,14,20,.75)", "#f2b24c"));
+    drawBeagle(ctx, Math.round(beagle.fx * T), 13 * T, beagle.frame, beagle.flip);
+    // people, back to front
+    const all = [me, ...people].sort((a, b) => a.fy - b.fy);
+    for (const p of all) {
+      const x = Math.round(p.fx * T), y = Math.round(p.fy * T) - 2;
+      const v = p === me ? 1 : volumeFor(p);
+      if (p.speaking && v > 0) { ctx.strokeStyle = "#3ccf74"; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(x + 8, y + 15, 8, 3, 0, 0, Math.PI * 2); ctx.stroke(); }
+      const sitting = (grid[p.y][p.x] === "chair" || grid[p.y][p.x] === "stool") && !p.moving;
+      ctx.save(); if (p.flip && p.dir === "side") { ctx.translate(x * 2 + 16, 0); ctx.scale(-1, 1); }
+      drawPerson(ctx, x, y, p.look, p.dir, p.step, sitting); ctx.restore();
+      label(statusOf(p) + " " + p.name, x + 8, y - 9, p === me ? "rgba(242,178,76,.92)" : "rgba(18,14,20,.78)", p === me ? "#1d1820" : (v > 0 || p.text ? "#f3e9d8" : "#9a8fa0"), true);
+    }
+
+    // bubbles last
+    const now = performance.now();
+    for (const p of [...all, beagle]) if (p.bubble && p.bubble.until > now) bubble(p.bubble.text, Math.round(p.fx * T) + 8, Math.round((p === beagle ? 13 : p.fy) * T) - 12);
+    // reactions float up and fade, on top of everything
+    for (const p of all) {
+      p.reacts = (p.reacts || []).filter(r => now - r.t0 < 1800);
+      p.reacts.forEach((r, i) => { const k = (now - r.t0) / 1800; ctx.globalAlpha = 1 - k * k; ctx.font = "13px 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif"; ctx.textBaseline = "alphabetic"; ctx.fillText(r.e, Math.round(p.fx * T) + 1 + i * 7, Math.round(p.fy * T) - 4 - k * 18); ctx.globalAlpha = 1; });
+    }
+  }
+  function label(text, x, y, bg, fg, center) {
+    ctx.font = "8px DotGothic16, 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', monospace"; ctx.textBaseline = "top";
+    const w = Math.ceil(ctx.measureText(text).width) + 4, lx = Math.round(center ? x - w / 2 : x);
+    ctx.fillStyle = bg; ctx.fillRect(lx, y, w, 9); ctx.fillStyle = fg; ctx.fillText(text, lx + 2, y + .5);
+  }
+  function bubble(text, x, y) {
+    ctx.font = "8px DotGothic16, monospace"; ctx.textBaseline = "top";
+    const chars = [...text], rows = []; for (let i = 0; i < chars.length; i += 12) rows.push(chars.slice(i, i + 12).join(""));
+    const w = Math.ceil(Math.max(...rows.map(r => ctx.measureText(r).width))) + 8, h = rows.length * 9 + 5;
+    const bx = Math.round(x - w / 2), by = Math.round(y - h - 4);
+    ctx.fillStyle = "#1d1820"; ctx.fillRect(bx - 1, by - 1, w + 2, h + 2);
+    ctx.fillStyle = "#fffaf0"; ctx.fillRect(bx, by, w, h); ctx.fillRect(x - 1, by + h, 3, 2); ctx.fillRect(x, by + h + 2, 1, 1);
+    ctx.fillStyle = "#1d1820"; rows.forEach((r, i) => ctx.fillText(r, bx + 4, by + 3 + i * 9));
+  }
+  function frame(now) { const dt = Math.min(100, now - last); last = now; update(dt); if (!main.classList.contains("text")) draw(); requestAnimationFrame(frame); }
+  (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => { resize(); renderHear(); requestAnimationFrame(frame); });
+})();
+</script>
