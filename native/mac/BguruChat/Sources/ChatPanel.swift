@@ -52,9 +52,13 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         animationBehavior = .utilityWindow
         let root = MainPanelView(store: store, timeline: timeline, pin: pin, onClose: { [weak self] in self?.dismiss() }, onSignOut: onSignOut)
         let host = NSHostingView(rootView: root)
-        // Only keep the content's minimum: growing to its ideal size made the panel wide
-        // (the jukebox's sideways chip rows, three long tabs — drikin 2026-10-19).
-        host.sizingOptions = [.minSize]
+        // The content never sizes the panel; its size is the member's (and minSize above).
+        // Growing to the content's ideal size made it wide (drikin 2026-10-19), and even
+        // following only the content's minimum tied the window to whatever rows the
+        // timeline's lazy list had built: a wide row coming on screen widened the window,
+        // which rewrapped and rebuilt the rows, which changed the minimum again… — the
+        // freezes while browsing the timeline (drikin 2026-10-20).
+        host.sizingOptions = []
         contentView = host
         pin.wantsHeight = { [weak self] h in self?.grow(toHeight: h) }
         pin.onChange = { [weak self] pinned in self?.applyPin(pinned) }
@@ -179,6 +183,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
             }
         }
         store.isVisible = true
+        HangWatch.note("panel open (\(pin.tab), \(pin.pinned ? "pinned" : "peek"), \(Int(frame.width))×\(Int(frame.height)))")
         focusComposer()
     }
 
@@ -218,6 +223,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     }
 
     func dismiss() {
+        HangWatch.note("panel close")
         stopFollowingPalette()
         if let prev = previousApp {
             previousApp = nil
@@ -418,6 +424,11 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         return key is NSOpenPanel || key is NSSavePanel
     }
 
+    /// A resize storm here is what a layout loop looks like (see HangWatch).
+    func windowDidResize(_ notification: Notification) {
+        HangWatch.note("panel size \(Int(frame.width))×\(Int(frame.height))")
+    }
+
     func windowDidBecomeKey(_ notification: Notification) {
         store.isVisible = true
     }
@@ -437,7 +448,9 @@ final class PinState {
     /// into the message box when it changes.
     var focusRequest = 0
     /// Chat or timeline (the switch at the top, ⌘1 / ⌘2, or a two-finger swipe).
-    var tab: MainTab = .chat
+    var tab: MainTab = .chat {
+        didSet { if tab != oldValue { HangWatch.note("tab \(tab)") } }
+    }
     /// Opens the emoji & symbols palette for the message box (set by the panel).
     @ObservationIgnored var openEmoji: (() -> Void)?
     @ObservationIgnored var onChange: ((Bool) -> Void)?

@@ -142,6 +142,12 @@ struct ChatView: View {
                 Button("B-guru をブラウザで開く") { NSWorkspace.shared.open(APIClient.baseURL) }
                 Button("アップデートを確認…") { Updater.shared.checkNow() }
                     .disabled(!Updater.shared.canCheck)
+                // For bug reports: what the app recorded when it stopped responding.
+                Button("フリーズの記録を Finder で表示") {
+                    let url = FileManager.default.fileExists(atPath: HangWatch.logURL.path) ? HangWatch.logURL : HangWatch.directory
+                    try? FileManager.default.createDirectory(at: HangWatch.directory, withIntermediateDirectories: true)
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
                 Divider()
                 Button("ログアウト", action: onSignOut)
                 Button("終了") { NSApp.terminate(nil) }
