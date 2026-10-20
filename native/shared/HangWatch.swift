@@ -65,6 +65,13 @@ final class HangWatch: NSObject, @unchecked Sendable {
         let info = Bundle.main.infoDictionary
         add("launch \(info?["CFBundleShortVersionString"] ?? "?") (\(info?["CFBundleVersion"] ?? "?")) "
             + ProcessInfo.processInfo.operatingSystemVersionString)
+        startTimer()
+    }
+
+    /// Kept out of start(): a closure written inside a @MainActor method is main-actor
+    /// isolated, and Swift traps when the timer then calls it on `queue` (0.3.34 crashed
+    /// at launch this way).
+    private func startTimer() {
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now() + 1, repeating: .milliseconds(500), leeway: .milliseconds(100))
         t.setEventHandler { [weak self] in self?.tick() }
