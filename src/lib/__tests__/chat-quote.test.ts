@@ -112,3 +112,15 @@ describe("splitPostLinks", () => {
     expect(splitPostLinks(body).filter((p) => p.kind === "post")).toHaveLength(1);
   });
 });
+
+describe("a quote is about the post, not the article it links to", () => {
+  const LINK2 = "https://bsm.backspace.fm/#/post/8729";
+  it("drops pasted URLs from the excerpt, uses the link card's title for a link-only post", () => {
+    expect(quoteText({ authorName: "NORIO", text: "https://share.google/zFOWugfJDxbbvwVRe", hasImages: false, permalink: LINK2, linkTitle: "ソニー、ウォークマンZXシリーズ最新モデル「NW-ZX900」を海外発表" }))
+      .toBe(`📝 NORIO さんの投稿「ソニー、ウォークマンZXシリーズ最新モデル「NW-ZX900」を海外発表」\n${LINK2}\n`);
+    expect(quoteText({ authorName: "Kenta", text: "これは試す価値ありそうだな https://l.smartnews.com/m-8lgVyveg/bL5jK9", hasImages: false, permalink: LINK2 }))
+      .toBe(`📝 Kenta さんの投稿「これは試す価値ありそうだな」\n${LINK2}\n`);
+    expect(quoteText({ authorName: "a", text: "https://example.com/x", hasImages: false, permalink: LINK2 }))
+      .toBe(`📝 a さんの投稿「リンク」\n${LINK2}\n`);
+  });
+});

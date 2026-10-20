@@ -95,4 +95,13 @@ class ChatQuoteTest {
         assertNull(postIdFromUrl("https://bsm.backspace.fm.evil.com/#/post/1"))
         assertNull(postIdFromUrl("https://bsm.backspace.fm/#/post/1x"))
     }
+
+    @Test fun quoteIsAboutThePostNotTheArticle() {
+        val link = "https://bsm.backspace.fm/#/post/8729"
+        assertEquals("📝 NORIO さんの投稿「ソニー、ウォークマン最新モデル」\n$link\n",
+            quoteText("NORIO", "https://share.google/zFOWugfJDxbbvwVRe", false, link, "ソニー、ウォークマン最新モデル"))
+        assertEquals("📝 Kenta さんの投稿「これは試す価値ありそうだな」\n$link\n",
+            quoteText("Kenta", "これは試す価値ありそうだな https://l.smartnews.com/m-8lgVyveg/bL5jK9", false, link))
+        assertEquals("📝 a さんの投稿「リンク」\n$link\n", quoteText("a", "https://example.com/x", false, link))
+    }
 }

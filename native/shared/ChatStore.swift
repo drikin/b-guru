@@ -555,7 +555,8 @@ final class ChatStore {
         guard capabilities?.canSend == true else { return nil }
         return { [weak self] post in
             self?.pendingQuote = ChatStore.quoteText(authorName: post.authorName, text: post.text,
-                                                     hasImages: !(post.images ?? []).isEmpty, postId: post.parentId ?? post.id)
+                                                     hasImages: !(post.images ?? []).isEmpty, postId: post.parentId ?? post.id,
+                                                     linkTitle: post.urlPreview?.title)
             show()
         }
     }
@@ -570,23 +571,32 @@ final class ChatStore {
 
     /// What 「チャットに引用」 puts into the composer: who, the first line, the link.
     /// No @mention (quoting must not notify). docs: same text on every platform.
-    nonisolated static func quoteText(authorName: String?, text: String, hasImages: Bool, postId: Int) -> String {
+    nonisolated static func quoteText(authorName: String?, text: String, hasImages: Bool, postId: Int,
+                                      linkTitle: String? = nil) -> String {
         let name = (authorName?.isEmpty == false ? authorName! : "だれか")
         let link = "\(siteURL)/#/post/\(postId)"
-        let line = text.split(whereSeparator: \.isNewline)
-            .map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
-            .first { !$0.isEmpty } ?? ""
-        // A mention in the quoted line would notify that member again: ＠ (full width) is
-        // not a mention.
-        var excerpt = line.replacingOccurrences(of: "@", with: "＠")
-        // Markdown marks are noise in a one-line quote: "## 見出し", "> 引用", "- 項目", **太字**, `code`.
-        excerpt = excerpt.replacingOccurrences(of: #"^(#{1,6}|>|[-*+]|\d{1,3}[.)])\s+"#, with: "", options: .regularExpression)
-        for mark in ["**", "__", "~~", "`"] { excerpt = excerpt.replacingOccurrences(of: mark, with: "") }
-        excerpt = excerpt.trimmingCharacters(in: .whitespaces)
+        // The first line with words, once pasted URLs are taken out: the quote is about the
+        // post, not the article it links to (drikin 2026-10-20). A link-only post: the
+        // article's title from its link card.
+        var excerpt = text.split(whereSeparator: \.isNewline).map(cleanQuoteLine).first { !$0.isEmpty }
+            ?? linkTitle.map(cleanQuoteLine) ?? ""
         if excerpt.count > 40 { excerpt = String(excerpt.prefix(40)) + "…" } // Characters: never half an emoji
         if excerpt.isEmpty && hasImages { excerpt = "写真" }
+        if excerpt.isEmpty && text.range(of: #"https?://\S"#, options: .regularExpression) != nil { excerpt = "リンク" }
         let head = excerpt.isEmpty ? "📝 \(name) さんの投稿" : "📝 \(name) さんの投稿「\(excerpt)」"
         return "\(head)\n\(link)\n"
+    }
+
+    /// One line as quoted: URLs out, spaces collapsed, ＠ for @ (a mention in the quote
+    /// would notify that member again), Markdown marks dropped ("## 見出し", "> ", "- ",
+    /// **太字**, `code`).
+    nonisolated private static func cleanQuoteLine<S: StringProtocol>(_ raw: S) -> String {
+        var l = String(raw).replacingOccurrences(of: #"https?://\S+"#, with: " ", options: .regularExpression)
+        l = l.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        l = l.replacingOccurrences(of: "@", with: "＠")
+        l = l.replacingOccurrences(of: #"^(#{1,6}|>|[-*+]|\d{1,3}[.)])\s+"#, with: "", options: .regularExpression)
+        for mark in ["**", "__", "~~", "`"] { l = l.replacingOccurrences(of: mark, with: "") }
+        return l.trimmingCharacters(in: .whitespaces)
     }
 
     /// The post a B-guru permalink points to (https://bsm.backspace.fm/#/post/123).

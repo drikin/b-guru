@@ -13,7 +13,7 @@ object ChatQuote {
     fun permalink(post: Post): String = "${Net.BASE}/#/post/${post.parentId ?: post.id}"
 
     fun forPost(post: Post): String =
-        quoteText(post.authorName ?: "", post.text, post.images.isNotEmpty(), permalink(post))
+        quoteText(post.authorName ?: "", post.text, post.images.isNotEmpty(), permalink(post), post.urlPreview?.title)
 }
 
 private const val EXCERPT_MAX = 40
@@ -23,8 +23,11 @@ private const val EXCERPT_MAX = 40
  *  (code points: an emoji is never cut in half) with … when cut; no text → 「写真」 when
  *  the post has images, else no 「…」 at all. Every @ in the excerpt becomes ＠ and
  *  Markdown marks are dropped ([excerptLine]). */
-fun quoteText(authorName: String, text: String, hasImages: Boolean, permalink: String): String {
+fun quoteText(authorName: String, text: String, hasImages: Boolean, permalink: String, linkTitle: String? = null): String {
+    // URLs are taken out first: the quote is about the post, not the article it links to
+    // (drikin 2026-10-20). A link-only post: the article's title from its link card.
     val line = text.lineSequence().map(::excerptLine).firstOrNull { it.isNotEmpty() }
+        ?: linkTitle?.let(::excerptLine)?.takeIf { it.isNotEmpty() }
     val excerpt = when {
         line != null -> {
             val count = line.codePointCount(0, line.length)
@@ -32,6 +35,7 @@ fun quoteText(authorName: String, text: String, hasImages: Boolean, permalink: S
             else line.substring(0, line.offsetByCodePoints(0, EXCERPT_MAX)) + "…"
         }
         hasImages -> "写真"
+        URL_RE.containsMatchIn(text) -> "リンク"
         else -> null
     }
     val name = authorName.ifBlank { "だれか" } // same as the Apple app and the web
@@ -45,8 +49,10 @@ private val MD_LEAD_RE = Regex("""^(#{1,6} |> |- |\* |\+ |\d+\. )""")
 /** One line of a post as quoted: spaces collapsed, @ → ＠ (a mention in the quote must not
  *  notify that member again), Markdown marks dropped (a leading heading / quote / list mark,
  *  every ** __ ~~ `), trimmed. */
+private val URL_RE = Regex("""https?://\S+""")
+
 internal fun excerptLine(raw: String): String {
-    val line = raw.trim().split(SPACES_RE).joinToString(" ").replace('@', '＠')
+    val line = URL_RE.replace(raw, " ").trim().split(SPACES_RE).joinToString(" ").replace('@', '＠')
     return MD_LEAD_RE.replace(line, "")
         .replace("**", "").replace("__", "").replace("~~", "").replace("`", "")
         .trim()

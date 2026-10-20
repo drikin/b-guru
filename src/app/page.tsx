@@ -8226,6 +8226,7 @@ export default function Home() {
       text: post.text,
       hasImages: (post.images?.length ?? 0) > 0,
       permalink: postPermalink(post.parentId ?? post.id),
+      linkTitle: post.urlPreview?.title ?? null,
     });
     setChatText((cur) => appendQuote(cur, quote));
     if (threadPost) closeThread();

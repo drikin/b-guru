@@ -19,8 +19,13 @@ export function postPermalink(rootId: number, origin: string = POST_PERMALINK_OR
 /** 1 行を抜粋用に整える: 空白を 1 つに詰める → 行頭の Markdown 記号
  *  （`#`〜`######`・`>`・`-`・`*`・`+`・`1.` の後に空白）を外す →
  *  `**` `__` `~~` `` ` `` をすべて外す → trim。 */
+const URL_RE = /https?:\/\/\S+/g;
+
 function cleanLine(l: string): string {
   return l
+    // The quote is about the post: a pasted article URL is not its text (drikin 2026-10-20
+    // 「記事 URL の引用になっている」). The post's own link goes on the next line.
+    .replace(URL_RE, " ")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^(?:#{1,6}|>|[-*+]|\d+\.) /, "")
@@ -32,13 +37,16 @@ function cleanLine(l: string): string {
  *  行頭の Markdown 記号と ** __ ~~ ` は外す（cleanLine）。
  *  「@」は全角「＠」に置き換える（引用した行のメンションで本人に再通知しない）。
  *  本文が空なら写真付きは「写真」、何もなければ空文字。 */
-export function quoteExcerpt(text: string | null | undefined, hasImages: boolean): string {
-  const line =
-    String(text ?? "")
-      .split(/\r\n|\r|\n/)
-      .map(cleanLine)
-      .find((l) => l.length > 0) ?? "";
-  if (!line) return hasImages ? "写真" : "";
+export function quoteExcerpt(
+  text: string | null | undefined,
+  hasImages: boolean,
+  linkTitle?: string | null
+): string {
+  const raw = String(text ?? "");
+  let line = raw.split(/\r\n|\r|\n/).map(cleanLine).find((l) => l.length > 0) ?? "";
+  // A post that is only a link: the article's title (from its link card) says what it is.
+  if (!line && linkTitle) line = cleanLine(linkTitle);
+  if (!line) return hasImages ? "写真" : /https?:\/\/\S/.test(raw) ? "リンク" : "";
   const safe = line.replace(/@/g, "＠");
   const chars = Array.from(safe); // コードポイント単位 — 絵文字・サロゲートペアを割らない
   return chars.length > QUOTE_EXCERPT_MAX ? chars.slice(0, QUOTE_EXCERPT_MAX).join("") + "…" : safe;
@@ -52,14 +60,17 @@ export function quoteText({
   text,
   hasImages,
   permalink,
+  linkTitle,
 }: {
   authorName: string | null | undefined;
   text: string | null | undefined;
   hasImages: boolean;
   permalink: string;
+  /** The link card's title (posts.url_preview.title), used when the post is only a link. */
+  linkTitle?: string | null;
 }): string {
   const name = String(authorName ?? "").trim() || "だれか";
-  const excerpt = quoteExcerpt(text, hasImages);
+  const excerpt = quoteExcerpt(text, hasImages, linkTitle);
   const head = excerpt ? `📝 ${name} さんの投稿「${excerpt}」` : `📝 ${name} さんの投稿`;
   return `${head}\n${permalink}\n`;
 }
