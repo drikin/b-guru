@@ -3,8 +3,10 @@
  *
  * - sessions: getSessionEmail() only accepts `expires_at > now()`, so expired
  *   rows are dead weight (738 of 1,055 on 2026-09-28) that nothing removed.
- * - otp_codes: the OTP login flow is gone (no reader since 2026-09-01); expired
+ * - otp_codes: the old OTP login flow is gone (no reader since 2026-09-01); expired
  *   codes are likewise unreadable.
+ * - login_requests (lib/login.ts): a login mail is dead once its "sign out
+ *   everywhere" link (30 days after use) can no longer be used.
  *
  * Deliberately NOT in lib/session.ts (another workstream owns that file).
  * One process-wide timer, started from instrumentation.ts. Idempotent, like
@@ -23,6 +25,9 @@ export async function purgeExpiredAuthRows(): Promise<{
 }> {
   const s = await pool.query(`DELETE FROM sessions WHERE expires_at < now()`);
   const o = await pool.query(`DELETE FROM otp_codes WHERE expires_at < now()`);
+  const lr = await pool.query(
+    `DELETE FROM login_requests WHERE created_at < now() - interval '31 days'`
+  );
   // エージェントトークン: 期限切れ OR 失効から 90 日経過。監査ログは 90 日保持。
   const at = await pool.query(
     `DELETE FROM agent_tokens WHERE expires_at < now()
@@ -33,7 +38,7 @@ export async function purgeExpiredAuthRows(): Promise<{
   );
   return {
     sessions: s.rowCount ?? 0,
-    otp: o.rowCount ?? 0,
+    otp: (o.rowCount ?? 0) + (lr.rowCount ?? 0),
     agentTokens: at.rowCount ?? 0,
     agentAudit: aa.rowCount ?? 0,
   };

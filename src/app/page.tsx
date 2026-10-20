@@ -4667,6 +4667,10 @@ export default function Home() {
   const [checking, setChecking] = useState(true);
 
   const [email, setEmail] = useState("");
+  // Sign-in is two steps: mail a code + link (/api/auth/request), then the code
+  // here or the link in the mail (/api/auth/verify).
+  const [loginStep, setLoginStep] = useState<"email" | "code">("email");
+  const [code, setCode] = useState("");
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -7436,8 +7440,34 @@ export default function Home() {
       const d = await r.json();
       if (!r.ok) setMsg({ type: "err", text: d.error || "エラー" });
       else {
+        setLoginStep("code");
+        setCode("");
+        setMsg(null);
+      }
+    } catch {
+      setMsg({ type: "err", text: "通信エラー" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await fetch("/api/auth/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code }),
+      });
+      const d = await r.json();
+      if (!r.ok) setMsg({ type: "err", text: d.error || "エラー" });
+      else {
         setAuth({ userId: d.userId, email: d.email, isAdmin: !!d.isAdmin });
         setMsg(null);
+        setLoginStep("email");
+        setCode("");
         checkAuth();
       }
     } catch {
@@ -7446,6 +7476,16 @@ export default function Home() {
       setBusy(false);
     }
   };
+
+  // While waiting for the code: if the member opens the mail's login link in
+  // another tab of this browser, the session cookie is shared, so pick it up.
+  useEffect(() => {
+    if (auth || loginStep !== "code") return;
+    const t = setInterval(() => {
+      if (document.visibilityState === "visible") checkAuth();
+    }, 3000);
+    return () => clearInterval(t);
+  }, [auth, loginStep, checkAuth]);
 
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -10064,22 +10104,58 @@ export default function Home() {
         </div>
 
         <Paper radius="lg" p="lg" withBorder shadow="sm">
-          <form onSubmit={login} className="space-y-4">
-            <TextInput
-              label="登録メールアドレス"
-              type="email"
-              required
-              placeholder="you@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.currentTarget.value)}
-            />
-            <Button fullWidth type="submit" loading={busy} color="green">
-              ログイン
-            </Button>
-            <Text size="xs" c="dimmed">
-              あなたが B-guru（backspace.fm 有料会員サービス）の会員として登録しているメールアドレスを入力すると、そのままログインできます。
-            </Text>
-          </form>
+          {loginStep === "email" ? (
+            <form onSubmit={login} className="space-y-4">
+              <TextInput
+                label="登録メールアドレス"
+                type="email"
+                required
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.currentTarget.value)}
+              />
+              <Button fullWidth type="submit" loading={busy} color="green">
+                ログインメールを送る
+              </Button>
+              <Text size="xs" c="dimmed">
+                B-guru（backspace.fm 有料会員サービス）の会員として登録しているメールアドレスに、ログイン用のメールが届きます。
+              </Text>
+            </form>
+          ) : (
+            <form onSubmit={verifyCode} className="space-y-4">
+              <Text size="sm">
+                {email} にメールを送りました。メールの「ログインする」を押すか、届いた 6 桁のコードを入力してください。
+              </Text>
+              <TextInput
+                label="6 桁のコード"
+                required
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                placeholder="123456"
+                value={code}
+                onChange={(e) => setCode(e.currentTarget.value.replace(/\D/g, ""))}
+                autoFocus
+              />
+              <Button fullWidth type="submit" loading={busy} color="green" disabled={code.length !== 6}>
+                ログイン
+              </Button>
+              <Text size="xs" c="dimmed">
+                数分たっても届かないときは、迷惑メールのフォルダと、backspace.fm の有料会員として登録しているアドレスかどうかを確かめてください。
+              </Text>
+              <Button
+                variant="subtle"
+                color="gray"
+                size="xs"
+                onClick={() => {
+                  setLoginStep("email");
+                  setMsg(null);
+                }}
+              >
+                メールアドレスを入れ直す・もう一度送る
+              </Button>
+            </form>
+          )}
           {msg && (
             <Text size="sm" mt="md" c={msg.type === "ok" ? "green" : "red"}>
               {msg.text}

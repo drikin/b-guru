@@ -141,6 +141,24 @@ describe("verifyAgentToken", () => {
     expect(ctx.email).toBe("a@b.c");
   });
 
+  it("人のアプリ（voice）のトークンだけ、使うたびに期限を延ばす", async () => {
+    const run = async (scopes: string[]) => {
+      query.mockReset();
+      query.mockImplementation(async (sql: string) =>
+        String(sql).includes("SELECT id, token_hash")
+          ? { rows: [{ id: 1, email: "a@b.c", scopes, device_name: "t",
+                       expires_at: new Date(Date.now() + 86400_000), last_membership_check: new Date() }] }
+          : { rows: [], rowCount: 0 }
+      );
+      await verifyAgentToken("Bearer bga_x");
+      const call = query.mock.calls.find((c) => String(c[0]).includes("SET last_used_at"))!;
+      expect(String(call[0])).toContain("GREATEST(expires_at");
+      return call[1][2];
+    };
+    expect(await run(["read", "chat", "voice"])).toBe(true);
+    expect(await run(["read"])).toBe(false);
+  });
+
   it("6 時間以上経過で Ghost 再判定・非会員ならトークン失効 + membership_ended", async () => {
     const revokes: unknown[][] = [];
     query.mockImplementation(async (sql: string) => {

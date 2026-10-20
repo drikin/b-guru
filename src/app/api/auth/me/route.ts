@@ -5,6 +5,7 @@ import { findMemberByEmail } from "@/lib/ghost";
 import { gravatarUrl } from "@/lib/posts";
 import { ensureUserId } from "@/lib/user";
 import { isAdmin } from "@/lib/admin";
+import { slideSession } from "@/lib/login";
 
 // Per-user auth state: never cache (the early <link rel=preload> fetch in
 // lib/early-fetch.ts carries no cache:no-store, so the header is what applies).
@@ -28,6 +29,9 @@ export async function GET() {
   if (!email) {
     return NextResponse.json({ authenticated: false }, { status: 200, headers: NO_CACHE });
   }
+  // Every page load asks /api/auth/me, so this is where a session in use
+  // gets its expiry pushed out (lib/login.ts).
+  await slideSession();
 
   // Resolve the display name from B-guru's own profile (user_profiles), so the
   // bottom-left corner / composer match the timeline. Falls back to the Ghost
