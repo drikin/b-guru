@@ -25,6 +25,10 @@ final class AppSettings {
     var quietHours: Bool {
         didSet { UserDefaults.standard.set(quietHours, forKey: "quietHours") }
     }
+    /// Also notify new timeline posts (comments not included). Off until turned on.
+    var notifyTimeline: Bool {
+        didSet { UserDefaults.standard.set(notifyTimeline, forKey: "notifyTimeline") }
+    }
     /// Show the app in the Dock too, with an unread badge on its icon.
     var showInDock: Bool {
         didSet {
@@ -42,6 +46,7 @@ final class AppSettings {
         notifyMode = NotifyMode(rawValue: d.string(forKey: "notifyMode") ?? "") ?? .all
         quietHours = d.object(forKey: "quietHours") as? Bool ?? true
         showInDock = d.bool(forKey: "showInDock")
+        notifyTimeline = d.bool(forKey: "notifyTimeline")
     }
 
     func isQuietNow(_ date: Date = Date()) -> Bool {

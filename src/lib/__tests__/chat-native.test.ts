@@ -125,7 +125,7 @@ describe("agent チャット DTO", () => {
 
 describe("個人ストリームへの変換", () => {
   const viewer = { userId: "uid_me", mentionNames: new Set<string>() };
-  it("chat create/edit/delete と presence だけを流す", () => {
+  it("chat create/edit/delete と presence と投稿の作成だけを流す", () => {
     expect(liveToStreamEvent({ type: "chat", action: "delete", message: { id: 9 } }, viewer)).toEqual({
       event: "chat",
       data: { action: "delete", id: 9 },
@@ -136,7 +136,12 @@ describe("個人ストリームへの変換", () => {
       event: "presence",
       data: { user_ids: ["u1"] },
     });
-    expect(liveToStreamEvent({ type: "post", postId: 1, action: "create" }, viewer)).toBeNull();
+    // 投稿の作成は id だけ（Mac がタイムラインの新着を自分で通知するため）。更新・削除は流さない
+    expect(liveToStreamEvent({ type: "post", postId: 1, action: "create" }, viewer)).toEqual({
+      event: "post",
+      data: { action: "create", post_id: 1 },
+    });
+    expect(liveToStreamEvent({ type: "post", postId: 1, action: "update" }, viewer)).toBeNull();
   });
 });
 

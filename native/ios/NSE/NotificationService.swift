@@ -87,6 +87,11 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
             guard let r = replies.first(where: { ($0["id"] as? NSNumber)?.intValue == q.replyId }) ?? replies.last,
                   let text = r["text"] as? String else { return nil }
             return ("\((r["author_name"] as? String) ?? "誰か") が返信しました", clip(text))
+        case "timeline_new":
+            guard let postId = q.postId,
+                  let post = await get("/api/agent/posts/\(postId)", token: token)?["post"] as? [String: Any],
+                  let text = post["text"] as? String else { return nil }
+            return ("\((post["author_name"] as? String) ?? "誰か") が投稿しました", clip(text))
         default:
             return nil
         }

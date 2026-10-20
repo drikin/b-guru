@@ -542,6 +542,8 @@ export async function initSchema() {
     -- quiet_hours: 0:00〜7:00 JST は新着を送らない（メンションは送る）。
     ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS notify_mode TEXT NOT NULL DEFAULT 'all';
     ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS quiet_hours BOOLEAN NOT NULL DEFAULT TRUE;
+    -- notify_timeline: タイムラインの新しい投稿も知らせる（アプリの設定で選ぶ・既定は送らない）。
+    ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS notify_timeline BOOLEAN NOT NULL DEFAULT FALSE;
 
     -- エージェント API のレート制限カウンタ（固定窓・key=token_id:scope）。
     CREATE TABLE IF NOT EXISTS rate_limits (

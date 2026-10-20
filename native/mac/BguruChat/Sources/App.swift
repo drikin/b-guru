@@ -183,6 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         MediaCache.shared.token = token
         store.onMention = { [weak self] m in self?.notifyMention(m) }
         store.onNewMessage = { [weak self] m in self?.notifyNewMessage(m) }
+        store.onPostCreated = { [weak self] in self?.timelinePostCreated() }
         store.onBecameVisible = { [weak self] in self?.clearBundledNotification() }
         self.store = store
         store.start()
@@ -351,6 +352,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "chat-\(m.id)", content: content, trigger: nil))
     }
 
+    /// 「タイムラインの新しい投稿も通知する」: the stream says a post or comment was made;
+    /// a moment later the timeline is read again and posts newer than any seen before
+    /// (not mine, still unread) become one notification each (at most 3 at a time).
+    /// Not while the timeline is on screen — it shows them itself.
+    private var newestPostSeen = 0
+    private var postCheckTask: Task<Void, Never>?
+
+    private func timelinePostCreated() {
+        guard settings.notifyTimeline, let timeline else { return }
+        postCheckTask?.cancel()
+        postCheckTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled, let self else { return }
+            let before = self.newestPostSeen > 0 ? self.newestPostSeen : (timeline.posts.map(\.id).max() ?? 0)
+            await timeline.refresh()
+            self.newestPostSeen = max(before, timeline.posts.map(\.id).max() ?? 0)
+            guard before > 0, !self.settings.isQuietNow() else { return }
+            if self.store?.isVisible == true, self.panel?.pin.tab == .timeline { return }
+            let fresh = timeline.posts.filter { $0.id > before && $0.isAuthor != true && $0.unread == true }
+            for p in fresh.sorted(by: { $0.id < $1.id }).prefix(3) { self.notifyPost(p) }
+        }
+    }
+
+    private func notifyPost(_ p: Post) {
+        let content = UNMutableNotificationContent()
+        content.title = "\(p.authorName ?? "誰か") が投稿しました"
+        let text = p.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        content.body = text.count > 240 ? String(text.prefix(240)) + "…" : (text.isEmpty ? "新しい投稿があります" : text)
+        content.categoryIdentifier = "newpost"
+        content.threadIdentifier = "timeline"
+        content.userInfo = ["postId": p.id]
+        content.sound = .default
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "post-\(p.id)", content: content, trigger: nil))
+    }
+
     /// Everything that is not a mention goes into ONE notification that is
     /// updated in place ("ゆう: …（ほか 3 件の新着）"), so a busy room never
     /// floods the notification centre. Updates are debounced (0.4 s): re-adding
@@ -429,6 +465,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             didReceive response: UNNotificationResponse) async {
         let id = response.notification.request.content.userInfo["messageId"] as? Int
+        let postId = response.notification.request.content.userInfo["postId"] as? Int
         let action = response.actionIdentifier
         let text = (response as? UNTextInputNotificationResponse)?.userText
         await MainActor.run {
@@ -438,9 +475,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             case "heart":
                 if let id { self.store?.toggleReaction(id, emoji: "❤️") }
             default:
-                // Click: open the chat at that message.
+                // Click: open the chat at that message, or the post's thread in the timeline.
                 self.showPanel()
                 if let id { self.store?.reveal(id) }
+                else if let postId { self.timeline?.openThread = postId }
             }
         }
     }

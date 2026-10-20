@@ -193,11 +193,12 @@ final class APIClient: Sendable {
 
     /// APNs device token for this iPhone/iPad (hex). environment: "sandbox" | "production".
     func registerPush(deviceToken: String, environment: String, platform: String,
-                      notifyMode: String = "all", quietHours: Bool = true) async throws {
+                      notifyMode: String = "all", quietHours: Bool = true, notifyTimeline: Bool? = nil) async throws {
         struct OK: Decodable { var ok: Bool }
-        let _: OK = try await send(request("POST", "/api/agent/devices/push",
-                                           json: ["token": deviceToken, "environment": environment, "platform": platform,
-                                                  "notify_mode": notifyMode, "quiet_hours": quietHours]))
+        var body: [String: Any] = ["token": deviceToken, "environment": environment, "platform": platform,
+                                   "notify_mode": notifyMode, "quiet_hours": quietHours]
+        if let notifyTimeline { body["notify_timeline"] = notifyTimeline }
+        let _: OK = try await send(request("POST", "/api/agent/devices/push", json: body))
     }
 
     func unregisterPush(deviceToken: String) async {

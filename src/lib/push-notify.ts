@@ -3,6 +3,7 @@
  * - Chat: members whose name is @mentioned (same matching as the web bark and
  *   the native stream — chat-mention.ts). Never the author.
  * - Personal: a reply to one of your posts (createNotification type "reply").
+ * - Timeline: a new post (not a comment, not a whisper) to devices that chose it.
  *
  * Privacy: the payload carries ids and a generic text only, never the message.
  * The app's Notification Service Extension fetches the real text with the
@@ -14,7 +15,7 @@ import { activePushDevices, markPushSent, pushDeviceOwners, removePushDevice, ty
 import { isMentionedIn, mentionNamesFor } from "./chat-mention";
 import { resolveDisplayNames } from "./display-name";
 
-export type PushKind = "chat_mention" | "chat_new" | "reply";
+export type PushKind = "chat_mention" | "chat_new" | "reply" | "timeline_new";
 
 /** 0:00–7:00 JST — new-message pushes wait (mentions still go out). */
 export function isQuietHourJst(now = new Date()): boolean {
@@ -29,14 +30,16 @@ export function buildPushPayload(kind: PushKind, ids: { messageId?: number; post
       ? { title: "B-guru チャット", body: "あなたへのメンションがあります" }
       : kind === "chat_new"
         ? { title: "B-guru チャット", body: "新着メッセージがあります" }
-        : { title: "B-guru", body: "あなたの投稿に返信がありました" };
+        : kind === "timeline_new"
+          ? { title: "B-guru タイムライン", body: "新しい投稿があります" }
+          : { title: "B-guru", body: "あなたの投稿に返信がありました" };
   return {
     aps: {
       alert,
       sound: kind === "chat_mention" ? "bark.caf" : "default",
       "mutable-content": 1,
-      category: kind === "chat_mention" ? "mention" : kind === "chat_new" ? "newmsg" : "reply",
-      "thread-id": kind === "reply" ? `post-${ids.postId ?? 0}` : "chat",
+      category: kind === "chat_mention" ? "mention" : kind === "chat_new" ? "newmsg" : kind === "timeline_new" ? "newpost" : "reply",
+      "thread-id": kind === "reply" ? `post-${ids.postId ?? 0}` : kind === "timeline_new" ? "timeline" : "chat",
     },
     kind,
     ...(ids.messageId != null ? { message_id: ids.messageId } : {}),
@@ -143,4 +146,23 @@ export async function pushPersonalNotification(
   const devices = await activePushDevices([recipientEmail]);
   if (devices.length === 0) return 0;
   return deliver(devices, buildPushPayload("reply", { postId: n.postId, replyId: n.replyId }), `reply-${n.replyId ?? n.postId}`);
+}
+
+/** A new timeline post: to every device that chose timeline notifications, except the
+ *  author's. Quiet hours hold it like a chat message; at most one per 20 s per member. */
+export async function pushNewPost(postId: number, authorEmail: string): Promise<number> {
+  if (!pushEnabled()) return 0;
+  const author = authorEmail.trim().toLowerCase();
+  const quiet = isQuietHourJst();
+  const devices = (await activePushDevices(null)).filter(
+    (d) => d.notifyTimeline && d.email !== author && !(quiet && d.quietHours)
+  );
+  const recipients = [...new Set(devices.map((d) => d.email))].filter((e) => !throttled(e, "timeline_new"));
+  if (recipients.length === 0) return 0;
+  const allowed = new Set(recipients);
+  return deliver(
+    devices.filter((d) => allowed.has(d.email)),
+    buildPushPayload("timeline_new", { postId }),
+    `post-${postId}`
+  );
 }

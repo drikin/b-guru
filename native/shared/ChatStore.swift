@@ -86,6 +86,8 @@ final class ChatStore {
     var onMention: ((ChatMessage) -> Void)?
     /// A message from someone else arrived while the panel was hidden.
     var onNewMessage: ((ChatMessage) -> Void)?
+    /// A post or comment was created somewhere (the Mac notifies new timeline posts).
+    @ObservationIgnored var onPostCreated: (() -> Void)?
     var onBecameVisible: (() -> Void)?
 
     private let api: APIClient
@@ -233,6 +235,8 @@ final class ChatStore {
             if let v = try? dec.decode(VoiceRoomInfo.self, from: ev.data) { voice.apply(v) }
         case "revoked":
             signedOut = true
+        case "post":
+            onPostCreated?()
         default:
             break // unknown events are ignored (forward compatible)
         }

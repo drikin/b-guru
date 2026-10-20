@@ -29,13 +29,19 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
         set { UserDefaults.standard.set(newValue, forKey: "quietHours"); syncSettings() }
     }
 
+    /// Also new timeline posts (comments not included). Off until the member turns it on.
+    var notifyTimeline: Bool {
+        get { UserDefaults.standard.bool(forKey: "notifyTimeline") }
+        set { UserDefaults.standard.set(newValue, forKey: "notifyTimeline"); syncSettings() }
+    }
+
     private func syncSettings() {
         guard let hex = deviceToken, let api = session?.api else { return }
         let platform = UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "ios"
-        let mode = notifyMode, quiet = quietHours
+        let mode = notifyMode, quiet = quietHours, timeline = notifyTimeline
         Task {
             try? await api.registerPush(deviceToken: hex, environment: Self.environment, platform: platform,
-                                        notifyMode: mode, quietHours: quiet)
+                                        notifyMode: mode, quietHours: quiet, notifyTimeline: timeline)
         }
     }
 
@@ -58,6 +64,7 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
             UNNotificationCategory(identifier: "mention", actions: [reply, heart], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: "newmsg", actions: [reply], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: "reply", actions: [open], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: "newpost", actions: [open], intentIdentifiers: [], options: []),
         ])
     }
 
@@ -98,7 +105,8 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
                                             willPresent notification: UNNotification,
                                             withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void) {
         let kind = notification.request.content.userInfo["kind"] as? String
-        let options: UNNotificationPresentationOptions = kind == "chat_mention" || kind == "chat_new" ? [] : [.banner, .sound]
+        // In the app, the chat and the timeline show what is new themselves.
+        let options: UNNotificationPresentationOptions = kind == "chat_mention" || kind == "chat_new" || kind == "timeline_new" ? [] : [.banner, .sound]
         DispatchQueue.main.async { completionHandler(options) }
     }
 
@@ -130,7 +138,7 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
             if let messageId {
                 session?.store?.reveal(messageId)
             } else if let postId {
-                // A reply to your post: open the thread in the app's timeline.
+                // A reply to your post or a new post: open the thread in the app's timeline.
                 if let timeline = session?.timeline {
                     timeline.openThread = postId
                 } else if let url = URL(string: "https://bsm.backspace.fm/#/post/\(postId)") {

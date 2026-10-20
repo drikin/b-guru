@@ -15,6 +15,7 @@ struct ChatScreen: View {
     @State private var draft = ""
     @State private var notifyAll = PushCenter.shared.notifyMode == "all"
     @State private var quietHours = PushCenter.shared.quietHours
+    @State private var notifyTimeline = PushCenter.shared.notifyTimeline
     @State private var editingId: Int?
     /// Photos attached to the next message (up to 4).
     @State private var photos = PostDraft(maxImages: 4)
@@ -99,6 +100,8 @@ struct ChatScreen: View {
                 .onChange(of: notifyAll) { _, all in PushCenter.shared.notifyMode = all ? "all" : "mentions" }
                 Toggle("静かな時間（0:00〜7:00）", isOn: $quietHours)
                     .onChange(of: quietHours) { _, on in PushCenter.shared.quietHours = on }
+                Toggle("タイムラインの新着", isOn: $notifyTimeline)
+                    .onChange(of: notifyTimeline) { _, on in PushCenter.shared.notifyTimeline = on }
             }
             Button("B-guru をブラウザで開く", systemImage: "safari") { Platform.open(APIClient.baseURL) }
             Button("ログアウト", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive, action: onSignOut)

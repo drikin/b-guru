@@ -135,6 +135,7 @@ struct ChatView: View {
                 Picker("通知", selection: $settings.notifyMode) {
                     ForEach(AppSettings.NotifyMode.allCases) { Text($0.label).tag($0) }
                 }
+                Toggle("タイムラインの新しい投稿も通知する", isOn: $settings.notifyTimeline)
                 Toggle("静かな時間（0:00〜7:00）は新着を通知しない", isOn: $settings.quietHours)
                 Toggle("Dock にも表示（未読バッジ）", isOn: $settings.showInDock)
                 Divider()

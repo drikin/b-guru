@@ -117,6 +117,11 @@ export function liveToStreamEvent(ev: LiveEvent, viewer: ChatViewer): StreamEven
   if (ev.type === "presence") {
     return { event: "presence", data: { user_ids: ev.userIds } };
   }
+  // A post or comment was created: ids only (the Mac app re-reads its timeline and
+  // notifies new posts itself; older apps ignore unknown events).
+  if (ev.type === "post" && ev.action === "create") {
+    return { event: "post", data: { action: "create", post_id: ev.postId } };
+  }
   if (ev.type === "chat_reaction") {
     // Same shape as the chat list's reactions, with `mine` for this viewer.
     return {

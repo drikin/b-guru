@@ -1,7 +1,7 @@
 /* /api/agent/devices/push — ネイティブアプリの端末トークン登録（スコープ read）。
  *   iPhone/iPad は APNs（environment "production"|"sandbox"）、Android は FCM（environment "fcm"）。
  *   POST   { token, environment: "production"|"sandbox"|"fcm", platform?, notify_mode?: "all"|"mentions",
- *            quiet_hours?: boolean } → この端末にプッシュを送る（設定の変更も同じ POST）
+ *            quiet_hours?: boolean, notify_timeline?: boolean } → この端末にプッシュを送る（設定の変更も同じ POST）
  *   DELETE { token }                                                   → 送らない（ログアウト時）
  * 端末はこの agent token に紐付く。トークンが失効・期限切れになれば送られない。 */
 import { NextRequest } from "next/server";
@@ -47,6 +47,8 @@ export async function POST(req: NextRequest) {
       platform,
       notifyMode: normalizeNotifyMode(b?.notify_mode),
       quietHours: b?.quiet_hours !== false,
+      // Only when sent: older apps re-register without it and must not switch it off.
+      notifyTimeline: typeof b?.notify_timeline === "boolean" ? b.notify_timeline : undefined,
     });
     return { status: 200, body: { apiVersion: AGENT_API_VERSION, ok: true }, headers: {} };
   });

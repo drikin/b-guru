@@ -9,6 +9,7 @@ import { getProfile } from "@/lib/profile";
 import { pool } from "@/lib/db";
 import { emitLive } from "@/lib/live";
 import { sendWebPush } from "@/lib/push";
+import { pushNewPost } from "@/lib/push-notify";
 import { validatePollInput } from "@/lib/poll";
 import { classifyPost } from "@/lib/clubs";
 import { ensureUserId } from "@/lib/user";
@@ -214,6 +215,8 @@ export async function publishPost(
         url: `${(process.env.APP_URL || "").replace(/\/+$/, "")}#/post/${parentId ?? post.id}`,
         excludeEmail: email,
       }).catch(() => {});
+      // The apps: a new post (not a comment) to members who turned timeline notifications on.
+      if (isRoot) void pushNewPost(post.id, email).catch((pe) => console.error("pushNewPost:", (pe as any)?.message));
     }
 
     // Record in dedup map so a double-submit within 30s returns this post.
