@@ -29,6 +29,8 @@ export const AGENT_SCOPES: AgentScope[] = ["read", "read_state", "write", "chat"
 
 /** トークン TTL（日）。 */
 export const AGENT_TOKEN_TTL_DAYS = 30;
+/** 人のアプリ（voice スコープ）のトークンは、最後に使ってからこの日数まで有効。 */
+export const APP_TOKEN_SLIDING_DAYS = 90;
 /** 1 メールあたりのアクティブトークン上限（デバイスごと）。 */
 export const MAX_TOKENS_PER_EMAIL = 10; // 5 → 10（drikin 2026-10-17: Mac・iPhone・iPad・Android・エージェントで足りない）
 /** Ghost 会員再判定の最小間隔（時間）。 */
@@ -267,10 +269,17 @@ export async function verifyAgentToken(
   }
 
   // 使用記録（ベストエフォート — 失敗で検証を落とさない）。
+  //   人のアプリのトークン（voice スコープ = ネイティブのログイン画面からだけ発行）は
+  //   使うたびに期限を延ばす。使い続けている端末はログインし直しにならない。
+  //   AI エージェント向けのトークンは発行から 30 日の固定のまま。
+  const sliding = ((row.scopes ?? []) as string[]).includes("voice");
   try {
     await pool.query(
-      `UPDATE agent_tokens SET last_used_at = now(), last_ip = COALESCE($2, last_ip) WHERE id = $1`,
-      [row.id, opts.ip ?? null]
+      `UPDATE agent_tokens SET last_used_at = now(), last_ip = COALESCE($2, last_ip),
+              expires_at = CASE WHEN $3 THEN GREATEST(expires_at, now() + make_interval(days => $4))
+                                ELSE expires_at END
+        WHERE id = $1`,
+      [row.id, opts.ip ?? null, sliding, APP_TOKEN_SLIDING_DAYS]
     );
   } catch {
     /* ignore */

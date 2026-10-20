@@ -513,6 +513,38 @@ export async function initSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_agent_tokens_email ON agent_tokens(email);
 
+    -- メールでの本人確認（lib/login.ts）。1 行 = 1 通のログインメール。
+    -- code_hash / link_hash / revoke_hash は SHA-256 のみ保存（平文はメールにだけ載る）。
+    -- revoke_hash = ログイン通知メールの「全端末ログアウト」リンク（30 日有効）。
+    CREATE TABLE IF NOT EXISTS login_requests (
+      id SERIAL PRIMARY KEY,
+      email TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      link_hash TEXT UNIQUE NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      ip TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      revoke_hash TEXT UNIQUE
+    );
+    CREATE INDEX IF NOT EXISTS idx_login_requests_email ON login_requests(email, created_at DESC);
+
+    -- 一度だけ流す移行の記録。
+    CREATE TABLE IF NOT EXISTS schema_flags (
+      name TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    -- メール確認なしで入れた頃のログインを全部切る（drikin 2026-10-20: 公開時に全員ログインし直し）。
+    -- Web のセッションも、アプリ・AI エージェントのトークンも、確認なしのログインから発行されたため。
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM schema_flags WHERE name = 'login-email-verify-reset') THEN
+        DELETE FROM sessions;
+        UPDATE agent_tokens SET revoked_at = now() WHERE revoked_at IS NULL;
+        INSERT INTO schema_flags (name) VALUES ('login-email-verify-reset');
+      END IF;
+    END $$;
+
     -- エージェント API の監査ログ（housekeeping で 90 日で掃除）。
     CREATE TABLE IF NOT EXISTS agent_audit_log (
       id SERIAL PRIMARY KEY,
