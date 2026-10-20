@@ -200,6 +200,7 @@ struct RecordSheen: View {
 struct Turntable: View {
     let jukebox: JukeboxStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.jukeboxOnScreen) private var onScreen
     /// Where the record stopped, so it does not jump when it starts again.
     @State private var restAngle: Double = 0
     @State private var spinStart = Date()
@@ -212,7 +213,7 @@ struct Turntable: View {
     #endif
 
     var body: some View {
-        let spinning = jukebox.isPlaying && !reduceMotion
+        let spinning = jukebox.isPlaying && !reduceMotion && onScreen
         ZStack {
             RoundedRectangle(cornerRadius: 18)
                 .fill(LinearGradient(colors: [Color(red: 0.66, green: 0.47, blue: 0.31), Color(red: 0.49, green: 0.33, blue: 0.2)],
@@ -502,6 +503,9 @@ struct MiniDisc: View {
 }
 
 extension EnvironmentValues {
+    /// The jukebox tab is the one showing (the Mac keeps hidden tabs built): the record
+    /// turns only then.
+    @Entry var jukeboxOnScreen = true
     /// The jukebox when it is on for this member (timeline posts with an episode's
     /// audio play it here instead of saying "Web で再生").
     @Entry var jukebox: JukeboxStore? = nil

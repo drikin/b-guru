@@ -75,6 +75,9 @@ struct ChatView: View {
             photos.add(imageData: data)
         }
         .onAppear { composerFocused = true }
+        // The tabs stay built: back on the chat, the caret goes back into the message box.
+        // A separate little view watches the tab, so the chat itself does not redraw.
+        .background(FocusOnChatTab(pin: pin, focused: $composerFocused))
         .onChange(of: pin.focusRequest) { _, _ in
             // Re-assert even if SwiftUI believes it is already focused.
             composerFocused = false
@@ -369,4 +372,22 @@ private struct OnlineLabelStyle: LabelStyle {
 extension Notification.Name {
     /// ⌘V with an image on the pasteboard while the chat is open (object: image Data).
     static let chatPasteImage = Notification.Name("fm.backspace.bguru.chatPasteImage")
+}
+
+/// Puts the caret back into the message box when the chat tab shows again, and takes it
+/// out while another tab shows (the hidden composer must not get the typing).
+private struct FocusOnChatTab: View {
+    let pin: PinState
+    var focused: FocusState<Bool>.Binding
+
+    var body: some View {
+        Color.clear
+            .onChange(of: pin.tab) { _, t in
+                if t == .chat {
+                    DispatchQueue.main.async { focused.wrappedValue = true }
+                } else {
+                    focused.wrappedValue = false
+                }
+            }
+    }
 }

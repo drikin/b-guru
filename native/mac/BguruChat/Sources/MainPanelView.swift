@@ -24,17 +24,28 @@ struct MainPanelView: View {
         pin.tab = initialTab
     }
 
+    /// The jukebox is built the first time it is opened, then kept like the others.
+    @State private var jukeboxBuilt = false
+
     var body: some View {
-        Group {
-            switch pin.tab {
-            case .chat:
-                ChatView(store: store, pin: pin, onClose: onClose, onSignOut: onSignOut, tabPicker: AnyView(picker))
-            case .timeline:
-                TimelineScreen(timeline: timeline, capabilities: store.capabilities, tabPicker: AnyView(picker), onReconnect: onSignOut)
-                    .background(.regularMaterial)
-            case .jukebox:
-                JukeboxScreen(jukebox: store.jukebox, path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox", tabPicker: AnyView(picker))
-                    .background(.regularMaterial)
+        // All tabs stay built; switching only shows one and hides the others (instant,
+        // and each keeps its scroll place — drikin 2026-10-19「さらにチューニング」).
+        ZStack {
+            // Each tab in an Equatable wrapper: switching re-runs this body, and rebuilding
+            // the tabs with a fresh picker / closures redrew every row of all three (measured).
+            ChatTab(store: store, pin: pin, onClose: onClose, onSignOut: onSignOut)
+                .equatable()
+                .shown(pin.tab == .chat)
+            TimelineTab(store: store, timeline: timeline, pin: pin, onSignOut: onSignOut)
+                .equatable()
+                .environment(\.timelineOnScreen, pin.tab == .timeline)
+                .shown(pin.tab == .timeline)
+            if jukeboxOn && (jukeboxBuilt || pin.tab == .jukebox) {
+                JukeboxTab(store: store, pin: pin)
+                    .equatable()
+                    .environment(\.jukeboxOnScreen, pin.tab == .jukebox)
+                    .shown(pin.tab == .jukebox)
+                    .onAppear { jukeboxBuilt = true }
             }
         }
         // Playing on: the record under every tab (not on the jukebox itself).
@@ -59,7 +70,17 @@ struct MainPanelView: View {
 
     private var jukeboxOn: Bool { store.capabilities?.jukeboxEnabled ?? false }
 
-    @ViewBuilder private var picker: some View {
+}
+
+/// The switch at the top of every tab: チャット｜タイムライン（｜📻）. Reads the tab and the
+/// unread count itself, so only it redraws when they change.
+struct PanelTabSwitch: View {
+    let store: ChatStore
+    @Bindable var pin: PinState
+
+    private var jukeboxOn: Bool { store.capabilities?.jukeboxEnabled ?? false }
+
+    var body: some View {
         if jukeboxOn {
             // Three tabs: segments sized to their words (the system control makes them all
             // as wide as the widest and widened the panel). A radio (📻, drikin 2026-10-19) keeps it
@@ -79,6 +100,43 @@ struct MainPanelView: View {
             .fixedSize()
             .help("チャット（⌘1）／タイムライン（⌘2）")
         }
+    }
+}
+
+/// The tabs, rebuilt only when what they show changes (Equatable by identity).
+private struct ChatTab: View, @MainActor Equatable {
+    let store: ChatStore
+    let pin: PinState
+    let onClose: () -> Void
+    let onSignOut: () -> Void
+    static func == (a: Self, b: Self) -> Bool { a.store === b.store && a.pin === b.pin }
+    var body: some View {
+        ChatView(store: store, pin: pin, onClose: onClose, onSignOut: onSignOut,
+                 tabPicker: AnyView(PanelTabSwitch(store: store, pin: pin)))
+    }
+}
+
+private struct TimelineTab: View, @MainActor Equatable {
+    let store: ChatStore
+    let timeline: TimelineStore
+    let pin: PinState
+    let onSignOut: () -> Void
+    static func == (a: Self, b: Self) -> Bool { a.store === b.store && a.timeline === b.timeline && a.pin === b.pin }
+    var body: some View {
+        TimelineScreen(timeline: timeline, capabilities: store.capabilities,
+                       tabPicker: AnyView(PanelTabSwitch(store: store, pin: pin)), onReconnect: onSignOut)
+            .background(.regularMaterial)
+    }
+}
+
+private struct JukeboxTab: View, @MainActor Equatable {
+    let store: ChatStore
+    let pin: PinState
+    static func == (a: Self, b: Self) -> Bool { a.store === b.store && a.pin === b.pin }
+    var body: some View {
+        JukeboxScreen(jukebox: store.jukebox, path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox",
+                      tabPicker: AnyView(PanelTabSwitch(store: store, pin: pin)))
+            .background(.regularMaterial)
     }
 }
 
@@ -109,5 +167,17 @@ private struct PanelTabs: View {
         .padding(2)
         .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.07)))
         .fixedSize()
+    }
+}
+
+private extension View {
+    /// On screen, or kept built but invisible and untouchable. Not .disabled: that
+    /// reached every row and redrew them all on each switch (measured). The chat drops
+    /// the keyboard itself, and the timeline's shortcuts check that it is showing.
+    func shown(_ on: Bool) -> some View {
+        opacity(on ? 1 : 0)
+            .allowsHitTesting(on)
+            .accessibilityHidden(!on)
+            .zIndex(on ? 1 : 0)
     }
 }

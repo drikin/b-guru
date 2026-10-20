@@ -211,10 +211,19 @@ struct MessageRow: View {
         return f
     }()
 
+    /// "12:34" — parsed once per timestamp (every row asked again on each redraw).
     static func time(_ s: String) -> String {
+        if let hit = timeCache.object(forKey: s as NSString) { return hit as String }
         guard let d = isoFrac.date(from: s) ?? iso.date(from: s) else { return "" }
-        return hm.string(from: d)
+        let t = hm.string(from: d)
+        timeCache.setObject(t as NSString, forKey: s as NSString)
+        return t
     }
+    private static let timeCache: NSCache<NSString, NSString> = {
+        let c = NSCache<NSString, NSString>()
+        c.countLimit = 2000
+        return c
+    }()
 
     static func isEmojiOnly(_ s: String) -> Bool {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -10,7 +10,6 @@ struct TimelineScreen: View {
 
     @Environment(\.scenePhase) private var scenePhase
     /// False while the iPhone shows the chat page (the timeline page stays alive next to it).
-    @Environment(\.timelineOnScreen) private var onScreen
     @State private var path = NavigationPath()
     /// macOS: the open thread (the menu-bar panel has no navigation bar to push into).
     @State private var macThread: Int?
@@ -95,6 +94,8 @@ struct TimelineScreen: View {
                     .keyboardShortcut("n", modifiers: .command)
                     .help("新しい投稿（⌘N）")
             }
+            // The Mac keeps the tabs built: ⌘R / ⌘N / ⌘[ only while the timeline shows.
+            .modifier(DisabledOffScreen())
             .padding(.horizontal, 12)
             .padding(.top, 10)
             .padding(.bottom, 8)
@@ -146,7 +147,7 @@ struct TimelineScreen: View {
                                 onOpenImage: { viewing = ImageViewerItem(images: post.images ?? [], index: $0) })
                     }
                     .buttonStyle(.plain)
-                    .readWhenSeen(post.unread == true && onScreen && macThread == nil) { timeline.sawPost(post.id) }
+                    .readWhenSeen(post.unread == true && macThread == nil) { timeline.sawPost(post.id) }
                     .onAppear {
                         if post.id == timeline.posts.last?.id { Task { await timeline.loadMore() } }
                     }
@@ -494,9 +495,18 @@ extension View {
     }
 }
 
+/// Disabled while the timeline is not the page showing (reads the environment itself).
+private struct DisabledOffScreen: ViewModifier {
+    @Environment(\.timelineOnScreen) private var onScreen
+    func body(content: Content) -> some View { content.disabled(!onScreen) }
+}
+
 private struct ReadWhenSeen: ViewModifier {
     let active: Bool
     let onRead: () -> Void
+    /// Read here, not by the list: the list does not redraw every row when the page
+    /// (or the Mac's tab) comes and goes.
+    @Environment(\.timelineOnScreen) private var onScreen
     @State private var visible = false
     @State private var timer: Task<Void, Never>?
 
@@ -510,7 +520,7 @@ private struct ReadWhenSeen: ViewModifier {
             }
         }
         .onDisappear { visible = false }
-        .onChange(of: visible && active, initial: true) { _, seen in
+        .onChange(of: visible && active && onScreen, initial: true) { _, seen in
             timer?.cancel()
             timer = nil
             guard seen else { return }
