@@ -64,36 +64,47 @@ final class JukeboxStore {
             .appendingPathComponent("jukebox.json")
     }
 
-    private static let decoder: JSONDecoder = {
-        let d = JSONDecoder()
-        d.keyDecodingStrategy = .convertFromSnakeCase
-        return d
-    }()
+    private var loadedAt: Date?
 
-    /// Shows the saved copy at once, then the server's.
-    func load(path: String) async {
+    /// Shows the saved copy at once, then the server's — at most every 30 minutes (opening
+    /// the tab again does not fetch and decode ~1 MB again). The decoding runs off the main
+    /// thread: switching tabs got heavy when it did not (drikin 2026-10-19).
+    func load(path: String, force: Bool = false) async {
         #if DEBUG
         if api.token == "demo" { return }
         #endif
-        if episodes.isEmpty, let url = Self.cacheURL, let data = try? Data(contentsOf: url),
-           let r = try? Self.decoder.decode(JukeboxResponse.self, from: data) {
-            apply(r)
-        }
+        if !force, let at = loadedAt, Date().timeIntervalSince(at) < 30 * 60, !episodes.isEmpty { return }
         guard !loading else { return }
         loading = true
         defer { loading = false }
+        if episodes.isEmpty, let url = Self.cacheURL,
+           let r = await Task.detached(priority: .userInitiated, operation: { () -> JukeboxResponse? in
+               guard let data = try? Data(contentsOf: url) else { return nil }
+               return try? Self.decode(data)
+           }).value {
+            apply(r)
+        }
         do {
             let data = try await api.jukeboxData(path: path)
-            let r = try Self.decoder.decode(JukeboxResponse.self, from: data)
+            let r = try await Task.detached(priority: .userInitiated) { try Self.decode(data) }.value
             apply(r)
             loadFailed = false
+            loadedAt = Date()
             if let url = Self.cacheURL {
-                try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try? data.write(to: url, options: .atomic)
+                Task.detached(priority: .utility) {
+                    try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try? data.write(to: url, options: .atomic)
+                }
             }
         } catch {
             loadFailed = episodes.isEmpty
         }
+    }
+
+    private nonisolated static func decode(_ data: Data) throws -> JukeboxResponse {
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        return try d.decode(JukeboxResponse.self, from: data)
     }
 
     private func apply(_ r: JukeboxResponse) {
@@ -519,6 +530,14 @@ final class JukeboxStore {
             ep(7, "2014-01-03", "#001: backspace.fm始まりました！", n: 1),
         ]
         today = .init(id: "demo-5", yearsAgo: 7, postId: nil)
+        // BGURU_DEMO_JUKEBOX_JSON=<a saved /api/agent/jukebox response>: the real-sized
+        // archive (1,170 records) for performance checks; the audio stays the test tone.
+        if let path = ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX_JSON"],
+           let data = try? Data(contentsOf: URL(fileURLWithPath: path)), var r = try? Self.decode(data) {
+            r.episodes = r.episodes.map { var e = $0; e.audioUrl = audio; return e }
+            episodes = r.episodes
+            today = r.today
+        }
     }
     #endif
 }

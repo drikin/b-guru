@@ -51,7 +51,7 @@ struct JukeboxScreen: View {
         }
         .scrollDismissesKeyboard(.immediately)
         .task { await jukebox.load(path: path) }
-        .pullToRefresh { await jukebox.load(path: path) }
+        .pullToRefresh { await jukebox.load(path: path, force: true) }
     }
 
     // MARK: Today's picks

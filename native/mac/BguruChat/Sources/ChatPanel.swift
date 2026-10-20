@@ -91,14 +91,35 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         f.size.height = target
         f.origin.y = max(visible.minY, top - target)
         if f.maxY > visible.maxY { f.origin.y = visible.maxY - target }
-        setFrame(f, display: true, animate: true)
+        setFrame(f, display: true, animate: false) // an animated resize relaid the whole view every frame
     }
 
     private var swipe = SwipeTracker()
 
+    /// A sideways swipe over something that scrolls sideways (the jukebox's chip rows)
+    /// scrolls it, not the tabs.
+    private func overSidewaysScroller(_ event: NSEvent) -> Bool {
+        guard let content = contentView,
+              let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)) else { return false }
+        var v: NSView? = hit
+        while let view = v {
+            if let sv = view as? NSScrollView, let doc = sv.documentView,
+               doc.frame.width > sv.contentView.bounds.width + 1 { return true }
+            v = view.superview
+        }
+        return false
+    }
+
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .scrollWheel, let step = swipe.handle(event) {
-            withAnimation(.easeOut(duration: 0.18)) { pin.tab = step > 0 ? .timeline : .chat }
+        if event.type == .scrollWheel, !overSidewaysScroller(event), let step = swipe.handle(event) {
+            // チャット → タイムライン → 📻, one step per swipe (drikin 2026-10-19: with three
+            // tabs the swipe only went between the first two).
+            var order: [MainTab] = [.chat, .timeline]
+            if store.capabilities?.jukeboxEnabled ?? false { order.append(.jukebox) }
+            if let i = order.firstIndex(of: pin.tab) {
+                let next = max(0, min(order.count - 1, i + step))
+                if next != i { withAnimation(.easeOut(duration: 0.18)) { pin.tab = order[next] } }
+            }
         }
         // ⌘V with an image (and no text) on the pasteboard in the chat: attach it.
         if event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
