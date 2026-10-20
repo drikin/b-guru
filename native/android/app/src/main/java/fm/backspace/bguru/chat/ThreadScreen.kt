@@ -161,9 +161,10 @@ fun ThreadScreen(
                         TextButton(onClick = pick, enabled = draft.remaining > 0) { Text("📷") }
                         TextField(
                             value = draft.value, onValueChange = { draft.value = it },
-                            placeholder = { Text("返信") }, maxLines = 6, shape = RoundedCornerShape(20.dp),
+                            placeholder = { Text(composerPlaceholder("返信")) }, maxLines = 6,
+                            keyboardOptions = ComposerKeyboardOptions, shape = RoundedCornerShape(20.dp),
                             colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
-                            modifier = Modifier.weight(1f).enterSends(draft, ::sendReply),
+                            modifier = Modifier.weight(1f).composerKeys(draft.value, { draft.value = it }, ::sendReply),
                         )
                         IconButton(enabled = draft.canSend, onClick = ::sendReply) {
                             Icon(Icons.AutoMirrored.Filled.Send, "返信を送信", tint = if (draft.canSend) AccentGreen else MaterialTheme.colorScheme.outline)

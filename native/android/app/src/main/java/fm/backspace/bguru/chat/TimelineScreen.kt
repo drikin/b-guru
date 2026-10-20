@@ -85,10 +85,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
@@ -487,9 +483,12 @@ fun ComposeDialog(api: ApiClient, parentId: Long?, maxImages: Int, onDismiss: ()
                 Column(Modifier.padding(16.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextField(
                         value = draft.value, onValueChange = { draft.value = it },
-                        placeholder = { Text("いまどうしてる？") },
+                        placeholder = { Text(composerPlaceholder("いまどうしてる？")) },
+                        keyboardOptions = ComposerKeyboardOptions,
                         modifier = Modifier.fillMaxWidth().weight(1f, fill = false)
-                            .enterSends(draft) { if (draft.canSend) scope.launch { draft.send(api, parentId)?.let(onPosted) } },
+                            .composerKeys(draft.value, { draft.value = it }, onSend = {
+                                if (draft.canSend) scope.launch { draft.send(api, parentId)?.let(onPosted) }
+                            }),
                         minLines = 5,
                         colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
                     )
@@ -517,17 +516,6 @@ fun relativeTime(iso: String, now: Instant = Instant.now()): String {
         sec < 86400 -> "${sec / 3600}時間前"
         else -> MD.format(t)
     }
-}
-
-/** The timeline's text boxes use the chat's keys: a hardware keyboard's Enter sends,
- *  ⇧Enter is a newline, and while a Japanese conversion is open Enter only confirms
- *  it. The on-screen keyboard's return key inserts a newline. */
-fun Modifier.enterSends(draft: PostDraft, onSend: () -> Unit): Modifier = onPreviewKeyEvent { e ->
-    if (e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) return@onPreviewKeyEvent false
-    if (draft.value.composition != null) return@onPreviewKeyEvent false
-    if ((e.key == androidx.compose.ui.input.key.Key.Enter || e.key == androidx.compose.ui.input.key.Key.NumPadEnter) && !e.isShiftPressed) {
-        onSend(); true
-    } else false
 }
 
 /** Calls `onRead` once at least a quarter of the row `key` has stayed on screen for a

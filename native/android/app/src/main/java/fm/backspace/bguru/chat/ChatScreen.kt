@@ -77,12 +77,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.isShiftPressed
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -501,8 +495,9 @@ private fun Composer(
                         TextField(
                             value = field,
                             onValueChange = onField,
-                            placeholder = { Text(if (editing) "編集内容" else "メッセージ") },
+                            placeholder = { Text(composerPlaceholder(if (editing) "編集内容" else "メッセージ")) },
                             maxLines = 6,
+                            keyboardOptions = ComposerKeyboardOptions,
                             shape = RoundedCornerShape(20.dp),
                             colors = TextFieldDefaults.colors(
                                 focusedIndicatorColor = Color.Transparent,
@@ -511,20 +506,18 @@ private fun Composer(
                             modifier = Modifier
                                 .weight(1f)
                                 .focusRequester(focus)
-                                // Hardware keyboard: Enter sends, Shift+Enter is a newline, ↑ edits the last message.
-                                .onPreviewKeyEvent { e ->
-                                    if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                                    // A Japanese conversion is open: Enter / ↑ / Esc belong to the IME.
-                                    if (field.composition != null) return@onPreviewKeyEvent false
-                                    when {
-                                        e.key == Key.Enter && !e.isShiftPressed -> {
-                                            if (matches.isNotEmpty()) onPickMention(matches.first()) else onSubmit(); true
-                                        }
-                                        e.key == Key.DirectionUp -> onEditLast()
-                                        e.key == Key.Escape && editing -> { onCancelEdit(); true }
-                                        else -> false
-                                    }
-                                },
+                                // docs/composer-keys.md: hardware Enter sends (saves while editing),
+                                // ⇧Enter newline, ↑ edits the last message; on-screen return is a newline.
+                                .composerKeys(
+                                    value = field,
+                                    onValueChange = onField,
+                                    onSend = onSubmit,
+                                    mentionOpen = matches.isNotEmpty(),
+                                    onPickMention = { matches.firstOrNull()?.let(onPickMention) },
+                                    editing = editing,
+                                    onCancel = onCancelEdit,
+                                    onUp = onEditLast,
+                                ),
                         )
                     }
                     val hasContent = draft.isNotBlank() || (canAttach && photos.photos.isNotEmpty())
