@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Photos taken with the camera button live in cacheDir/camera/ only until they
+     are attached (never in shared storage or the gallery). -->
+<paths>
+    <cache-path name="camera" path="camera/" />
+</paths>

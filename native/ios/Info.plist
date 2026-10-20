@@ -25,7 +25,7 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.social-networking</string>
 	<key>NSCameraUsageDescription</key>
-	<string>B-guru Chat はカメラを使いません（ボイスルームの通話ライブラリにカメラ機能が含まれているため、この説明が必要です）。</string>
+	<string>タイムラインやチャットに付ける写真をその場で撮るときにカメラを使います。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>ボイスルームで話すときだけマイクを使います。録音はしません。</string>
 	<key>UIApplicationSceneManifest</key>

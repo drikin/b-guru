@@ -59,6 +59,7 @@ fun ThreadScreen(
     val focus = LocalFocusManager.current
     val listState = rememberLazyListState()
     val pick = rememberPhotoPicker(draft)
+    val camera = rememberCameraCapture { ctx, uri -> draft.add(ctx, listOf(uri)) }
     val canReact = capabilities?.canReactPosts ?: false
 
     var refreshing by remember(id) { mutableStateOf(false) }
@@ -158,7 +159,8 @@ fun ThreadScreen(
                     DraftImages(draft)
                     draft.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                     Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        TextButton(onClick = pick, enabled = draft.remaining > 0) { Text("📷") }
+                        TextButton(onClick = pick, enabled = draft.remaining > 0) { Text("🖼️") }
+                        CameraButton(onClick = camera, enabled = draft.remaining > 0)
                         TextField(
                             value = draft.value, onValueChange = { draft.value = it },
                             placeholder = { Text(composerPlaceholder("返信")) }, maxLines = 6,

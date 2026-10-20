@@ -69,6 +69,18 @@
             android:name="io.livekit.android.room.track.screencapture.ScreenCaptureService"
             tools:node="remove" />
 
+        <!-- The camera button: TakePicture writes into cacheDir/camera/ through this
+             provider. No CAMERA permission is needed (the camera app takes the photo). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.camera"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/camera_paths" />
+        </provider>
+
         <meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="chat" />
     </application>
 </manifest>

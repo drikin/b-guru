@@ -244,6 +244,9 @@ struct ComposeSheet: View {
                         Label("写真", systemImage: "photo.on.rectangle")
                     }
                     .disabled(draft.images.count >= draft.maxImages)
+                    #if os(iOS)
+                    CameraButton(draft: draft) { Label("カメラ", systemImage: "camera") }
+                    #endif
                     #if os(macOS)
                     Button { importing = true } label: { Label("ファイル…", systemImage: "folder") }
                         .disabled(draft.images.count >= draft.maxImages)

@@ -92,6 +92,11 @@ struct ThreadScreen: View {
                 }
                 .disabled(draft.images.count >= draft.maxImages || capabilities?.canPublish != true)
                 .accessibilityLabel("写真を添付")
+                #if os(iOS)
+                if capabilities?.canPublish == true {
+                    CameraButton(draft: draft) { Image(systemName: "camera").font(.system(size: 20)) }
+                }
+                #endif
                 PostTextInput(text: $draft.text, isFocused: $replyFocused, placeholder: "返信", onSubmit: sendReply)
                     .padding(.vertical, 8)
                     .padding(.horizontal, 12)

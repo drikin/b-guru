@@ -476,6 +476,7 @@ private fun Composer(
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(maxPhotos.coerceAtLeast(2))) { uris ->
         if (uris.isNotEmpty()) scope.launch { photos.add(context, uris, maxPhotos, caps?.chatImageMaxSide ?: 1280) }
     }
+    val camera = rememberCameraCapture { ctx, uri -> photos.add(ctx, listOf(uri), maxPhotos, caps?.chatImageMaxSide ?: 1280) }
     val matches = if (editing) emptyList() else Mention.activeQuery(draft)?.let { q ->
         Mention.candidates(store.members, q.second, store.recentAuthors)
     } ?: emptyList()
@@ -501,7 +502,8 @@ private fun Composer(
                         IconButton(
                             onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                             enabled = photos.remaining(maxPhotos) > 0,
-                        ) { Text("📷", fontSize = 20.sp, modifier = Modifier.alpha(if (photos.remaining(maxPhotos) > 0) 1f else 0.4f)) }
+                        ) { Text("🖼️", fontSize = 20.sp, modifier = Modifier.alpha(if (photos.remaining(maxPhotos) > 0) 1f else 0.4f)) }
+                        CameraButton(onClick = camera, enabled = photos.remaining(maxPhotos) > 0)
                     }
                     run {
                         // Setting the value from outside (clear after send) restarts the

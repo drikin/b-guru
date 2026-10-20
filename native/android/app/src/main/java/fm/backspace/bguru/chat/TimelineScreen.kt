@@ -486,6 +486,7 @@ fun ComposeDialog(api: ApiClient, parentId: Long?, maxImages: Int, onDismiss: ()
     val draft = remember { PostDraft(maxImages) }
     val scope = rememberCoroutineScope()
     val pick = rememberPhotoPicker(draft)
+    val camera = rememberCameraCapture { ctx, uri -> draft.add(ctx, listOf(uri)) }
     Dialog(onDismissRequest = { if (!draft.sending && draft.text.isEmpty() && draft.images.isEmpty()) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize()) {
@@ -514,7 +515,8 @@ fun ComposeDialog(api: ApiClient, parentId: Long?, maxImages: Int, onDismiss: ()
                     DraftImages(draft)
                     draft.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = pick, enabled = draft.remaining > 0) { Text("📷 写真") }
+                        TextButton(onClick = pick, enabled = draft.remaining > 0) { Text("🖼️ 写真") }
+                        CameraButton(onClick = camera, enabled = draft.remaining > 0)
                         Text("${draft.images.size}/${draft.maxImages}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }

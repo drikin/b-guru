@@ -205,6 +205,10 @@ struct ChatScreen: View {
                     }
                     .disabled(photos.images.count >= photos.maxImages)
                     .accessibilityLabel("写真を付ける")
+                    CameraButton(draft: photos) {
+                        Image(systemName: "camera").font(.system(size: 21))
+                            .frame(width: 30, height: 36)
+                    }
                 }
                 // Hardware keyboard (iPad): Return sends, Shift+Return is a newline, and the
                 // Return that confirms a Japanese conversion only confirms it (see
