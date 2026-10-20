@@ -107,6 +107,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         store.quoteAction { self.panel?.pin.tab = .chat }?(post)
                     }
                 }
+                // -demoNeta: 「ネタ帳に送る」 of the first post with a link (offline: sending does nothing).
+                if CommandLine.arguments.contains("-demoNeta"), let post = timeline.posts.first(where: { $0.urlPreview != nil }) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        self.panel?.pin.tab = .timeline
+                        store.netaPost = post
+                    }
+                }
                 // -demoOpenPostLink: as if a post's link in the chat were clicked.
                 if CommandLine.arguments.contains("-demoOpenPostLink"), let post = timeline.posts.first(where: { $0.urlPreview != nil }) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {

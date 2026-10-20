@@ -135,6 +135,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             Capabilities.PostFeatures(read = true, publish = true, upload = true, reactions = true, maxImages = 5),
             room = Capabilities.RoomFeatures(enabled = true),
             jukebox = Capabilities.JukeboxFeatures(enabled = true),
+            neta = Capabilities.NetaFeatures(enabled = true, path = "/api/agent/neta", site = "https://neta.backspace.fm"),
         ))
         // A local fake room: its people talk in the chat too (bubbles come from these rows).
         room.loadDemo { id, name, text ->

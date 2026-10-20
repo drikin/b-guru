@@ -19,6 +19,12 @@ struct MainView: View {
             .environment(\.jukebox, jukeboxOn ? store.jukebox : nil)
             // 「チャットに引用」: the quote goes into the chat's composer, the chat shows.
             .environment(\.quoteToChat, store.quoteAction { tab = .chat })
+            // 「ネタ帳に送る」: the article the post links to, after a confirmation.
+            .environment(\.sendToNeta, store.netaAction())
+            .sheet(item: Binding(get: { store.netaPost }, set: { store.netaPost = $0 })) { post in
+                NetaSheet(post: post, store: store) { store.netaPost = nil }
+                    .presentationDetents([.medium, .large])
+            }
             // A post's link in the chat opens its thread here, not in the browser.
             .environment(\.openURL, ChatStore.openPostLinks(in: timeline))
             .task(id: jukeboxOn) { if jukeboxOn { await store.jukebox.load(path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox") } }

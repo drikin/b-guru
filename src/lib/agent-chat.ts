@@ -210,6 +210,8 @@ export function agentCapabilities(scopes: AgentScope[], opts: { voice?: boolean;
       // `join` = this token has the "voice" scope (apps issued before it must sign in again).
       // The club room (8-bit room view + proximity voice), behind a rollout flag.
       room: { enabled: !!opts.room, path: "/api/agent/room" },
+      // Send the article a post links to into BS ネタ帳 (neta.backspace.fm) — POST { url, title, description? }.
+      neta: { enabled: can("post"), path: "/api/agent/neta", site: "https://neta.backspace.fm" },
       // Past backspace.fm episodes to listen to (Art19), behind a rollout flag.
       jukebox: { enabled: !!opts.jukebox, path: "/api/agent/jukebox" },
       voice: {

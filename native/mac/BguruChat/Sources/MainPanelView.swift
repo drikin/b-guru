@@ -47,12 +47,25 @@ struct MainPanelView: View {
                     .shown(pin.tab == .jukebox)
                     .onAppear { jukeboxBuilt = true }
             }
+            // 「ネタ帳に送る」 inside the panel (a sheet bigger than the panel drew wrongly).
+            if let post = store.netaPost {
+                Color.black.opacity(0.35).ignoresSafeArea()
+                    .onTapGesture { store.netaPost = nil }
+                    .zIndex(2) // above the shown tab (zIndex 1)
+                NetaSheet(post: post, store: store) { store.netaPost = nil }
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .shadow(radius: 12)
+                    .padding(16)
+                    .id(post.id)
+                    .zIndex(3)
+            }
         }
         // No mini player under the chat and the timeline (drikin 2026-10-20): the jukebox
         // tab, the media keys and Control Center play and pause.
         .environment(\.jukebox, jukeboxOn ? store.jukebox : nil)
         // 「チャットに引用」: the quote goes into the chat's composer, the chat shows.
         .environment(\.quoteToChat, store.quoteAction { tab = .chat })
+        .environment(\.sendToNeta, store.netaAction())
         // A post's link in the chat opens its thread here, not in the browser.
         .environment(\.openURL, ChatStore.openPostLinks(in: timeline))
         .task(id: jukeboxOn) { if jukeboxOn { await store.jukebox.load(path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox") } }

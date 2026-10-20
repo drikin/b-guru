@@ -166,6 +166,21 @@ class ApiClient(val token: String) {
     /** The whole catalogue as text (it is cached on disk as is). */
     suspend fun jukeboxText(path: String = "/api/agent/jukebox"): String = send(request("GET", path))
 
+    // MARK: ネタ帳
+
+    /** POST { url, title, description? }. Every status comes back (201 / 409 / 4xx …) with
+     *  the parsed body — the caller words the result. Throws only on transport errors. */
+    suspend fun sendNeta(url: String, title: String, description: String, path: String = "/api/agent/neta"): Pair<Int, NetaResponse?> {
+        val req = request("POST", path, buildJsonObject {
+            put("url", url); put("title", title)
+            if (description.isNotBlank()) put("description", description)
+        })
+        Net.http.newCall(req).await().use { resp ->
+            val text = resp.body.string()
+            return resp.code to runCatching { ApiJson.decodeFromString<NetaResponse>(text) }.getOrNull()
+        }
+    }
+
     // MARK: timeline
 
     suspend fun posts(cursor: String? = null, limit: Int = 30): PostListResponse =

@@ -561,6 +561,20 @@ final class ChatStore {
         }
     }
 
+    /// 「ネタ帳に送る」 (nil when this member cannot): the post to send waits in `netaPost`.
+    var netaPost: Post?
+    func netaAction() -> (@MainActor (Post) -> Void)? {
+        guard capabilities?.netaEnabled == true else { return nil }
+        return { [weak self] post in self?.netaPost = post }
+    }
+
+    func sendToNeta(url: String, title: String, description: String) async -> NetaOutcome {
+        #if DEBUG
+        if debugOffline { try? await Task.sleep(for: .milliseconds(400)); return .sent }
+        #endif
+        return await api.sendToNeta(path: capabilities?.netaPath ?? "/api/agent/neta", url: url, title: title, description: description)
+    }
+
     /// Opens a B-guru post's link in the timeline instead of the browser.
     static func openPostLinks(in timeline: TimelineStore) -> OpenURLAction {
         OpenURLAction { url in

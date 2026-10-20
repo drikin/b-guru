@@ -82,7 +82,10 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val voice: VoiceFeatures? = null,
         val room: RoomFeatures? = null,
         val jukebox: JukeboxFeatures? = null,
+        val neta: NetaFeatures? = null,
     )
+    /** 「ネタ帳に送る」: the article a post links to → BS ネタ帳 (public site). Needs the post scope. */
+    @Serializable data class NetaFeatures(val enabled: Boolean? = null, val path: String? = null, val site: String? = null)
     /** The jukebox (backspace.fm back catalogue), behind a rollout list. */
     @Serializable data class JukeboxFeatures(val enabled: Boolean? = null, val path: String? = null)
     /** The club room (ルーム): 8-bit room view + proximity voice, behind a rollout flag. */
@@ -144,6 +147,26 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val jukeboxEnabled get() = features?.jukebox?.enabled ?: false
     /** Only paths on our own server (the request carries the token). */
     val jukeboxPath get() = features?.jukebox?.path?.takeIf { it.startsWith("/api/") } ?: "/api/agent/jukebox"
+    /** 「ネタ帳に送る」 is on for this token. */
+    val netaEnabled get() = features?.neta?.enabled ?: false
+    /** Only paths on our own server (the request carries the token). */
+    val netaPath get() = features?.neta?.path?.takeIf { it.startsWith("/api/") } ?: "/api/agent/neta"
+    /** Only http(s): it is opened in the browser. */
+    val netaSite get() = features?.neta?.site?.takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: "https://neta.backspace.fm"
+}
+
+/** POST /api/agent/neta reply (201 / 409 / 4xx / 5xx all share this shape). */
+@Serializable
+data class NetaResponse(
+    val ok: Boolean? = null,
+    /** Not read by the app (ApiJson's snake_case naming looks for topic_id). */
+    val topicId: kotlinx.serialization.json.JsonElement? = null,
+    val site: String? = null,
+    val code: String? = null,
+    val error: String? = null,
+    val existing: NetaExisting? = null,
+) {
+    @Serializable data class NetaExisting(val title: String? = null, val submitter: String? = null)
 }
 
 // MARK: voice room

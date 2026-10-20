@@ -113,6 +113,26 @@ final class APIClient: Sendable {
         return data
     }
 
+    // MARK: BS ネタ帳
+
+    /// POST /api/agent/neta { url, title, description? }.
+    func sendToNeta(path: String, url: String, title: String, description: String) async -> NetaOutcome {
+        var body: [String: Any] = ["url": url, "title": title]
+        if !description.isEmpty { body["description"] = description }
+        do {
+            let (data, resp) = try await session.data(for: request("POST", path, json: body))
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            if status == 201 { return .sent }
+            if status == 409, let ex = obj["existing"] as? [String: Any] {
+                return .duplicate(title: ex["title"] as? String ?? "", submitter: ex["submitter"] as? String ?? "")
+            }
+            return .failed(obj["error"] as? String ?? "送れませんでした（\(status)）")
+        } catch {
+            return .failed("ネタ帳につながりませんでした")
+        }
+    }
+
     // MARK: Voice room
 
     func voiceState() async throws -> VoiceStateResponse {

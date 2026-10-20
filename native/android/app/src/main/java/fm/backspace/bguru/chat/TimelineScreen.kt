@@ -279,6 +279,7 @@ fun PostRow(
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
+    var netaUrls by remember { mutableStateOf<List<String>?>(null) }
     // Unread: a light green card with the web's green bar. Read after a second on
     // screen, and the colour fades out — so you can see what you just read.
     val unread by androidx.compose.animation.core.animateFloatAsState(if (post.unread == true) 1f else 0f, androidx.compose.animation.core.tween(600), label = "unread")
@@ -361,11 +362,22 @@ fun PostRow(
                     ChatQuote.pending = ChatQuote.forPost(post)
                 })
             }
+            // 「ネタ帳に送る」: only posts that link an article (docs/neta-client-spec.md).
+            if (App.session(context).store?.capabilities?.netaEnabled == true) {
+                val urls = remember(post.text, post.urlPreview?.url) { netaCandidates(post.text, post.urlPreview?.url) }
+                if (urls.isNotEmpty()) {
+                    DropdownMenuItem(text = { Text("ネタ帳に送る") }, onClick = {
+                        menu = false
+                        netaUrls = urls
+                    })
+                }
+            }
             DropdownMenuItem(text = { Text("Web で開く") }, onClick = {
                 menu = false
                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ChatQuote.permalink(post))))
             })
         }
+        netaUrls?.let { urls -> NetaDialog(post, urls, onDismiss = { netaUrls = null }) }
     }
 }
 

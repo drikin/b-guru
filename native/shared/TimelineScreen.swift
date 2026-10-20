@@ -248,6 +248,7 @@ struct PostRow: View {
     var showReplyCount = true
     @Environment(\.jukebox) private var jukebox
     @Environment(\.quoteToChat) private var quoteToChat
+    @Environment(\.sendToNeta) private var sendToNeta
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -323,6 +324,10 @@ struct PostRow: View {
             }
             if let quoteToChat {
                 Button("チャットに引用", systemImage: "quote.bubble") { quoteToChat(post) }
+            }
+            // The article the post links to (not the post itself) — docs/neta-client-spec.md.
+            if let sendToNeta, !NetaLinks.candidates(text: post.text, previewURL: post.urlPreview?.url).isEmpty {
+                Button("ネタ帳に送る", systemImage: "note.text.badge.plus") { sendToNeta(post) }
             }
             Button("テキストをコピー", systemImage: "doc.on.doc") { Platform.copy(post.text) }
             Button("Web で開く", systemImage: "safari") {
@@ -518,6 +523,9 @@ extension EnvironmentValues {
     /// 「チャットに引用」: puts the post into the chat's composer and shows the chat
     /// (nil when this member cannot send to the chat).
     @Entry var quoteToChat: (@MainActor (Post) -> Void)? = nil
+    /// 「ネタ帳に送る」: opens the confirmation for the article the post links to
+    /// (nil when this member cannot).
+    @Entry var sendToNeta: (@MainActor (Post) -> Void)? = nil
     /// The timeline is the page on screen (iPhone pages keep the other one alive).
     @Entry var timelineOnScreen = true
 }

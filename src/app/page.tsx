@@ -27,6 +27,7 @@ import {
   Box,
   Image,
   Modal,
+  Select,
   ActionIcon,
   Burger,
   Popover,
@@ -72,6 +73,7 @@ import { type ChatRow, CHAT_BODY_LIMIT, newChatClientId, newChatTempId, reconcil
 import { CHAT_MAX_PHOTOS, imageFiles, photoSlots, prepareChatPhoto, uploadChatPhotos } from "@/lib/chat-photos";
 import { normWs, isMentionedIn, mentionToken } from "@/lib/chat-mention";
 import { POST_PERMALINK_ORIGIN, appendQuote, postPermalink, quoteText, splitPostLinks } from "@/lib/chat-quote";
+import { netaCandidates, netaDefaultTitle } from "@/lib/neta-client";
 import MacAppCard from "@/components/MacAppCard";
 import AndroidAppCard from "@/components/AndroidAppCard";
 import type { PostPoll } from "@/lib/poll";
@@ -1500,6 +1502,7 @@ function PostCard({
   onToggleFavorite,
   onToggleBookmark,
   onQuoteToChat,
+  onSendToNeta,
   reactionBar,
 }: {
   post: FeedPost;
@@ -1529,6 +1532,8 @@ function PostCard({
   onToggleBookmark?: (post: FeedPost) => void;
   /** 「チャットに引用」。チャットを使えるとき（ログイン中）だけ渡す。 */
   onQuoteToChat?: (post: FeedPost) => void;
+  /** 「ネタ帳に送る」(docs/neta-client-spec.md)。ログイン中だけ渡す。送れる URL がある投稿だけボタンを出す。 */
+  onSendToNeta?: (post: FeedPost) => void;
   /** Reaction row, injected by the parent so the card stays presentational and
    *  the reaction state lives in one place (the feed), not per card. */
   reactionBar?: React.ReactNode;
@@ -1699,6 +1704,28 @@ function PostCard({
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
               <path d="M8 9h8" />
               <path d="M8 13h5" />
+            </svg>
+          </ActionIcon>
+        )}
+        {onSendToNeta && post.id > 0 && netaCandidates(post).length > 0 && (
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            size="sm"
+            aria-label="ネタ帳に送る"
+            title="ネタ帳に送る"
+            data-cx="send-to-neta"
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              onSendToNeta(post);
+            }}
+          >
+            {/* ノート（ネタ帳） */}
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+              <path d="M9 7h7" />
+              <path d="M9 11h5" />
             </svg>
           </ActionIcon>
         )}
@@ -2860,6 +2887,7 @@ function ProfileView({
   onToggleFavorite,
   onToggleBookmark,
   onQuoteToChat,
+  onSendToNeta,
 }: {
   profile: ProfileData | null;
   posts: FeedPost[];
@@ -2890,6 +2918,8 @@ function ProfileView({
   onToggleFavorite?: (post: FeedPost) => void;
   onToggleBookmark?: (post: FeedPost) => void;
   onQuoteToChat?: (post: FeedPost) => void;
+  /** 「ネタ帳に送る」(docs/neta-client-spec.md)。ログイン中だけ渡す。送れる URL がある投稿だけボタンを出す。 */
+  onSendToNeta?: (post: FeedPost) => void;
   renderReactionBar?: (postId: number, compact?: boolean) => React.ReactNode;
 }) {
   return (
@@ -3050,6 +3080,7 @@ function ProfileView({
                   onToggleFavorite={onToggleFavorite}
                   onToggleBookmark={onToggleBookmark}
                   onQuoteToChat={onQuoteToChat}
+                  onSendToNeta={onSendToNeta}
                 />
                 <CollapsibleReplies
                   parentId={post.id}
@@ -3501,6 +3532,7 @@ function TimelineFeed({
   onToggleFavorite,
   onToggleBookmark,
   onQuoteToChat,
+  onSendToNeta,
   skipFirstDate,
 }: {
   groups: FeedGroup[];
@@ -3556,6 +3588,8 @@ function TimelineFeed({
   onToggleFavorite?: (post: FeedPost) => void;
   onToggleBookmark?: (post: FeedPost) => void;
   onQuoteToChat?: (post: FeedPost) => void;
+  /** 「ネタ帳に送る」(docs/neta-client-spec.md)。ログイン中だけ渡す。送れる URL がある投稿だけボタンを出す。 */
+  onSendToNeta?: (post: FeedPost) => void;
   skipFirstDate?: boolean;
   renderReactionBar?: (postId: number, compact?: boolean) => React.ReactNode;
 }) {
@@ -3642,6 +3676,7 @@ function TimelineFeed({
               onToggleFavorite={onToggleFavorite}
               onToggleBookmark={onToggleBookmark}
               onQuoteToChat={onQuoteToChat}
+              onSendToNeta={onSendToNeta}
             />
             {/* Interleaved comments = replies to this card, rendered right after
              * it so the position (between which cards) is preserved.
@@ -4863,6 +4898,15 @@ export default function Home() {
   const [editAudio, setEditAudio] = useState<string | null>(null);
   const [editAudioUploading, setEditAudioUploading] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<FeedPost | null>(null);
+  // 「ネタ帳に送る」の確認の画面
+  const [netaPost, setNetaPost] = useState<FeedPost | null>(null);
+  const [netaUrls, setNetaUrls] = useState<string[]>([]);
+  const [netaUrl, setNetaUrl] = useState("");
+  const [netaTitle, setNetaTitle] = useState("");
+  const [netaDesc, setNetaDesc] = useState("");
+  const [netaSending, setNetaSending] = useState(false);
+  const [netaError, setNetaError] = useState<string | null>(null);
+  const [netaDone, setNetaDone] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -8220,6 +8264,57 @@ export default function Home() {
   // @メンションは付けない（通知しない）。チャット表示はスレッド/検索/プロフィールより
   // 描画が優先されるが、タブバーはホーム直下でしか出ないので、戻れるようにスレッド・
   // 検索・プロフィールを閉じてホーム（タイムライン/チャットのタブ）に揃えてから開く。
+  // 「ネタ帳に送る」(ドリキン 2026-10-20, docs/neta-client-spec.md)。ネタ帳は公開サイト
+  // なので必ず確認の画面を出す。説明は空から（会員限定の本文を勝手に公開しない）。
+  const openNeta = (post: FeedPost) => {
+    const urls = netaCandidates(post);
+    if (urls.length === 0) return;
+    setNetaPost(post);
+    setNetaUrls(urls);
+    setNetaUrl(urls[0]);
+    setNetaTitle(netaDefaultTitle(urls[0], post.urlPreview));
+    setNetaDesc("");
+    setNetaError(null);
+    setNetaDone(false);
+    setNetaSending(false);
+  };
+  const closeNeta = () => {
+    if (netaSending) return;
+    setNetaPost(null);
+  };
+  const changeNetaUrl = (url: string) => {
+    // 題名が前の URL の既定（カードの題名か空）のままなら、新しい URL の既定に入れ替える。
+    if (netaTitle === netaDefaultTitle(netaUrl, netaPost?.urlPreview)) {
+      setNetaTitle(netaDefaultTitle(url, netaPost?.urlPreview));
+    }
+    setNetaUrl(url);
+    setNetaError(null);
+  };
+  const sendNeta = async () => {
+    if (netaSending || !netaTitle.trim() || !netaUrl) return;
+    setNetaSending(true);
+    setNetaError(null);
+    try {
+      const res = await fetch("/api/neta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: netaUrl, title: netaTitle.trim(), description: netaDesc.trim() || undefined }),
+      });
+      const d = await res.json().catch(() => null);
+      if (res.ok && d?.ok) {
+        setNetaDone(true);
+      } else if (res.status === 409 && d?.existing) {
+        setNetaError(`今週のネタ帳には ${d.existing.submitter ?? "ほかの人"} さんが「${d.existing.title ?? ""}」として投稿済みです`);
+      } else {
+        setNetaError(typeof d?.error === "string" && d.error ? d.error : `送れませんでした（${res.status}）`);
+      }
+    } catch {
+      setNetaError("送れませんでした。通信を確かめてください");
+    } finally {
+      setNetaSending(false);
+    }
+  };
+
   const quotePostToChat = (post: FeedPost) => {
     const quote = quoteText({
       authorName: post.authorName,
@@ -12055,6 +12150,7 @@ export default function Home() {
                   onToggleFavorite={auth ? toggleFavoriteFor : undefined}
                   onToggleBookmark={auth ? toggleBookmarkFor : undefined}
                   onQuoteToChat={auth ? quotePostToChat : undefined}
+                  onSendToNeta={auth ? openNeta : undefined}
                 />
               ) : feedLoading ? (
                 <Text c="dimmed">読み込み中…</Text>
@@ -12163,6 +12259,7 @@ export default function Home() {
                           onToggleFavorite={auth ? toggleFavoriteFor : undefined}
                           onToggleBookmark={auth ? toggleBookmarkFor : undefined}
                           onQuoteToChat={auth ? quotePostToChat : undefined}
+                          onSendToNeta={auth ? openNeta : undefined}
                         />
                       )}
 
@@ -12189,6 +12286,7 @@ export default function Home() {
                           onToggleFavorite={auth ? toggleFavoriteFor : undefined}
                           onToggleBookmark={auth ? toggleBookmarkFor : undefined}
                           onQuoteToChat={auth ? quotePostToChat : undefined}
+                          onSendToNeta={auth ? openNeta : undefined}
                         />
                         </Box>
                       ))}
@@ -12441,6 +12539,7 @@ export default function Home() {
                   onToggleFavorite={auth ? toggleFavoriteFor : undefined}
                   onToggleBookmark={auth ? toggleBookmarkFor : undefined}
                   onQuoteToChat={auth ? quotePostToChat : undefined}
+                  onSendToNeta={auth ? openNeta : undefined}
                   onVotePoll={handleVotePoll}
                   onEditPoll={handleEditPoll}
                   onSetClub={handleSetClub}
@@ -13248,6 +13347,91 @@ export default function Home() {
             削除する
           </Button>
         </Group>
+      </Modal>
+
+      {/* 「ネタ帳に送る」確認 — ネタ帳 (neta.backspace.fm) は公開サイト */}
+      <Modal
+        opened={!!netaPost}
+        onClose={closeNeta}
+        centered
+        withCloseButton
+        closeOnClickOutside={!netaSending}
+        closeOnEscape={!netaSending}
+        title="ネタ帳に送る"
+      >
+        {netaDone ? (
+          <Stack gap="sm">
+            <Text size="sm" c="inherit">ネタ帳に送りました</Text>
+            <Group justify="space-between">
+              <Button
+                component="a"
+                href="https://neta.backspace.fm"
+                target="_blank"
+                rel="noopener"
+                variant="light"
+                size="xs"
+              >
+                ネタ帳を開く
+              </Button>
+              <Button variant="default" size="xs" onClick={closeNeta}>
+                閉じる
+              </Button>
+            </Group>
+          </Stack>
+        ) : (
+          <Stack gap="sm">
+            {netaUrls.length > 1 ? (
+              <Select
+                label="URL"
+                data={netaUrls}
+                value={netaUrl}
+                onChange={(v) => v && changeNetaUrl(v)}
+                allowDeselect={false}
+                disabled={netaSending}
+                comboboxProps={{ withinPortal: true }}
+              />
+            ) : (
+              <Box>
+                <Text size="sm" fw={500}>URL</Text>
+                <Text size="sm" c="dimmed" style={{ wordBreak: "break-all" }}>{netaUrl}</Text>
+              </Box>
+            )}
+            <TextInput
+              label="題名"
+              required
+              value={netaTitle}
+              maxLength={200}
+              disabled={netaSending}
+              onChange={(e) => { const v = e.currentTarget.value; setNetaTitle(v); }}
+            />
+            <Textarea
+              label="説明（任意）"
+              value={netaDesc}
+              maxLength={1000}
+              autosize
+              minRows={2}
+              maxRows={6}
+              disabled={netaSending}
+              onChange={(e) => { const v = e.currentTarget.value; setNetaDesc(v); }}
+            />
+            <Text size="xs" c="dimmed">
+              ネタ帳は公開サイトです。B-guru の表示名{displayName ? `（${displayName}）` : ""}で投稿されます。
+            </Text>
+            {netaError && (
+              <Text size="sm" c="red">
+                {netaError}
+              </Text>
+            )}
+            <Group justify="flex-end">
+              <Button variant="default" size="xs" onClick={closeNeta} disabled={netaSending}>
+                キャンセル
+              </Button>
+              <Button size="xs" loading={netaSending} disabled={!netaTitle.trim() || netaSending} onClick={sendNeta}>
+                送る
+              </Button>
+            </Group>
+          </Stack>
+        )}
       </Modal>
 
       {/* Poll (survey) edit modal — author only, within 1h of posting.

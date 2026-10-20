@@ -125,12 +125,19 @@ struct Capabilities: Decodable, Sendable {
         var enabled: Bool?
         var path: String?
     }
+    /// 「ネタ帳に送る」: a post's article into BS ネタ帳 (docs/neta-client-spec.md).
+    struct NetaFeatures: Decodable, Sendable {
+        var enabled: Bool?
+        var path: String?
+        var site: String?
+    }
     struct Features: Decodable, Sendable {
         var chat: ChatFeatures?
         var posts: PostFeatures?
         var voice: VoiceFeatures?
         var room: RoomFeatures?
         var jukebox: JukeboxFeatures?
+        var neta: NetaFeatures?
     }
     var apiVersion: Int
     var scopes: [String]?
@@ -161,6 +168,11 @@ struct Capabilities: Decodable, Sendable {
     var jukeboxPath: String {
         if let p = features?.jukebox?.path, p.hasPrefix("/api/") { return p }
         return "/api/agent/jukebox"
+    }
+    var netaEnabled: Bool { features?.neta?.enabled ?? false }
+    var netaPath: String {
+        if let p = features?.neta?.path, p.hasPrefix("/api/") { return p }
+        return "/api/agent/neta"
     }
     /// This token may join (has the "voice" scope — older tokens must sign in again).
     var canJoinVoice: Bool { features?.voice?.join ?? false }
@@ -398,4 +410,34 @@ struct JukeboxResponse: Codable, Sendable {
     }
     var episodes: [Episode]
     var today: Today?
+}
+
+// MARK: - BS ネタ帳 (docs/neta-client-spec.md)
+
+enum NetaLinks {
+    /// The article URLs a post points to: its link card first, then URLs in the text
+    /// (trailing punctuation off). Never B-guru itself. No duplicates.
+    static func candidates(text: String, previewURL: String?) -> [String] {
+        var out: [String] = []
+        func add(_ raw: String) {
+            var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            while let last = s.last, "。、)）」』】,.!?！？".contains(last) { s.removeLast() }
+            guard let u = URL(string: s), let scheme = u.scheme?.lowercased(), scheme == "http" || scheme == "https",
+                  let host = u.host?.lowercased(), host != "bsm.backspace.fm", u.user == nil else { return }
+            if !out.contains(s) { out.append(s) }
+        }
+        if let p = previewURL { add(p) }
+        // Japanese text runs straight on after a URL: its brackets and 、。 end it (same as the web).
+        let re = try? NSRegularExpression(pattern: #"https?://[^\s<>"'　「」『』【】（）、。]+"#)
+        for m in re?.matches(in: text, range: NSRange(text.startIndex..., in: text)) ?? [] {
+            if let r = Range(m.range, in: text) { add(String(text[r])) }
+        }
+        return out
+    }
+}
+
+enum NetaOutcome: Equatable, Sendable {
+    case sent
+    case duplicate(title: String, submitter: String)
+    case failed(String)
 }
