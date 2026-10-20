@@ -33,11 +33,7 @@ struct TimelineScreen: View {
                 if !timeline.hasLoaded { await timeline.refresh() }
             }
             .onAppear { timeline.startPolling() }
-            .onChange(of: timeline.openThread, initial: true) { _, id in
-                guard let id else { return }
-                open(id)
-                timeline.openThread = nil
-            }
+            .modifier(OpenThreadWhenShown(timeline: timeline, open: open))
             .onDisappear { timeline.stopPolling() }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { Task { await timeline.refresh() } }
@@ -531,6 +527,43 @@ extension View {
     /// Scrolling past quickly does not read it.
     func readWhenSeen(_ active: Bool, onRead: @escaping () -> Void) -> some View {
         modifier(ReadWhenSeen(active: active, onRead: onRead))
+    }
+}
+
+/// Opens the thread asked for (a notification, a post's link in the chat). On the iPhone
+/// the timeline is a page of a paged TabView: switching to it and pushing the thread in
+/// the same moment made UIKit throw during layout and the app crashed (TestFlight reports
+/// 2026-10-20, 「チャットからタイムラインへのリンクで落ちた」). So: wait until the page
+/// shows, let the page settle, then push. The Mac's panel has no pages and opens at once.
+private struct OpenThreadWhenShown: ViewModifier {
+    let timeline: TimelineStore
+    let open: (Int) -> Void
+    @Environment(\.timelineOnScreen) private var onScreen
+    @State private var waiting: Int?
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: timeline.openThread, initial: true) { _, id in
+                guard let id else { return }
+                timeline.openThread = nil
+                #if os(iOS)
+                waiting = id
+                if onScreen { pushSoon() }
+                #else
+                open(id)
+                #endif
+            }
+            .onChange(of: onScreen) { _, shown in
+                if shown, waiting != nil { pushSoon() }
+            }
+    }
+
+    private func pushSoon() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            guard let id = waiting, onScreen else { return }
+            waiting = nil
+            open(id)
+        }
     }
 }
 
