@@ -60,6 +60,21 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         pin.onChange = { [weak self] pinned in self?.applyPin(pinned) }
         pin.openEmoji = { [weak self] in self?.openEmojiPalette() }
         if UserDefaults.standard.bool(forKey: "pinned") { pin.pinned = true }
+        narrowOnce()
+    }
+
+    /// 0.3.13–0.3.18 widened the panel to fit the jukebox, and the pinned frame kept that
+    /// width. Once, bring it back to the usual width (drikin 2026-10-19「もうちょっと縦長に」);
+    /// a width the member sets afterwards stays.
+    private func narrowOnce() {
+        let key = "panelNarrowed20261019"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        UserDefaults.standard.set(true, forKey: key)
+        var f = frame
+        guard f.width > 400 else { return }
+        f.origin.x += (f.width - 380) / 2
+        f.size.width = 380
+        setFrame(f, display: false)
     }
 
     override var canBecomeKey: Bool { true }

@@ -46,7 +46,7 @@ struct MainPanelView: View {
         .environment(\.jukebox, jukeboxOn ? store.jukebox : nil)
         .task(id: jukeboxOn) { if jukeboxOn { await store.jukebox.load(path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox") } }
         .onChange(of: jukeboxOn) { _, on in if !on && tab == .jukebox { tab = .chat } }
-        .onChange(of: pin.tab) { _, t in if t == .jukebox { pin.wantsHeight?(660) } }
+        .onChange(of: pin.tab) { _, t in if t == .jukebox { pin.wantsHeight?(780) } }
         // ⌃⌥B / the menu-bar icon always comes back to the chat input.
         .onChange(of: pin.focusRequest) { _, _ in tab = .chat }
         .onChange(of: timeline.openThread) { _, id in if id != nil { tab = .timeline } }
