@@ -48,12 +48,8 @@ struct MainPanelView: View {
                     .onAppear { jukeboxBuilt = true }
             }
         }
-        // Playing on: the record under every tab (not on the jukebox itself).
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if pin.tab != .jukebox {
-                JukeboxMiniPlayer(jukebox: store.jukebox) { tab = .jukebox }
-            }
-        }
+        // No mini player under the chat and the timeline (drikin 2026-10-20): the jukebox
+        // tab, the media keys and Control Center play and pause.
         .environment(\.jukebox, jukeboxOn ? store.jukebox : nil)
         .task(id: jukeboxOn) { if jukeboxOn { await store.jukebox.load(path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox") } }
         .onChange(of: jukeboxOn) { _, on in if !on && tab == .jukebox { tab = .chat } }

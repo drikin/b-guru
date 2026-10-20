@@ -42,13 +42,12 @@ import kotlinx.coroutines.launch
 /** Phone: timeline and chat (and the jukebox, when the server turns it on) as pages —
  *  swipe left/right or use the switch at the top (like the iPhone app). Tablet / wide
  *  window: the timeline beside the chat (or the jukebox). The jukebox's mini player
- *  sits at the bottom of every tab while an episode is playing or paused. */
+ *  is not shown under the timeline and the chat (drikin 2026-10-20). */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?, onSignOut: () -> Unit) {
     val wide = LocalConfiguration.current.screenWidthDp >= 840
     val jb = jukebox?.takeIf { store.capabilities?.jukeboxEnabled == true }
-    val showMini = jb != null && jb.active && jb.current != null && !WindowInsets.isImeVisible
 
     @Composable
     fun Segments(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
@@ -64,8 +63,7 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
     }
 
     Column(Modifier.fillMaxSize()) {
-        // With the mini player below, the pages leave the navigation bar to it.
-        Box(Modifier.weight(1f).then(if (showMini) Modifier.consumeWindowInsets(WindowInsets.navigationBars) else Modifier)) {
+        Box(Modifier.weight(1f)) {
             if (wide) {
                 var right by remember { mutableStateOf(0) } // 0 = chat, 1 = jukebox
                 LaunchedEffect(jb?.showTab) { if (jb?.showTab == true) { right = 1; jb.showTab = false; jb.revealTick++ } }
@@ -84,9 +82,8 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
                 Pages(store, timeline, jb, onSignOut) { labels, selected, onSelect -> Segments(labels, selected, onSelect) }
             }
         }
-        if (showMini && jb != null) {
-            JukeboxMiniPlayer(jb, inVoice = store.voice.inRoom, onOpen = { jb.showTab = true })
-        }
+        // No mini player under the timeline and the chat (drikin 2026-10-20): the jukebox
+        // tab and the playback notification play and pause.
     }
 }
 

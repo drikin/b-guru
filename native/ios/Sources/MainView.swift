@@ -13,17 +13,9 @@ struct MainView: View {
     @State private var leftTab: MainTab = .timeline
 
     var body: some View {
-        // Playing on: the record under every screen (not on the jukebox itself). Stacked
-        // below, not an inset: the pages ignore the bottom safe area and would slide the
-        // chat's composer under it.
-        VStack(spacing: 0) {
-            layout
-            if (hSize == .regular ? leftTab : tab) != .jukebox {
-                JukeboxMiniPlayer(jukebox: store.jukebox) {
-                    if hSize == .regular { leftTab = .jukebox } else { tab = .jukebox }
-                }
-            }
-        }
+        // No mini player under the timeline and the chat (drikin 2026-10-20: not needed —
+        // the jukebox tab, the lock screen and Control Center play and pause).
+        layout
             .environment(\.jukebox, jukeboxOn ? store.jukebox : nil)
             .task(id: jukeboxOn) { if jukeboxOn { await store.jukebox.load(path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox") } }
             .onChange(of: jukeboxOn) { _, on in
