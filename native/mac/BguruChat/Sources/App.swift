@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var bundledFirstId: Int?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        HangWatch.shared.start()
         TextComposition.watchReturnKey()
         #if DEBUG
         // Dev only: show in the Dock so UI automation can find the app.
