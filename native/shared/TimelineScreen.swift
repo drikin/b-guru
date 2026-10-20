@@ -41,6 +41,7 @@ struct TimelineScreen: View {
     }
 
     private func open(_ id: Int) {
+        HangWatch.note("open thread \(id)")
         #if os(iOS)
         path = NavigationPath([id])
         #else
@@ -74,7 +75,7 @@ struct TimelineScreen: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 if macThread != nil {
-                    Button { macThread = nil } label: { Image(systemName: "chevron.left") }
+                    Button { HangWatch.note("back to timeline"); macThread = nil } label: { Image(systemName: "chevron.left") }
                         .buttonStyle(.borderless)
                         .keyboardShortcut("[", modifiers: .command)
                         .help("タイムラインに戻る（⌘[）")
@@ -109,7 +110,7 @@ struct TimelineScreen: View {
             }
         }
         // The mouse's back button (sent by the panel) also leaves the thread (Ryu 2026-10-17).
-        .onReceive(NotificationCenter.default.publisher(for: .timelineBack)) { _ in macThread = nil }
+        .onReceive(NotificationCenter.default.publisher(for: .timelineBack)) { _ in HangWatch.note("back to timeline (mouse)"); macThread = nil }
         #endif
     }
 
@@ -127,9 +128,7 @@ struct TimelineScreen: View {
         ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
-                Color.clear.frame(height: 1).id("top")
-                    .onAppear { atTop = true }
-                    .onDisappear { atTop = false }
+                TimelineTopSentinel(atTop: $atTop)
                 if timeline.posts.isEmpty {
                     Text(timeline.hasLoaded ? (timeline.failed ? "読み込めませんでした。引っ張って再読み込み" : "まだ投稿がありません") : "読み込み中…")
                         .font(.callout).foregroundStyle(.secondary)
@@ -140,7 +139,7 @@ struct TimelineScreen: View {
                         PostRow(post: post, clubName: timeline.clubName(post.club),
                                 canReact: capabilities?.canReactPosts ?? false,
                                 onReact: { timeline.toggleReaction(post.id, emoji: $0) },
-                                onOpenImage: { viewing = ImageViewerItem(images: post.images ?? [], index: $0) })
+                                onOpenImage: { HangWatch.note("open image (post \(post.id))"); viewing = ImageViewerItem(images: post.images ?? [], index: $0) })
                     }
                     .buttonStyle(.plain)
                     .readWhenSeen(post.unread == true && macThread == nil) { timeline.sawPost(post.id) }
@@ -154,6 +153,7 @@ struct TimelineScreen: View {
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
         }
+        .modifier(TopTracker(atTop: $atTop))
         .pullToRefresh { await timeline.refresh() }
         .scrollDismissesKeyboard(.immediately)
         .dismissesKeyboardOnTap()
@@ -164,13 +164,51 @@ struct TimelineScreen: View {
         }
         .onChange(of: atTop) { _, top in if top { newAbove = 0 } }
         .overlay(alignment: .bottomTrailing) {
-            if !atTop {
-                JumpButton(arrow: "↑", count: newAbove) {
-                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("top", anchor: .top) }
+            // The fade is the button's own: an animation on the whole scroll view also
+            // animated the lazy list's layout each time this flipped.
+            ZStack {
+                if !atTop {
+                    JumpButton(arrow: "↑", count: newAbove) {
+                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("top", anchor: .top) }
+                    }
                 }
             }
+            .animation(.easeOut(duration: 0.15), value: atTop)
         }
-        .animation(.easeOut(duration: 0.15), value: atTop)
+        }
+    }
+}
+
+/// The first row of the list (the scroll target "top"). On systems without scroll
+/// geometry it also tells whether the top is on screen.
+private struct TimelineTopSentinel: View {
+    @Binding var atTop: Bool
+    var body: some View {
+        if #available(macOS 15.0, iOS 18.0, *) {
+            Color.clear.frame(height: 1).id("top")
+        } else {
+            Color.clear.frame(height: 1).id("top")
+                .onAppear { atTop = true }
+                .onDisappear { atTop = false }
+        }
+    }
+}
+
+/// Whether the newest posts are on screen, from where the list is scrolled to (macOS 15 /
+/// iOS 18+, like the chat's BottomTracker): only scrolling moves it. The first row's
+/// appear / disappear can also fire while the lazy list rebuilds its rows.
+private struct TopTracker: ViewModifier {
+    @Binding var atTop: Bool
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, iOS 18.0, *) {
+            content.onScrollGeometryChange(for: Bool.self) { g in
+                g.contentOffset.y + g.contentInsets.top < 60
+            } action: { _, top in
+                if top != atTop { atTop = top }
+            }
+        } else {
+            content
         }
     }
 }
