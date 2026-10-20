@@ -154,7 +154,9 @@ final class HangWatch: NSObject, @unchecked Sendable {
         defer { thread_resume(mainPort) }
         // Return addresses of system code carry a pointer signature in the top bits.
         let mask: UInt = 0x0000_7FFF_FFFF_FFFF
-        var pc: UInt = 0, fp: UInt = 0, lr: UInt = 0
+        var pc: UInt = 0, fp: UInt = 0
+        /// arm64: the caller of a function that has not saved its frame yet.
+        var lr: UInt? = nil
         #if arch(arm64)
         var st = arm_thread_state64_t()
         var count = mach_msg_type_number_t(MemoryLayout<arm_thread_state64_t>.size / MemoryLayout<natural_t>.size)
@@ -180,7 +182,7 @@ final class HangWatch: NSObject, @unchecked Sendable {
         #endif
         var n = 0
         frames[n] = pc & mask; n += 1
-        if lr != 0 { frames[n] = lr & mask; n += 1 }
+        if let lr, lr != 0 { frames[n] = lr & mask; n += 1 }
         var cur = fp
         while n < 128, cur >= stackLow, cur + 16 <= stackHigh, cur & 0x7 == 0,
               let p = UnsafePointer<UInt>(bitPattern: cur) {
