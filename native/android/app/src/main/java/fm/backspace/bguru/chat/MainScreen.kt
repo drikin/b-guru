@@ -27,6 +27,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +37,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
@@ -67,6 +70,8 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
             if (wide) {
                 var right by remember { mutableStateOf(0) } // 0 = chat, 1 = jukebox
                 LaunchedEffect(jb?.showTab) { if (jb?.showTab == true) { right = 1; jb.showTab = false; jb.revealTick++ } }
+                // 「チャットに引用」: show the chat (it takes the quote into its draft).
+                LaunchedEffect(ChatQuote.pending) { if (ChatQuote.pending != null) right = 0 }
                 Row(Modifier.fillMaxSize()) {
                     Row(Modifier.width(420.dp).fillMaxHeight()) {
                         TimelineScreen(timeline, store.capabilities, tabSwitch = null, onReconnect = onSignOut)
@@ -76,7 +81,7 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
                         { Segments(listOf("チャット", "ジュークボックス"), right) { right = it } }
                     }
                     if (jb != null && right == 1) JukeboxScreen(jb, store.capabilities, switch, onOpenThread = { timeline.openThread = it })
-                    else ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch)
+                    else PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch) }
                 }
             } else {
                 Pages(store, timeline, jb, onSignOut) { labels, selected, onSelect -> Segments(labels, selected, onSelect) }
@@ -102,7 +107,11 @@ private fun Pages(
     // Switching pages hides the keyboard.
     LaunchedEffect(pager.currentPage) { focus.clearFocus() }
     // A "reply to your post" notification: show the timeline (it opens the thread).
-    LaunchedEffect(timeline.openThread) { if (timeline.openThread != null) pager.animateScrollToPage(0) }
+    // (Launched in `scope`: the timeline clears openThread at once, which would cancel a
+    // scroll running inside this effect.)
+    LaunchedEffect(timeline.openThread) { if (timeline.openThread != null) scope.launch { pager.animateScrollToPage(0) } }
+    // 「チャットに引用」 from a post's menu: show the chat (it takes the quote, then clears it).
+    LaunchedEffect(ChatQuote.pending) { if (ChatQuote.pending != null) scope.launch { pager.animateScrollToPage(1) } }
     // The playback notification / the mini player: show the jukebox.
     LaunchedEffect(jb?.showTab, count) { if (jb?.showTab == true && count == 3) { pager.animateScrollToPage(2); jb.showTab = false; jb.revealTick++ } }
 
@@ -114,11 +123,27 @@ private fun Pages(
     HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
         when (page) {
             0 -> TimelineScreen(timeline, store.capabilities, tabSwitch = switch, onReconnect = onSignOut, visible = pager.currentPage == 0)
-            1 -> ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch, visible = pager.currentPage == 1)
+            1 -> PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch, visible = pager.currentPage == 1) }
             else -> if (jb != null) JukeboxScreen(jb, store.capabilities, switch, visible = pager.currentPage == 2,
                 onOpenThread = { timeline.openThread = it })
         }
     }
+}
+
+/** A tapped link to a B-guru post (`https://bsm.backspace.fm/#/post/<id>`) opens that
+ *  thread in the app (the timeline shows it); every other link goes to the browser. */
+@Composable
+private fun PostLinksInApp(timeline: TimelineStore, content: @Composable () -> Unit) {
+    val default = LocalUriHandler.current
+    val handler = remember(default, timeline) {
+        object : UriHandler {
+            override fun openUri(uri: String) {
+                val id = postIdFromUrl(uri)
+                if (id != null) timeline.openThread = id else default.openUri(uri)
+            }
+        }
+    }
+    CompositionLocalProvider(LocalUriHandler provides handler, content = content)
 }
 
 /** Three tabs in the top bar: segments sized to their words (equal widths would cut

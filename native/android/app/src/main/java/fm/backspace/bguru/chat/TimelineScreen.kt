@@ -354,9 +354,16 @@ fun PostRow(
                 menu = false
                 scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("post", post.text))) }
             })
+            // 「チャットに引用」: the post's link into the chat composer (MainScreen shows the chat).
+            if (App.session(context).store?.capabilities?.canSend == true) {
+                DropdownMenuItem(text = { Text("チャットに引用") }, onClick = {
+                    menu = false
+                    ChatQuote.pending = ChatQuote.forPost(post)
+                })
+            }
             DropdownMenuItem(text = { Text("Web で開く") }, onClick = {
                 menu = false
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("${Net.BASE}/#/post/${post.parentId ?: post.id}")))
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ChatQuote.permalink(post))))
             })
         }
     }

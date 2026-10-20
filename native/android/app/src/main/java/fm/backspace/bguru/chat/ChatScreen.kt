@@ -229,6 +229,20 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
         runCatching { focus.requestFocus() }
     }
 
+    // 「チャットに引用」 from a post's menu: once the chat is on screen, add the quote after
+    // the draft (an edit in progress is dropped) and focus the composer, cursor at the end.
+    val canSend = store.capabilities?.canSend == true
+    LaunchedEffect(ChatQuote.pending, visible, canSend) {
+        val quote = ChatQuote.pending ?: return@LaunchedEffect
+        if (!visible || !canSend) return@LaunchedEffect
+        ChatQuote.pending = null
+        if (editingId != null) { editingId = null; d.text = "" }
+        d.text = appendQuote(d.text, quote)
+        // After the page switch, which hides the keyboard (MainScreen clears the focus).
+        // In `scope`: clearing `pending` restarts (cancels) this effect.
+        scope.launch { kotlinx.coroutines.delay(300); runCatching { focus.requestFocus() } }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
