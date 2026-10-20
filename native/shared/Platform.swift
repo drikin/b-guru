@@ -225,8 +225,11 @@ struct MacPullToRefresh: ViewModifier {
                 .onScrollGeometryChange(for: CGFloat.self) { g in
                     -(g.contentOffset.y + g.contentInsets.top)
                 } action: { _, over in
-                    pull = max(0, over)
-                    if over <= 1 { armed = true }
+                    // Only while pulled past the top: plain scrolling must not update state
+                    // every frame (it made all scrolling heavier).
+                    let p = max(0, over)
+                    if p != pull, p > 0 || pull > 0 { pull = p }
+                    if over <= 1, !armed { armed = true }
                     guard over > threshold, armed, !refreshing else { return }
                     armed = false
                     refreshing = true

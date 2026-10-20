@@ -111,7 +111,9 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     }
 
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .scrollWheel, !overSidewaysScroller(event), let step = swipe.handle(event) {
+        // The cheap tracker first; the view lookup only once a swipe has fired (it ran on
+        // every scroll event and made all scrolling heavier — drikin 2026-10-19).
+        if event.type == .scrollWheel, let step = swipe.handle(event), !overSidewaysScroller(event) {
             // チャット → タイムライン → 📻, one step per swipe (drikin 2026-10-19: with three
             // tabs the swipe only went between the first two).
             var order: [MainTab] = [.chat, .timeline]
