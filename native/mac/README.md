@@ -34,15 +34,6 @@ UI 自動操作でアプリを見つけさせるとき（開発のみ）: `-regu
 ホバー操作の見た目確認（開発のみ）: `-selftest DIR -forceActions`（全行にボタンを出し、picker.png も書き出す）。
 画面録画なしの自己診断: `… -selftest <アプリのコンテナ内のディレクトリ> [-selftest-send] [-dark]`（接続時間・送信遅延・画面 PNG）
 
-## フリーズの記録
-- 起動中は見張りのスレッドがメインスレッドを 0.5 秒ごとに確かめ、3 秒応答がないと
-  `~/Library/Containers/fm.backspace.bguru.chat/Data/Library/Application Support/Diagnostics/hangs.log`
-  に書く（3・8・20 秒の 3 回）。中身: メインスレッドが忙しいのか（CPU ≈ 100 % ならレイアウトのループ）待っているのか、
-  そのときのコールスタック（`画像 +オフセット 記号`。dSYM と `atos` で引ける）、直前の操作（タブ・スレッド・再読み込み・窓のサイズ）。
-  強制終了しても残る。⋯ メニュー →「フリーズの記録を Finder で表示」で開ける
-- MetricKit がシステムのハングレポートを届けたら、同じフォルダに `metrickit-*.json` で保存する
-- サンドボックスのため自分で `sample` は使えない。固まっている最中なら、アクティビティモニタ →「プロセスのサンプルを収集」も有効
-
 ## リリース（ベータ配布）
 ```bash
 native/mac/scripts/release.sh 0.1.0              # 署名 → DMG → 公証 → staple → Gatekeeper 確認
