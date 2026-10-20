@@ -61,6 +61,11 @@ struct MainView: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
+            // The jukebox page appears once the server says it is on (after launch). Paged
+            // TabView is a collection view underneath: a page inserted mid-layout tripped
+            // UIKit's item-count assertion and the app crashed at launch (0.2.16–0.2.20).
+            // A different set of pages is a new TabView instead of an update.
+            .id(jukeboxOn)
             .ignoresSafeArea(.container, edges: .bottom)
             .onChange(of: timeline.openThread) { _, id in if id != nil { tab = .timeline } }
             // Switching pages hides the keyboard (it used to stay up over the timeline).
@@ -93,5 +98,6 @@ struct MainView: View {
         }
         .pickerStyle(.segmented)
         .frame(width: jukeboxOn ? 280 : 240)
+        .id(jukeboxOn) // a new control for a different number of segments, not an update
     }
 }
