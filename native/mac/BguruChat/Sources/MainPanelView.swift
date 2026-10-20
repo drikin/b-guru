@@ -51,6 +51,10 @@ struct MainPanelView: View {
         // No mini player under the chat and the timeline (drikin 2026-10-20): the jukebox
         // tab, the media keys and Control Center play and pause.
         .environment(\.jukebox, jukeboxOn ? store.jukebox : nil)
+        // 「チャットに引用」: the quote goes into the chat's composer, the chat shows.
+        .environment(\.quoteToChat, store.quoteAction { tab = .chat })
+        // A post's link in the chat opens its thread here, not in the browser.
+        .environment(\.openURL, ChatStore.openPostLinks(in: timeline))
         .task(id: jukeboxOn) { if jukeboxOn { await store.jukebox.load(path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox") } }
         .onChange(of: jukeboxOn) { _, on in if !on && tab == .jukebox { tab = .chat } }
         .onChange(of: pin.tab) { _, t in if t == .jukebox { pin.wantsHeight?(780) } }

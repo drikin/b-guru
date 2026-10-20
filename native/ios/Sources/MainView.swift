@@ -17,6 +17,10 @@ struct MainView: View {
         // the jukebox tab, the lock screen and Control Center play and pause).
         layout
             .environment(\.jukebox, jukeboxOn ? store.jukebox : nil)
+            // 「チャットに引用」: the quote goes into the chat's composer, the chat shows.
+            .environment(\.quoteToChat, store.quoteAction { tab = .chat })
+            // A post's link in the chat opens its thread here, not in the browser.
+            .environment(\.openURL, ChatStore.openPostLinks(in: timeline))
             .task(id: jukeboxOn) { if jukeboxOn { await store.jukebox.load(path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox") } }
             .onChange(of: jukeboxOn) { _, on in
                 if !on { if tab == .jukebox { tab = .chat }; leftTab = .timeline }

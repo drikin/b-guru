@@ -251,6 +251,7 @@ struct PostRow: View {
     let onOpenImage: (Int) -> Void
     var showReplyCount = true
     @Environment(\.jukebox) private var jukebox
+    @Environment(\.quoteToChat) private var quoteToChat
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -323,6 +324,9 @@ struct PostRow: View {
             if canReact {
                 ForEach(MessageRow.quick, id: \.self) { e in Button(e) { onReact(e) } }
                 Divider()
+            }
+            if let quoteToChat {
+                Button("チャットに引用", systemImage: "quote.bubble") { quoteToChat(post) }
             }
             Button("テキストをコピー", systemImage: "doc.on.doc") { Platform.copy(post.text) }
             Button("Web で開く", systemImage: "safari") {
@@ -515,6 +519,9 @@ enum ImageViewerOverlay {
 // MARK: read after a moment on screen (same rule as the web: 1 s, ≥ 25 % visible)
 
 extension EnvironmentValues {
+    /// 「チャットに引用」: puts the post into the chat's composer and shows the chat
+    /// (nil when this member cannot send to the chat).
+    @Entry var quoteToChat: (@MainActor (Post) -> Void)? = nil
     /// The timeline is the page on screen (iPhone pages keep the other one alive).
     @Entry var timelineOnScreen = true
 }

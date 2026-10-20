@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 
 /// All chat state for the app. Main-actor only; network work hops off and
 /// results come back here. Sending is optimistic: the bubble is on screen
@@ -12,6 +13,8 @@ final class ChatStore {
     enum Connection: Equatable { case connecting, live, offline }
 
     private(set) var rows: [ChatRow] = []
+    /// A timeline post to quote, waiting for the chat's composer (「チャットに引用」).
+    var pendingQuote: String?
     private(set) var unreadCount = 0
     /// Unread messages that @mention me (subset of unreadCount).
     private(set) var mentionCount = 0
@@ -540,5 +543,55 @@ final class ChatStore {
             guard !Task.isCancelled else { return }
             _ = try? await api.markRead(upTo: upTo)
         }
+    }
+
+    // MARK: - Quoting a timeline post (drikin 2026-10-20)
+
+    nonisolated static let siteURL = "https://bsm.backspace.fm"
+
+    /// The closure behind 「チャットに引用」 (nil when this member cannot send to the chat):
+    /// the quote waits for the composer, `show` brings the chat up.
+    func quoteAction(show: @escaping @MainActor () -> Void) -> (@MainActor (Post) -> Void)? {
+        guard capabilities?.canSend == true else { return nil }
+        return { [weak self] post in
+            self?.pendingQuote = ChatStore.quoteText(authorName: post.authorName, text: post.text,
+                                                     hasImages: !(post.images ?? []).isEmpty, postId: post.parentId ?? post.id)
+            show()
+        }
+    }
+
+    /// Opens a B-guru post's link in the timeline instead of the browser.
+    static func openPostLinks(in timeline: TimelineStore) -> OpenURLAction {
+        OpenURLAction { url in
+            if let id = ChatStore.postId(in: url) { timeline.openThread = id; return .handled }
+            return .systemAction
+        }
+    }
+
+    /// What 「チャットに引用」 puts into the composer: who, the first line, the link.
+    /// No @mention (quoting must not notify). docs: same text on every platform.
+    nonisolated static func quoteText(authorName: String?, text: String, hasImages: Bool, postId: Int) -> String {
+        let name = (authorName?.isEmpty == false ? authorName! : "だれか")
+        let link = "\(siteURL)/#/post/\(postId)"
+        let line = text.split(whereSeparator: \.isNewline)
+            .map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+            .first { !$0.isEmpty } ?? ""
+        // A mention in the quoted line would notify that member again: ＠ (full width) is
+        // not a mention.
+        var excerpt = line.replacingOccurrences(of: "@", with: "＠")
+        // Markdown marks are noise in a one-line quote: "## 見出し", "> 引用", "- 項目", **太字**, `code`.
+        excerpt = excerpt.replacingOccurrences(of: #"^(#{1,6}|>|[-*+]|\d{1,3}[.)])\s+"#, with: "", options: .regularExpression)
+        for mark in ["**", "__", "~~", "`"] { excerpt = excerpt.replacingOccurrences(of: mark, with: "") }
+        excerpt = excerpt.trimmingCharacters(in: .whitespaces)
+        if excerpt.count > 40 { excerpt = String(excerpt.prefix(40)) + "…" } // Characters: never half an emoji
+        if excerpt.isEmpty && hasImages { excerpt = "写真" }
+        let head = excerpt.isEmpty ? "📝 \(name) さんの投稿" : "📝 \(name) さんの投稿「\(excerpt)」"
+        return "\(head)\n\(link)\n"
+    }
+
+    /// The post a B-guru permalink points to (https://bsm.backspace.fm/#/post/123).
+    nonisolated static func postId(in url: URL) -> Int? {
+        guard url.host == "bsm.backspace.fm", let frag = url.fragment, frag.hasPrefix("/post/") else { return nil }
+        return Int(frag.dropFirst("/post/".count).prefix { $0.isNumber })
     }
 }

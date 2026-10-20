@@ -75,6 +75,20 @@ struct ChatView: View {
             photos.add(imageData: data)
         }
         .onAppear { composerFocused = true }
+        // 「チャットに引用」 from the timeline: add it to the draft, caret at the end.
+        .onChange(of: store.pendingQuote, initial: true) { _, q in
+            guard let q else { return }
+            draft = draft.isEmpty ? q : draft + "\n" + q
+            store.pendingQuote = nil
+            DispatchQueue.main.async {
+                composerFocused = true
+                // Focusing a text field selects all of it on the Mac: typing would replace
+                // the quote. Put the caret after it instead.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    (NSApp.keyWindow?.firstResponder as? NSTextView)?.moveToEndOfDocument(nil)
+                }
+            }
+        }
         // The tabs stay built: back on the chat, the caret goes back into the message box.
         // A separate little view watches the tab, so the chat itself does not redraw.
         .background(FocusOnChatTab(pin: pin, focused: $composerFocused))

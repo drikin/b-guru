@@ -64,6 +64,13 @@ struct ChatScreen: View {
         .onChange(of: onScreen) { _, on in
             store.isVisible = scenePhase == .active && on
         }
+        // 「チャットに引用」 from the timeline: add it to the draft, caret at the end.
+        .onChange(of: store.pendingQuote, initial: true) { _, q in
+            guard let q else { return }
+            draft = draft.isEmpty ? q : draft + "\n" + q
+            store.pendingQuote = nil
+            DispatchQueue.main.async { composerFocused = true }
+        }
     }
 
     // MARK: Toolbar

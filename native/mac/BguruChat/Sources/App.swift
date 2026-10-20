@@ -101,6 +101,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         }
                     }
                 }
+                // -demoQuote: 「チャットに引用」 of the first timeline post (as if chosen from its menu).
+                if CommandLine.arguments.contains("-demoQuote"), let post = timeline.posts.dropFirst().first {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                        store.quoteAction { self.panel?.pin.tab = .chat }?(post)
+                    }
+                }
                 if CommandLine.arguments.contains("-demoJukeboxTab") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.panel?.pin.tab = .jukebox }
                 }
