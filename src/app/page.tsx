@@ -81,6 +81,7 @@ import { applyVoiceEvent, loadVoice, type VoiceRoomInfo } from "@/lib/voice-clie
 import RoomPanel from "@/components/RoomView";
 import { applyRoomEvent, reloadRoomIfOn, roomChatBubble } from "@/lib/room-client";
 import { bubbleText } from "@/lib/room-logic";
+import { EDIT_HINT, SAVE_HINT, SEND_HINT, handleComposerKeyDown, useEnterSends } from "@/lib/composer-keys";
 
 /** Decode a base64url VAPID public key into a Uint8Array for pushManager.subscribe. */
 function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
@@ -513,12 +514,17 @@ function imagesFromPaste(e: React.ClipboardEvent): FileList | null {
 }
 
 function MentionTextarea({
-  value, onChange, onKeyDown, onPaste, placeholder, autosize, minRows, maxRows, mb,
+  value, onChange, onKeyDown, onSend, onCancel, onPaste, placeholder, autosize, minRows, maxRows, mb,
   maxLength, label, description, autoFocus, ariaLabel, suggestUp, wrapperStyle,
   initialMention, inputRef,
 }: {
   value: string;
   onChange: (v: string) => void;
+  /** Send (or save, when editing). Enables the Enter/newline rule of
+   *  docs/composer-keys.md for this textarea. */
+  onSend?: () => void;
+  /** Cancel an edit (Esc). Pass only for an edit box. */
+  onCancel?: () => void;
   onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   placeholder?: string;
@@ -637,19 +643,12 @@ function MentionTextarea({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // During IME composition (Japanese, Chinese, Korean, …), let the IME own
-    // Enter/Arrow/Tab — otherwise the mention navigator hijacks them and the
-    // user can't commit or pick IME candidates. The parent's onKeyDown guards
-    // its own shortcuts against composition, so it is safe to fall through.
-    if ((e.nativeEvent as any).isComposing) {
-      onKeyDown?.(e);
-      return;
-    }
-    // Mention suggestions are open — handle navigation/selection.
-    // But always let modifier-key combos (Cmd/Ctrl+Enter, Shift+Enter) pass
-    // through to the parent's onKeyDown so reply/whisper shortcuts work even
-    // while a suggestion popup is visible.
-    if (query !== null && filtered.length > 0) {
+    const mentionOpen = query !== null && filtered.length > 0;
+    // Arrow/Tab navigate the @-list — but never during IME composition
+    // (Japanese etc.), where the IME owns those keys.
+    const native = e.nativeEvent as KeyboardEvent;
+    const composing = !!native?.isComposing || e.keyCode === 229;
+    if (mentionOpen && !composing) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setSuggestIndex(i => (i + 1) % filtered.length);
@@ -660,16 +659,27 @@ function MentionTextarea({
         setSuggestIndex(i => (i - 1 + filtered.length) % filtered.length);
         return;
       }
-      // Plain Enter or Tab selects a mention — but only without modifiers.
-      if ((e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.shiftKey) || e.key === "Tab") {
+      if (e.key === "Tab" && !e.shiftKey) {
         e.preventDefault();
         insertMention(filtered[suggestIndex]);
         return;
       }
-      if (e.key === "Escape") {
-        setQuery(null);
-        return;
-      }
+    }
+    // Enter / Esc follow the one rule in docs/composer-keys.md
+    // (@/lib/composer-keys): physical keyboard → Enter sends (or picks the
+    // @-candidate), ⇧Enter newline; on-screen keyboard → Enter is a newline.
+    if (onSend) {
+      const done = handleComposerKeyDown(e, {
+        onSend,
+        onCancel,
+        mentionOpen,
+        onPickMention: () => insertMention(filtered[suggestIndex]),
+        onCloseMention: () => setQuery(null),
+      });
+      if (done !== "none") return;
+    } else if (mentionOpen && !composing && e.key === "Escape") {
+      setQuery(null);
+      return;
     }
     onKeyDown?.(e);
   };
@@ -3133,6 +3143,7 @@ function InlineReplyBox({
     uploadAudio(files, setAudio, setAudioUploading, (s) => setError(s));
   const removeAudio = () => setAudio(null);
 
+  const enterSends = useEnterSends();
   const handleSubmit = async (whisper: boolean) => {
     if (!canSend) return;
     const t = text;
@@ -3164,20 +3175,12 @@ function InlineReplyBox({
         autoFocus
         onChange={setText}
         onPaste={handlePaste}
-        placeholder={`${authorLabel} の投稿にコメント…（Shift+Enter でうなる）`}
+        placeholder={`${authorLabel} の投稿にコメント…${enterSends ? `（${SEND_HINT}）` : ""}`}
         minRows={2}
         autosize
         maxRows={5}
-        onKeyDown={(e) => {
-          if ((e.nativeEvent as any).isComposing) return;
-          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-            e.preventDefault();
-            handleSubmit(false);
-          } else if (e.shiftKey && e.key === "Enter") {
-            e.preventDefault();
-            handleSubmit(true);
-          }
-        }}
+        // Enter（物理キーボード）で吠える。うなるは下の「うなる」ボタン（docs/composer-keys.md）。
+        onSend={() => void handleSubmit(false)}
       />
       {error && (
         <Text size="xs" c="red">
@@ -3917,14 +3920,8 @@ function ComposerPaper({
     }
   };
 
-  // Cmd/Ctrl + Enter to submit (skip during IME composition)
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      if ((e.nativeEvent as any).isComposing) return;
-      e.preventDefault();
-      handleSubmit();
-    }
-  };
+  // Enter（物理キーボード）/ ⌘Enter で吠える。画面キーボードでは改行（docs/composer-keys.md）。
+  const enterSends = useEnterSends();
 
   return (
     <Paper p="md" radius="md" withBorder shadow="sm">
@@ -3958,7 +3955,7 @@ function ComposerPaper({
           autoFocus
           value={text}
           onChange={setText}
-          onKeyDown={onKeyDown}
+          onSend={() => void handleSubmit()}
           onPaste={handlePaste}
           mb="xs"
         />
@@ -4251,9 +4248,11 @@ function ComposerPaper({
                 e.target.value = "";
               }}
             />
-            <Text size="xs" c="dimmed">
-              Cmd/Ctrl + Enter で吠える
-            </Text>
+            {enterSends && (
+              <Text size="xs" c="dimmed">
+                Enter で吠える・⇧Enter 改行
+              </Text>
+            )}
           </Group>
           <Group gap="xs">
             <Button
@@ -4798,6 +4797,8 @@ export default function Home() {
   );
   const [editingPost, setEditingPost] = useState<FeedPost | null>(null);
   const [editText, setEditText] = useState("");
+  // 物理キーボード（Enter で送信）なら true — 入力欄のヒントの出し分け（docs/composer-keys.md）。
+  const enterSends = useEnterSends();
   const [editImages, setEditImages] = useState<string[]>([]);
   // At most one audio attachment on the edit modal (mirrors the composer).
   const [editAudio, setEditAudio] = useState<string | null>(null);
@@ -11561,14 +11562,12 @@ export default function Home() {
                                       autosize
                                       minRows={1}
                                       maxRows={4}
-                                      placeholder="編集内容（Enter 保存 / Esc キャンセル）"
+                                      placeholder={enterSends ? `編集内容（${EDIT_HINT}）` : "編集内容"}
                                       onKeyDown={(e) => {
-                                        if ((e.nativeEvent as any).isComposing) return;
-                                        if (e.key === "Escape") cancelEditChat();
-                                        if (e.key === "Enter" && !e.shiftKey) {
-                                          e.preventDefault();
-                                          saveChatEdit();
-                                        }
+                                        handleComposerKeyDown(e, {
+                                          onSend: () => void saveChatEdit(),
+                                          onCancel: cancelEditChat,
+                                        });
                                       }}
                                     />
                                     <Group justify="flex-end" gap={6} mt={6} wrap="nowrap">
@@ -11738,14 +11737,8 @@ export default function Home() {
                           void addChatPhotos(Array.from(files));
                         }
                       }}
-                      onKeyDown={(e) => {
-                        if ((e.nativeEvent as any).isComposing) return;
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          sendChat();
-                        }
-                      }}
-                      placeholder="メッセージ（@名前 でメンション・Enter 送信）"
+                      onSend={sendChat}
+                      placeholder={enterSends ? `メッセージ（@名前 でメンション・${SEND_HINT}）` : "メッセージ（@名前 でメンション）"}
                       autosize
                       minRows={1}
                       maxRows={4}
@@ -12105,7 +12098,7 @@ export default function Home() {
                           <MentionTextarea
                             autosize
                             minRows={2}
-                            placeholder={`${threadPost.authorName || "この投稿"} に返信…（Shift+Enter でうなる）`}
+                            placeholder={`${threadPost.authorName || "この投稿"} に返信…${enterSends ? `（${SEND_HINT}）` : ""}`}
                             value={replyText}
                             onChange={setReplyText}
                             mb="xs"
@@ -12116,16 +12109,8 @@ export default function Home() {
                                 onThreadReplyPick(files);
                               }
                             }}
-                            onKeyDown={(e) => {
-                              if ((e.nativeEvent as any).isComposing) return;
-                              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                                e.preventDefault();
-                                submitThreadReply();
-                              } else if (e.shiftKey && e.key === "Enter") {
-                                e.preventDefault();
-                                submitThreadReply(true);
-                              }
-                            }}
+                            // Enter（物理キーボード）で吠える。うなるは「うなる」ボタン（docs/composer-keys.md）。
+                            onSend={() => void submitThreadReply()}
                           />
                           {threadReplyImages.length > 0 && (
                             <Group gap="xs" mb="xs">
@@ -12628,11 +12613,18 @@ export default function Home() {
                       }}
                     >
                       <Textarea
-                        placeholder="コメントを書く…"
+                        placeholder={enterSends ? `コメントを書く…（${SEND_HINT}）` : "コメントを書く…"}
                         autosize
                         minRows={2}
                         value={dnCommentText}
                         onChange={(e) => setDnCommentText(e.currentTarget.value)}
+                        onKeyDown={(e) => {
+                          handleComposerKeyDown(e, {
+                            onSend: () => {
+                              if (!dnPostingComment) void dnSubmitComment();
+                            },
+                          });
+                        }}
                         mb="sm"
                       />
                       <Group justify="flex-end">
@@ -12997,9 +12989,10 @@ export default function Home() {
             <MentionTextarea
               autosize
               minRows={3}
-              placeholder="本文"
+              placeholder={enterSends ? `本文（${SAVE_HINT}）` : "本文"}
               value={editText}
               onChange={setEditText}
+              onSend={saveEdit}
               onPaste={(e) => {
                 const files = imagesFromPaste(e);
                 if (files) {
