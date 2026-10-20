@@ -329,13 +329,56 @@ struct ReactionPicker: View {
     }
 }
 
+/// Lays its children out left to right and starts a new line when the width runs out.
+/// Its minimum width is that of its widest child, never the sum of them.
+struct FlowRow: Layout {
+    var spacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, lineHeight: CGFloat = 0, width: CGFloat = 0
+        for s in subviews {
+            let size = s.sizeThatFits(.unspecified)
+            if x > 0, x + spacing + size.width > maxWidth {
+                width = max(width, x)
+                x = 0
+                y += lineHeight + spacing
+                lineHeight = 0
+            }
+            x += (x > 0 ? spacing : 0) + size.width
+            lineHeight = max(lineHeight, size.height)
+        }
+        return CGSize(width: max(width, x), height: y + lineHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x: CGFloat = 0, y: CGFloat = 0, lineHeight: CGFloat = 0
+        for s in subviews {
+            let size = s.sizeThatFits(.unspecified)
+            if x > 0, x + spacing + size.width > bounds.width + 0.5 { // rounding: never wrap more than measured
+                x = 0
+                y += lineHeight + spacing
+                lineHeight = 0
+            }
+            if x > 0 { x += spacing }
+            s.place(at: CGPoint(x: bounds.minX + x, y: bounds.minY + y), proposal: ProposedViewSize(size))
+            x += size.width
+            lineHeight = max(lineHeight, size.height)
+        }
+    }
+}
+
 struct ReactionChips: View {
     let reactions: [Reaction]
     let enabled: Bool
     let onTap: (String) -> Void
 
     var body: some View {
-        HStack(spacing: 4) {
+        // Wraps onto more lines instead of growing sideways: a post with many kinds of
+        // reaction made the row (and with it the Mac panel's minimum width) wider than the
+        // panel, which kept relaying the panel while scrolling (drikin 2026-10-20, the
+        // timeline froze).
+        FlowRow(spacing: 4) {
             ForEach(reactions, id: \.emoji) { r in
                 Button { onTap(r.emoji) } label: {
                     HStack(spacing: 2) {

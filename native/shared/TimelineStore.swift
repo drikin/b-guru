@@ -34,6 +34,7 @@ final class TimelineStore {
         #if DEBUG
         if api.token == "demo" { return }
         #endif
+        HangWatch.note("timeline refresh (\(posts.count) posts)")
         if clubs.isEmpty, let c = try? await api.clubs() {
             clubs = Dictionary(c.map { ($0.key, $0.name) }, uniquingKeysWith: { a, _ in a })
         }
@@ -47,8 +48,10 @@ final class TimelineStore {
             }
             nextCursor = r.nextCursor
             failed = false
+            HangWatch.note("timeline refreshed → \(posts.count) posts")
         } catch {
             failed = posts.isEmpty
+            HangWatch.note("timeline refresh failed: \(error.localizedDescription)")
         }
         hasLoaded = true
     }
@@ -57,10 +60,12 @@ final class TimelineStore {
         guard let cursor = nextCursor, !loadingMore else { return }
         loadingMore = true
         defer { loadingMore = false }
+        HangWatch.note("timeline load more (\(posts.count) posts)")
         if let r = try? await api.posts(cursor: cursor) {
             let known = Set(posts.map(\.id))
             posts += r.posts.filter { !known.contains($0.id) }
             nextCursor = r.nextCursor
+            HangWatch.note("timeline loaded more → \(posts.count) posts")
         }
     }
 
