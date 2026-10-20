@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clientIp } from "@/lib/client-ip";
-import { destroyAllSessionsFor } from "@/lib/session";
-import { verifyRevokeLink, LoginError } from "@/lib/login";
+import { verifyRevokeLink, destroyAllSessionsFor, LoginError } from "@/lib/login";
 import { sameOrigin } from "../_lib";
 
 export const dynamic = "force-dynamic";

@@ -12,6 +12,7 @@
  * 回数制限は rate_limits テーブルの固定窓（agent-auth と同じ方式）。
  */
 import crypto from "crypto";
+import { cookies } from "next/headers";
 import { pool } from "./db";
 import { findMemberByEmail, isPaidMember } from "./ghost";
 import { sendEmail } from "./mailgun";
@@ -294,4 +295,53 @@ export async function verifyRevokeLink(token: string, ip: string | null): Promis
     throw new LoginError(400, "このリンクは有効期限が切れています");
   }
   return res.rows[0].email;
+}
+
+// ---- セッションの延長と全端末ログアウト ----
+// lib/session.ts は VPS 上に別作業の未コミット変更があり、deploy.sh がその md5 を
+// 確かめている（scripts/deploy.sh）。ここに置いて session.ts は触らない。
+
+const SESSION_COOKIE = "bsm_session";
+/** 最後に使ってからこの日数まで有効（使い続けている端末はログインし直しにならない）。 */
+export const SESSION_SLIDING_DAYS = 90;
+/** cookie は DB の期限より長く持たせる（400 日はブラウザの上限）。有効かどうかは DB が決める。 */
+const COOKIE_MAX_AGE_SEC = 60 * 60 * 24 * 400;
+
+/**
+ * このブラウザのセッションの期限を延ばす（1 日に 1 回まで）。/api/auth/me から呼ぶ。
+ * 延ばしたときは cookie も付け直す。失敗してもログアウトさせない。
+ */
+export async function slideSession(): Promise<void> {
+  try {
+    const store = await cookies();
+    const token = store.get(SESSION_COOKIE)?.value;
+    if (!token) return;
+    const res = await pool.query(
+      `UPDATE sessions SET expires_at = now() + make_interval(days => $2)
+        WHERE token = $1 AND expires_at > now()
+          AND expires_at < now() + make_interval(days => $2) - interval '1 day'
+        RETURNING token`,
+      [token, SESSION_SLIDING_DAYS]
+    );
+    if (!res.rows[0]) return;
+    store.set(SESSION_COOKIE, token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: COOKIE_MAX_AGE_SEC,
+    });
+  } catch (e) {
+    console.error("[login] slide failed:", (e as Error)?.message);
+  }
+}
+
+/** 本人のすべての Web セッションとアプリ・エージェント用トークンを切る（全端末ログアウト）。 */
+export async function destroyAllSessionsFor(email: string): Promise<void> {
+  const e = normalizeEmail(email);
+  await pool.query(`DELETE FROM sessions WHERE email = $1`, [e]);
+  await pool.query(
+    `UPDATE agent_tokens SET revoked_at = now() WHERE email = $1 AND revoked_at IS NULL`,
+    [e]
+  );
 }
