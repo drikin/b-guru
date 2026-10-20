@@ -71,6 +71,7 @@ import type { ChatMessage } from "@/lib/chat";
 import { type ChatRow, CHAT_BODY_LIMIT, newChatClientId, newChatTempId, reconcileChat, markChatFailed, markChatRetrying } from "@/lib/chat-optimistic";
 import { CHAT_MAX_PHOTOS, imageFiles, photoSlots, prepareChatPhoto, uploadChatPhotos } from "@/lib/chat-photos";
 import { normWs, isMentionedIn, mentionToken } from "@/lib/chat-mention";
+import { POST_PERMALINK_ORIGIN, appendQuote, postPermalink, quoteText, splitPostLinks } from "@/lib/chat-quote";
 import MacAppCard from "@/components/MacAppCard";
 import AndroidAppCard from "@/components/AndroidAppCard";
 import type { PostPoll } from "@/lib/poll";
@@ -294,8 +295,37 @@ function linkifyUserLinks(text: string): string {
 function renderChatBody(
   body: string,
   members: MentionMember[],
-  myUserId: string
+  myUserId: string,
+  onOpenPost?: (postId: number) => void
 ): React.ReactNode {
+  // 「チャットに引用」で貼られた B-guru 投稿リンク（<origin>/#/post/<id>）は
+  // 新しいタブではなくこのページ内でスレッドを開く。修飾キー付きクリックは
+  // ブラウザ既定（新しいタブ等）に任せる。
+  if (onOpenPost) {
+    const origins =
+      typeof window !== "undefined" ? [POST_PERMALINK_ORIGIN, window.location.origin] : [POST_PERMALINK_ORIGIN];
+    const parts = splitPostLinks(body, origins);
+    if (parts.some((p) => p.kind === "post")) {
+      return parts.map((p, i) =>
+        p.kind === "post" ? (
+          <a
+            key={`pl${i}`}
+            href={`#/post/${p.postId}`}
+            onClick={(e) => {
+              if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+              e.preventDefault();
+              onOpenPost(p.postId);
+            }}
+            style={{ color: "var(--mantine-color-anchor)", textDecoration: "underline", wordBreak: "break-all" }}
+          >
+            {p.text}
+          </a>
+        ) : (
+          <Fragment key={`pt${i}`}>{renderChatBody(p.text, members, myUserId)}</Fragment>
+        )
+      );
+    }
+  }
   const nameSet = new Set(members.map((m) => normWs(m.name)));
   const myNameSet = new Set(
     members.filter((m) => !!myUserId && m.userId === myUserId).map((m) => normWs(m.name))
@@ -1469,6 +1499,7 @@ function PostCard({
   onOpenClub,
   onToggleFavorite,
   onToggleBookmark,
+  onQuoteToChat,
   reactionBar,
 }: {
   post: FeedPost;
@@ -1496,6 +1527,8 @@ function PostCard({
   onToggleFavorite?: (post: FeedPost) => void;
   /** ブックマークトグル（投稿単位）。未ログインでは渡さない。自分の投稿にも使える。 */
   onToggleBookmark?: (post: FeedPost) => void;
+  /** 「チャットに引用」。チャットを使えるとき（ログイン中）だけ渡す。 */
+  onQuoteToChat?: (post: FeedPost) => void;
   /** Reaction row, injected by the parent so the card stays presentational and
    *  the reaction state lives in one place (the feed), not per card. */
   reactionBar?: React.ReactNode;
@@ -1646,6 +1679,26 @@ function PostCard({
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill={post.bookmarkedByMe ? "currentColor" : "none"} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+            </svg>
+          </ActionIcon>
+        )}
+        {onQuoteToChat && post.id > 0 && (
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            size="sm"
+            aria-label="チャットに引用"
+            title="チャットに引用"
+            data-cx="quote-to-chat"
+            onClick={(e: React.MouseEvent) => {
+              e.stopPropagation();
+              onQuoteToChat(post);
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              <path d="M8 9h8" />
+              <path d="M8 13h5" />
             </svg>
           </ActionIcon>
         )}
@@ -2806,6 +2859,7 @@ function ProfileView({
   onOpenClub,
   onToggleFavorite,
   onToggleBookmark,
+  onQuoteToChat,
 }: {
   profile: ProfileData | null;
   posts: FeedPost[];
@@ -2835,6 +2889,7 @@ function ProfileView({
   onOpenClub?: (club: string) => void;
   onToggleFavorite?: (post: FeedPost) => void;
   onToggleBookmark?: (post: FeedPost) => void;
+  onQuoteToChat?: (post: FeedPost) => void;
   renderReactionBar?: (postId: number, compact?: boolean) => React.ReactNode;
 }) {
   return (
@@ -2994,6 +3049,7 @@ function ProfileView({
                   onOpenClub={onOpenClub}
                   onToggleFavorite={onToggleFavorite}
                   onToggleBookmark={onToggleBookmark}
+                  onQuoteToChat={onQuoteToChat}
                 />
                 <CollapsibleReplies
                   parentId={post.id}
@@ -3444,6 +3500,7 @@ function TimelineFeed({
   onOpenClub,
   onToggleFavorite,
   onToggleBookmark,
+  onQuoteToChat,
   skipFirstDate,
 }: {
   groups: FeedGroup[];
@@ -3498,6 +3555,7 @@ function TimelineFeed({
   onOpenClub?: (club: string) => void;
   onToggleFavorite?: (post: FeedPost) => void;
   onToggleBookmark?: (post: FeedPost) => void;
+  onQuoteToChat?: (post: FeedPost) => void;
   skipFirstDate?: boolean;
   renderReactionBar?: (postId: number, compact?: boolean) => React.ReactNode;
 }) {
@@ -3583,6 +3641,7 @@ function TimelineFeed({
               onOpenClub={onOpenClub}
               onToggleFavorite={onToggleFavorite}
               onToggleBookmark={onToggleBookmark}
+              onQuoteToChat={onQuoteToChat}
             />
             {/* Interleaved comments = replies to this card, rendered right after
              * it so the position (between which cards) is preserved.
@@ -8155,6 +8214,55 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  // 「チャットに引用」(ドリキン 2026-10-20「タイムラインの記事のURLを簡単にチャットに
+  // 引用できるようにしたい」)。投稿の抜粋とパーマリンク（返信はスレッドのルート）を
+  // チャットの入力欄の末尾に足し（下書きは残す）、チャットを開いて入力欄にフォーカス。
+  // @メンションは付けない（通知しない）。チャット表示はスレッド/検索/プロフィールより
+  // 描画が優先されるが、タブバーはホーム直下でしか出ないので、戻れるようにスレッド・
+  // 検索・プロフィールを閉じてホーム（タイムライン/チャットのタブ）に揃えてから開く。
+  const quotePostToChat = (post: FeedPost) => {
+    const quote = quoteText({
+      authorName: post.authorName,
+      text: post.text,
+      hasImages: (post.images?.length ?? 0) > 0,
+      permalink: postPermalink(post.parentId ?? post.id),
+    });
+    setChatText((cur) => appendQuote(cur, quote));
+    if (threadPost) closeThread();
+    setProfileUserId(null);
+    if (searchQuery) setSearchQuery("");
+    if (activeNavRef.current !== "feed") setActiveNav("feed");
+    setNavOpened(false);
+    setAsideOpened(false);
+    favViewRef.current = false;
+    setFavView(false);
+    bmViewRef.current = false;
+    setBmView(false);
+    setChatMention(null);
+    openChat();
+    // The composer mounts with the chat view; wait for it (a few frames at most).
+    let tries = 0;
+    const focusEnd = () => {
+      const ta = chatInputRef.current;
+      if (!ta) {
+        if (++tries < 30) requestAnimationFrame(focusEnd);
+        return;
+      }
+      ta.focus();
+      const end = ta.value.length;
+      ta.setSelectionRange(end, end);
+      ta.scrollTop = ta.scrollHeight;
+    };
+    requestAnimationFrame(() => requestAnimationFrame(focusEnd));
+  };
+
+  // チャット内の B-guru 投稿リンクをクリック → 新しいタブではなくこのページで
+  // スレッドを開く。チャット表示はスレッドより描画優先なのでタイムラインに切り替える。
+  const openPostFromChat = (postId: number) => {
+    showTimeline();
+    openThread(postId);
+  };
+
   // Toggle like optimistically on the feed list AND the current thread view
   // (threadPost + threadReplies use separate state, so update both). Also
   // recurse into nested replies (inline group comments) so their likes update.
@@ -11618,11 +11726,11 @@ export default function Home() {
                                           }
                                         >
                                           <ChatImageGrid urls={m.images} onOpen={openPreview} />
-                                          {m.body && <div>{renderChatBody(m.body, mentionMembers, auth?.userId || "")}</div>}
+                                          {m.body && <div>{renderChatBody(m.body, mentionMembers, auth?.userId || "", openPostFromChat)}</div>}
                                         </div>
                                       ) : (
                                         <div style={bubbleStyle}>
-                                          {renderChatBody(m.body, mentionMembers, auth?.userId || "")}
+                                          {renderChatBody(m.body, mentionMembers, auth?.userId || "", openPostFromChat)}
                                         </div>
                                       )}
                                       {!mine && chatActions}
@@ -11945,6 +12053,7 @@ export default function Home() {
                   onOpenClub={selectClub}
                   onToggleFavorite={auth ? toggleFavoriteFor : undefined}
                   onToggleBookmark={auth ? toggleBookmarkFor : undefined}
+                  onQuoteToChat={auth ? quotePostToChat : undefined}
                 />
               ) : feedLoading ? (
                 <Text c="dimmed">読み込み中…</Text>
@@ -12052,6 +12161,7 @@ export default function Home() {
                           onOpenClub={selectClub}
                           onToggleFavorite={auth ? toggleFavoriteFor : undefined}
                           onToggleBookmark={auth ? toggleBookmarkFor : undefined}
+                          onQuoteToChat={auth ? quotePostToChat : undefined}
                         />
                       )}
 
@@ -12077,6 +12187,7 @@ export default function Home() {
                           onOpenProfile={openProfile}
                           onToggleFavorite={auth ? toggleFavoriteFor : undefined}
                           onToggleBookmark={auth ? toggleBookmarkFor : undefined}
+                          onQuoteToChat={auth ? quotePostToChat : undefined}
                         />
                         </Box>
                       ))}
@@ -12328,6 +12439,7 @@ export default function Home() {
                   onOpenProfile={openProfile}
                   onToggleFavorite={auth ? toggleFavoriteFor : undefined}
                   onToggleBookmark={auth ? toggleBookmarkFor : undefined}
+                  onQuoteToChat={auth ? quotePostToChat : undefined}
                   onVotePoll={handleVotePoll}
                   onEditPoll={handleEditPoll}
                   onSetClub={handleSetClub}
