@@ -584,9 +584,12 @@ struct LinkCard: View {
         } label: {
             VStack(alignment: .leading, spacing: 0) {
                 if let img = preview.proxiedImage {
-                    MediaImage(path: img, maxPixel: 900)
+                    // The picture fills a fixed box and never sizes the card: a wide image
+                    // used to push the card past the column (seen in the Mac thread view).
+                    Color.clear
                         .frame(maxWidth: .infinity)
                         .frame(height: 170)
+                        .overlay { MediaImage(path: img, maxPixel: 900) }
                         .clipped()
                         .overlay {
                             if preview.videoId != nil {

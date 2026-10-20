@@ -107,6 +107,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         store.quoteAction { self.panel?.pin.tab = .chat }?(post)
                     }
                 }
+                // -demoOpenPostLink: as if a post's link in the chat were clicked.
+                if CommandLine.arguments.contains("-demoOpenPostLink"), let post = timeline.posts.first(where: { $0.urlPreview != nil }) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        let url = URL(string: "https://bsm.backspace.fm/#/post/\(post.id)")!
+                        _ = ChatStore.openPostLinks(in: timeline).callAsFunction(url)
+                    }
+                }
                 if CommandLine.arguments.contains("-demoJukeboxTab") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.panel?.pin.tab = .jukebox }
                 }
