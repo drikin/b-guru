@@ -257,7 +257,10 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     }
 
     // Esc closes.
-    override func cancelOperation(_ sender: Any?) { dismiss() }
+    override func cancelOperation(_ sender: Any?) {
+        if ImageViewerOverlay.closeIfOpen() { return } // a picture over the panel goes first
+        dismiss()
+    }
 
     func windowDidResignKey(_ notification: Notification) {
         lastResignKeyAt = Date()

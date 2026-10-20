@@ -258,6 +258,7 @@ struct ChatView: View {
                     .onKeyPress(.escape) {
                         // Esc during a Japanese conversion cancels the conversion, not the panel.
                         if TextComposition.isActive { return .ignored }
+                        if ImageViewerOverlay.closeIfOpen() { return .handled }
                         if editingId != nil { cancelEdit(); return .handled }
                         onClose()
                         return .handled

@@ -129,6 +129,14 @@ enum RecordColors {
     static func label(_ year: String) -> Color {
         Color(hue: (hue[year] ?? 140) / 360, saturation: 0.62, brightness: 0.62)
     }
+    /// The same colour for Core Graphics drawing.
+    static func labelCG(_ year: String) -> CGColor {
+        #if os(iOS)
+        UIColor(hue: (hue[year] ?? 140) / 360, saturation: 0.62, brightness: 0.62, alpha: 1).cgColor
+        #else
+        NSColor(hue: (hue[year] ?? 140) / 360, saturation: 0.62, brightness: 0.62, alpha: 1).cgColor
+        #endif
+    }
 }
 
 /// The record itself: grooves, a sheen and the label. `angle` turns it.
@@ -575,17 +583,40 @@ enum JukeboxFormat {
 /// The lock screen / Control Center picture: the record with its label.
 @MainActor
 enum RecordArtwork {
+    /// Drawn with Core Graphics, with no text. It used SwiftUI's ImageRenderer, and on the
+    /// Mac rendering text that way could leave the app's shared glyph cache upside down —
+    /// chat text then showed with every character flipped (reported 2026-10-19).
     static func make(for e: Episode) -> MPMediaItemArtwork? {
-        let view = RecordDisc(episode: e)
-            .frame(width: 600, height: 600)
-            .padding(40)
-            .background(Color(red: 0.23, green: 0.16, blue: 0.12))
-        let r = ImageRenderer(content: view)
-        r.scale = 1
+        let side = 600
+        guard let ctx = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        let full = CGRect(x: 0, y: 0, width: side, height: side)
+        ctx.setFillColor(CGColor(srgbRed: 0.23, green: 0.16, blue: 0.12, alpha: 1))
+        ctx.fill(full)
+        let c = CGPoint(x: full.midX, y: full.midY)
+        let r = CGFloat(side) * 0.44
+        ctx.setFillColor(CGColor(gray: 0.07, alpha: 1))
+        ctx.fillEllipse(in: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2))
+        var groove = r * 0.97
+        var i = 0
+        ctx.setLineWidth(1.2)
+        while groove > r * 0.36 {
+            ctx.setStrokeColor(CGColor(gray: i % 2 == 0 ? 0.13 : 0.09, alpha: 1))
+            ctx.strokeEllipse(in: CGRect(x: c.x - groove, y: c.y - groove, width: groove * 2, height: groove * 2))
+            groove -= 6
+            i += 1
+        }
+        let lr = r * 0.34
+        ctx.setFillColor(RecordColors.labelCG(e.year))
+        ctx.fillEllipse(in: CGRect(x: c.x - lr, y: c.y - lr, width: lr * 2, height: lr * 2))
+        ctx.setFillColor(CGColor(gray: 0.05, alpha: 0.9))
+        ctx.fillEllipse(in: CGRect(x: c.x - 7, y: c.y - 7, width: 14, height: 14))
+        guard let cg = ctx.makeImage() else { return nil }
         #if os(iOS)
-        guard let img = r.uiImage else { return nil }
+        let img = UIImage(cgImage: cg)
         #else
-        guard let img = r.nsImage else { return nil }
+        let img = NSImage(cgImage: cg, size: NSSize(width: side, height: side))
         #endif
         return artwork(img)
     }

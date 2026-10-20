@@ -87,6 +87,25 @@ enum TextComposition {
         return (FirstResponderProbe.current() as? UITextInput)?.markedTextRange != nil
         #endif
     }
+
+    #if os(macOS)
+    /// Whether a conversion was open when the current Return went down — recorded before
+    /// the input method sees the key, so the Return that confirms a conversion never
+    /// sends even if SwiftUI only hears about it after the text is committed
+    /// (docs/composer-keys.md).
+    private(set) static var openAtReturn = false
+    private static var monitor: Any?
+
+    static func watchReturnKey() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { e in
+            if e.keyCode == 36 || e.keyCode == 76 { // Return, keypad Enter
+                MainActor.assumeIsolated { openAtReturn = isActive }
+            }
+            return e
+        }
+    }
+    #endif
 }
 
 #if os(iOS)
@@ -163,7 +182,7 @@ extension View {
         // Return belongs to the input method (it confirms the conversion).
         self
             .onKeyPress(keys: [.return], phases: .down) { press in
-                guard !TextComposition.isActive else { return .ignored }
+                guard !TextComposition.isActive, !TextComposition.openAtReturn else { return .ignored }
                 if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
                     guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else { return .ignored }
                     editor.insertNewlineIgnoringFieldEditor(nil)

@@ -13,7 +13,12 @@ import GameController
 /// Here the rule is order-independent: a conversion confirmed with Return inserts
 /// no "\n", while a plain Return does. So "\n" arriving from a hardware keyboard
 /// (without Shift) = send. The on-screen keyboard's return key keeps inserting a
-/// newline, as before.
+/// newline, as before. The rule for every platform: docs/composer-keys.md.
+///
+/// Hardware or on-screen is told by the key itself (2026-10-19): a hardware Return
+/// arrives as a key press (pressesBegan) right before its "\n"; the on-screen return
+/// key sends no press. (It used to be guessed from GameController and the keyboard's
+/// height, which was wrong with a floating keyboard or a keyboard case left attached.)
 struct ComposerTextView: UIViewRepresentable {
     @Binding var text: String
     @Binding var isFocused: Bool
@@ -38,7 +43,7 @@ struct ComposerTextView: UIViewRepresentable {
         tv.textContainer.lineFragmentPadding = 0
         tv.isScrollEnabled = false
         tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        tv.placeholderLabel.text = placeholder
+        tv.placeholder = placeholder
         tv.text = text
         tv.updatePlaceholder()
         return tv
@@ -48,7 +53,8 @@ struct ComposerTextView: UIViewRepresentable {
         context.coordinator.parent = self
         tv.onUpArrowWhenEmpty = onUpArrowWhenEmpty
         tv.onEscape = onEscape
-        tv.placeholderLabel.text = placeholder
+        tv.onCommandReturn = onSubmit
+        tv.placeholder = placeholder
         if tv.text != text {
             // Never fight an open conversion — except to clear after a send,
             // which must drop leftover marked text (voice input, IME).
@@ -85,7 +91,7 @@ struct ComposerTextView: UIViewRepresentable {
         }
 
         func textView(_ tv: UITextView, shouldChangeTextIn range: NSRange, replacementText repl: String) -> Bool {
-            guard repl == "\n", let ctv = tv as? ComposerUITextView, ctv.hardwareKeyboard, !ctv.shiftOnReturn else { return true }
+            guard repl == "\n", let ctv = tv as? ComposerUITextView, ctv.hardwareReturn, !ctv.shiftOnReturn else { return true }
             parent.onSubmit()
             return false
         }
@@ -99,6 +105,10 @@ final class ComposerUITextView: UITextView {
     let placeholderLabel = UILabel()
     var onUpArrowWhenEmpty: (() -> Bool)?
     var onEscape: (() -> Bool)?
+    /// ⌘Return on a hardware keyboard (sends, like Return).
+    var onCommandReturn: (() -> Void)?
+    /// The placeholder without the key hint.
+    var placeholder = "" { didSet { updatePlaceholder() } }
 
     override init(frame: CGRect, textContainer: NSTextContainer?) {
         super.init(frame: frame, textContainer: textContainer)
@@ -115,45 +125,41 @@ final class ComposerUITextView: UITextView {
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    func updatePlaceholder() { placeholderLabel.isHidden = !text.isEmpty || markedTextRange != nil }
+    func updatePlaceholder() {
+        placeholderLabel.isHidden = !text.isEmpty || markedTextRange != nil
+        // The key hint only when Return sends, i.e. with a hardware keyboard.
+        let hint = GCKeyboard.coalesced != nil && !placeholder.isEmpty ? "（Enter 送信・⇧Enter 改行）" : ""
+        if placeholderLabel.text != placeholder + hint { placeholderLabel.text = placeholder + hint }
+    }
 
-    /// Height of the on-screen keyboard last time it moved. With an external
-    /// keyboard only the small shortcut bar (or nothing) is shown.
-    private var softKeyboardHeight: CGFloat = 0
+    /// The Return being handled came from a hardware key (its press is under way).
+    private(set) var hardwareReturn = false
     private var returnShift = false
 
-    /// A hardware keyboard is in use: GameController says so, or the on-screen
-    /// keyboard is not up while we are editing (either signal is enough).
-    var hardwareKeyboard: Bool {
-        GCKeyboard.coalesced != nil || (isFirstResponder && softKeyboardHeight < 120)
-    }
-
-    /// Shift held with Return (Shift+Return = newline).
-    var shiftOnReturn: Bool {
-        if returnShift { return true }
-        guard let input = GCKeyboard.coalesced?.keyboardInput else { return false }
-        return input.button(forKeyCode: .leftShift)?.isPressed == true || input.button(forKeyCode: .rightShift)?.isPressed == true
-    }
+    /// Shift held with that Return (Shift+Return = newline).
+    var shiftOnReturn: Bool { returnShift }
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
         NotificationCenter.default.removeObserver(self)
         guard window != nil else { return }
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardFrame(_:)),
-                                               name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(keyboardFrame(_:)),
-                                               name: UIResponder.keyboardWillHideNotification, object: nil)
+        // Keep the key hint in step with a keyboard being attached or removed.
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardsChanged),
+                                               name: .GCKeyboardDidConnect, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardsChanged),
+                                               name: .GCKeyboardDidDisconnect, object: nil)
     }
 
-    @objc private func keyboardFrame(_ note: Notification) {
-        guard let end = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
-              let screen = window?.windowScene?.screen else { return }
-        softKeyboardHeight = note.name == UIResponder.keyboardWillHideNotification
-            ? 0 : max(0, screen.bounds.intersection(end).height)
-    }
+    @objc private func keyboardsChanged() { DispatchQueue.main.async { self.updatePlaceholder() } }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         if let key = presses.first?.key, key.keyCode == .keyboardReturnOrEnter || key.keyCode == .keypadEnter {
+            // ⌘Return sends (no "\n" is inserted for it); never during a conversion.
+            if key.modifierFlags.contains(.command) {
+                if markedTextRange == nil { onCommandReturn?() }
+                return
+            }
+            hardwareReturn = true
             returnShift = key.modifierFlags.contains(.shift)
         }
         // ↑ / Esc belong to the input method while a conversion is open.
@@ -170,10 +176,16 @@ final class ComposerUITextView: UITextView {
         super.pressesBegan(presses, with: event)
     }
 
+    override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        super.pressesCancelled(presses, with: event)
+        hardwareReturn = false
+        returnShift = false
+    }
+
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         super.pressesEnded(presses, with: event)
         if presses.contains(where: { $0.key?.keyCode == .keyboardReturnOrEnter || $0.key?.keyCode == .keypadEnter }) {
-            DispatchQueue.main.async { self.returnShift = false }
+            DispatchQueue.main.async { self.returnShift = false; self.hardwareReturn = false }
         }
     }
 

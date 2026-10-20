@@ -214,12 +214,24 @@ struct ReconnectBanner: View {
 }
 
 extension View {
-    /// Full screen on iPhone / iPad, a sheet in the Mac panel.
-    func imageViewer(_ item: Binding<ImageViewerItem?>) -> some View {
+    /// Full screen on iPhone / iPad; on the Mac, laid over the panel itself. It was a sheet,
+    /// a separate window bigger than the narrow panel (520 × 480), and with the panel
+    /// floating above other windows it could end up behind it, drawn wrongly — the chat's
+    /// text showed upside down (reported 2026-10-19).
+    @ViewBuilder func imageViewer(_ item: Binding<ImageViewerItem?>) -> some View {
         #if os(iOS)
         fullScreenCover(item: item) { ImageViewer(item: $0) }
         #else
-        sheet(item: item) { ImageViewer(item: $0).frame(minWidth: 520, minHeight: 480) }
+        overlay {
+            if let it = item.wrappedValue {
+                ImageViewer(item: it, onClose: { item.wrappedValue = nil })
+                    .transition(.opacity)
+                    .onAppear { ImageViewerOverlay.open += 1 }
+                    .onDisappear { ImageViewerOverlay.open -= 1 }
+                    .onReceive(NotificationCenter.default.publisher(for: .closeImageViewer)) { _ in item.wrappedValue = nil }
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: item.wrappedValue?.id)
         #endif
     }
 }
@@ -381,7 +393,13 @@ struct PostImages: View {
 /// Full screen, swipe between images, pinch to zoom.
 struct ImageViewer: View {
     let item: ImageViewerItem
-    @Environment(\.dismiss) private var dismiss
+    /// Set when laid over a view (the Mac); otherwise it was presented and dismisses.
+    var onClose: (() -> Void)? = nil
+    @Environment(\.dismiss) private var environmentDismiss
+
+    private func dismiss() {
+        if let onClose { onClose() } else { environmentDismiss() }
+    }
     @State private var index = 0
 
     var body: some View {
@@ -476,6 +494,20 @@ private struct ZoomableImage: View {
 extension Notification.Name {
     /// The mouse's back button was pressed over the timeline (posted by the Mac panel).
     static let timelineBack = Notification.Name("fm.backspace.bguru.timelineBack")
+    /// Esc while a picture is open over the panel: close the picture, not the panel.
+    static let closeImageViewer = Notification.Name("fm.backspace.bguru.closeImageViewer")
+}
+
+/// How many pictures are open over the panel (Esc closes them first).
+@MainActor
+enum ImageViewerOverlay {
+    static var open = 0
+    /// Closes an open picture; false when none was open.
+    static func closeIfOpen() -> Bool {
+        guard open > 0 else { return false }
+        NotificationCenter.default.post(name: .closeImageViewer, object: nil)
+        return true
+    }
 }
 #endif
 
