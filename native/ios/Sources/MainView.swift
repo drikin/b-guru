@@ -86,7 +86,10 @@ struct MainView: View {
         Picker("表示", selection: $tab.animation(.easeOut(duration: 0.2))) {
             Text("タイムライン").tag(MainTab.timeline)
             Text(store.unreadCount > 0 ? "チャット ●" : "チャット").tag(MainTab.chat)
-            if jukeboxOn { Text("📻").accessibilityLabel("ジュークボックス").tag(MainTab.jukebox) }
+            // Plain Text only: a segmented picker becomes a UISegmentedControl, which takes a
+            // string or an image per segment — a modified Text (accessibilityLabel) made UIKit
+            // throw during layout and the app crashed at launch (0.2.16–0.2.17).
+            if jukeboxOn { Text("📻").tag(MainTab.jukebox) }
         }
         .pickerStyle(.segmented)
         .frame(width: jukeboxOn ? 280 : 240)
