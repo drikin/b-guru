@@ -62,8 +62,8 @@ struct MainPanelView: View {
         .onChange(of: pin.focusRequest) { _, _ in tab = .chat }
         .onChange(of: timeline.openThread) { _, id in if id != nil { tab = .timeline } }
         .background {
-            Button("") { tab = .chat }.keyboardShortcut("1", modifiers: .command).hidden()
-            Button("") { tab = .timeline }.keyboardShortcut("2", modifiers: .command).hidden()
+            Button("") { tab = .timeline }.keyboardShortcut("1", modifiers: .command).hidden()
+            Button("") { tab = .chat }.keyboardShortcut("2", modifiers: .command).hidden()
             if jukeboxOn { Button("") { tab = .jukebox }.keyboardShortcut("3", modifiers: .command).hidden() }
         }
     }
@@ -81,25 +81,13 @@ struct PanelTabSwitch: View {
     private var jukeboxOn: Bool { store.capabilities?.jukeboxEnabled ?? false }
 
     var body: some View {
-        if jukeboxOn {
-            // Three tabs: segments sized to their words (the system control makes them all
-            // as wide as the widest and widened the panel). A radio (📻, drikin 2026-10-19) keeps it
-            // narrow and stays apart from the chat's own 💬｜🏠 (text｜room) switch.
-            PanelTabs(selection: $pin.tab, items: [
-                (.chat, store.unreadCount > 0 ? "チャット ●" : "チャット", "チャット（⌘1）"),
-                (.timeline, "タイムライン", "タイムライン（⌘2）"),
-                (.jukebox, "📻", "ジュークボックス（⌘3）"),
-            ])
-        } else {
-            Picker("表示", selection: $pin.tab) {
-                Text(store.unreadCount > 0 ? "チャット ●" : "チャット").tag(MainTab.chat)
-                Text("タイムライン").tag(MainTab.timeline)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .help("チャット（⌘1）／タイムライン（⌘2）")
-        }
+        // 📰 タイムライン ・ 💬 チャット ・ 📻 プレイヤー — the same order and marks in every app
+        // (drikin 2026-10-20); segments sized to their marks (the system control made them
+        // all as wide as the widest and widened the panel).
+        PanelTabs(selection: $pin.tab, items: [
+            (.timeline, "📰", "タイムライン（⌘1）"),
+            (.chat, store.unreadCount > 0 ? "💬●" : "💬", "チャット（⌘2）"),
+        ] + (jukeboxOn ? [(.jukebox, "📻", "プレイヤー（⌘3）")] : []))
     }
 }
 

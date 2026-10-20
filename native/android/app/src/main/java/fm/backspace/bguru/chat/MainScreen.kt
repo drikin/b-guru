@@ -54,7 +54,8 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
 
     @Composable
     fun Segments(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
-        if (labels.size > 2) { CompactSegments(labels, selected, onSelect); return }
+        // Marks, not words now: segments sized to them, two or three (drikin 2026-10-20).
+        if (labels.size >= 2) { CompactSegments(labels, selected, onSelect); return }
         SingleChoiceSegmentedButtonRow(Modifier.width(250.dp)) {
             labels.forEachIndexed { i, label ->
                 SegmentedButton(selected = selected == i, onClick = { onSelect(i) },
@@ -78,7 +79,7 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
                     }
                     VerticalDivider()
                     val switch: (@Composable () -> Unit)? = if (jb == null) null else {
-                        { Segments(listOf("チャット", "ジュークボックス"), right) { right = it } }
+                        { Segments(listOf(if (store.unreadCount > 0) "💬•" else "💬", "📻"), right) { right = it } }
                     }
                     if (jb != null && right == 1) JukeboxScreen(jb, store.capabilities, switch, onOpenThread = { timeline.openThread = it })
                     else PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch) }
@@ -115,8 +116,9 @@ private fun Pages(
     // The playback notification / the mini player: show the jukebox.
     LaunchedEffect(jb?.showTab, count) { if (jb?.showTab == true && count == 3) { pager.animateScrollToPage(2); jb.showTab = false; jb.revealTick++ } }
 
-    val labels = if (jb != null) listOf("タイムライン", if (store.unreadCount > 0) "チャット•" else "チャット", "📻")
-                 else listOf("タイムライン", if (store.unreadCount > 0) "チャット•" else "チャット")
+    // 📰 タイムライン ・ 💬 チャット ・ 📻 プレイヤー — the same order and marks in every app (drikin 2026-10-20).
+    val chatLabel = if (store.unreadCount > 0) "💬•" else "💬"
+    val labels = if (jb != null) listOf("📰", chatLabel, "📻") else listOf("📰", chatLabel)
     val switch: @Composable () -> Unit = {
         segments(labels, pager.currentPage) { i -> scope.launch { pager.animateScrollToPage(i) } }
     }

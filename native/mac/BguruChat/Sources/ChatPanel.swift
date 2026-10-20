@@ -114,9 +114,9 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         // The cheap tracker first; the view lookup only once a swipe has fired (it ran on
         // every scroll event and made all scrolling heavier — drikin 2026-10-19).
         if event.type == .scrollWheel, let step = swipe.handle(event), !overSidewaysScroller(event) {
-            // チャット → タイムライン → 📻, one step per swipe (drikin 2026-10-19: with three
+            // 📰 → 💬 → 📻 (the tabs' order), one step per swipe (drikin 2026-10-19: with three
             // tabs the swipe only went between the first two).
-            var order: [MainTab] = [.chat, .timeline]
+            var order: [MainTab] = [.timeline, .chat]
             if store.capabilities?.jukeboxEnabled ?? false { order.append(.jukebox) }
             if let i = order.firstIndex(of: pin.tab) {
                 let next = max(0, min(order.count - 1, i + step))

@@ -76,24 +76,23 @@ struct MainView: View {
     /// iPad: the left column switches between the timeline and the jukebox.
     private var leftPicker: some View {
         Picker("表示", selection: $leftTab.animation(.easeOut(duration: 0.2))) {
-            Text("タイムライン").tag(MainTab.timeline)
-            Text("📻 ジュークボックス").tag(MainTab.jukebox)
+            Text("📰").tag(MainTab.timeline)
+            Text("📻").tag(MainTab.jukebox)
         }
         .pickerStyle(.segmented)
-        .frame(width: 260)
+        .frame(width: 130)
     }
 
+    /// 📰 タイムライン ・ 💬 チャット ・ 📻 プレイヤー — the same order and marks in every app
+    /// (drikin 2026-10-20). Plain Text segments (a segmented picker is a UISegmentedControl).
     private var picker: some View {
         Picker("表示", selection: $tab.animation(.easeOut(duration: 0.2))) {
-            Text("タイムライン").tag(MainTab.timeline)
-            Text(store.unreadCount > 0 ? "チャット ●" : "チャット").tag(MainTab.chat)
-            // Plain Text only: a segmented picker becomes a UISegmentedControl, which takes a
-            // string or an image per segment — a modified Text (accessibilityLabel) made UIKit
-            // throw during layout and the app crashed at launch (0.2.16–0.2.17).
+            Text("📰").tag(MainTab.timeline)
+            Text(store.unreadCount > 0 ? "💬●" : "💬").tag(MainTab.chat)
             if jukeboxOn { Text("📻").tag(MainTab.jukebox) }
         }
         .pickerStyle(.segmented)
-        .frame(width: jukeboxOn ? 280 : 240)
+        .frame(width: jukeboxOn ? 180 : 130)
         .id(jukeboxOn) // a new control for a different number of segments, not an update
     }
 }

@@ -465,7 +465,7 @@ struct RoomModeIcons: View {
         let inRoom = room.mode == .room
         HStack(spacing: 2) {
             segment(selected: !inRoom, help: "テキスト") {
-                Image(systemName: "text.bubble")
+                Image(systemName: "list.bullet") // not a bubble: 💬 is the chat tab itself
             } action: {
                 Task { await room.toText() }
             }
