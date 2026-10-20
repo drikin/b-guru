@@ -38,6 +38,7 @@ object Push {
     private const val CH_MENTION = "mention"
     private const val CH_CHAT = "chat"
     private const val CH_REPLY = "reply"
+    private const val CH_TIMELINE = "timeline"
     /** All "new messages" pushes share one rolling notification. */
     private const val NEW_MESSAGES_ID = 1
     private const val PREFS = "push"
@@ -65,15 +66,18 @@ object Push {
             NotificationChannel(CH_MENTION, "メンション", NotificationManager.IMPORTANCE_HIGH).apply { description = "あなた宛ての @メンション" },
             NotificationChannel(CH_CHAT, "新着メッセージ", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "チャットの新着（まとめて 1 件）" },
             NotificationChannel(CH_REPLY, "投稿への返信", NotificationManager.IMPORTANCE_DEFAULT),
+            NotificationChannel(CH_TIMELINE, "タイムラインの新着", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "タイムラインの新しい投稿（コメントは除く）" },
         ))
     }
 
     fun notifyMode(context: Context) = prefs(context).getString("notifyMode", "all") ?: "all"
     fun quietHours(context: Context) = prefs(context).getBoolean("quietHours", true)
+    /** New timeline posts (off by default; the server keeps its own copy too). */
+    fun notifyTimeline(context: Context) = prefs(context).getBoolean("notifyTimeline", false)
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    fun setSettings(context: Context, mode: String, quiet: Boolean) {
-        prefs(context).edit().putString("notifyMode", mode).putBoolean("quietHours", quiet).apply()
+    fun setSettings(context: Context, mode: String, quiet: Boolean, timeline: Boolean = notifyTimeline(context)) {
+        prefs(context).edit().putString("notifyMode", mode).putBoolean("quietHours", quiet).putBoolean("notifyTimeline", timeline).apply()
         App.session(context).api?.let { register(context, it) }
     }
 
@@ -83,7 +87,7 @@ object Push {
         val app = context.applicationContext
         FirebaseMessaging.getInstance().token.addOnSuccessListener { t ->
             prefs(app).edit().putString("fcmToken", t).apply()
-            scope.launch { runCatching { api.registerPush(t, notifyMode(app), quietHours(app)) } }
+            scope.launch { runCatching { api.registerPush(t, notifyMode(app), quietHours(app), notifyTimeline(app)) } }
         }
     }
 
@@ -122,12 +126,8 @@ object Push {
         if ((kind == "chat_mention" || kind == "chat_new") && session.store?.isVisible == true) return
         val api = session.api ?: TokenStore.load(context)?.let(::ApiClient) ?: return
 
-        var title = if (kind == "reply") "B-guru" else "B-guru チャット"
-        var text = when (kind) {
-            "chat_mention" -> "あなたへのメンションがあります"
-            "chat_new" -> "新着メッセージがあります"
-            else -> "あなたの投稿に返信がありました"
-        }
+        var title = PushContent.defaultTitle(kind)
+        var text = PushContent.defaultText(kind)
         if (messageId != null) {
             runBlocking {
                 withTimeoutOrNull(8000) { runCatching { api.chatMessage(messageId) }.getOrNull() }
@@ -136,13 +136,22 @@ object Push {
                 text = m.body
             }
         }
+        if (kind == PushContent.TIMELINE_NEW && postId != null) {
+            // Only ids come through FCM: fetch the post with this device's own token.
+            runBlocking {
+                withTimeoutOrNull(8000) { runCatching { api.thread(postId).post }.getOrNull() }
+            }?.let { p ->
+                title = PushContent.timelineTitle(p.authorName)
+                text = PushContent.timelineText(p.text)
+            }
+        }
 
         val open = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             if (messageId != null) putExtra(EXTRA_MESSAGE_ID, messageId)
         }
-        val tap = if (kind == "reply" && postId != null) {
-            // A reply to your post: open the thread in the app's timeline.
+        val tap = if (PushContent.opensThread(kind) && postId != null) {
+            // A reply to your post / a new post: open the thread in the app's timeline.
             val thread = Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 putExtra(EXTRA_POST_ID, postId)
@@ -151,12 +160,14 @@ object Push {
         } else {
             PendingIntent.getActivity(context, (messageId ?: 0L).toInt(), open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         }
-        val notifId = when (kind) {
-            "chat_new" -> NEW_MESSAGES_ID
-            "chat_mention" -> (messageId ?: 0L).toInt() + 100
-            else -> (postId ?: 0L).toInt() + 1_000_000
+        val notifId = PushContent.notificationId(kind, messageId, postId, NEW_MESSAGES_ID)
+        val channel = when (kind) {
+            "chat_mention" -> CH_MENTION
+            "chat_new" -> CH_CHAT
+            PushContent.TIMELINE_NEW -> CH_TIMELINE
+            else -> CH_REPLY
         }
-        val b = NotificationCompat.Builder(context, when (kind) { "chat_mention" -> CH_MENTION; "chat_new" -> CH_CHAT; else -> CH_REPLY })
+        val b = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notification)
             .setColor(0xFF16A34A.toInt())
             .setContentTitle(title)
@@ -164,21 +175,21 @@ object Push {
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setContentIntent(tap)
             .setAutoCancel(true)
-            .setGroup("chat")
-            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setGroup(if (kind == PushContent.TIMELINE_NEW) "timeline" else "chat")
+            .setCategory(if (kind == PushContent.TIMELINE_NEW) NotificationCompat.CATEGORY_SOCIAL else NotificationCompat.CATEGORY_MESSAGE)
             // Lock screen: the generic text only (the message shows once unlocked).
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(
-                NotificationCompat.Builder(context, CH_CHAT)
+                NotificationCompat.Builder(context, channel)
                     .setSmallIcon(R.drawable.ic_notification)
                     .setColor(0xFF16A34A.toInt())
-                    .setContentTitle(if (kind == "reply") "B-guru" else "B-guru チャット")
-                    .setContentText(if (kind == "chat_mention") "あなたへのメンションがあります" else "新着があります")
+                    .setContentTitle(PushContent.defaultTitle(kind))
+                    .setContentText(PushContent.publicText(kind))
                     .build()
             )
         // Reply / ❤️ need "unlock first", which Android enforces only from 12 (API 31).
         // Older phones get no actions at all; the receiver also refuses while locked.
-        if (messageId != null && kind != "reply" && Build.VERSION.SDK_INT >= 31) {
+        if (messageId != null && (kind == "chat_mention" || kind == "chat_new") && Build.VERSION.SDK_INT >= 31) {
             b.addAction(replyAction(context, messageId, notifId))
             if (kind == "chat_mention") b.addAction(heartAction(context, messageId, notifId))
         }
@@ -205,6 +216,53 @@ object Push {
             .putExtra(EXTRA_MESSAGE_ID, messageId).putExtra("notif", notifId)
         val pi = PendingIntent.getBroadcast(context, notifId * 2 + 1, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         return NotificationCompat.Action.Builder(0, "❤️", pi).setAuthenticationRequired(true).build()
+    }
+}
+
+/** The pure parts of a push: texts, ids, where a tap goes (unit-tested). */
+object PushContent {
+    const val TIMELINE_NEW = "timeline_new"
+    const val TIMELINE_TEXT_MAX = 240
+
+    fun defaultTitle(kind: String) = when (kind) {
+        "reply" -> "B-guru"
+        TIMELINE_NEW -> "B-guru タイムライン"
+        else -> "B-guru チャット"
+    }
+
+    fun defaultText(kind: String) = when (kind) {
+        "chat_mention" -> "あなたへのメンションがあります"
+        "chat_new" -> "新着メッセージがあります"
+        TIMELINE_NEW -> "新しい投稿があります"
+        else -> "あなたの投稿に返信がありました"
+    }
+
+    /** Lock screen: never the content itself. */
+    fun publicText(kind: String) = when (kind) {
+        "chat_mention" -> "あなたへのメンションがあります"
+        TIMELINE_NEW -> "新しい投稿があります"
+        else -> "新着があります"
+    }
+
+    fun timelineTitle(authorName: String?): String =
+        authorName?.trim()?.takeIf { it.isNotEmpty() }?.let { "$it が投稿しました" } ?: defaultTitle(TIMELINE_NEW)
+
+    /** The start of the post (photo-only posts have no text: the generic line). */
+    fun timelineText(text: String?): String {
+        val t = text?.trim().orEmpty()
+        if (t.isEmpty()) return defaultText(TIMELINE_NEW)
+        return if (t.length > TIMELINE_TEXT_MAX) t.take(TIMELINE_TEXT_MAX).trimEnd() + "…" else t
+    }
+
+    /** A tap opens the post's thread in the timeline. */
+    fun opensThread(kind: String) = kind == "reply" || kind == TIMELINE_NEW
+
+    /** One notification per post / mention; all "new messages" share one. */
+    fun notificationId(kind: String, messageId: Long?, postId: Long?, newMessagesId: Int): Int = when (kind) {
+        "chat_new" -> newMessagesId
+        "chat_mention" -> (messageId ?: 0L).toInt() + 100
+        TIMELINE_NEW -> (postId ?: 0L).toInt() + 3_000_000
+        else -> (postId ?: 0L).toInt() + 1_000_000
     }
 }
 

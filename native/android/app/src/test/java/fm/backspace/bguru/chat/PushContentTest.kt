@@ -1,0 +1,51 @@
+package fm.backspace.bguru.chat
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class PushContentTest {
+    @Test fun timelineTitleUsesAuthorOrFallback() {
+        assertEquals("mazzo が投稿しました", PushContent.timelineTitle("mazzo"))
+        assertEquals("mazzo が投稿しました", PushContent.timelineTitle("  mazzo "))
+        assertEquals("B-guru タイムライン", PushContent.timelineTitle(null))
+        assertEquals("B-guru タイムライン", PushContent.timelineTitle(" "))
+    }
+
+    @Test fun timelineTextIsTrimmedToTheStart() {
+        assertEquals("こんにちは", PushContent.timelineText(" こんにちは\n"))
+        assertEquals("新しい投稿があります", PushContent.timelineText(""))
+        assertEquals("新しい投稿があります", PushContent.timelineText(null))
+        val long = "あ".repeat(300)
+        val out = PushContent.timelineText(long)
+        assertEquals(PushContent.TIMELINE_TEXT_MAX + 1, out.length)
+        assertTrue(out.endsWith("…"))
+        assertEquals("あ".repeat(240), PushContent.timelineText("あ".repeat(240)))
+    }
+
+    @Test fun defaultsPerKind() {
+        assertEquals("B-guru タイムライン", PushContent.defaultTitle("timeline_new"))
+        assertEquals("新しい投稿があります", PushContent.defaultText("timeline_new"))
+        assertEquals("新しい投稿があります", PushContent.publicText("timeline_new"))
+        assertEquals("B-guru", PushContent.defaultTitle("reply"))
+        assertEquals("B-guru チャット", PushContent.defaultTitle("chat_new"))
+        assertEquals("新着メッセージがあります", PushContent.defaultText("chat_new"))
+        assertEquals("あなたの投稿に返信がありました", PushContent.defaultText("reply"))
+    }
+
+    @Test fun tapOpensThreadForPosts() {
+        assertTrue(PushContent.opensThread("timeline_new"))
+        assertTrue(PushContent.opensThread("reply"))
+        assertFalse(PushContent.opensThread("chat_new"))
+        assertFalse(PushContent.opensThread("chat_mention"))
+    }
+
+    @Test fun notificationIdsArePerPostAndDistinct() {
+        assertEquals(1, PushContent.notificationId("chat_new", 5, null, 1))
+        assertEquals(105, PushContent.notificationId("chat_mention", 5, null, 1))
+        assertEquals(1_000_042, PushContent.notificationId("reply", null, 42, 1))
+        assertEquals(3_000_042, PushContent.notificationId("timeline_new", null, 42, 1))
+        assertTrue(PushContent.notificationId("timeline_new", null, 42, 1) != PushContent.notificationId("timeline_new", null, 43, 1))
+    }
+}

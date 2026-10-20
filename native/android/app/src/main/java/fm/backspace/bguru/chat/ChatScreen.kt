@@ -425,6 +425,7 @@ private fun ChatMenu(onSignOut: () -> Unit) {
     var open by remember { mutableStateOf(false) }
     var notifyAll by remember { mutableStateOf(Push.notifyMode(context) == "all") }
     var quiet by remember { mutableStateOf(Push.quietHours(context)) }
+    var timeline by remember { mutableStateOf(Push.notifyTimeline(context)) }
     IconButton(onClick = { open = true }) { Icon(Icons.Default.MoreVert, contentDescription = "メニュー") }
     DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
         DropdownMenuItem(
@@ -441,6 +442,16 @@ private fun ChatMenu(onSignOut: () -> Unit) {
             text = { Text("静かな時間（0:00〜7:00）") },
             leadingIcon = { if (quiet) Icon(Icons.Default.Check, null) else Spacer(Modifier.size(24.dp)) },
             onClick = { quiet = !quiet; Push.setSettings(context, if (notifyAll) "all" else "mentions", quiet) },
+        )
+        DropdownMenuItem(
+            text = {
+                Column {
+                    Text("タイムラインの新着")
+                    Text("新しい投稿を知らせる（コメントは除く）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            leadingIcon = { if (timeline) Icon(Icons.Default.Check, null) else Spacer(Modifier.size(24.dp)) },
+            onClick = { timeline = !timeline; Push.setSettings(context, if (notifyAll) "all" else "mentions", quiet, timeline) },
         )
         HorizontalDivider()
         DropdownMenuItem(text = { Text("B-guru をブラウザで開く") }, onClick = {

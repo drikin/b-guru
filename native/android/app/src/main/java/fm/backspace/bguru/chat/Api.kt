@@ -123,10 +123,11 @@ class ApiClient(val token: String) {
     }
 
     /** FCM registration token for this device. */
-    suspend fun registerPush(fcmToken: String, notifyMode: String, quietHours: Boolean) {
+    suspend fun registerPush(fcmToken: String, notifyMode: String, quietHours: Boolean, notifyTimeline: Boolean) {
         send(request("POST", "/api/agent/devices/push", buildJsonObject {
             put("token", fcmToken); put("environment", "fcm"); put("platform", "android")
             put("notify_mode", notifyMode); put("quiet_hours", quietHours)
+            put("notify_timeline", notifyTimeline)
         }))
     }
 
