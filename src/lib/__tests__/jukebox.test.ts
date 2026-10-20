@@ -37,7 +37,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-import { jukeboxEnabledFor, jukeboxForApp, postDailyIfDue } from "../jukebox";
+import { jukeboxBrokenClient, jukeboxEnabledFor, jukeboxForApp, postDailyIfDue } from "../jukebox";
 
 describe("daily post", () => {
   beforeEach(() => {
@@ -83,5 +83,14 @@ describe("rollout flag", () => {
     process.env.JUKEBOX_ALLOW_EMAILS = "*";
     expect(jukeboxEnabledFor("c@x.jp")).toBe(true);
     expect(jukeboxEnabledFor(null)).toBe(false);
+  });
+});
+
+describe("iOS builds that crash with the jukebox on", () => {
+  it("are 0.2.16 to 0.2.20 only", () => {
+    for (const v of ["0.2.16", "0.2.17", "0.2.18", "0.2.19", "0.2.20"]) expect(jukeboxBrokenClient(`BguruChatMac/${v}`)).toBe(true);
+    for (const v of ["0.2.15", "0.2.21", "0.2.22", "0.2.200", "0.3.18", "0.3.27"]) expect(jukeboxBrokenClient(`BguruChatMac/${v}`)).toBe(false);
+    expect(jukeboxBrokenClient("BguruChatAndroid/0.3.17")).toBe(false);
+    expect(jukeboxBrokenClient(null)).toBe(false);
   });
 });

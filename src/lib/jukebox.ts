@@ -25,6 +25,13 @@ export function jukeboxEnabledFor(email: string | null | undefined): boolean {
   return raw.split(",").map((s) => s.trim().toLowerCase()).includes(email.trim().toLowerCase());
 }
 
+/** iOS 0.2.16–0.2.20 crash at launch when the jukebox is on (a page inserted into a
+ *  paged TabView mid-layout; fixed in 0.2.21). They send "BguruChatMac/0.2.x" — the Mac
+ *  app is 0.3.x and never had these numbers. Never tell them it is on. */
+export function jukeboxBrokenClient(userAgent: string | null | undefined): boolean {
+  return /^BguruChatMac\/0\.2\.(1[6-9]|20)(?![0-9])/.test(userAgent ?? "");
+}
+
 // ── 取り込み ─────────────────────────────────────────────────────
 
 type G = { __jukebox?: { etag?: string; lastModified?: string; syncedAt?: number; timer?: ReturnType<typeof setInterval>; busy?: boolean } };
