@@ -146,12 +146,14 @@ describe("日付と順位表", () => {
     expect(weekStart(jst("2026-10-25T23:59:59"))).toBe("2026-10-19");
   });
   it("1 回の記録が載る順位表（先頭がその遊び方の順位表）", () => {
-    expect(boardsFor("daily", "2026-10-21", jst("2026-10-22T01:00:00"))).toEqual(["d:2026-10-21", "all", "all:daily"]);
-    expect(boardsFor("free", null, jst("2026-10-21T12:00:00"))).toEqual(["w:2026-10-19", "all", "all:free"]);
-    expect(boardFor("today", null, jst("2026-10-21T12:00:00"))).toBe("d:2026-10-21");
-    expect(boardFor("week", null, jst("2026-10-21T12:00:00"))).toBe("w:2026-10-19");
-    expect(boardFor("all", "free")).toBe("all:free");
-    expect(boardFor("all", null)).toBe("all");
+    // 順位表はルールの版ごと（v2 から頭に "v2:"。v1 の記録は表に出ない）
+    expect(boardsFor("daily", "2026-10-21", jst("2026-10-22T01:00:00"))).toEqual(["v2:d:2026-10-21", "v2:all", "v2:all:daily"]);
+    expect(boardsFor("free", null, jst("2026-10-21T12:00:00"))).toEqual(["v2:w:2026-10-19", "v2:all", "v2:all:free"]);
+    expect(boardsFor("daily", "2026-10-21", 0, 1)).toEqual(["d:2026-10-21", "all", "all:daily"]);
+    expect(boardFor("today", null, jst("2026-10-21T12:00:00"))).toBe("v2:d:2026-10-21");
+    expect(boardFor("week", null, jst("2026-10-21T12:00:00"))).toBe("v2:w:2026-10-19");
+    expect(boardFor("all", "free")).toBe("v2:all:free");
+    expect(boardFor("all", null)).toBe("v2:all");
   });
   it("チャットの 1 行・週の王者の文", () => {
     expect(announceText("leader", "まつお", 2980, 2100, 1)).toBe("🐶 まつおさんが「締め切りダッシュ」今日の 1 位に！ 2,980 点（2,100m）");

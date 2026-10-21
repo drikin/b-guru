@@ -7,7 +7,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { traceRun } from "../minigame/sim";
+import { ENGINE_VERSION, traceRun } from "../minigame/sim";
 import { botRun } from "./minigame-bot";
 
 type PW = typeof import("playwright");
@@ -52,12 +52,67 @@ for (const name of ["chromium", "webkit"] as const) {
           .bguruMinigameEngine;
         return { v: eng.engine_version, traces: cs.map((c) => eng.traceRun(c.seed, c.ch, c.inputs)) };
       }, cases);
-      expect(got.v).toBe(1);
+      expect(got.v).toBe(ENGINE_VERSION);
       for (let i = 0; i < cases.length; i++) {
         expect(got.traces[i], `${name} case ${i}`).toEqual(nodeTraces[i]);
       }
-      // 長い記録も含まれている（3 分ほど走る）
-      expect(Math.max(...nodeTraces.map((t) => t.result.ticks))).toBeGreaterThan(60 * 150);
+      // 長い記録も含まれている（最後の区間まで走る）
+      expect(Math.max(...nodeTraces.map((t) => t.result.ticks))).toBeGreaterThan(60 * 100);
+    }, 60_000);
+  });
+}
+
+// ごく短いタップ（pointerdown と pointerup が同じ瞬間）でも跳ぶ。記録には押しと離しが別の刻みで残る。
+for (const bname of ["chromium", "webkit"] as const) {
+  const browserType = pw?.[bname];
+  let installed = false;
+  try {
+    installed = !!browserType && existsSync(browserType.executablePath());
+  } catch {
+    installed = false;
+  }
+  (installed ? describe : describe.skip)(`ごく短いタップ（${bname}）`, () => {
+    it("押して離すのが同じ瞬間でもジャンプし、記録は押し→次の刻みで離し", async () => {
+      const browser = await browserType!.launch();
+      try {
+        const page = await browser.newPage({ viewport: { width: 393, height: 400 } });
+        await page.setContent('<!doctype html><html><body><div id="minigame"></div></body></html>');
+        // アプリの代わり: 発行の頼みにその場で答える
+        await page.evaluate(() => {
+          window.addEventListener("bguru-minigame", (e: Event) => {
+            const m = (e as CustomEvent).detail as { type: string; req?: number; mode?: string; character?: string };
+            const g = (window as unknown as { bguruMinigame: { receive: (x: unknown) => void } }).bguruMinigame;
+            if (m.type === "request_play")
+              setTimeout(() => g.receive({ type: "state", play: { req: m.req, play_id: 1, seed: 4242, mode: m.mode, character: m.character, engine_version: 2, date: null, expires_at: "" } }), 0);
+          });
+        });
+        await page.addScriptTag({ content: js });
+        await page.click('button[data-act="start"][data-arg="free"]');
+        await page.waitForTimeout(500);
+        const st = () =>
+          page.evaluate(() => (window as unknown as { bguruMinigame: { game: { debugState: () => { phase: string; h: number; inputs: number[]; tick: number } } } }).bguruMinigame.game.debugState());
+        expect((await st()).phase).toBe("playing");
+        // 同じ瞬間に押して離す（1ms のタップ）
+        await page.evaluate(() => {
+          const el = document.querySelector(".mg-stage") as HTMLElement;
+          const r = el.getBoundingClientRect();
+          const o = { bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, pointerId: 1, pointerType: "touch", isPrimary: true, button: 0 };
+          el.dispatchEvent(new PointerEvent("pointerdown", o));
+          window.dispatchEvent(new PointerEvent("pointerup", o));
+        });
+        let maxH = 0;
+        for (let i = 0; i < 20; i++) {
+          await page.waitForTimeout(16);
+          maxH = Math.max(maxH, (await st()).h);
+        }
+        expect(maxH).toBeGreaterThan(0);
+        const ins = (await st()).inputs;
+        expect(ins.length).toBe(2);
+        expect(ins[0] & 3).toBe(1);
+        expect(ins[1]).toBe(1 * 4 + 0); // 次の刻みで離す
+      } finally {
+        await browser.close();
+      }
     }, 60_000);
   });
 }

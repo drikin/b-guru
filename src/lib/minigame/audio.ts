@@ -2,7 +2,7 @@
  * ジュークボックス・ボイスルームの音を止めないよう、使えるなら navigator.audioSession.type = "ambient"
  * （他の音と混ぜる）にし、音量は控えめ。消音は設定（localStorage）。 */
 
-export type SfxName = "jump" | "jump2" | "sd" | "coffee" | "lamp" | "money" | "hit" | "choose" | "powerup" | "dead" | "revive" | "slow" | "highscore" | "select";
+export type SfxName = "jump" | "jump2" | "sd" | "coffee" | "lamp" | "money" | "hit" | "choose" | "powerup" | "dead" | "revive" | "slow" | "highscore" | "select" | "dive";
 
 const MUTE_KEY = "bguru-minigame-mute";
 const MASTER = 0.16;
@@ -153,6 +153,9 @@ export class Sfx {
         break;
       case "highscore":
         [523, 659, 784, 1047, 784, 1047].forEach((f, i) => this.tone(f, i * 0.08, i === 5 ? 0.25 : 0.08, { vol: 0.3 }));
+        break;
+      case "dive":
+        this.tone(900, 0, 0.08, { to: 220, vol: 0.3 });
         break;
       case "select":
         this.tone(660, 0, 0.04, { vol: 0.2 });

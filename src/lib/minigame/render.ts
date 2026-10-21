@@ -8,13 +8,17 @@ import {
   CHARACTERS,
   FP,
   K_BILL,
+  K_BOOM,
   K_BOX,
   K_COFFEE,
+  K_DRONE,
   K_LAMP,
   K_MIC,
   K_MONEY,
+  K_PIT,
   K_SD,
   K_XLR,
+  zoneOf,
   type SimState,
 } from "./sim";
 
@@ -34,6 +38,15 @@ const KIND_SPRITE: Record<number, string> = {
   [K_LAMP]: "reclamp",
   [K_MONEY]: "money",
 };
+
+/** 区間ごとの空の色（上・中・下）と星の色。 */
+export const STAGE_LOOK: { sky: [string, string, string]; star: string }[] = [
+  { sky: ["#1d1820", "#2b1d3a", "#2b1d3a"], star: "#5b3f7a" }, // 0 収録スタジオ（室内）
+  { sky: ["#120e14", "#1d1820", "#2b1d3a"], star: "#5b3f7a" }, // 1 秋葉原
+  { sky: ["#0c1222", "#1b2a4a", "#1d1820"], star: "#4bacc6" }, // 2 締め切り前夜
+  { sky: ["#1d0f24", "#3b1d4a", "#5b3f7a"], star: "#e86a92" }, // 3 散財ナイト
+  { sky: ["#1d1410", "#3a2416", "#4b2f1d"], star: "#c98a2e" }, // 4 機材の山
+];
 
 export type Fit = { k: number; w: number; cssW: number; cssH: number; dpr: number };
 
@@ -122,16 +135,34 @@ export class Renderer {
     if (im) this.ctx.drawImage(im, x | 0, y | 0);
   }
 
-  /** 背景（空・星・街・床）。camX = 世界の px（スクロール量）。 */
-  background(camX: number, t: number): void {
+  /** 背景（区間ごとの空・小物・街・床）。camX = 世界の px（スクロール量）、zone = 区間。 */
+  background(camX: number, t: number, zone = 0): void {
     const c = this.ctx;
     const W = this.w;
-    c.fillStyle = "#120e14";
+    const look = STAGE_LOOK[zone] ?? STAGE_LOOK[0];
+    c.fillStyle = look.sky[0];
     c.fillRect(0, 0, W, VIEW_H);
-    c.fillStyle = "#1d1820";
+    c.fillStyle = look.sky[1];
     c.fillRect(0, 40, W, 50);
-    c.fillStyle = "#2b1d3a";
+    c.fillStyle = look.sky[2];
     c.fillRect(0, 80, W, 48);
+    if (zone === 0) {
+      // 収録スタジオ: 吸音材の壁と「ON AIR」のランプ
+      const off = -((camX >> 1) % 24);
+      for (let x = off; x < W; x += 24) {
+        for (let y = 14; y < GROUND_Y - 8; y += 24) {
+          c.fillStyle = ((x - off) / 24 + (y - 14) / 24) % 2 === 0 ? "#3d3646" : "#33283f";
+          c.fillRect(x + 2, y, 20, 20);
+        }
+      }
+      const ax = (((-(camX >> 1)) % 300) + 300) % 300;
+      c.fillStyle = (t >> 5) & 1 ? "#dc4a3f" : "#8c2f39";
+      c.fillRect(ax + 40, 24, 22, 7);
+      c.fillStyle = "#fdf0d2";
+      c.fillRect(ax + 43, 27, 16, 1);
+      this.tile("floor", camX, GROUND_Y, 16);
+      return;
+    }
     // 星（決まった位置・ゆっくり流れる）
     for (let i = 0; i < 28; i++) {
       const sx = ((i * 97 + 13) % 400) - ((camX >> 4) % 400);
@@ -139,12 +170,54 @@ export class Renderer {
       const y = (i * 53) % 70;
       if (x >= W) continue;
       const tw = ((t >> 4) + i) % 9 === 0;
-      c.fillStyle = tw ? "#fdf0d2" : "#5b3f7a";
+      c.fillStyle = tw ? "#fdf0d2" : look.star;
       c.fillRect(x, y, 1, 1);
     }
+    if (zone === 2) {
+      // 締め切り前夜: 月
+      const mx = W - 60;
+      c.fillStyle = "#f7e7a1";
+      c.fillRect(mx, 14, 12, 12);
+      c.fillRect(mx - 2, 16, 16, 8);
+      c.fillRect(mx + 2, 12, 8, 16);
+      c.fillStyle = look.sky[0];
+      c.fillRect(mx + 5, 13, 8, 9);
+    }
+    if (zone === 3) {
+      // 散財ナイト: お札が舞う
+      const m = frameImage("money");
+      if (m) {
+        c.globalAlpha = 0.22;
+        for (let i = 0; i < 6; i++) {
+          const x = ((((i * 71 - (camX >> 2) + (t >> 1)) % (W + 40)) + W + 40) % (W + 40)) - 20;
+          const y = (i * 37 + (t >> 2)) % 56;
+          c.drawImage(m, x, y);
+        }
+        c.globalAlpha = 1;
+      }
+    }
+    if (zone === 4) {
+      // 機材の山: 奥に積まれた段ボールの影（障害物と見間違えないよう、模様のない暗い形）
+      c.fillStyle = "#2a1f1a";
+      const off = -((camX >> 2) % 96);
+      for (let x = off; x < W; x += 96) {
+        c.fillRect(x, GROUND_Y - 58, 22, 58);
+        c.fillRect(x + 22, GROUND_Y - 34, 18, 34);
+        c.fillRect(x + 52, GROUND_Y - 46, 26, 46);
+      }
+    }
     // 遠くの街・近くの街（視差）
-    this.tile("city2", camX >> 2, GROUND_Y - 48 - 10, 64);
-    this.tile("city1", camX >> 1, GROUND_Y - 48, 64);
+    if (zone !== 4) this.tile("city2", camX >> 2, GROUND_Y - 48 - 10, 64);
+    if (zone === 1 || zone === 3) this.tile("city1", camX >> 1, GROUND_Y - 48, 64);
+    if (zone === 1) {
+      // 秋葉原: ネオンの看板
+      const off = -((camX >> 1) % 64);
+      for (let x = off, i = 0; x < W; x += 64, i++) {
+        const on = ((t >> 4) + i) % 5 !== 0;
+        c.fillStyle = on ? (i % 2 ? "#e86a92" : "#4bacc6") : "#3d3646";
+        c.fillRect(x + 20, 86 + (i % 3) * 6, 3, 10);
+      }
+    }
     // 床
     this.tile("floor", camX, GROUND_Y, 16);
   }
@@ -160,13 +233,29 @@ export class Renderer {
   scene(s: SimState, character: string, t: number): void {
     const px = s.x >> 8;
     const camX = px - PLAYER_X;
-    this.background(camX, t);
+    this.background(camX, t, zoneOf(px));
     const c = this.ctx;
+    // 床の穴（先に描く: 床を黒く抜く）
+    for (const o of s.objs) {
+      if (!o.live || o.k !== K_PIT) continue;
+      const sx = o.x - camX;
+      if (sx > this.w || sx + o.w < 0) continue;
+      c.fillStyle = "#120e14";
+      c.fillRect(sx, GROUND_Y, o.w, VIEW_H - GROUND_Y);
+      c.fillStyle = "#c98a2e";
+      c.fillRect(sx - 1, GROUND_Y, 1, VIEW_H - GROUND_Y);
+      c.fillRect(sx + o.w, GROUND_Y, 1, VIEW_H - GROUND_Y);
+      if (s.invuln > 0 || s.lamp > 0) {
+        // 無敵の間は穴の上も走れる（板を渡した絵）
+        c.fillStyle = "#7c5434";
+        c.fillRect(sx, GROUND_Y, o.w, 3);
+      }
+    }
 
     for (const o of s.objs) {
-      if (!o.live) continue;
+      if (!o.live || o.k === K_PIT) continue;
       const sx = o.x - camX;
-      if (sx > this.w + 4 || sx + o.w < -40) continue;
+      if (sx > this.w + 4 || sx + Math.min(o.w, 64) < -40) continue;
       const name = KIND_SPRITE[o.k];
       if (o.k === K_XLR) {
         // 床をうねる（8px ずつ上下にずらす）
@@ -185,6 +274,19 @@ export class Renderer {
           this.img("box", undefined, sx, GROUND_Y - 16);
           this.img("box", undefined, sx + 16, GROUND_Y - 16);
         } else this.img("box", undefined, sx, GROUND_Y - 16);
+      } else if (o.k === K_DRONE) {
+        const im = frameImage("drone", (t >> 2) & 1 ? "f2" : "f1");
+        const bob = ((t >> 4) & 1) === 0 ? 0 : -1;
+        if (im) c.drawImage(im, sx, GROUND_Y - o.y - 9 + bob);
+      } else if (o.k === K_BOOM) {
+        // 竿（上から）＋先のマイク
+        const top = GROUND_Y - o.y - 16;
+        c.fillStyle = "#55555f";
+        c.fillRect(sx + 7, 0, 2, Math.max(0, top + 1));
+        c.fillStyle = "#8a8a96";
+        c.fillRect(sx + 7, 0, 1, Math.max(0, top + 1));
+        const im = frameImage("boommic");
+        if (im) c.drawImage(im, sx, top);
       } else if (o.k === K_MIC) {
         const im = frameImage("micstand");
         if (im) c.drawImage(im, sx, GROUND_Y - im.height);
@@ -253,7 +355,7 @@ export class Renderer {
 
   /** タイトル・結果の後ろ（キャラがその場で走る）。 */
   idle(character: string, t: number, dead = false): void {
-    this.background(t >> 1, t);
+    this.background(t >> 1, t, 1);
     const frame = dead ? "hit" : (t >> 3) & 1 ? "run2" : "run1";
     this.img(character, frame, PLAYER_X, GROUND_Y - 16);
     if (!dead) this.img("beagle", (t >> 3) & 1 ? "run1" : "run2", PLAYER_X - 24, GROUND_Y - 16);

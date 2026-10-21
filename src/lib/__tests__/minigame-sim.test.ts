@@ -10,7 +10,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import * as S from "../minigame/sim";
-import { botRun } from "./minigame-bot";
+import { botRun, humanRun } from "./minigame-bot";
+import { planRun } from "./minigame-planner";
 
 function liveRun(seed: number, ch: string, packed: number[]) {
   const events = S.unpackInputs(packed)!;
@@ -139,9 +140,9 @@ describe("記録の形", () => {
   });
 });
 
-describe("ルールの固定（ENGINE_VERSION 1）", () => {
-  it("版は 1", () => {
-    expect(S.ENGINE_VERSION).toBe(1);
+describe("ルールの固定（ENGINE_VERSION 2）", () => {
+  it("版は 2", () => {
+    expect(S.ENGINE_VERSION).toBe(2);
   });
   it("決まった種・決まった操作の答え（ルールを変えたら ENGINE_VERSION を上げてここを直す）", () => {
     // 何もしない（跳ばない）とすぐ終わる
@@ -156,15 +157,15 @@ describe("ルールの固定（ENGINE_VERSION 1）", () => {
     expect({ idle: [idle.ticks, idle.score, idle.cause], periodic: [periodic.result.ticks, periodic.result.score, periodic.result.cause, periodic.digests.at(-1)] }).toMatchInlineSnapshot(`
       {
         "idle": [
-          637,
-          159,
-          "xlr",
+          578,
+          144,
+          "box",
         ],
         "periodic": [
-          723,
-          273,
+          559,
+          139,
           "box",
-          184248927,
+          2150394151,
         ],
       }
     `);
@@ -182,12 +183,77 @@ describe("手触り", () => {
     }
   });
 
-  it("うまく避け続けても、締め切りの壁が 3〜4 分ほどで追いつく", () => {
-    const r = botRun(5, "drikin");
-    expect(r.sim.cause).toBe("deadline");
-    expect(r.sim.tick / 60).toBeGreaterThan(150);
-    expect(r.sim.tick / 60).toBeLessThan(300);
+  it("完璧に避け続けても、締め切りの壁が 3 分前後で追いつく（障害物では終わらない = 理不尽な配置がない）", () => {
+    for (const [seed, ch] of [
+      [5, "drikin"],
+      [20261022, "matsuo"],
+      [77, "zenji"],
+    ] as const) {
+      const r = botRun(seed, ch);
+      expect(r.sim.cause, `${seed} ${ch}`).toBe("deadline");
+      expect(r.sim.tick / 60).toBeGreaterThan(100);
+      expect(r.sim.tick / 60).toBeLessThan(200);
+      expect(r.sim.stage).toBe(S.STAGE_COUNT - 1);
+    }
   });
+
+  it("どの型も、出てくる区間の速さで、どのキャラでも完璧な操作なら当たらずに越せる", () => {
+    const zoneTick: number[] = [];
+    let x = 0;
+    let t = 0;
+    for (let z = 0; z < S.STAGE_COUNT; z++) {
+      while (x < z * S.CHECKPOINT_M * S.PX_PER_M * S.FP) {
+        t++;
+        x += S.baseSpeed(t);
+      }
+      zoneTick.push(t);
+    }
+    const bad: string[] = [];
+    for (const pat of S.PATTERNS) {
+      for (const T of [zoneTick[pat.zone], 6000]) {
+        for (const ch of S.CHARACTERS) {
+          const r = planRun(S, 1, ch, { maxTicks: T + 420 }, (s) => {
+            s.tick = T;
+            s.nextObsX = 1e9;
+            s.billT = 1e9;
+            s.nextCp = 1e9;
+            s.objs = [];
+            S.placePattern(s, pat, (s.x >> 8) + 300, S.baseSpeed(T));
+          });
+          if (r.sim.hearts !== S.START_HEARTS || r.sim.dead) bad.push(`${pat.name} T${T} ${ch}`);
+        }
+      }
+    }
+    expect(bad).toEqual([]);
+  }, 120_000);
+
+  it("区間は 500m ごとに替わり、新しい要素はその区間から出る", () => {
+    const r = botRun(5, "drikin");
+    expect(r.sim.stage).toBe(4);
+    for (const p of S.PATTERNS) {
+      if (p.els.some((e) => e[0] === S.T_DRONE || e[0] === S.T_BOOM)) expect(p.zone, p.name).toBeGreaterThanOrEqual(1);
+      if (p.els.some((e) => e[0] === S.T_PIT)) expect(p.zone, p.name).toBeGreaterThanOrEqual(2);
+      if (p.els.some((e) => e[0] === S.T_RAIN)) expect(p.zone, p.name).toBeGreaterThanOrEqual(3);
+    }
+    expect(S.zoneOf(499 * 8)).toBe(0);
+    expect(S.zoneOf(500 * 8)).toBe(1);
+    expect(S.zoneOf(99999 * 8)).toBe(S.STAGE_COUNT - 1);
+  });
+
+  it("人に近い自動操作（反応 150〜250ms・ぶれ・ときどき判断ミス）は 30〜90 秒前後、上手でも 3 分は超えない", () => {
+    const human: number[] = [];
+    const skilled: number[] = [];
+    for (let i = 0; i < 12; i++) {
+      const ch = S.CHARACTERS[i % 3];
+      human.push(humanRun(5000 + i * 7919, ch, "human", 100 + i).sim.tick / 60);
+      skilled.push(humanRun(5000 + i * 7919, ch, "skilled", 100 + i).sim.tick / 60);
+    }
+    human.sort((a, b) => a - b);
+    const med = human[6];
+    expect(med).toBeGreaterThan(30);
+    expect(med).toBeLessThan(100);
+    expect(Math.max(...skilled)).toBeLessThan(200);
+  }, 120_000);
 
   it("松尾は空中でもう一度跳べる・善司は障害物の手前でスロー", () => {
     const m = S.newSim(1, "matsuo");
@@ -212,6 +278,98 @@ describe("手触り", () => {
       if (z.ev & S.E_SLOW) slowed = true;
     }
     expect(slowed).toBe(true);
+  });
+
+  it("空中でもう一度タップすると急降下（松尾は 1 回目が小ジャンプ、2 回目が急降下）", () => {
+    const d = S.newSim(1, "drikin");
+    S.simInput(d, 1);
+    S.simStep(d);
+    S.simInput(d, 0);
+    for (let i = 0; i < 5; i++) S.simStep(d);
+    const hBefore = d.h;
+    S.simInput(d, 1);
+    expect(d.ev & S.E_DIVE).toBeTruthy();
+    S.simStep(d);
+    expect(d.h).toBeLessThan(hBefore);
+    let landed = 0;
+    for (let i = 0; i < 20 && !landed; i++) {
+      S.simStep(d);
+      if (d.ground) landed = i + 1;
+    }
+    expect(landed).toBeGreaterThan(0);
+    expect(landed).toBeLessThan(6);
+    const m = S.newSim(1, "matsuo");
+    S.simInput(m, 1);
+    S.simStep(m);
+    S.simInput(m, 0);
+    for (let i = 0; i < 5; i++) S.simStep(m);
+    S.simInput(m, 1);
+    expect(m.ev & S.E_AIRJUMP).toBeTruthy();
+    S.simInput(m, 0);
+    S.simStep(m);
+    S.simInput(m, 1);
+    expect(m.ev & S.E_DIVE).toBeTruthy();
+  });
+
+  it("ごく短いタップ（同じ刻みで押して離す）でも跳ぶ", () => {
+    const s = S.newSim(1, "drikin");
+    S.simInput(s, 1);
+    S.simInput(s, 0);
+    S.simStep(s);
+    expect(s.ground).toBe(0);
+    expect(s.h).toBeGreaterThan(0);
+    // 記録しても同じ（押しと離しの両方が残る）
+    const rec = new S.InputRecorder();
+    rec.push(200, 1);
+    rec.push(201, 0);
+    expect(S.unpackInputs(rec.packed)).toEqual([
+      { tick: 200, code: 1 },
+      { tick: 201, code: 0 },
+    ]);
+  });
+
+  it("床の穴: 落ちるとハートが 1 つ減り、しばらく無敵で穴の上を走れる", () => {
+    const s = S.newSim(1, "drikin");
+    s.nextObsX = 1e9;
+    s.billT = 1e9;
+    S.placePattern(s, S.PATTERNS.find((p) => p.name === "大きな穴")!, (s.x >> 8) + 40, S.baseSpeed(0));
+    let fell = false;
+    for (let i = 0; i < 120 && !fell; i++) {
+      S.simStep(s);
+      if (s.ev & S.E_FALL) fell = true;
+    }
+    expect(fell).toBe(true);
+    expect(s.hearts).toBe(S.START_HEARTS - 1);
+    expect(s.invuln).toBeGreaterThan(0);
+    for (let i = 0; i < 40; i++) {
+      S.simStep(s);
+      expect(s.ev & S.E_FALL).toBe(0);
+    }
+  });
+
+  it("ドローン・ブームマイクは跳ぶと当たり、跳ばなければくぐれる", () => {
+    for (const name of ["低いドローン", "ブームマイク"]) {
+      const pat = S.PATTERNS.find((p) => p.name === name)!;
+      const mk = () => {
+        const s = S.newSim(1, "drikin");
+        s.nextObsX = 1e9;
+        s.billT = 1e9;
+        S.placePattern(s, pat, (s.x >> 8) + 60, S.baseSpeed(0));
+        return s;
+      };
+      const stay = mk();
+      for (let i = 0; i < 80; i++) S.simStep(stay);
+      expect(stay.hearts, name).toBe(S.START_HEARTS);
+      const jumpy = mk();
+      let hit = false;
+      for (let i = 0; i < 80; i++) {
+        if (i % 20 === 12) S.simInput(jumpy, 1);
+        if (i % 20 === 14) S.simInput(jumpy, 0);
+        S.simStep(jumpy);
+        if (jumpy.ev & S.E_HIT) hit = true;
+      }
+      expect(hit, name).toBe(true);
+    }
   });
 
   it("長押しは軽く押すより高く跳ぶ", () => {

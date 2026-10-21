@@ -89,16 +89,23 @@ export function weekStart(now = Date.now()): string {
   return new Date(Date.UTC(j.getUTCFullYear(), j.getUTCMonth(), j.getUTCDate() - back)).toISOString().slice(0, 10);
 }
 
+/** 順位表はルールの版ごとに分ける（v2 から名前の頭に "v2:"。v1 の記録は消さずに残るが、表には出ない）。 */
+export function boardPrefix(version = ENGINE_VERSION): string {
+  return version >= 2 ? `v${version}:` : "";
+}
+
 /** 1 回の記録が載る順位表（先頭が「その遊び方の」順位表）。 */
-export function boardsFor(mode: MinigameMode, date: string | null, finishedMs: number): string[] {
-  if (mode === "daily") return [`d:${date ?? dailyDate(finishedMs)}`, "all", "all:daily"];
-  return [`w:${weekStart(finishedMs)}`, "all", "all:free"];
+export function boardsFor(mode: MinigameMode, date: string | null, finishedMs: number, version = ENGINE_VERSION): string[] {
+  const p = boardPrefix(version);
+  if (mode === "daily") return [`${p}d:${date ?? dailyDate(finishedMs)}`, `${p}all`, `${p}all:daily`];
+  return [`${p}w:${weekStart(finishedMs)}`, `${p}all`, `${p}all:free`];
 }
 
 export function boardFor(period: MinigamePeriod, mode: MinigameMode | null, now = Date.now()): string {
-  if (period === "today") return `d:${dailyDate(now)}`;
-  if (period === "week") return `w:${weekStart(now)}`;
-  return mode ? `all:${mode}` : "all";
+  const p = boardPrefix();
+  if (period === "today") return `${p}d:${dailyDate(now)}`;
+  if (period === "week") return `${p}w:${weekStart(now)}`;
+  return mode ? `${p}all:${mode}` : `${p}all`;
 }
 
 // ───────────────────────────────── 種
@@ -183,7 +190,7 @@ export async function getLeaderboard(actor: Actor, periodRaw: unknown, modeRaw: 
   return {
     period,
     mode: period === "today" ? "daily" : period === "week" ? "free" : mode,
-    key: period === "all" ? null : board.slice(2),
+    key: period === "all" ? null : board.slice(board.lastIndexOf(":") + 1),
     entries,
     me: mine ? { rank: mine.rank ?? 0, score: mine.score, distance: mine.distance } : null,
   };
@@ -202,11 +209,11 @@ export async function getInfo(actor: Actor): Promise<MinigameInfo> {
   const date = dailyDate(now);
   const [seed, today, week, all, plays, top, players] = await Promise.all([
     dailySeed(date),
-    bestOn(`d:${date}`, actor.userId),
-    bestOn(`w:${weekStart(now)}`, actor.userId),
-    bestOn("all", actor.userId),
+    bestOn(boardFor("today", null, now), actor.userId),
+    bestOn(boardFor("week", null, now), actor.userId),
+    bestOn(boardFor("all", null, now), actor.userId),
     playsToday(actor.userId, now),
-    topEntries(`d:${date}`, 1),
+    topEntries(boardFor("today", null, now), 1),
     playersOf([actor.userId]),
   ]);
   return {
@@ -329,7 +336,7 @@ export async function finishPlay(actor: Actor, id: number, body: Record<string, 
     throw new MinigameError(422, "too_fast", "記録の時間が合いません");
   }
   const finishedAt = new Date(up.rows[0].finished_at);
-  const boards = boardsFor(row.mode, row.date_jst, finishedAt.getTime());
+  const boards = boardsFor(row.mode, row.date_jst, finishedAt.getTime(), row.engine_version);
   const primary = boards[0];
 
   const prevLeader = row.mode === "daily" ? (await topRows(primary, 1))[0] ?? null : null;
@@ -420,7 +427,7 @@ export function scheduleTopBroadcast(delayMs = topDelay): void {
 
 export async function broadcastTopNow(): Promise<boolean> {
   const date = dailyDate();
-  const top = await topEntries(`d:${date}`, TOP_LIVE);
+  const top = await topEntries(boardFor("today", null), TOP_LIVE);
   const sig = `${date}|` + top.map((e) => `${e.user_id}:${e.score}`).join(",");
   if (sig === mem.topSig) return false;
   mem.topSig = sig;
@@ -488,7 +495,7 @@ export async function weeklyKingCheck(now = Date.now()): Promise<number | null> 
   const thisWeek = weekStart(now);
   if (now < Date.parse(`${thisWeek}T09:00:00+09:00`)) return null;
   const prev = weekStart(now - 7 * DAY);
-  const top = await topEntries(`w:${prev}`, 3);
+  const top = await topEntries(`${boardPrefix()}w:${prev}`, 3);
   if (top.length === 0) return null;
   // 先に週の行を取る（二重投稿しない。取れなければもう投稿済み）
   const reserve = await pool.query(
@@ -537,14 +544,14 @@ export async function adminListPlays(userId: string | null, limit: number) {
 export async function recomputeBests(userId: string): Promise<void> {
   await pool.query(`DELETE FROM minigame_bests WHERE game = $1 AND user_id = $2`, [GAME, userId]);
   const r = await pool.query(
-    `SELECT id, mode, to_char(date_jst, 'YYYY-MM-DD') AS date_jst, character, score, distance, finished_at
+    `SELECT id, mode, to_char(date_jst, 'YYYY-MM-DD') AS date_jst, character, score, distance, finished_at, engine_version
        FROM minigame_plays WHERE game = $1 AND user_id = $2 AND status = 'verified' ORDER BY finished_at ASC, id ASC`,
     [GAME, userId]
   );
   const best = new Map<string, { id: number; score: number; distance: number; character: string; at: Date }>();
   for (const p of r.rows) {
     const at = new Date(p.finished_at);
-    for (const b of boardsFor(p.mode, p.date_jst, at.getTime())) {
+    for (const b of boardsFor(p.mode, p.date_jst, at.getTime(), Number(p.engine_version))) {
       const cur = best.get(b);
       if (!cur || Number(p.score) > cur.score) best.set(b, { id: Number(p.id), score: Number(p.score), distance: Number(p.distance), character: p.character, at });
     }

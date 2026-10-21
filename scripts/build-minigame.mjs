@@ -23,6 +23,7 @@ export const GAME_SOURCES = [
   `${M}types.ts`,
   `${M}sprites.ts`,
   `${M}sprites.placeholder.ts`,
+  `${M}sprites.extra.ts`,
   `${M}sprites.generated.ts`,
 ];
 export const WORKER_SOURCES = [`${M}sim.ts`, `${M}sim-worker.ts`];

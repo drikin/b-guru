@@ -1,11 +1,12 @@
 /* 🎮 締め切りダッシュ — ドット絵の窓口。
  * 正本はドット絵担当の sprites.generated.ts（scripts/minigame-sprites.py が作る。ここからは書き換えない）。
- * そこに無い名前・コマ（まだ描かれていない物）は sprites.placeholder.ts の仮の絵で埋める。
+ * そこに無い名前・コマは、v2 で足した物なら sprites.extra.ts、それ以外は sprites.placeholder.ts の仮の絵で埋める。
  * どちらもパレットが違うので、1 枚ごとに自分のパレットを持たせて返す。 */
 import * as G from "./sprites.generated";
 import * as P from "./sprites.placeholder";
+import * as X from "./sprites.extra";
 
-export type Sprite = { w: number; h: number; frames: Record<string, string[]>; palette: string[]; source: "generated" | "placeholder" };
+export type Sprite = { w: number; h: number; frames: Record<string, string[]>; palette: string[]; source: "generated" | "extra" | "placeholder" };
 
 /** ゲームが使う名前と、それぞれに要るコマ。 */
 export const NEEDED: Record<string, string[]> = {
@@ -29,6 +30,9 @@ export const NEEDED: Record<string, string[]> = {
   floor: [],
   city1: [],
   city2: [],
+  // v2: 跳んではいけない障害物（ドット絵担当の生成ファイルに無ければ sprites.extra.ts）
+  drone: ["f1", "f2"],
+  boommic: [],
 };
 
 function valid(sp: unknown, need: string[]): sp is { w: number; h: number; frames: Record<string, string[]> } {
@@ -48,7 +52,9 @@ function build(): Record<string, Sprite> {
   const out: Record<string, Sprite> = {};
   for (const [name, need] of Object.entries(NEEDED)) {
     const g = gen[name];
+    const x = X.SPRITES[name];
     if (valid(g, need) && genPal.length > 0) out[name] = { ...g, palette: genPal, source: "generated" };
+    else if (x && valid(x, need)) out[name] = { ...x, palette: X.PALETTE, source: "extra" };
     else out[name] = { ...P.SPRITES[name], palette: P.PALETTE, source: "placeholder" };
   }
   return out;

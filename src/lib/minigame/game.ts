@@ -8,6 +8,9 @@
 import {
   CHARACTERS,
   E_AIRJUMP,
+  E_DIVE,
+  E_FALL,
+  E_STAGE,
   E_BILLHIT,
   E_CHOOSE,
   E_COFFEE,
@@ -62,7 +65,7 @@ const CHAR_KEY = "bguru-minigame-character";
 
 export const CHARACTER_INFO: Record<Character, { name: string; trait: string }> = {
   drikin: { name: "ドリキン", trait: "散財でコンボが伸びる（請求書もやや多い）" },
-  matsuo: { name: "松尾", trait: "空中でもう一度だけ小さく跳べる" },
+  matsuo: { name: "松尾", trait: "空中の 1 回目のタップで小さく跳べる（2 回目で急降下）" },
   zenji: { name: "善司", trait: "障害物の手前で一瞬スロー（10 秒に 1 回）" },
 };
 
@@ -73,7 +76,19 @@ export const POWERUP_INFO: Record<number, { name: string; desc: string; icon: [s
   [P_MAGNET]: { name: "SD カード吸い寄せ", desc: "近くの SD カードが寄ってくる", icon: ["sdcard"] },
 };
 
+/** 区間（500m ごと。sim.ts の stage）。 */
+export const STAGE_INFO: { name: string; hint: string }[] = [
+  { name: "収録スタジオ", hint: "タップでジャンプ・長押しで高く・空中でもう一度タップで急降下" },
+  { name: "秋葉原", hint: "ドローンとブームマイクは跳ばずにくぐる" },
+  { name: "締め切り前夜", hint: "床の穴は長押しで飛び越える" },
+  { name: "散財ナイト", hint: "請求書の雨が降ってくる" },
+  { name: "機材の山", hint: "組み合わせが速くなる" },
+];
+
 const CAUSE_LABEL: Record<string, string> = {
+  drone: "ドローンにぶつかった",
+  boom: "ブームマイクに頭をぶつけた",
+  pit: "穴に落ちた",
   xlr: "XLR ケーブルに引っかかった",
   micstand: "マイクスタンドにぶつかった",
   box: "段ボールの山にぶつかった",
@@ -122,6 +137,8 @@ const STYLE = `
 .mg-tabs button[aria-pressed="true"]{background:#f2b24c;color:#120e14}
 .mg-note{position:absolute;left:0;right:0;bottom:4px;text-align:center;font-size:.9em;pointer-events:none}
 .mg-note span{background:rgba(18,14,20,.85);padding:.15em .6em;border-radius:5px}
+.mg-banner{position:absolute;left:0;right:0;top:38%;text-align:center;font-size:.95em;text-shadow:0 1px 0 #120e14,1px 0 0 #120e14,-1px 0 0 #120e14,0 -1px 0 #120e14}
+.mg-banner b{color:#f2b24c}
 .mg-bubble{background:#fdf0d2;color:#120e14;border-radius:8px;padding:.15em .6em;font-weight:700}
 `;
 
@@ -162,6 +179,8 @@ export class DashGame {
   private prefetch: { ticket: PlayTicket; at: number } | null = null;
   private deadAt = 0;
   private restShown = false;
+  /** 区間が替わったときの帯（刻みで消える）。 */
+  private stageBanner: { stage: number; until: number } | null = null;
   private board: { period: MinigamePeriod; data: LeaderboardDto | null; loading: boolean; error: string | null } = {
     period: "today",
     data: null,
@@ -300,9 +319,18 @@ export class DashGame {
   }
 
   /** テスト・確認用: 今の画面と数字。 */
-  debugState(): { phase: Phase; tick: number; distance: number; score: number; character: Character } {
+  debugState(): { phase: Phase; tick: number; distance: number; score: number; character: Character; h: number; stage: number; inputs: number[] } {
     const s = this.run?.sim;
-    return { phase: this.phase, tick: s?.tick ?? 0, distance: s ? distanceM(s) : 0, score: s ? scoreOf(s) : 0, character: this.character };
+    return {
+      phase: this.phase,
+      tick: s?.tick ?? 0,
+      distance: s ? distanceM(s) : 0,
+      score: s ? scoreOf(s) : 0,
+      character: this.character,
+      h: s ? s.h : 0,
+      stage: s ? s.stage : 0,
+      inputs: this.run ? this.run.rec.packed.slice() : [],
+    };
   }
 
   // ───────────────────────────── 大きさ
@@ -376,11 +404,21 @@ export class DashGame {
     const r = this.run;
     if (!r) return;
     const s = r.sim;
-    for (const code of this.queue) {
+    // 同じ刻みの中で押して離した（ごく短いタップ）ときは、離すのを次の刻みに回す
+    // （押した刻みで「押した」を記録し、最低 1 刻みは押したことにする。記録には両方が残り、再生でも同じ）。
+    const q = this.queue;
+    this.queue = [];
+    let pressedNow = false;
+    for (let i = 0; i < q.length; i++) {
+      const code = q[i];
+      if (code === 0 && pressedNow) {
+        this.queue = q.slice(i);
+        break;
+      }
       r.rec.push(s.tick, code);
       simInput(s, code);
+      if (code === 1) pressedNow = true;
     }
-    this.queue = [];
     simStep(s);
     const ev = s.ev;
     if (!ev) return;
@@ -392,7 +430,9 @@ export class DashGame {
     if (ev & E_MONEY) this.play("money");
     if (ev & E_SLOW) this.play("slow");
     if (ev & E_REVIVE) this.play("revive");
-    if (ev & (E_HIT | E_BILLHIT) && !(ev & E_DEAD)) {
+    if (ev & E_DIVE) this.play("dive");
+    if (ev & E_STAGE) this.stageBanner = { stage: s.stage, until: s.tick + 150 };
+    if (ev & (E_HIT | E_BILLHIT | E_FALL) && !(ev & E_DEAD)) {
       this.play("hit");
       this.host.haptic?.("hit");
     }
@@ -454,6 +494,7 @@ export class DashGame {
     this.run = { mode, character, seed, sim: newSim(seed, character), rec: new InputRecorder(), ticket, ticketP, unrecorded };
     this.lastResult = null;
     this.finishError = null;
+    this.stageBanner = null;
     this.queue = [];
     this.pressed = false;
     this.phase = "playing";
@@ -756,15 +797,25 @@ export class DashGame {
     let html = "";
     if (r && (this.phase === "playing" || this.phase === "choosing" || this.phase === "paused")) {
       const s = r.sim;
-      const hearts = "♥".repeat(Math.max(0, s.hearts)) + "♡".repeat(Math.max(0, START_HEARTS - s.hearts));
+      const hearts = "♥".repeat(Math.min(5, Math.max(0, s.hearts))) + "♡".repeat(Math.max(0, START_HEARTS - s.hearts));
       const fx = [s.coffee > 0 ? "☕" : "", s.lamp > 0 ? "🔴" : "", s.money > 0 ? "💸" : "", s.pw[P_REVIVE] > 0 ? "✚" : ""].join("");
       const label = r.mode === "daily" ? "今日" : "自由";
       html =
         `<div class="mg-l"><span style="color:#dc4a3f">${hearts}</span><b>${num(distanceM(s))}m</b>` +
         `<span>💾<b>${s.sd}</b></span>${s.combo > 1 ? `<b style="color:#f2b24c">x${s.combo}${s.money > 0 ? "×2" : ""}</b>` : ""}</div>` +
-        `<div class="mg-r"><span>${fx}</span><span class="mg-dim">${label}</span>` +
+        `<div class="mg-r"><span>${fx}</span><span class="mg-dim">${label}・${esc(STAGE_INFO[s.stage]?.name ?? "")}</span>` +
         (this.phase === "playing" ? `<button data-act="pause" aria-label="一時停止">⏸</button>` : "") +
         `</div>`;
+      // 走り出し（操作の説明）と区間の切り替え（名前と新しい要素）の帯
+      let banner: { name: string; hint: string } | null = null;
+      if (s.tick < 240 && s.stage === 0) banner = { name: "", hint: STAGE_INFO[0].hint };
+      else if (this.stageBanner && s.tick < this.stageBanner.until) {
+        const i = STAGE_INFO[this.stageBanner.stage];
+        banner = i ? { name: `区間 ${this.stageBanner.stage + 1}: ${i.name}`, hint: i.hint } : null;
+      }
+      if (banner && this.phase === "playing") {
+        html += `<div class="mg-banner">${banner.name ? `<b>${esc(banner.name)}</b> ` : ""}<span>${esc(banner.hint)}</span></div>`;
+      }
     }
     if (html !== this.hudText) {
       this.hudText = html;
@@ -828,6 +879,7 @@ export class DashGame {
         html =
           `<div class="mg-panel">` +
           `<div class="mg-row"><img class="mg-ico" src="${spriteDataUrl("beagle", "sit")}" width="${px(16)}" height="${px(16)}" alt=""><span class="mg-bubble">${num(s ? distanceM(s) : 0)}m！ どっちにする？わん</span></div>` +
+          (s && STAGE_INFO[s.stage] ? `<div class="mg-dim">ここから 区間 ${s.stage + 1}「${esc(STAGE_INFO[s.stage].name)}」: ${esc(STAGE_INFO[s.stage].hint)}</div>` : "") +
           `<div class="mg-cards">${cards}</div></div>`;
         break;
       }
@@ -839,7 +891,7 @@ export class DashGame {
         const prev = (r as Run & { prevDistance?: number }).prevDistance;
         const d = distanceM(s);
         const diff = typeof prev === "number" ? d - prev : null;
-        const causeImg = s.cause && s.cause !== "deadline" ? spriteDataUrl(s.cause) : spriteDataUrl("deadline");
+        const causeImg = spriteDataUrl(({ boom: "boommic", pit: "floor", deadline: "deadline" } as Record<string, string>)[s.cause] ?? (s.cause || "deadline"));
         const lines: string[] = [];
         if (res) {
           lines.push(

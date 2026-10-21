@@ -57,7 +57,7 @@ async function playHonest(actor: { email: string; userId: string }, mode: "daily
   const t = await issue(actor, mode, ch);
   const run = botRun(t.seed, ch, { lapse: opts.lapse, rngSeed: opts.rngSeed });
   await age(t.play_id, Math.ceil(run.sim.tick / 60));
-  const res = await m.mg.finishPlay(actor, t.play_id, { inputs: run.inputs, engine_version: 1, score: m.sim.scoreOf(run.sim) });
+  const res = await m.mg.finishPlay(actor, t.play_id, { inputs: run.inputs, engine_version: m.sim.ENGINE_VERSION, score: m.sim.scoreOf(run.sim) });
   return { ticket: t, run, res };
 }
 
@@ -112,14 +112,14 @@ d("🎮 締め切りダッシュ（DB）", () => {
     const issued = await m.api.handleMinigame("POST", ["plays"], a, new URLSearchParams(), async () => ({ mode: "daily", character: "matsuo" }));
     expect(issued.status).toBe(201);
     const t = (issued.body as { play: import("../minigame/types").PlayTicket }).play;
-    expect(t).toMatchObject({ mode: "daily", character: "matsuo", engine_version: 1, date: m.mg.dailyDate() });
+    expect(t).toMatchObject({ mode: "daily", character: "matsuo", engine_version: m.sim.ENGINE_VERSION, date: m.mg.dailyDate() });
     const info = await m.mg.getInfo(a);
     expect(t.seed).toBe(info.daily.seed); // 今日のチャレンジは全員同じ種
     const run = botRun(t.seed, "matsuo", { lapse: 100, rngSeed: 3 });
     await age(t.play_id, Math.ceil(run.sim.tick / 60));
     const out = await m.api.handleMinigame("POST", ["plays", String(t.play_id), "finish"], a, new URLSearchParams(), async () => ({
       inputs: run.inputs,
-      engine_version: 1,
+      engine_version: m.sim.ENGINE_VERSION,
       score: 1, // 申告値は照合だけ
     }));
     expect(out.status).toBe(200);
@@ -141,12 +141,12 @@ d("🎮 締め切りダッシュ（DB）", () => {
     const row = (await sql(`SELECT status, score, claimed_score, inputs IS NOT NULL AS has FROM minigame_plays WHERE id = $1`, [t.play_id])).rows[0];
     expect(row).toMatchObject({ status: "verified", score: res.score, claimed_score: 1, has: true });
     const boards = (await sql(`SELECT board FROM minigame_bests WHERE user_id = $1 ORDER BY board`, [a.userId])).rows.map((r) => r.board);
-    expect(boards).toEqual(["all", "all:daily", `d:${m.mg.dailyDate()}`]);
+    expect(boards).toEqual(["v2:all", "v2:all:daily", `v2:d:${m.mg.dailyDate()}`]);
     // 1 回限り
-    await expectErr(m.mg.finishPlay(a, t.play_id, { inputs: run.inputs, engine_version: 1 }), 409, "already_finished");
+    await expectErr(m.mg.finishPlay(a, t.play_id, { inputs: run.inputs, engine_version: m.sim.ENGINE_VERSION }), 409, "already_finished");
     // 自分の回だけ
     const t2 = await issue(a, "free");
-    await expectErr(m.mg.finishPlay(b, t2.play_id, { inputs: [], engine_version: 1 }), 404, "not_found");
+    await expectErr(m.mg.finishPlay(b, t2.play_id, { inputs: [], engine_version: m.sim.ENGINE_VERSION }), 404, "not_found");
   });
 
   it("速度改造（刻み数/60 > 実時間 + 10 秒）は弾く", async () => {
@@ -154,43 +154,43 @@ d("🎮 締め切りダッシュ（DB）", () => {
     const run = botRun(t.seed, "drikin", { lapse: 50, rngSeed: 1 });
     expect(run.sim.tick / 60).toBeGreaterThan(15);
     // 発行の直後に 15 秒以上ぶんの記録 → 弾く
-    await expectErr(m.mg.finishPlay(a, t.play_id, { inputs: run.inputs, engine_version: 1 }), 422, "too_fast");
+    await expectErr(m.mg.finishPlay(a, t.play_id, { inputs: run.inputs, engine_version: m.sim.ENGINE_VERSION }), 422, "too_fast");
     const row = (await sql(`SELECT status, reject_reason FROM minigame_plays WHERE id = $1`, [t.play_id])).rows[0];
     expect(row).toEqual({ status: "rejected", reject_reason: "too_fast" });
     // ちょうど実時間 + 10 秒までは通る
     const t2 = await issue(a, "free");
     const run2 = botRun(t2.seed, "drikin", { lapse: 50, rngSeed: 1 });
     await age(t2.play_id, Math.ceil(run2.sim.tick / 60) - 9);
-    expect((await m.mg.finishPlay(a, t2.play_id, { inputs: run2.inputs, engine_version: 1 })).score).toBe(m.sim.scoreOf(run2.sim));
+    expect((await m.mg.finishPlay(a, t2.play_id, { inputs: run2.inputs, engine_version: m.sim.ENGINE_VERSION })).score).toBe(m.sim.scoreOf(run2.sim));
   });
 
   it("記録の上限（3 万件・64KB）・engine_version 違い・期限切れ・壊れた記録", async () => {
     const t = await issue(a, "free");
-    await expectErr(m.mg.finishPlay(a, t.play_id, { inputs: new Array(30001).fill(1), engine_version: 1 }), 413, "too_large");
-    await expectErr(m.mg.finishPlay(a, t.play_id, { inputs: new Array(20000).fill(99999999), engine_version: 1 }), 413, "too_large");
+    await expectErr(m.mg.finishPlay(a, t.play_id, { inputs: new Array(30001).fill(1), engine_version: m.sim.ENGINE_VERSION }), 413, "too_large");
+    await expectErr(m.mg.finishPlay(a, t.play_id, { inputs: new Array(20000).fill(99999999), engine_version: m.sim.ENGINE_VERSION }), 413, "too_large");
     // 本文そのものが大きすぎる（route の読み方）
     const big = new Request("http://x/", { method: "POST", body: JSON.stringify({ inputs: new Array(30000).fill(1234567) }) });
     expect(await m.api.readJsonLimited(big)).toBe("too_large");
     // 上の 413 では状態を変えない（まだ出せる）
     expect((await sql(`SELECT status FROM minigame_plays WHERE id = $1`, [t.play_id])).rows[0].status).toBe("issued");
 
-    await expectErr(m.mg.finishPlay(a, t.play_id, { inputs: [], engine_version: 2 }), 409, "engine_version");
+    await expectErr(m.mg.finishPlay(a, t.play_id, { inputs: [], engine_version: 99 }), 409, "engine_version");
     expect((await sql(`SELECT status, reject_reason FROM minigame_plays WHERE id = $1`, [t.play_id])).rows[0]).toEqual({
       status: "rejected",
       reject_reason: "engine_version",
     });
     const t2 = await issue(a, "free");
-    await sql(`UPDATE minigame_plays SET engine_version = 0 WHERE id = $1`, [t2.play_id]);
-    const e2 = m.mg.finishPlay(a, t2.play_id, { inputs: [], engine_version: 1 });
+    await sql(`UPDATE minigame_plays SET engine_version = 1 WHERE id = $1`, [t2.play_id]); // v1 のときに発行した回
+    const e2 = m.mg.finishPlay(a, t2.play_id, { inputs: [], engine_version: m.sim.ENGINE_VERSION });
     await expect(e2).rejects.toMatchObject({ code: "engine_version", message: "ルール更新のため記録できません" });
 
     const t3 = await issue(a, "free");
     await age(t3.play_id, 31 * 60);
-    await expectErr(m.mg.finishPlay(a, t3.play_id, { inputs: [], engine_version: 1 }), 409, "expired");
+    await expectErr(m.mg.finishPlay(a, t3.play_id, { inputs: [], engine_version: m.sim.ENGINE_VERSION }), 409, "expired");
 
     const t4 = await issue(a, "free");
-    await expectErr(m.mg.finishPlay(a, t4.play_id, { inputs: [1.5], engine_version: 1 }), 422, "invalid_record");
-    await expectErr(m.mg.finishPlay(a, (await issue(a, "free")).play_id, { inputs: "x", engine_version: 1 }), 400, "invalid_request");
+    await expectErr(m.mg.finishPlay(a, t4.play_id, { inputs: [1.5], engine_version: m.sim.ENGINE_VERSION }), 422, "invalid_record");
+    await expectErr(m.mg.finishPlay(a, (await issue(a, "free")).play_id, { inputs: "x", engine_version: m.sim.ENGINE_VERSION }), 400, "invalid_request");
     await expectErr(m.mg.issuePlay(a, { mode: "x", character: "drikin" }), 400, "invalid_request");
     await expectErr(m.mg.issuePlay(a, { mode: "free", character: "someone" }), 400, "invalid_request");
   });
@@ -199,20 +199,25 @@ d("🎮 締め切りダッシュ（DB）", () => {
     // A は何もしない回（すぐ終わる）、B はうまい回
     const t1 = await issue(a, "daily");
     await age(t1.play_id, 30);
-    const r1 = { ticket: t1, res: await m.mg.finishPlay(a, t1.play_id, { inputs: [], engine_version: 1 }) };
+    const r1 = { ticket: t1, res: await m.mg.finishPlay(a, t1.play_id, { inputs: [], engine_version: m.sim.ENGINE_VERSION }) };
     const r2 = await playHonest(b, "daily", { lapse: 0, rngSeed: 2, character: "zenji" });
     expect(r2.res.score).toBeGreaterThan(r1.res.score);
     expect(r2.res.rank).toBe(1);
     // A の同じ点の回: ベストは変わらず（同点は先の回）、その回の記録は残さない
     const low = await m.mg.issuePlay(a, { mode: "daily", character: "drikin" });
     await age(low.play_id, 20);
-    const lowRes = await m.mg.finishPlay(a, low.play_id, { inputs: [], engine_version: 1 });
+    const lowRes = await m.mg.finishPlay(a, low.play_id, { inputs: [], engine_version: m.sim.ENGINE_VERSION });
     expect(lowRes.new_best).toBe(false);
     expect(lowRes.best).toBe(r1.res.score);
     expect(lowRes.rank).toBe(2);
     const kept = (await sql(`SELECT id FROM minigame_plays WHERE user_id = $1 AND inputs IS NOT NULL`, [a.userId])).rows.map((r) => r.id);
     expect(kept).toEqual([r1.ticket.play_id]);
 
+    // v1（ルール更新の前）の記録は表に出ない
+    await sql(
+      `INSERT INTO minigame_bests (game, board, user_id, play_id, score, distance, character, achieved_at) VALUES ('dash', $1, $2, 1, 999999, 9999, 'drikin', now())`,
+      [`d:${m.mg.dailyDate()}`, a.userId]
+    );
     const today = await m.mg.getLeaderboard(a, "today", null);
     expect(today.entries.map((e) => [e.rank, e.name, e.score])).toEqual([
       [1, "みけ", r2.res.score],
@@ -242,7 +247,7 @@ d("🎮 締め切りダッシュ（DB）", () => {
 
     // 情報（GET me）
     const info = await m.mg.getInfo(a);
-    expect(info.engine_version).toBe(1);
+    expect(info.engine_version).toBe(m.sim.ENGINE_VERSION);
     expect(info.top_today?.user_id).toBeDefined();
     expect(info.best.today?.score).toBeGreaterThan(0);
     expect(info.plays_today).toBeGreaterThanOrEqual(4);
@@ -258,11 +263,11 @@ d("🎮 締め切りダッシュ（DB）", () => {
     }
     const t = await issue(a, "free");
     await age(t.play_id, 30);
-    const r = await m.mg.finishPlay(a, t.play_id, { inputs: [], engine_version: 1 });
+    const r = await m.mg.finishPlay(a, t.play_id, { inputs: [], engine_version: m.sim.ENGINE_VERSION });
     expect(r).toMatchObject({ plays_today: 21, rest_hint: true });
     const t2 = await issue(a, "free");
     await age(t2.play_id, 30);
-    expect((await m.mg.finishPlay(a, t2.play_id, { inputs: [], engine_version: 1 })).rest_hint).toBe(false);
+    expect((await m.mg.finishPlay(a, t2.play_id, { inputs: [], engine_version: m.sim.ENGINE_VERSION })).rest_hint).toBe(false);
   });
 
   it("配信: 今日の上位 10 は全員へ（まとめて 1 回）、ベストは本人だけ、メールは載らない", async () => {
@@ -286,7 +291,7 @@ d("🎮 締め切りダッシュ（DB）", () => {
     process.env.MINIGAME_ENABLED = `${A},${B}`;
     const ti = await issue(a, "daily");
     await age(ti.play_id, 30);
-    await m.mg.finishPlay(a, ti.play_id, { inputs: [], engine_version: 1 });
+    await m.mg.finishPlay(a, ti.play_id, { inputs: [], engine_version: m.sim.ENGINE_VERSION });
     await new Promise((r) => setTimeout(r, 50));
     expect((await sql(`SELECT count(*) AS n FROM chat_messages WHERE body LIKE '%締め切りダッシュ%'`)).rows[0].n).toBe("0");
 
@@ -318,7 +323,7 @@ d("🎮 締め切りダッシュ（DB）", () => {
     ] as const) {
       await sql(
         `INSERT INTO minigame_bests (game, board, user_id, play_id, score, distance, character, achieved_at) VALUES ('dash', $1, $2, 1, $3, $4, 'drikin', now())`,
-        [`w:${prev}`, u.userId, score, score - 500]
+        [`${m.mg.boardPrefix()}w:${prev}`, u.userId, score, score - 500]
       );
     }
     process.env.MINIGAME_ENABLED = `${A}`;
@@ -339,7 +344,7 @@ d("🎮 締め切りダッシュ（DB）", () => {
     const r2 = await playHonest(a, "daily", { lapse: 0, rngSeed: 2 });
     await playHonest(b, "daily", { lapse: 300, rngSeed: 3 });
     const top = Math.max(r1.res.score, r2.res.score);
-    const cur = await m.mg.bestOn(`d:${m.mg.dailyDate()}`, a.userId);
+    const cur = await m.mg.bestOn(m.mg.boardFor("today", null), a.userId);
     expect(cur?.score).toBe(top);
     const bestId = cur!.play_id;
     const other = bestId === r2.ticket.play_id ? r1 : r2;
@@ -348,13 +353,13 @@ d("🎮 締め切りダッシュ（DB）", () => {
     expect(denied.status).toBe(403);
     const ok = await m.api.handleMinigame("POST", ["admin", "plays", String(bestId), "reject"], admin, new URLSearchParams(), async () => ({}));
     expect(ok.status).toBe(200);
-    expect((await m.mg.bestOn(`d:${m.mg.dailyDate()}`, a.userId))?.score).toBe(other.res.score);
+    expect((await m.mg.bestOn(m.mg.boardFor("today", null), a.userId))?.score).toBe(other.res.score);
     const list = await m.api.handleMinigame("GET", ["admin", "plays"], admin, new URLSearchParams({ user_id: a.userId }), async () => ({}));
     expect((list.body as { plays: { id: number; status: string }[] }).plays.find((p) => p.id === bestId)?.status).toBe("rejected");
 
     const clr = await m.api.handleMinigame("POST", ["admin", "users", a.userId, "clear"], admin, new URLSearchParams(), async () => ({}));
     expect(clr.status).toBe(200);
-    expect(await m.mg.bestOn(`d:${m.mg.dailyDate()}`, a.userId)).toBeNull();
+    expect(await m.mg.bestOn(m.mg.boardFor("today", null), a.userId)).toBeNull();
     expect((await m.mg.getLeaderboard(b, "today", null)).entries.map((e) => e.user_id)).toEqual([b.userId]);
   });
 });
