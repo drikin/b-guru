@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>締め切りダッシュ</title>
+<!-- B-guru 🎮 締め切りダッシュ（アプリの WebView 用）。約束は docs/minigame-spec.md「橋渡し」（bridge_version 1）。
+     この画面はトークンを持たず、ネットワークにも出ない（game.js だけを読む。API はアプリが中継する）。 -->
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; -webkit-text-size-adjust: 100%; overscroll-behavior: none; }
+  body { padding: 0; box-sizing: border-box; overflow: hidden; }
+  #minigame { width: 100%; }
+</style>
+</head>
+<body>
+<div id="minigame"></div>
+<script src="/minigame/game.js"></script>
+</body>
+</html>

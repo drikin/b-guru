@@ -17,6 +17,7 @@
 import crypto from "crypto";
 import type { PoolClient } from "pg";
 import { pool } from "./db";
+import { featureEnabledFor, featurePublic } from "./feature-flag";
 import { emitLive } from "./live";
 import { emitPersonal } from "./personal-live";
 import { createPost, gravatarUrl, SYSTEM_EMAIL } from "./posts";
@@ -61,23 +62,16 @@ export const RECENT_ENDED = 20;
 /** 観戦の合図はこの間に来ていれば「観戦中」。 */
 export const WATCH_TTL_MS = 45_000;
 
-/** SHOGI_ENABLED: 未設定・"0" = 誰にも出さない、"1"（または "*"）= 全員、メールのカンマ区切り = その人だけ。 */
+/** SHOGI_ENABLED: 未設定・"0" = 誰にも出さない、"1"（または "*"）= 全員、メールのカンマ区切り = その人だけ
+ *  （読み方は lib/feature-flag.ts で MINIGAME_ENABLED と共通）。 */
 export function shogiEnabledFor(email: string | null | undefined): boolean {
-  if (!email) return false;
-  const raw = process.env.SHOGI_ENABLED?.trim();
-  if (!raw || raw === "0" || raw.toLowerCase() === "false") return false;
-  if (raw === "1" || raw === "*" || raw.toLowerCase() === "true") return true;
-  return raw
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .includes(email.trim().toLowerCase());
+  return featureEnabledFor("SHOGI_ENABLED", email);
 }
 
 /** 全員に公開しているか（SHOGI_ENABLED が 1）。公開前は、チャットのカード・ビーグルの投稿・通知を出さない
  *  （出している人以外にも見えてしまうため）。 */
 export function shogiPublic(): boolean {
-  const raw = process.env.SHOGI_ENABLED?.trim().toLowerCase();
-  return raw === "1" || raw === "*" || raw === "true";
+  return featurePublic("SHOGI_ENABLED");
 }
 
 /** テスト用: SHOGI_SELF_PLAY（メールのカンマ区切り）の人は、自分の募集を自分で受けて両方の手を指せる。 */

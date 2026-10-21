@@ -707,5 +707,68 @@ export async function initSchema() {
     -- 将棋の通知（shogi_offer / shogi_turn）を受け取る端末。対応したアプリだけが true を送る
     -- （古いアプリは知らない kind を「返信がありました」と出してしまうため、既定は送らない）。
     ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS notify_shogi BOOLEAN NOT NULL DEFAULT FALSE;
+    -- 🎮 締め切りダッシュ（lib/minigame.ts、docs/minigame-spec.md）。遊んだ人は users.user_id（メールは持たない）。
+    -- 1 回ごとに番号と種を発行し（issued、30 分で期限切れ）、操作の記録をサーバで再生してスコアを決める（verified）。
+    CREATE TABLE IF NOT EXISTS minigame_plays (
+      id SERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      game TEXT NOT NULL DEFAULT 'dash',
+      mode TEXT NOT NULL,                   -- daily（今日のチャレンジ）| free（自由プレイ）
+      date_jst DATE,                        -- 今日のチャレンジの日付（JST 5 時区切り）。自由は NULL
+      seed INT NOT NULL,
+      character TEXT NOT NULL,              -- drikin | matsuo | zenji
+      engine_version INT NOT NULL,
+      issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      finished_at TIMESTAMPTZ,
+      ticks INT,
+      score INT,
+      distance INT,
+      sd INT,
+      cause TEXT,
+      claimed_score INT,                    -- 端末の申告（照合だけ。記録はサーバの再生の値）
+      status TEXT NOT NULL DEFAULT 'issued', -- issued | verified | rejected
+      reject_reason TEXT,
+      inputs JSONB                          -- 操作の記録。自己ベスト（どれかの順位表に載っている回）の分だけ残す
+    );
+    CREATE INDEX IF NOT EXISTS idx_minigame_plays_user ON minigame_plays(user_id, issued_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_minigame_plays_verified ON minigame_plays(finished_at) WHERE status = 'verified';
+    -- 今日のチャレンジの種（日付ごとに 1 つ。全員同じ面）。
+    CREATE TABLE IF NOT EXISTS minigame_daily (
+      date_jst DATE NOT NULL,
+      game TEXT NOT NULL DEFAULT 'dash',
+      seed INT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (date_jst, game)
+    );
+    -- 順位表ごとの各人のベスト（board: d:日付 / w:週の始め / all / all:daily / all:free）。
+    CREATE TABLE IF NOT EXISTS minigame_bests (
+      game TEXT NOT NULL,
+      board TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      play_id INT NOT NULL,
+      score INT NOT NULL,
+      distance INT NOT NULL,
+      character TEXT NOT NULL,
+      achieved_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (game, board, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_minigame_bests_rank ON minigame_bests(game, board, score DESC, achieved_at);
+    -- チャットへの 1 行（1 日 10 行まで、10 分以内の続きは最後の 1 回にまとめる）。
+    CREATE TABLE IF NOT EXISTS minigame_announces (
+      date_jst DATE NOT NULL,
+      game TEXT NOT NULL DEFAULT 'dash',
+      lines INT NOT NULL DEFAULT 0,
+      last_msg_id INT,
+      last_at TIMESTAMPTZ,
+      PRIMARY KEY (date_jst, game)
+    );
+    -- 月曜 9 時の「週の王者」の投稿（週ごとに 1 本）。
+    CREATE TABLE IF NOT EXISTS minigame_weekly (
+      week_start DATE NOT NULL,
+      game TEXT NOT NULL DEFAULT 'dash',
+      post_id INT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (week_start, game)
+    );
   `);
 }

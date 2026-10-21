@@ -83,7 +83,9 @@ import VoiceBar, { VoiceMini } from "@/components/VoiceBar";
 import { applyVoiceEvent, loadVoice, type VoiceRoomInfo } from "@/lib/voice-client";
 import RoomPanel from "@/components/RoomView";
 import { applyRoomEvent, reloadRoomIfOn, roomChatBubble } from "@/lib/room-client";
-import { ShogiChatCard, ShogiPanel, ShogiToggle } from "@/components/shogi/ShogiPanel";
+import { ShogiChatCard, ShogiPanel } from "@/components/shogi/ShogiPanel";
+import { GameToggles, MinigamePanel } from "@/components/minigame/MinigamePanel";
+import { applyMinigameEvent, reloadMinigame } from "@/lib/minigame-client";
 import { applyShogiEvent, openShogiGame, reloadShogi } from "@/lib/shogi-client";
 import { bubbleText } from "@/lib/room-logic";
 import { EDIT_HINT, SAVE_HINT, SEND_HINT, handleComposerKeyDown, useEnterSends } from "@/lib/composer-keys";
@@ -6975,6 +6977,14 @@ export default function Home() {
         /* ignore a malformed event */
       }
     });
+    // 🎮 締め切りダッシュ: today's top 10 changed, or my own best.
+    es.addEventListener("minigame", (e: MessageEvent) => {
+      try {
+        applyMinigameEvent(JSON.parse(e.data));
+      } catch {
+        /* ignore a malformed event */
+      }
+    });
     // Club room (ルーム): members joining / moving / leaving and reactions.
     es.addEventListener("room", (e: MessageEvent) => {
       try {
@@ -7009,6 +7019,7 @@ export default function Home() {
       void loadVoice(); // and who is in the voice room
       reloadRoomIfOn(); // and the club room
       reloadShogi(); // and ☗ 将棋 (missed moves while disconnected)
+      reloadMinigame(); // and 🎮 (today's top while disconnected)
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) L.silentRefreshFeed();
     };
     es.onerror = () => {
@@ -11902,10 +11913,11 @@ export default function Home() {
                   }}
                 >
                   {/* Club room on: テキスト｜ルーム switch + map; off: the voice bar as before.
-                      ☗ 将棋 sits next to the switch (its own line without the room); open = the
-                      board above the chat log (spectate while chatting). */}
-                  <RoomPanel fallback={<VoiceBar />} extra={(row) => <ShogiToggle row={row} />} />
+                      ☗ 将棋 and 🎮 締め切りダッシュ (icons only) sit next to the switch (their own line
+                      without the room); open = the board / the game above the chat log (one at a time). */}
+                  <RoomPanel fallback={<VoiceBar />} extra={(row) => <GameToggles row={row} />} />
                   <ShogiPanel />
+                  <MinigamePanel />
                   {/* Message list */}
                   <ScrollArea.Autosize
                     type="auto"

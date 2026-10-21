@@ -44,7 +44,8 @@ const SHOW_RECENT_RESULTS = false;
 /** ビーグル（AI）の表示名（サーバの system アカウント）。 */
 const BEAGLE_NAME = "ビーグル";
 
-/** 「☗ 将棋」ボタン。row = 行に置く（ルームが無いとき、ボイスのバーの上）。 */
+/** ☗ のボタン（アイコンだけ。ドリキン 2026-10-21「☗ 将棋の文字をやめて ☗ のアイコンだけに」。
+ *  読み上げ・ツールチップは「将棋」のまま）。row = 行に置く（ルームが無いとき、ボイスのバーの上）。 */
 export function ShogiToggle({ row = false }: { row?: boolean }) {
   const s = useShogi();
   useEffect(() => {
@@ -60,10 +61,13 @@ export function ShogiToggle({ row = false }: { row?: boolean }) {
       variant={s.open ? "filled" : "light"}
       color="green"
       aria-pressed={s.open}
+      aria-label="将棋"
+      data-cx="shogi-toggle"
       onClick={() => setShogiOpen(!s.open)}
-      title={live ? `対局中 ${live} 局` : "将棋を指す・観戦する"}
+      title={live ? `将棋（対局中 ${live} 局）` : "将棋"}
+      px={8}
     >
-      ☗ 将棋
+      <span aria-hidden>☗</span>
       {offers + mineActive > 0 && (
         <Badge size="xs" color="red" ml={6} circle>
           {offers + mineActive}

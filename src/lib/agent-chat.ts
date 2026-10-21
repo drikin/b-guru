@@ -23,6 +23,10 @@ import { fcmEnabled } from "./fcm";
 import { VOICE_MAX_PARTICIPANTS, VOICE_MAX_SPEAKERS } from "./voice";
 import { resolveDisplayName } from "./display-name";
 import { TIME_CONTROLS } from "./shogi-clock";
+import { CHARACTERS, ENGINE_VERSION as MINIGAME_ENGINE_VERSION } from "./minigame/sim";
+
+/** The game page's postMessage contract (docs/minigame-spec.md「橋渡し」). */
+export const MINIGAME_BRIDGE_VERSION = 1;
 
 /** The board page's postMessage contract (docs/shogi-spec.md「盤面の橋渡し」). */
 export const SHOGI_BRIDGE_VERSION = 1;
@@ -156,6 +160,10 @@ export function liveToStreamEvent(ev: LiveEvent, viewer: ChatViewer): StreamEven
   if (ev.type === "shogi") {
     return { event: "shogi", data: { action: ev.action, game: ev.game } };
   }
+  // 🎮 締め切りダッシュ: 今日の上位 10 (the stream route drops it for members without the feature).
+  if (ev.type === "minigame") {
+    return { event: "minigame", data: { action: ev.action, period: ev.period, key: ev.key, top: ev.top } };
+  }
   return null;
 }
 
@@ -178,7 +186,7 @@ export function toAgentVoiceDto(s: VoiceState) {
  *  calling token's, so a client knows up front which actions will be refused. */
 export function agentCapabilities(
   scopes: AgentScope[],
-  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean } = {}
+  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; minigame?: boolean } = {}
 ) {
   const ttlHours = parseInt(CHAT_TTL, 10) || 24;
   const can = (s: AgentScope) => scopes.includes(s);
@@ -218,7 +226,7 @@ export function agentCapabilities(
       },
       stream: {
         path: "/api/agent/stream",
-        events: ["ready", "chat", "presence", "notification", "voice", ...(opts.shogi ? ["shogi"] : [])],
+        events: ["ready", "chat", "presence", "notification", "voice", ...(opts.shogi ? ["shogi"] : []), ...(opts.minigame ? ["minigame"] : [])],
         affects_presence: false,
       },
       notifications: { read: can("read"), stream: true },
@@ -242,6 +250,9 @@ export function agentCapabilities(
       // ☗ 将棋 (docs/shogi-spec.md), behind SHOGI_ENABLED. The board is a web page the app
       // shows in a WebView (bridge_version 1); the app keeps the token and the API to itself.
       shogi: shogiCapability(!!opts.shogi, scopes),
+      // 🎮 締め切りダッシュ (docs/minigame-spec.md), behind MINIGAME_ENABLED. The game is a web page the app
+      // shows in a WebView (bridge_version 1); the app keeps the token and relays the API.
+      minigame: minigameCapability(!!opts.minigame, scopes),
       voice: {
         enabled: !!opts.voice,
         join: !!opts.voice && can("voice"),
@@ -265,6 +276,20 @@ export function shogiCapability(enabled: boolean, scopes: AgentScope[]) {
     /** ビーグルと対局（練習）できる: POST games { mode, opponent: "beagle" }（アプリがボタンを出す目印）。 */
     beagle: true,
     time_controls: TIME_CONTROLS,
+  };
+}
+
+export function minigameCapability(enabled: boolean, scopes: AgentScope[]) {
+  return {
+    enabled,
+    path: "/api/agent/minigame",
+    game_url: "/minigame/index.html",
+    bridge_version: MINIGAME_BRIDGE_VERSION,
+    /** The simulation's rule version: a play issued for another version is refused (「ルール更新のため記録できません」). */
+    engine_version: MINIGAME_ENGINE_VERSION,
+    play: enabled && scopes.includes("chat"),
+    characters: [...CHARACTERS],
+    modes: ["daily", "free"],
   };
 }
 

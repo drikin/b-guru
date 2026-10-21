@@ -3044,16 +3044,84 @@ console.log("\nS. ☗ 将棋: 無効の間は出ない（SHOGI_ENABLED）");
       const chat = document.querySelector('[class*="bguru-chat-view"]');
       if (!chat) return null;
       return {
-        toggle: [...chat.querySelectorAll('button')].some((b) => (b.textContent || '').includes('将棋')),
+        toggle: [...chat.querySelectorAll('button')].some((b) => (b.textContent || '').includes('将棋') || b.getAttribute('aria-label') === '将棋'),
         panel: !!chat.querySelector('[data-cx="shogi-panel"]'),
       };
     })()`);
     check("「☗ 将棋」 is not shown in the chat while disabled", shown && !shown.toggle && !shown.panel, JSON.stringify(shown));
     await page.evaluate(clickTab("タイムライン"));
     await page.waitForTimeout(400);
+  } else if (probe.api === 200) {
+    // 2026-10-21 オーナー指示: 切り替えは「☗ 将棋」の文字をやめて ☗ のアイコンだけ（読み上げ・title は「将棋」）。
+    await page.evaluate(clickTab("チャット"));
+    await page.waitForTimeout(1500);
+    const t = await page.evaluate(`(() => {
+      const b = document.querySelector('[data-cx="shogi-toggle"]');
+      return b ? { text: (b.textContent || '').trim(), aria: b.getAttribute('aria-label'), title: b.getAttribute('title') } : null;
+    })()`);
+    check(
+      "☗ toggle is the icon only (aria-label / title stay 「将棋」)",
+      !!t && t.text.startsWith("☗") && !t.text.includes("将棋") && t.aria === "将棋" && (t.title || "").startsWith("将棋"),
+      JSON.stringify(t)
+    );
+    await page.evaluate(clickTab("タイムライン"));
+    await page.waitForTimeout(400);
   } else {
-    console.log(`  [skip] shogi is enabled for this account (GET /api/shogi/games → ${probe.api}); enabled checks are added separately`);
+    console.log(`  [skip] shogi probe failed (GET /api/shogi/games → ${probe.api})`);
   }
+}
+
+// ------------------------------------------------------------ 🎮 締め切りダッシュ（MINIGAME_ENABLED）
+// 2026-10-21: ミニゲームは MINIGAME_ENABLED で切り替える（未設定 = 誰にも出さない）。無効の間は 🎮 が出ず、
+// API は 404。ゲームの静的ファイル（アプリの WebView 用）はフラグに関係なく配られる。有効なら 🎮 はアイコンだけで、
+// 開くと上にゲーム・下にチャット（ページはスクロールしない、入力欄が見える）。
+console.log("\nT. 🎮 締め切りダッシュ（MINIGAME_ENABLED）");
+{
+  const probe = await page
+    .evaluate(`(async () => {
+      const r = await fetch('/api/minigame/me', { cache: 'no-store' }).catch(() => null);
+      const h = await fetch('/minigame/index.html', { cache: 'no-store' }).catch(() => null);
+      const js = await fetch('/minigame/game.js', { cache: 'no-store' }).catch(() => null);
+      return { api: r ? r.status : 0, page: h ? h.status : 0, js: js ? js.status : 0 };
+    })()`)
+    .catch((e) => ({ error: String(e) }));
+  check("game page is served (/minigame/index.html, game.js)", probe.page === 200 && probe.js === 200, JSON.stringify(probe));
+  await page.evaluate(clickTab("チャット"));
+  await page.waitForTimeout(1500);
+  const shown = await page.evaluate(`(() => {
+    const chat = document.querySelector('[class*="bguru-chat-view"]');
+    if (!chat) return null;
+    const b = chat.querySelector('[data-cx="minigame-toggle"]') || [...chat.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === 'ゲーム');
+    return { toggle: !!b, text: b ? (b.textContent || '').trim() : null, aria: b ? b.getAttribute('aria-label') : null, panel: !!chat.querySelector('[data-cx="minigame-panel"]') };
+  })()`);
+  if (probe.api === 404) {
+    check("minigame API answers 404 while disabled", true, "GET /api/minigame/me → 404");
+    check("🎮 is not shown in the chat while MINIGAME_ENABLED is off", !!shown && !shown.toggle && !shown.panel, JSON.stringify(shown));
+  } else if (probe.api === 200) {
+    check("🎮 is the icon only (aria-label 「ゲーム」)", !!shown && shown.toggle && shown.text === "🎮" && shown.aria === "ゲーム", JSON.stringify(shown));
+    await page.click('[data-cx="minigame-toggle"]').catch(() => {});
+    await page.waitForSelector('[data-cx="minigame-panel"] canvas', { timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(800);
+    const lay = await page.evaluate(`(() => {
+      const panel = document.querySelector('[data-cx="minigame-panel"]');
+      const input = document.querySelector('[class*="bguru-chat-view"] textarea');
+      if (!panel) return null;
+      const r = panel.getBoundingClientRect();
+      const ir = input ? input.getBoundingClientRect() : null;
+      return { scrollY: Math.round(window.scrollY), canvas: !!panel.querySelector('canvas'), panelBottom: Math.round(r.bottom), inputBottom: ir ? Math.round(ir.bottom) : null, vh: innerHeight };
+    })()`);
+    check(
+      "🎮 opens the game above the chat (no page scroll, the composer stays visible)",
+      !!lay && lay.canvas && lay.scrollY === 0 && lay.inputBottom !== null && lay.inputBottom <= lay.vh && lay.panelBottom < lay.inputBottom,
+      JSON.stringify(lay)
+    );
+    await page.click('[data-cx="minigame-toggle"]').catch(() => {}); // 閉じる（開いている間だけ作り、閉じたら捨てる）
+    await page.waitForTimeout(400);
+  } else {
+    console.log(`  [skip] minigame probe failed (GET /api/minigame/me → ${probe.api})`);
+  }
+  await page.evaluate(clickTab("タイムライン"));
+  await page.waitForTimeout(400);
 }
 
 // ------------------------------------------------------------ cleanup

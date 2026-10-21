@@ -15,6 +15,9 @@ export async function register() {
       // ☗ 将棋: 止まっていた間の時間切れを延ばし、進行中の対局のタイマーを張り直す。
       const { ensureShogiSweeper } = await import("@/lib/shogi");
       ensureShogiSweeper();
+      // 🎮 締め切りダッシュ: 月曜 9 時の週の王者の投稿・期限切れの発行の片付け（1 分ごと）。
+      const { ensureMinigameSweeper } = await import("@/lib/minigame");
+      ensureMinigameSweeper();
     } catch (e) {
       console.error("[bsm] initSchema failed:", e);
     }
