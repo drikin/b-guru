@@ -6,7 +6,7 @@
  *   ShogiChatCard   チャットに流れる kind "shogi" の対局中カード（盤の小さな絵・観戦する）
  * 状態は lib/shogi-client.ts（React の外）。盤は lib/shogi-board/board.ts（アプリの WebView と同じ部品）。 */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { ActionIcon, Badge, Button, CloseButton, Group, Select, Switch, Text, useComputedColorScheme } from "@mantine/core";
+import { ActionIcon, Badge, Button, CloseButton, Group, Switch, Text, useComputedColorScheme } from "@mantine/core";
 import ShogiBoard from "./ShogiBoard";
 import {
   acceptShogiGame,
@@ -38,10 +38,7 @@ function useShogi(): ShogiSnapshot {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }
 
-const MODE = { blitz: "⚡速い", slow: "🐢ゆっくり" } as const;
 
-/** ロビーの「相手を指名」（オーナー 2026-10-21: 一旦出さない。サーバの指名 API は残っている）。true で戻る。 */
-const SHOW_INVITE = false;
 /** ロビーの「最近の結果」（同上、一旦出さない）。true で戻る。 */
 const SHOW_RECENT_RESULTS = false;
 /** ビーグル（AI）の表示名（サーバの system アカウント）。 */
@@ -161,7 +158,7 @@ function GameTabs({ s }: { s: ShogiSnapshot }) {
             onClick={() => selectGame(g.id)}
             title={myTurn ? "あなたの番" : "相手の番"}
           >
-            {MODE[g.mode].slice(0, 2)} {opp?.name ?? "?"}
+            {opp?.name ?? "?"}
             {myTurn ? " ●" : ""}
           </Button>
         );
@@ -177,8 +174,6 @@ function GameTabs({ s }: { s: ShogiSnapshot }) {
 
 // ─────────────────────────── ロビー
 
-type Member = { userId: string; name: string };
-
 function Lobby({ s }: { s: ShogiSnapshot }) {
   const me = s.me;
   const offersToMe = s.games.filter((g) => g.status === "offered" && g.invitee?.user_id === me);
@@ -188,18 +183,7 @@ function Lobby({ s }: { s: ShogiSnapshot }) {
     .filter((g) => g.status === "active")
     .sort((a, b) => Number(!!myColorIn(b, me)) - Number(!!myColorIn(a, me)));
   const ended = s.games.filter((g) => g.status === "ended").slice(0, 10);
-  const [members, setMembers] = useState<Member[] | null>(null);
-  const [invitee, setInvitee] = useState<string | null>(null);
-  const [inviteMode, setInviteMode] = useState<"blitz" | "slow">("blitz");
-  const [beagleOpen, setBeagleOpen] = useState(false);
 
-  const loadMembers = () => {
-    if (members) return;
-    fetch("/api/members", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : { members: [] }))
-      .then((d) => setMembers(((d.members ?? []) as Member[]).filter((m) => m.userId !== me && m.name !== "ビーグル")))
-      .catch(() => setMembers([]));
-  };
 
   // 対局はサイト全体で 1 つだけ・早い者勝ち（ドリキン 2026-10-21）。見えている対局があれば新しく出せない。
   const busy = s.games.some((g) => g.status === "open" || g.status === "offered" || g.status === "active");
@@ -211,83 +195,15 @@ function Lobby({ s }: { s: ShogiSnapshot }) {
           対局は 1 局ずつです。募集中の対局を受けるか、対局中なら観戦してください。
         </Text>
       ) : (
-      <Section title="対局を申し込む">
-        <Group gap={6}>
-          <Button size="compact-sm" color="green" disabled={s.busy} onClick={() => void createShogiGame("blitz")}>
-            ⚡ 速い（10 分＋30 秒）で募集
-          </Button>
-          <Button size="compact-sm" color="green" variant="light" disabled={s.busy} onClick={() => void createShogiGame("slow")}>
-            🐢 ゆっくりで募集
-          </Button>
-        </Group>
-        <Group gap={6} mt={6} wrap="wrap">
-          {!beagleOpen ? (
-            <Button size="compact-sm" variant="light" color="orange" disabled={s.busy} onClick={() => setBeagleOpen(true)}>
-              🐶 ビーグルと対局（練習）
-            </Button>
-          ) : (
-            <>
-              <Text size="xs" style={{ alignSelf: "center" }}>
-                🐶 ビーグルと:
-              </Text>
-              <Button size="compact-sm" color="orange" disabled={s.busy} onClick={() => void startBeagleGame("blitz")}>
-                ⚡ 速い
-              </Button>
-              <Button size="compact-sm" color="orange" variant="light" disabled={s.busy} onClick={() => void startBeagleGame("slow")}>
-                🐢 ゆっくり
-              </Button>
-              <Button size="compact-sm" variant="subtle" color="gray" onClick={() => setBeagleOpen(false)}>
-                やめる
-              </Button>
-            </>
-          )}
-        </Group>
-        {SHOW_INVITE && (
-        <Group gap={6} mt={6} wrap="wrap" align="flex-end">
-          <Select
-            size="xs"
-            placeholder="相手を指名"
-            searchable
-            clearable
-            data={(members ?? []).map((m) => ({ value: m.userId, label: m.name }))}
-            value={invitee}
-            onChange={setInvitee}
-            onDropdownOpen={loadMembers}
-            onFocus={loadMembers}
-            nothingFoundMessage={members ? "見つかりません" : "読み込み中…"}
-            style={{ flex: "1 1 140px", minWidth: 140 }}
-            aria-label="指名する相手"
-          />
-          <Select
-            size="xs"
-            data={[
-              { value: "blitz", label: "⚡ 速い" },
-              { value: "slow", label: "🐢 ゆっくり" },
-            ]}
-            value={inviteMode}
-            onChange={(v) => setInviteMode(v === "slow" ? "slow" : "blitz")}
-            allowDeselect={false}
-            style={{ width: 110 }}
-            aria-label="持ち時間"
-          />
-          <Button
-            size="compact-sm"
-            variant="light"
-            color="green"
-            disabled={!invitee || s.busy}
-            onClick={() => {
-              if (invitee) void createShogiGame(inviteMode, invitee).then(() => setInvitee(null));
-            }}
-          >
-            指名する
-          </Button>
-        </Group>
-        )}
-        <Text size="xs" c="dimmed" mt={4}>
-          先後は振り駒で決まります。募集は 15 分{SHOW_INVITE ? "、指名は 24 時間" : ""}で期限切れ。ゆっくりは 72 時間指さないと負けです。
-          ビーグルとの対局は申し込みなしですぐ始まります（初心者向けの練習相手）。
-        </Text>
-      </Section>
+      // シンプルに 2 つだけ（ドリキン 2026-10-21「はやい、遅いも要らない」「シンプルなデザインに」）。持ち時間は速い将棋に固定。
+      <Group gap={8} justify="center" py={6}>
+        <Button color="green" disabled={s.busy} onClick={() => void createShogiGame("blitz")}>
+          対局を募集
+        </Button>
+        <Button color="orange" variant="light" disabled={s.busy} onClick={() => void startBeagleGame("blitz")}>
+          🐶 ビーグルと対局
+        </Button>
+      </Group>
       )}
 
       {offersToMe.length > 0 && (
@@ -295,8 +211,7 @@ function Lobby({ s }: { s: ShogiSnapshot }) {
           {offersToMe.map((g) => (
             <Row key={g.id}>
               <Text size="sm" style={{ flex: 1 }}>
-                {g.creator.name} さんから（{MODE[g.mode]}
-                {g.rematch_of ? "・再戦" : ""}）
+                {g.creator.name} さんから{g.rematch_of ? "（再戦）" : ""}
               </Text>
               <Button size="compact-xs" color="green" disabled={s.busy} onClick={() => void acceptShogiGame(g.id)}>
                 受ける
@@ -314,7 +229,7 @@ function Lobby({ s }: { s: ShogiSnapshot }) {
           {myPending.map((g) => (
             <Row key={g.id}>
               <Text size="sm" style={{ flex: 1 }}>
-                {g.status === "offered" ? `${g.invitee?.name ?? "?"} さんへ` : "募集中"}（{MODE[g.mode]}）
+                {g.status === "offered" ? `${g.invitee?.name ?? "?"} さんへ` : "募集中"}
                 <Text span size="xs" c="dimmed">
                   {" "}
                   〜{g.deadline_at ? new Date(g.deadline_at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : ""}
@@ -338,7 +253,7 @@ function Lobby({ s }: { s: ShogiSnapshot }) {
           {openOthers.map((g) => (
             <Row key={g.id}>
               <Text size="sm" style={{ flex: 1 }}>
-                {g.creator.name} さん（{MODE[g.mode]}）
+                {g.creator.name} さんが募集中
               </Text>
               <Button size="compact-xs" color="green" disabled={s.busy} onClick={() => void acceptShogiGame(g.id)}>
                 受ける
@@ -360,7 +275,7 @@ function Lobby({ s }: { s: ShogiSnapshot }) {
                 ☗{g.black?.name} vs ☖{g.white?.name}
                 <Text span size="xs" c="dimmed">
                   {" "}
-                  {MODE[g.mode]}・{g.ply} 手{g.spectators ? `・👀${g.spectators}` : ""}
+                  {g.ply} 手{g.spectators ? `・👀${g.spectators}` : ""}
                 </Text>
               </Text>
               <Button size="compact-xs" variant="light" color="green" onClick={() => selectGame(g.id)}>
@@ -494,7 +409,7 @@ function GameView({ s }: { s: ShogiSnapshot }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minHeight: 0 }}>
       <Group gap={6} justify="space-between" wrap="nowrap">
         <Text size="xs" c="dimmed" style={{ flex: 1 }}>
-          {MODE[g.mode]}・{g.ply} 手{g.spectators ? `・👀 ${g.spectators} 人が観戦中` : ""}
+          {g.ply} 手{g.spectators ? `・👀 ${g.spectators} 人が観戦中` : ""}
           {ended ? `・${resultText(g)}` : ""}
           {active && my ? (g.turn === my ? "・あなたの番" : vsBeagle ? "・ビーグルが考え中…🐶" : "・相手の番") : ""}
         </Text>
