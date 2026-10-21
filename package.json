@@ -24,6 +24,7 @@
     "postcss-preset-mantine": "^1.18.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "sharp": "0.35.5",
     "web-push": "^3.6.7",
     "zod": "^3.25.76"
   },

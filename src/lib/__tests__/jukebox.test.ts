@@ -44,7 +44,8 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-import { jukeboxBrokenClient, jukeboxEnabledFor, jukeboxForApp, postDailyIfDue, syncBsmFeed } from "../jukebox";
+import { jukeboxBrokenClient, jukeboxEnabledFor, jukeboxForApp, postDailyIfDue, syncBsmFeed, jukeboxAppResponse, etagMatches, invalidateJukeboxCache, upsertEpisodes } from "../jukebox";
+import { pool } from "@/lib/db";
 
 describe("daily post", () => {
   beforeEach(() => {
@@ -137,5 +138,45 @@ describe("会員限定の BSM ポッドキャスト（BSM_FEED_URL）", () => {
     const err = await syncBsmFeed(down as unknown as typeof fetch).catch((e: Error) => e.message);
     expect(err).toBe("bsm feed unreachable");
     expect(String(err)).not.toContain("secret");
+  });
+});
+
+describe("アプリ向けの一覧はメモリに持ち、ETag で 304 を返せる", () => {
+  const listCalls = () =>
+    (pool.query as unknown as { mock: { calls: unknown[][] } }).mock.calls.filter((c) => String(c[0]).includes("left(summary, 161)")).length;
+  beforeEach(() => invalidateJukeboxCache());
+
+  it("summary は SQL で 161 字だけ読み、一覧は 1 回だけ作る", async () => {
+    const before = listCalls();
+    const a = await jukeboxAppResponse(1);
+    const b = await jukeboxAppResponse(1);
+    expect(listCalls() - before).toBe(1);
+    expect(a.json).toBe(b.json);
+    expect(a.etag).toBe(b.etag);
+    const body = JSON.parse(a.json);
+    expect(Object.keys(body)).toEqual(["apiVersion", "episodes", "today"]);
+    expect(body.apiVersion).toBe(1);
+    expect(body.episodes.map((e: { id: string }) => e.id)).toEqual(["bsm:a1", "g7"]);
+    // Same DTO as jukeboxForApp (the shape the apps already parse).
+    expect(body.episodes).toEqual((await jukeboxForApp()).episodes);
+  });
+
+  it("取り込み（upsert）で作り直す", async () => {
+    await jukeboxAppResponse(1);
+    const before = listCalls();
+    await upsertEpisodes([]);
+    await jukeboxAppResponse(1);
+    expect(listCalls() - before).toBe(1);
+  });
+
+  it("If-None-Match の比較（弱い ETag・リスト・*）", async () => {
+    const { etag } = await jukeboxAppResponse(1);
+    expect(etag.startsWith('W/"')).toBe(true);
+    expect(etagMatches(etag, etag)).toBe(true);
+    expect(etagMatches(etag.slice(2), etag)).toBe(true); // strong form of the same tag
+    expect(etagMatches(`"other", ${etag}`, etag)).toBe(true);
+    expect(etagMatches("*", etag)).toBe(true);
+    expect(etagMatches(null, etag)).toBe(false); // URLSession / OkHttp without a cache: plain 200
+    expect(etagMatches('W/"jb-different"', etag)).toBe(false);
   });
 });

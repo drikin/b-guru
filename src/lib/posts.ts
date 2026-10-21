@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { pool } from "./db";
 import { fetchUrlPreview, UrlPreview } from "./urlpreview";
 import { emitLive } from "./live";
+import { invalidateOnPostChange, sharedCache } from "./shared-cache";
 import { buildPostPoll, endsAtOf, type PostPoll } from "./poll";
 import { isActiveClubKey } from "./club-store";
 import { isAdmin } from "./admin";
@@ -562,40 +563,58 @@ export async function getPostPoll(
 
 /** ホットトピック: 直近7日間で最もコメント（ささやき含む）が付いたルート投稿の上位 limit 件。
  *  盛り上がり度 = 7日間のコメント数（いいねは集計対象外 — 無効のため）。スコア降順 → 最終アクティビティ順。 */
+/** 盛り上がり（hot）の順位は閲覧者によらず同じなので、id と 7 日のコメント数だけを
+ *  全員で HOT_TTL_MS 共有する（lib/shared-cache.ts。投稿・削除で作り直し）。
+ *  閲覧者ごとの項目（自分の投稿か・いいね済みか等）は毎回、その数件だけを主キーで引く。 */
+export const HOT_TTL_MS = 45_000;
+const HOT_RANK_LIMIT = 5;
+
+async function computeHotRanking(): Promise<{ id: number; n: number }[]> {
+  // Same order as before: 7-day comment count (incl. whispers), then last activity
+  // (newest non-whisper reply, or the post itself) — see POST_SELECT.last_activity.
+  const res = await pool.query(
+    `SELECT p.id,
+            (SELECT COUNT(*) FROM posts r
+              WHERE r.parent_id = p.id AND r.created_at > now() - interval '7 days')::int AS n
+       FROM posts p
+      WHERE p.parent_id IS NULL
+        AND EXISTS (
+          SELECT 1 FROM posts r
+          WHERE r.parent_id = p.id AND r.created_at > now() - interval '7 days'
+        )
+      ORDER BY 2 DESC,
+        GREATEST(p.created_at,
+          COALESCE((SELECT MAX(r.created_at) FROM posts r WHERE r.parent_id = p.id AND r.is_whisper IS NOT TRUE), p.created_at)
+        ) DESC
+      LIMIT $1`,
+    [HOT_RANK_LIMIT]
+  );
+  return res.rows.map((r: { id: number; n: number }) => ({ id: r.id, n: r.n }));
+}
+
+const hotRanking = invalidateOnPostChange(sharedCache(HOT_TTL_MS, computeHotRanking));
+
 export async function listHotTopics(
   viewerEmail: string,
   limit = 5
 ): Promise<FeedPost[]> {
+  const ranked = (await hotRanking.get()).slice(0, Math.max(0, Math.min(limit, HOT_RANK_LIMIT)));
+  if (ranked.length === 0) return [];
+  const ids = ranked.map((r) => r.id);
   const res = await pool.query(
     `${POST_SELECT}
-     WHERE p.parent_id IS NULL
-       AND EXISTS (
-         SELECT 1 FROM posts r
-         WHERE r.parent_id = p.id AND r.created_at > now() - interval '7 days'
-       )
-     GROUP BY p.id
-     ORDER BY
-       (SELECT COUNT(*) FROM posts r
-        WHERE r.parent_id = p.id AND r.created_at > now() - interval '7 days') DESC,
-       last_activity DESC
-     LIMIT $2`,
-    [viewerEmail, limit]
+     WHERE p.id = ANY($2::int[]) AND p.parent_id IS NULL
+     GROUP BY p.id`,
+    [viewerEmail, ids]
   );
-  const posts = res.rows.map(mapRow);
-  if (posts.length === 0) return posts;
-
-  // Attach the 7-day comment count (incl. whispers) for each hot topic.
-  const ids = posts.map((p) => p.id);
-  const cntRes = await pool.query(
-    `SELECT r.parent_id AS pid, COUNT(*)::int AS n
-     FROM posts r
-     WHERE r.parent_id = ANY($1::int[]) AND r.created_at > now() - interval '7 days'
-     GROUP BY r.parent_id`,
-    [ids]
-  );
-  const cnt = new Map<number, number>(cntRes.rows.map((r) => [r.pid, r.n]));
-  for (const p of posts) p.recentComments = cnt.get(p.id) ?? 0;
-
+  const byId = new Map<number, FeedPost>(res.rows.map((r: { id: number }) => [r.id, mapRow(r)]));
+  const posts: FeedPost[] = [];
+  for (const r of ranked) {
+    const p = byId.get(r.id);
+    if (!p) continue; // deleted since the ranking was cached
+    p.recentComments = r.n;
+    posts.push(p);
+  }
   return posts;
 }
 

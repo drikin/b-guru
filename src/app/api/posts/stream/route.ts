@@ -5,7 +5,7 @@ import { liveBus, LiveEvent } from "@/lib/live";
 import { getSessionEmail } from "@/lib/session";
 import {
   ensurePresenceSweeper,
-  getOnlineUserIds,
+  getOnlineMembers,
   markOffline,
   markOnline,
 } from "@/lib/presence";
@@ -54,6 +54,11 @@ export async function GET(req: NextRequest) {
         // also open to signed-out visitors). Same DTO as the apps: user_id / name / avatar.
         // The club room likewise: signed-in members who have it (rollout flag).
         if (event.type === "room" && !roomOn) return;
+        // Names / avatars of who is online: signed-in members only (same as
+        // GET /api/presence, which returns [] to visitors).
+        if (event.type === "presence" && !email && event.members) {
+          event = { type: "presence", userIds: event.userIds };
+        }
         if (event.type === "voice") {
           if (!email) return;
           try {
@@ -78,8 +83,8 @@ export async function GET(req: NextRequest) {
         // panel renders immediately without waiting for the next change.
         // Opaque user ids only — this used to ship every online member's email
         // address to every client that opened the stream.
-        void getOnlineUserIds().then((userIds) => {
-          send({ type: "presence", userIds });
+        void getOnlineMembers().then((members) => {
+          send({ type: "presence", userIds: members.map((m) => m.userId), members });
         });
       }
 

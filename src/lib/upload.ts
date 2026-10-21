@@ -1,11 +1,12 @@
 /* アップロードの正本（Web の /api/upload とアプリの /api/agent/upload で共通）。 */
 import { NextResponse } from "next/server";
-import { rm, mkdir } from "fs/promises";
+import { rm, mkdir, writeFile } from "fs/promises";
 import { createWriteStream } from "node:fs";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import path from "path";
 import crypto from "crypto";
+import { POST_IMAGE_MAX_SIDE, canPassThrough, extForFormat, imageInfo, resizeImage } from "./image-resize";
 
 
 const MAX_IMAGES = 5;
@@ -216,10 +217,29 @@ export async function handleUpload(
   const urls: string[] = [];
   const written: string[] = [];
   for (const file of files) {
-    const ext = path.extname(file.name) || ".jpg";
-    const safeExt = [".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext) ? ext : ".jpg";
-    const filename = `${chat ? CHAT_UPLOAD.prefix : ""}${Date.now()}-${crypto.randomBytes(6).toString("hex")}${safeExt}`;
+    const ext = path.extname(file.name).toLowerCase() || ".jpg";
+    let safeExt = [".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext) ? ext : ".jpg";
+    const base = `${chat ? CHAT_UPLOAD.prefix : ""}${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
+    let filename = `${base}${safeExt}`;
     try {
+      // Post images (not chat: those are already ≤1280 px and EXIF-free from the
+      // browser) are stored at most POST_IMAGE_MAX_SIDE on the long side, rotated
+      // upright and with EXIF/GPS removed. Anything sharp cannot handle (GIF,
+      // animations, odd files) is stored as sent, like before.
+      if (!chat && file.size <= maxImageBytes) {
+        const prepared = await preparePostImage(Buffer.from(await file.arrayBuffer()));
+        if (prepared.ext) safeExt = prepared.ext;
+        filename = `${base}${safeExt}`;
+        try {
+          await writeFile(path.join(uploadDir, filename), prepared.data);
+        } catch (err) {
+          await rm(path.join(uploadDir, filename), { force: true });
+          throw err;
+        }
+        written.push(filename);
+        urls.push(`/api/media/${filename}`);
+        continue;
+      }
       const reject = await saveOrReject(file, "画像", maxImageBytes, () => filename);
       if (reject) {
         await Promise.all(
@@ -240,4 +260,20 @@ export async function handleUpload(
   }
 
   return NextResponse.json({ urls }, { status: 201 });
+}
+
+/** Normalise one post image for storage: ≤ POST_IMAGE_MAX_SIDE, upright, no EXIF/XMP/IPTC.
+ *  Returns the bytes to store and, when re-encoded, the extension of the real format
+ *  (a .jpg that is really a PNG is stored as .png so /api/media sends the right type).
+ *  Falls back to the bytes as sent when sharp cannot read them. */
+export async function preparePostImage(buf: Buffer): Promise<{ data: Buffer; ext?: string }> {
+  try {
+    const info = await imageInfo(buf);
+    if (canPassThrough(info, POST_IMAGE_MAX_SIDE)) return { data: buf };
+    const out = await resizeImage(buf, POST_IMAGE_MAX_SIDE);
+    return { data: out.data, ext: extForFormat(out.format) || undefined };
+  } catch (err) {
+    console.warn("[upload] image not processed, stored as sent:", err instanceof Error ? err.message : err);
+    return { data: buf };
+  }
 }

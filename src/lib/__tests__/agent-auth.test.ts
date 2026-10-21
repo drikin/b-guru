@@ -30,9 +30,12 @@ import {
   hashToken,
   AgentAuthError,
   RATE_RULES,
+  LAST_USED_EVERY_MS,
+  _resetLastUsedThrottleForTest,
 } from "../agent-auth";
 
 beforeEach(() => {
+  _resetLastUsedThrottleForTest();
   query.mockReset();
   query.mockResolvedValue({ rows: [], rowCount: 0 });
   findMemberByEmail.mockReset();
@@ -143,6 +146,7 @@ describe("verifyAgentToken", () => {
 
   it("人のアプリ（voice）のトークンだけ、使うたびに期限を延ばす", async () => {
     const run = async (scopes: string[]) => {
+      _resetLastUsedThrottleForTest(); // same token id 1 in both runs
       query.mockReset();
       query.mockImplementation(async (sql: string) =>
         String(sql).includes("SELECT id, token_hash")
@@ -157,6 +161,35 @@ describe("verifyAgentToken", () => {
     };
     expect(await run(["read", "chat", "voice"])).toBe(true);
     expect(await run(["read"])).toBe(false);
+  });
+
+  it("使用記録（last_used_at の UPDATE）は 1 トークン 1 分に 1 回まで", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-10-20T00:00:00Z"));
+      const tokenRow = (id: number) => ({
+        rows: [{ id, email: "a@b.c", scopes: ["read"], device_name: "t",
+                 expires_at: new Date(Date.now() + 86400_000), last_membership_check: new Date() }],
+      });
+      let tokenId = 1;
+      query.mockImplementation(async (sql: string) =>
+        String(sql).includes("SELECT id, token_hash") ? tokenRow(tokenId) : { rows: [], rowCount: 0 }
+      );
+      const updates = () => query.mock.calls.filter((c) => String(c[0]).includes("SET last_used_at")).length;
+      await verifyAgentToken("Bearer bga_x");
+      await verifyAgentToken("Bearer bga_x");
+      await verifyAgentToken("Bearer bga_x");
+      expect(updates()).toBe(1);
+      tokenId = 2; // another token is recorded on its own
+      await verifyAgentToken("Bearer bga_y");
+      expect(updates()).toBe(2);
+      tokenId = 1;
+      vi.setSystemTime(new Date(Date.now() + LAST_USED_EVERY_MS));
+      await verifyAgentToken("Bearer bga_x");
+      expect(updates()).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("6 時間以上経過で Ghost 再判定・非会員ならトークン失効 + membership_ended", async () => {

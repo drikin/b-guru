@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile, stat } from "fs/promises";
 import path from "path";
 import { lookup } from "dns/promises";
 import net from "net";
+import { shrinkProxyImage } from "@/lib/image-resize";
 
 // GET /api/img?u=<encoded-url> — proxy + disk-cache external preview images.
 //
@@ -120,6 +121,9 @@ async function dirSize(dir: string): Promise<number> {
   }
 }
 
+/** Bumped when the cached bytes change shape (2 = resized to PROXY_IMAGE_MAX_SIDE). */
+const PROXY_CACHE_VERSION = 2;
+
 export async function GET(req: NextRequest) {
   const raw = req.nextUrl.searchParams.get("u");
   if (!raw) {
@@ -150,12 +154,29 @@ export async function GET(req: NextRequest) {
       readFile(cachePath),
       readFile(metaPath, "utf8"),
     ]);
-    const meta = JSON.parse(metaRaw) as { ct: string; ts: number };
+    const meta = JSON.parse(metaRaw) as { ct: string; ts: number; v?: number };
     if (Date.now() - meta.ts < CACHE_TTL_MS) {
-      return new NextResponse(new Uint8Array(buf), {
+      let body: Buffer = buf;
+      let ct = meta.ct || "image/jpeg";
+      // Entries cached before resizing existed: shrink once and rewrite in place
+      // (local CPU only — no second trip to the third-party host).
+      if (meta.v !== PROXY_CACHE_VERSION) {
+        const shrunk = await shrinkProxyImage(buf, ct);
+        body = shrunk.buf;
+        ct = shrunk.ct;
+        try {
+          await Promise.all([
+            writeFile(cachePath, body),
+            writeFile(metaPath, JSON.stringify({ ct, ts: meta.ts, v: PROXY_CACHE_VERSION })),
+          ]);
+        } catch {
+          /* best-effort */
+        }
+      }
+      return new NextResponse(new Uint8Array(body), {
         status: 200,
         headers: {
-          "Content-Type": meta.ct || "image/jpeg",
+          "Content-Type": ct,
           "Cache-Control": "public, max-age=1209600, immutable",
           "X-Img-Cache": "HIT",
         },
@@ -222,10 +243,14 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "too large" }, { status: 413 });
     }
 
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.byteLength > MAX_BYTES) {
+    const raw = Buffer.from(await res.arrayBuffer());
+    if (raw.byteLength > MAX_BYTES) {
       return NextResponse.json({ error: "too large" }, { status: 413 });
     }
+    // Shrink before caching: og:images are often 2-4 MB PNGs for a ~500 px card.
+    const shrunk = await shrinkProxyImage(raw, ct);
+    const buf = shrunk.buf;
+    const outCt = shrunk.ct;
 
     await mkdir(CACHE_DIR, { recursive: true });
 
@@ -255,7 +280,7 @@ export async function GET(req: NextRequest) {
     try {
       await Promise.all([
         writeFile(cachePath, buf),
-        writeFile(metaPath, JSON.stringify({ ct, ts: Date.now() })),
+        writeFile(metaPath, JSON.stringify({ ct: outCt, ts: Date.now(), v: PROXY_CACHE_VERSION })),
       ]);
     } catch {
       /* cache write failure must not break the response */
@@ -264,7 +289,7 @@ export async function GET(req: NextRequest) {
     return new NextResponse(new Uint8Array(buf), {
       status: 200,
       headers: {
-        "Content-Type": ct,
+        "Content-Type": outCt,
         "Cache-Control": "public, max-age=1209600, immutable",
         "X-Img-Cache": "MISS",
       },

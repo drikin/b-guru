@@ -4,6 +4,7 @@ import type { ChatMessage } from "./chat";
 import type { UrlPreview } from "./urlpreview";
 import type { VoiceState } from "./voice";
 import type { RoomMember } from "./room";
+import type { PresenceMember } from "./presence";
 
 // Chat delete events only carry the message id; create events carry the full
 // message. A chat event's `message` always has at least `id`.
@@ -36,7 +37,9 @@ liveBus.setMaxListeners(0);
 export type LiveEvent =
   | { type: "post"; postId: number; action: "create" | "update" | "delete"; authorId?: string; urlPreview?: UrlPreview | null }
   | { type: "pin"; postId: number; action: "toggle" }
-  | { type: "presence"; userIds: string[] }
+  /** `members` (name / avatar / visible) goes to signed-in Web clients only; the
+   *  posts stream drops it for visitors and the agent stream sends `user_ids` only. */
+  | { type: "presence"; userIds: string[]; members?: PresenceMember[] }
   | { type: "chat"; message: ChatLiveMessage; action: "create" | "delete" | "edit" }
   | { type: "poll"; action: "vote" | "edit"; postId: number; poll: PostPoll }
   | { type: "club"; postId: number; club: string | null }

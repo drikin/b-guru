@@ -49,21 +49,35 @@ function currentList(): string[] {
 }
 
 /**
- * Broadcast the online set as opaque user ids.
+ * Broadcast the online set — opaque user ids plus the enriched member list
+ * (userId / name / avatar / visible, the same as GET /api/presence returns).
  *
  * The registry is keyed by email (the internal identity everywhere), but this
  * event is fanned out to EVERY connected client, so the addresses must be
  * translated to `users.user_id` before they leave the process. An email that
  * has no user_id yet is skipped rather than leaked.
+ *
+ * Coalesced: a burst of joins / leaves / visibility flips within
+ * PRESENCE_BROADCAST_MS becomes ONE event. Carrying `members` in the event lets
+ * the Web stop re-fetching GET /api/presence on every presence event (that
+ * re-fetch was ~30% of all requests: every client × every change). The native
+ * stream (/api/agent/stream) still sends only `user_ids` — see agent-chat.ts.
  */
-async function broadcast(): Promise<void> {
+export const PRESENCE_BROADCAST_MS = 1500;
+let broadcastTimer: ReturnType<typeof setTimeout> | null = null;
+
+function broadcast(): void {
+  if (broadcastTimer) return;
+  broadcastTimer = setTimeout(() => {
+    broadcastTimer = null;
+    void broadcastNow();
+  }, PRESENCE_BROADCAST_MS);
+}
+
+async function broadcastNow(): Promise<void> {
   try {
-    const emails = currentList();
-    const ids = await emailToUserIds(emails);
-    const userIds = emails
-      .map((em) => ids.get(em.trim().toLowerCase()))
-      .filter((id): id is string => id != null);
-    liveBus.emit("change", { type: "presence", userIds });
+    const members = await getOnlineMembers();
+    liveBus.emit("change", { type: "presence", userIds: members.map((m) => m.userId), members });
   } catch (e) {
     console.error("presence broadcast error:", (e as any)?.message);
   }

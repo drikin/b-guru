@@ -4,6 +4,7 @@ import { stat } from "fs/promises";
 import { Readable } from "stream";
 import path from "path";
 import { mediaAuthEmail } from "@/lib/download-auth";
+import { mediaVariant } from "@/lib/media-variants";
 
 // Stream a byte range of `filePath` as a web ReadableStream. Buffering the whole
 // file (Buffer.alloc + fh.read) held the HTTP connection until the entire
@@ -51,6 +52,24 @@ export async function GET(
   try {
     const s = await stat(filePath);
     if (!s.isFile()) throw new Error("not a file");
+
+    // Post images: never send the original (iPhone full size, EXIF with GPS).
+    // ?w=320|640|1280|2048 picks a size; no ?w = long side 2048. The resized,
+    // EXIF-free copy is made once and cached on disk; the original stays as it is.
+    // Chat photos (chat-…) are already small and EXIF-free, so they are served as is.
+    const variant = await mediaVariant(filename, filePath, req.nextUrl.searchParams.get("w"));
+    if (variant) {
+      const vs = await stat(variant.path);
+      return new NextResponse(streamFile(variant.path, 0, vs.size - 1), {
+        status: 200,
+        headers: {
+          "Content-Type": variant.contentType,
+          "Cache-Control": "private, max-age=31536000, immutable",
+          "Content-Length": String(vs.size),
+          "X-Media-Variant": variant.label,
+        },
+      });
+    }
     const size = s.size;
 
     const baseHeaders: Record<string, string> = {

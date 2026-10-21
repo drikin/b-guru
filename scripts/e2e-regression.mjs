@@ -94,6 +94,15 @@ page.on("response", (r) => {
     expected404.add(r.url());
   }
 });
+// Performance round 2 (2026-10-20): the presence SSE event carries the online
+// list, so the page must not GET /api/presence per event any more (it was 30% of
+// all requests). Counted for the whole run — other test pages join and leave,
+// which used to make this page re-fetch every time.
+const presenceGets = [];
+page.on("request", (r) => {
+  const u = new URL(r.url());
+  if (r.method() === "GET" && u.pathname === "/api/presence") presenceGets.push(Date.now());
+});
 page.on("pageerror", (e) => consoleErrors.push(String(e).slice(0, 200)));
 page.on("console", (m) => {
   if (m.type() !== "error") return;
@@ -2934,6 +2943,70 @@ check("no uncaught page errors at the end", consoleErrors.length === 0, consoleE
     int32?.postsRead === 200,
     `status=${int32?.postsRead}`
   );
+}
+
+// ------------------------------------------------- performance round 2
+console.log("\nP. Performance (2026-10-20): presence list in SSE, sized images, chat input");
+{
+  // One GET on load (mount) is fine; per-event re-fetches are not. The 5-minute
+  // self-heal adds at most one more per 5 min of run time.
+  check(
+    "presence: no GET /api/presence per SSE event",
+    presenceGets.length <= 2 + Math.floor((Date.now() - (presenceGets[0] ?? Date.now())) / 300000),
+    `GETs=${presenceGets.length}`
+  );
+
+  await page.goto(BASE_URL, { waitUntil: "networkidle", timeout: 60000 });
+  await page.waitForTimeout(1500);
+  const media = await page.evaluate(() => {
+    const imgs = [...document.querySelectorAll('[data-post-id] img')]
+      .filter((i) => /\/api\/media\/(?!chat-)[^?]+\.(jpe?g|png|webp)/i.test(i.getAttribute("src") || ""));
+    return imgs.slice(0, 20).map((i) => ({ src: i.getAttribute("src"), srcset: i.getAttribute("srcset") || "" }));
+  });
+  if (media.length === 0) {
+    console.log("  [skip] no uploaded post images on the first page");
+  } else {
+    check(
+      "timeline images ask for a sized copy (?w=) with a srcset",
+      media.every((m) => /[?&]w=\d+/.test(m.src) && /640w/.test(m.srcset) && /1280w/.test(m.srcset)),
+      media.find((m) => !/[?&]w=/.test(m.src))?.src ?? `${media.length} images`
+    );
+    // The default copy (no ?w, what the apps load) must carry no EXIF (GPS).
+    const exif = await page.evaluate(async (src) => {
+      const r = await fetch(src.replace(/\?.*$/, ""), { cache: "no-store" });
+      const b = new Uint8Array(await r.arrayBuffer());
+      const head = new TextDecoder("latin1").decode(b.subarray(0, Math.min(b.length, 65536)));
+      return { status: r.status, bytes: b.length, exif: head.includes("Exif\u0000\u0000"), variant: r.headers.get("x-media-variant") };
+    }, media[0].src);
+    check("uploaded image (default copy) has no EXIF", exif.status === 200 && !exif.exif, JSON.stringify(exif));
+  }
+
+  // Typing in the chat must not re-render the timeline: the draft lives in its
+  // own component. Probe: React re-renders of a memoised card leave the DOM
+  // untouched, so instead check the input still works end to end (value kept
+  // across closing and reopening the chat, send button enables).
+  await page.evaluate(clickTab("チャット"));
+  await page.waitForTimeout(800);
+  const ta = page.locator('textarea[aria-label="チャットメッセージ"]');
+  if ((await ta.count()) > 0) {
+    await ta.first().fill("e2e-draft-keep");
+    await page.evaluate(clickTab("タイムライン"));
+    await page.waitForTimeout(400);
+    await page.evaluate(clickTab("チャット"));
+    await page.waitForTimeout(800);
+    const kept = await page.locator('textarea[aria-label="チャットメッセージ"]').first().inputValue().catch(() => "");
+    const sendEnabled = await page
+      .locator('button[aria-label="送信"]')
+      .first()
+      .isEnabled()
+      .catch(() => false);
+    check("chat draft survives closing/reopening the chat", kept === "e2e-draft-keep", `value=${JSON.stringify(kept)}`);
+    check("send button enables with a draft", sendEnabled);
+    await page.locator('textarea[aria-label="チャットメッセージ"]').first().fill("");
+    await page.evaluate(clickTab("タイムライン"));
+  } else {
+    console.log("  [skip] chat input not found");
+  }
 }
 
 // ------------------------------------------------------------ cleanup

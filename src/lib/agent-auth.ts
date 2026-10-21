@@ -272,8 +272,11 @@ export async function verifyAgentToken(
   //   人のアプリのトークン（voice スコープ = ネイティブのログイン画面からだけ発行）は
   //   使うたびに期限を延ばす。使い続けている端末はログインし直しにならない。
   //   AI エージェント向けのトークンは発行から 30 日の固定のまま。
+  //   読み取りでも毎回 UPDATE していた（アプリは 1 画面で何十回も呼ぶ）ので、
+  //   1 トークン LAST_USED_EVERY_MS に 1 回までにする。last_used_at / last_ip は
+  //   最大その分古くなるだけ、30 日の期限延長には影響しない。
   const sliding = ((row.scopes ?? []) as string[]).includes("voice");
-  try {
+  if (shouldRecordUse(row.id)) try {
     await pool.query(
       `UPDATE agent_tokens SET last_used_at = now(), last_ip = COALESCE($2, last_ip),
               expires_at = CASE WHEN $3 THEN GREATEST(expires_at, now() + make_interval(days => $4))
@@ -294,6 +297,23 @@ export async function verifyAgentToken(
     scopes: (row.scopes ?? []) as AgentScope[],
     expiresAt: new Date(row.expires_at).toISOString(),
   };
+}
+
+/** 使用記録（last_used_at・last_ip・期限延長）の間引き。 */
+export const LAST_USED_EVERY_MS = 60_000;
+const lastUseRecorded = new Map<number, number>();
+
+function shouldRecordUse(tokenId: number, now = Date.now()): boolean {
+  const prev = lastUseRecorded.get(tokenId);
+  if (prev !== undefined && now - prev < LAST_USED_EVERY_MS) return false;
+  if (lastUseRecorded.size > 10_000) lastUseRecorded.clear();
+  lastUseRecorded.set(tokenId, now);
+  return true;
+}
+
+/** テスト用: 間引きの記憶を消す。 */
+export function _resetLastUsedThrottleForTest(): void {
+  lastUseRecorded.clear();
 }
 
 /** スコープ確認。無ければ forbidden。 */

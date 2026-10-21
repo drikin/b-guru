@@ -9,6 +9,7 @@
  *   音声は投稿の audio_url に付くので、その場で再生でき、返信がその回の感想スレッドになる）。
  *   止めるときは JUKEBOX_DAILY_POST=0。
  * 単一プロセス（pm2 1 本）前提のタイマー。日付ごとの投稿は jukebox_daily の主キーで 1 本に保つ。 */
+import { createHash } from "crypto";
 import { pool } from "./db";
 import { ART19_FEED_URL, BSM_SERIES, clip, jstDay, parseArt19, parseBsmFeed, pickForDay, dailyPostText, yearsAgo, type FeedEpisode } from "./jukebox-feed";
 
@@ -104,6 +105,7 @@ export async function upsertEpisodes(eps: FeedEpisode[]): Promise<void> {
     [col("guid"), col("title"), col("publishedAt"), col("audioUrl"), col("audioBytes"), col("durationSec"),
      col("summary"), col("series"), col("number"), col("webUrl")]
   );
+  invalidateJukeboxCache(); // the app list is rebuilt on the next request
 }
 
 // ── アプリ向け ───────────────────────────────────────────────────
@@ -119,6 +121,84 @@ async function allEpisodes(): Promise<Row[]> {
        FROM podcast_episodes WHERE NOT hidden ORDER BY published_at DESC, id DESC`
   );
   return r.rows;
+}
+
+/** The app list: the summary is cut to 160 characters anyway (toAgentEpisodeDto), so
+ *  only 161 are read — the full show notes made the list ~1.3 MB of SQL traffic. */
+async function appEpisodes(): Promise<Row[]> {
+  const r = await pool.query(
+    `SELECT id, guid, title, published_at, audio_url, audio_bytes, duration_sec, left(summary, 161) AS summary,
+            series, number, web_url
+       FROM podcast_episodes WHERE NOT hidden ORDER BY published_at DESC, id DESC`
+  );
+  return r.rows;
+}
+
+/** The episode list for the apps, built once and shared by every request until the
+ *  feed sync changes it (upsertEpisodes) or JUKEBOX_CACHE_MS passes (a row hidden by
+ *  hand in the DB shows up within that). `json` is the ready-made "episodes" array. */
+const JUKEBOX_CACHE_MS = 10 * 60_000;
+type JukeboxCache = { rows: Row[]; json: string; hash: string; at: number };
+type JG = { __jukeboxApp?: { cache?: JukeboxCache; inflight?: Promise<JukeboxCache>; gen: number } };
+const appCache = () => ((globalThis as JG).__jukeboxApp ??= { gen: 0 });
+
+export function invalidateJukeboxCache(): void {
+  const c = appCache();
+  c.gen++;
+  c.cache = undefined;
+  c.inflight = undefined;
+}
+
+async function cachedAppList(): Promise<JukeboxCache> {
+  const c = appCache();
+  if (c.cache && Date.now() - c.cache.at < JUKEBOX_CACHE_MS) return c.cache;
+  if (c.inflight) return c.inflight;
+  const gen = c.gen;
+  const p = appEpisodes().then((rows) => {
+    const json = JSON.stringify(rows.map(toAgentEpisodeDto));
+    const built: JukeboxCache = { rows, json, hash: createHash("sha1").update(json).digest("hex").slice(0, 20), at: Date.now() };
+    if (gen === c.gen) c.cache = built;
+    return built;
+  });
+  c.inflight = p;
+  p.finally(() => {
+    if (c.inflight === p) c.inflight = undefined;
+  }).catch(() => {});
+  return p;
+}
+
+async function todayPick(rows: Row[]) {
+  const day = jstDay();
+  const d = await pool.query(`SELECT episode_id, post_id FROM jukebox_daily WHERE day = $1`, [day]);
+  const pickRow = d.rows[0]
+    ? rows.find((r) => r.id === d.rows[0].episode_id)
+    : pickForDay(publicOnly(rows).map((r) => ({ ...r, publishedAt: new Date(r.published_at).toISOString() })), day);
+  return pickRow
+    ? {
+        id: pickRow.guid,
+        years_ago: yearsAgo(new Date(pickRow.published_at).toISOString(), day),
+        post_id: (d.rows[0]?.post_id as number | null | undefined) ?? null,
+      }
+    : null;
+}
+
+/** GET /api/agent/jukebox as a ready-made JSON string plus its ETag (the shared list is
+ *  not re-serialised per request; only "today" is looked up). */
+export async function jukeboxAppResponse(apiVersion: number | string): Promise<{ json: string; etag: string }> {
+  const list = await cachedAppList();
+  const today = await todayPick(list.rows);
+  const todayJson = JSON.stringify(today);
+  const json = `{"apiVersion":${JSON.stringify(apiVersion)},"episodes":${list.json},"today":${todayJson}}`;
+  const etag = `W/"jb-${createHash("sha1").update(`${apiVersion}|${list.hash}|${todayJson}`).digest("hex").slice(0, 24)}"`;
+  return { json, etag };
+}
+
+/** If-None-Match matches `etag` (weak comparison, lists and * allowed). */
+export function etagMatches(ifNoneMatch: string | null | undefined, etag: string): boolean {
+  if (!ifNoneMatch) return false;
+  const strip = (t: string) => t.trim().replace(/^W\//, "");
+  const want = strip(etag);
+  return ifNoneMatch.split(",").some((t) => t.trim() === "*" || strip(t) === want);
 }
 
 /** One episode for the apps (snake_case like the rest of /api/agent). */
@@ -138,22 +218,8 @@ export function toAgentEpisodeDto(r: Row) {
 
 /** GET /api/agent/jukebox: every episode (newest first) and today's pick. */
 export async function jukeboxForApp() {
-  const rows = await allEpisodes();
-  const day = jstDay();
-  const d = await pool.query(`SELECT episode_id, post_id FROM jukebox_daily WHERE day = $1`, [day]);
-  const pickRow = d.rows[0]
-    ? rows.find((r) => r.id === d.rows[0].episode_id)
-    : pickForDay(publicOnly(rows).map((r) => ({ ...r, publishedAt: new Date(r.published_at).toISOString() })), day);
-  return {
-    episodes: rows.map(toAgentEpisodeDto),
-    today: pickRow
-      ? {
-          id: pickRow.guid,
-          years_ago: yearsAgo(new Date(pickRow.published_at).toISOString(), day),
-          post_id: d.rows[0]?.post_id ?? null,
-        }
-      : null,
-  };
+  const list = await cachedAppList();
+  return { episodes: list.rows.map(toAgentEpisodeDto), today: await todayPick(list.rows) };
 }
 
 // ── 毎朝の投稿 ───────────────────────────────────────────────────

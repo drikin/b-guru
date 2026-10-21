@@ -85,6 +85,14 @@ import RoomPanel from "@/components/RoomView";
 import { applyRoomEvent, reloadRoomIfOn, roomChatBubble } from "@/lib/room-client";
 import { bubbleText } from "@/lib/room-logic";
 import { EDIT_HINT, SAVE_HINT, SEND_HINT, handleComposerKeyDown, useEnterSends } from "@/lib/composer-keys";
+import { mediaSized, mediaSrcSet } from "@/lib/media-url";
+import { createDeferredRefresh } from "@/lib/deferred-refresh";
+import { useStableHandler } from "@/lib/use-stable-handler";
+
+/** Who is online (GET /api/presence and the SSE presence event's `members`). */
+type OnlineMember = { userId: string; name: string | null; avatar?: string | null; visible?: boolean | null };
+/** Coalescing window for sidebar re-fetches triggered by SSE events. */
+const SIDEBAR_REFRESH_COALESCE_MS = 3000;
 
 /** Decode a base64url VAPID public key into a Uint8Array for pushManager.subscribe. */
 function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
@@ -543,6 +551,40 @@ function imagesFromPaste(e: React.ClipboardEvent): FileList | null {
   const dt = new DataTransfer();
   files.forEach((f) => dt.items.add(f));
   return dt.files;
+}
+
+/** The chat composer's textarea with its own state (see chatDraftRef in Home):
+ *  a keystroke re-renders only this, not Home and the timeline. */
+function ChatDraftInput({
+  draftRef,
+  sinkRef,
+  onHasText,
+  ...rest
+}: {
+  draftRef: React.MutableRefObject<string>;
+  sinkRef: React.MutableRefObject<((v: string) => void) | null>;
+  onHasText: (v: boolean) => void;
+} & Omit<React.ComponentProps<typeof MentionTextarea>, "value" | "onChange">) {
+  // Read once to seed the state (the draft kept while the chat was closed).
+  // eslint-disable-next-line react-hooks/refs
+  const [text, setText] = useState(() => draftRef.current);
+  useEffect(() => {
+    sinkRef.current = setText;
+    // Pick up a write that happened between the first render and this effect.
+    setText(draftRef.current);
+    return () => {
+      if (sinkRef.current === setText) sinkRef.current = null;
+    };
+  }, [draftRef, sinkRef]);
+  const onChange = useCallback(
+    (v: string) => {
+      draftRef.current = v;
+      setText(v);
+      onHasText(v.trim() !== "");
+    },
+    [draftRef, onHasText]
+  );
+  return <MentionTextarea {...rest} value={text} onChange={onChange} />;
 }
 
 function MentionTextarea({
@@ -1959,7 +2001,12 @@ function PostCard({
           {post.images.map((src, i) => (
             <Image
               key={i}
-              src={src}
+              // Resized, EXIF-free copies (lib/media-variants.ts): the card is at
+              // most 360 px wide, so 640w covers 1x/2x phones and 1280w big 2x
+              // screens. The lightbox (onPreview) still opens the 2048 px copy.
+              src={mediaSized(src, 640)}
+              srcSet={mediaSrcSet(src)}
+              sizes={post.images.length === 1 ? "(max-width: 420px) 100vw, 360px" : "(max-width: 600px) 50vw, 300px"}
               radius="md"
               // Off-screen media must not be fetched: the timeline renders 20+
               // images, and without lazy loading they saturate the browser's
@@ -2204,6 +2251,29 @@ function PostCard({
  *  clamp — and a feature-specific bottom row passed as `children`. Clicking the
  *  card scrolls the timeline to that post (via `onOpen`). Keeps the pins & hot
  *  lists visually identical without duplicating the card markup. */
+/** PostCard for the timeline, memoised. `reactionBar` is a fresh element on every
+ *  render, but it is a pure function of (renderReactionBar, post.id), so it counts
+ *  as unchanged while `reactionBarSource` (= renderReactionBar) is the same. Every
+ *  other prop is compared by identity — Home passes stable handlers
+ *  (useStableHandler) and the feed keeps unchanged posts as the same objects. */
+type PostCardProps = React.ComponentProps<typeof PostCard>;
+const FeedPostCard = memo(
+  function FeedPostCard(allProps: PostCardProps & { reactionBarSource?: unknown }) {
+    const { reactionBarSource, ...props } = allProps;
+    void reactionBarSource; // only used by the comparator below
+    return <PostCard {...props} />;
+  },
+  (prev, next) => {
+    const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
+    for (const k of keys) {
+      if (k === "reactionBar") continue;
+      if ((prev as Record<string, unknown>)[k] !== (next as Record<string, unknown>)[k]) return false;
+    }
+    // Without a source to compare, fall back to the element itself (always new → re-render).
+    return next.reactionBarSource !== undefined ? true : prev.reactionBar === next.reactionBar;
+  }
+);
+
 function SidebarPostCard({
   post,
   onOpen,
@@ -2312,7 +2382,7 @@ function PinnedCard({
     <SidebarPostCard post={post} onOpen={onOpen} loading={loading}>
       {previewImg && (
         <Image
-          src={previewImg}
+          src={mediaSized(previewImg, 640)}
           alt=""
           radius={6}
           // Sidebar cards sit below the fold on most viewports; without lazy
@@ -2407,7 +2477,7 @@ function HotTopicCard({
     <SidebarPostCard post={post} onOpen={onOpen} loading={loading}>
       {previewImg && (
         <Image
-          src={previewImg}
+          src={mediaSized(previewImg, 640)}
           alt=""
           radius={6}
           // Sidebar cards sit below the fold on most viewports; without lazy
@@ -3280,7 +3350,7 @@ function InlineReplyBox({
           {images.map((src, i) => (
             <Box key={i} style={{ position: "relative" }}>
               <Image
-                src={src}
+                src={mediaSized(src, 320)}
                 width={56}
                 height={56}
                 fit="contain"
@@ -3502,7 +3572,7 @@ const SearchBox = memo(function SearchBox({
   );
 });
 
-function TimelineFeed({
+const TimelineFeed = memo(function TimelineFeed({
   groups,
   auth,
   avatarSrc,
@@ -3644,13 +3714,19 @@ function TimelineFeed({
           flexDirection: "column",
           gap: 8,
           marginTop: firstOfGroup ? 20 : 0,
+          // Off-screen groups skip layout/paint until they come near the
+          // viewport (a page holds 50+ groups with images and reply chains).
+          // "auto" remembers each group's real height once it has been shown,
+          // so scrolling back up does not jump.
+          contentVisibility: "auto",
+          containIntrinsicSize: "auto 420px",
         }}
       >
         {g.posts.map((post, i) => (
           <Fragment key={post.id}>
             {/* The author's own card (no reply button here; "ささやく" offers a
              * quiet, in-place reply that does NOT bump the group to the top) */}
-            <PostCard
+            <FeedPostCard
               post={post}
               auth={auth}
               mentionMembers={mentionMembers}
@@ -3659,6 +3735,7 @@ function TimelineFeed({
               isThreadRoot={false}
               showReplyButton={false}
               reactionBar={renderReactionBar?.(post.id)}
+              reactionBarSource={renderReactionBar}
               onOpenThread={onOpenThread}
               onOpenThreadReply={onOpenThreadReply}
               onLike={onLike}
@@ -3756,7 +3833,7 @@ function TimelineFeed({
     );
   }
   return <>{rendered}</>;
-}
+});
 
 // Optimistic feed mutation helpers (appendReplyLocal / parentInFeed /
 // replaceReplyInFeed / removeReplyTemp) now live in @/lib/feed (pure + tested).
@@ -5289,9 +5366,9 @@ export default function Home() {
       .catch(() => {});
   }, [auth]);
 
-  const [onlineMembers, setOnlineMembers] = useState<
-    { userId: string; name: string | null; avatar?: string | null; visible?: boolean | null }[]
-  >([]);
+  const [onlineMembers, setOnlineMembers] = useState<OnlineMember[]>([]);
+  /** The posts SSE stream is open (set by the stream effect). */
+  const sseOpenRef = useRef(false);
   const loadOnline = useCallback(() => {
     if (!auth) {
       setOnlineMembers([]);
@@ -5404,7 +5481,21 @@ export default function Home() {
     refreshTabFavicon(); // initial paint (clears any stale badge)
     return unsub;
   }, []);
-  const [chatText, setChatText] = useState("");
+  // The chat draft lives in a ref, not in Home's state: typing re-rendered all of
+  // Home (the whole timeline included) on every keystroke. ChatDraftInput owns
+  // the textarea's state; Home writes through setChatText (mention, quote, emoji,
+  // restore after a failed send) and reads chatDraftRef.current. The draft also
+  // survives closing/reopening the chat (the input unmounts, the ref stays).
+  const chatDraftRef = useRef("");
+  const chatDraftSinkRef = useRef<((v: string) => void) | null>(null);
+  /** Only flips on empty ↔ non-empty (the send button), not on every keystroke. */
+  const [chatHasText, setChatHasText] = useState(false);
+  const setChatText = useCallback((next: string | ((cur: string) => string)) => {
+    const v = typeof next === "function" ? next(chatDraftRef.current) : next;
+    chatDraftRef.current = v;
+    chatDraftSinkRef.current?.(v);
+    setChatHasText(v.trim() !== "");
+  }, []);
   // Target member for a mention-pre-filled chat open (clicking an online row).
   const [chatMention, setChatMention] = useState<string | null>(null);
   // Slack-like emoji picker for the chat composer.
@@ -5685,7 +5776,7 @@ export default function Home() {
   }, [dropChatPhotoJob, restoreChatPhotoJob]);
 
   const sendChat = useCallback(() => {
-    const body = chatText.trim();
+    const body = chatDraftRef.current.trim();
     const me = authRef.current;
     const photos = chatPhotosRef.current;
     // Wait for photos still being resized (the send button is disabled meanwhile).
@@ -5719,7 +5810,7 @@ export default function Home() {
     // Keep focus (and the mobile soft keyboard) on the composer after sending.
     requestAnimationFrame(() => chatInputRef.current?.focus());
     void postChat(body, clientId);
-  }, [chatText, postChat]);
+  }, [postChat, setChatText]);
 
   const retryChat = useCallback((row: ChatRow) => {
     if (!row.clientId) return;
@@ -5805,9 +5896,10 @@ export default function Home() {
       return;
     }
     const ta = chatInputRef.current;
-    const start = ta?.selectionStart ?? chatText.length;
-    const end = ta?.selectionEnd ?? chatText.length;
-    const next = chatText.slice(0, start) + emoji + chatText.slice(end);
+    const cur = chatDraftRef.current;
+    const start = ta?.selectionStart ?? cur.length;
+    const end = ta?.selectionEnd ?? cur.length;
+    const next = cur.slice(0, start) + emoji + cur.slice(end);
     setChatText(next);
     const caret = start + emoji.length;
     requestAnimationFrame(() => {
@@ -5816,7 +5908,7 @@ export default function Home() {
         ta.setSelectionRange(caret, caret);
       }
     });
-  }, [chatEditText, chatEditingId, chatText]);
+  }, [chatEditText, chatEditingId, setChatText]);
 
   // Auto-scroll the message list to the bottom when it grows while open.
   // A single immediate scrollTop can come out short: fonts/avatars/the mount
@@ -6661,6 +6753,26 @@ export default function Home() {
   useEffect(() => {
     if (!authRef.current) return;
     const es = new EventSource("/api/posts/stream");
+    // Sidebar re-fetches triggered by events are coalesced (a burst of posts →
+    // one /api/clubs/counts + one hot fetch ~3 s later) and held while the tab is
+    // hidden (run once when it comes back). See lib/deferred-refresh.ts.
+    const isHidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
+    const deferred = createDeferredRefresh(SIDEBAR_REFRESH_COALESCE_MS, isHidden);
+    const refreshHot = () => deferred.schedule("hot", () => loadersRef.current?.loadHot());
+    const refreshClubCounts = () => deferred.schedule("clubCounts", () => loadersRef.current?.loadClubCounts());
+    // The presence event carries the whole online list (lib/presence.ts), so the
+    // panel is set from it — no GET /api/presence per event. While hidden, only
+    // the latest list is kept and applied when the tab comes back.
+    let hiddenPresence: OnlineMember[] | null = null;
+    const onVisibleAgain = () => {
+      if (isHidden()) return;
+      if (hiddenPresence) {
+        setOnlineMembers(hiddenPresence);
+        hiddenPresence = null;
+      }
+      deferred.flushIfVisible();
+    };
+    document.addEventListener("visibilitychange", onVisibleAgain);
     const onChange = (e: MessageEvent) => {
       // Skip events triggered by our own posts — we already did an optimistic
       // update, and a silentRefreshFeed here would race with the POST response
@@ -6685,8 +6797,8 @@ export default function Home() {
           applyPostChange(postId, (p) => ({ ...p, urlPreview }));
         }
         // Still refresh hot topics (other people's view of activity changed)
-        loadHot();
-        loadClubCounts(); // 自分の投稿/コメントでも 7日アクティビティ数は増える
+        refreshHot();
+        refreshClubCounts(); // 自分の投稿/コメントでも 7日アクティビティ数は増える
         return;
       }
       // Timeline auto-refresh is disabled per drikin, so an incoming new
@@ -6694,17 +6806,33 @@ export default function Home() {
       // as pending so the beagle NEW badge appears live for arrivals not yet
       // loaded (cleared by tapping the logo / reload).
       if (action === "create") bumpPendingNew();
-      // 新着 create（他人）でも 7日アクティビティ数は増える → サイドバーを即時更新
-      loadClubCounts();
-      loadHot(); // new post/comment may change the hot-topics ranking
+      // 新着 create（他人）でも 7日アクティビティ数は増える → サイドバーを更新（数秒まとめる）
+      refreshClubCounts();
+      refreshHot(); // new post/comment may change the hot-topics ranking
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) silentRefreshFeed();
     };
     const onPinChange = () => {
       loadPinned(); // refresh the right-sidebar pin summary panel
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) silentRefreshFeed();
     };
-    const onPresenceChange = () => {
-      loadOnline(); // refresh the right-sidebar online panel
+    const onPresenceChange = (e: MessageEvent) => {
+      let members: OnlineMember[] | undefined;
+      try {
+        const d = JSON.parse(e.data);
+        if (Array.isArray(d?.members)) members = d.members;
+      } catch {
+        /* malformed → fall back to a fetch below */
+      }
+      if (!members) {
+        // An event without the list (older server during a deploy): fetch, coalesced.
+        deferred.schedule("online", () => loadersRef.current?.loadOnline());
+        return;
+      }
+      if (isHidden()) hiddenPresence = members;
+      else {
+        hiddenPresence = null;
+        setOnlineMembers(members);
+      }
     };
     // 投票（アンケート）: 他ユーザーの投票/お題編集を全クライアントへ即時反映。
     const onPoll = (e: MessageEvent) => {
@@ -6789,7 +6917,7 @@ export default function Home() {
       }
       if (!d || d.type !== "club" || d.postId == null) return;
       applyPostChange(d.postId, (p) => ({ ...p, club: d.club ?? null }));
-      loadClubCounts(); // ラベル付与/付け替えで部活アクティビティ数が変わりうる → 再取得
+      refreshClubCounts(); // ラベル付与/付け替えで部活アクティビティ数が変わりうる → 再取得（まとめて）
     };
     es.addEventListener("post", onChange);
     es.addEventListener("pin", onPinChange);
@@ -6820,6 +6948,7 @@ export default function Home() {
     // genuine reconnect should re-sync; the first open is a no-op.
     let firstOpen = true;
     es.onopen = () => {
+      sseOpenRef.current = true;
       if (firstOpen) {
         firstOpen = false;
         return;
@@ -6840,12 +6969,16 @@ export default function Home() {
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) L.silentRefreshFeed();
     };
     es.onerror = () => {
+      sseOpenRef.current = false; // the online panel's self-heal poll takes over until reconnect
       // EventSource auto-reconnects. When it does, onopen fires and we
       // silentRefreshFeed() to recover any events missed during the
       // disconnect. Nothing to do here — the reconnect + onopen handles it.
     };
     return () => {
       es.close();
+      sseOpenRef.current = false;
+      deferred.dispose();
+      document.removeEventListener("visibilitychange", onVisibleAgain);
     };
     // Depends on `auth` so the stream is opened once the session resolves. With
     // `[]` the effect ran before `authRef.current` was set, returned early, and
@@ -6873,13 +7006,22 @@ export default function Home() {
   // SSE onopen loads it again — calling it a third time was a measured
   // duplicate request. loadOnline() stays: it is not in the mount effect, and
   // this is the path that still fills the panel if SSE never connects.
+  //
+  // The presence SSE event now carries the online list itself, so while the
+  // stream is open the poll only runs every 5th tick (5 min) as a safety net;
+  // when the stream is down it polls every minute as before.
   useEffect(() => {
     if (!auth) return;
     let t: number | undefined;
     let t2: number | undefined;
+    let tick = 0;
+    const healOnline = () => {
+      tick++;
+      if (!sseOpenRef.current || tick % 5 === 0) loadOnline();
+    };
     const start = () => {
       if (t !== undefined) return;
-      t = window.setInterval(loadOnline, 60000);
+      t = window.setInterval(healOnline, 60000);
       t2 = window.setInterval(loadClubCounts, 60000);
     };
     const stop = () => {
@@ -6889,7 +7031,9 @@ export default function Home() {
     };
     const onVis = () => {
       if (document.visibilityState === "visible") {
-        loadOnline();
+        // With the stream open, the SSE effect applies the latest presence list
+        // kept while hidden; only fetch when the stream is down.
+        if (!sseOpenRef.current) loadOnline();
         loadClubCounts();
         start();
       } else {
@@ -10079,6 +10223,31 @@ export default function Home() {
   // region above `if (checking)`.
   const feedGroups = useMemo(() => groupFeed(feedPosts), [feedPosts]);
 
+  // Stable handlers for the memoised TimelineFeed / FeedPostCard: these were
+  // recreated on every Home render (chat keystroke, presence, a chat message
+  // arriving…), which re-rendered the whole timeline each time.
+  const feedUploadImages = useStableHandler(uploadImages);
+  const feedUploadVideo = useStableHandler(uploadVideo);
+  const feedUploadAudio = useStableHandler(uploadAudio);
+  const feedToggleInlineReply = useStableHandler(toggleInlineReply);
+  const feedSubmitInlineReply = useStableHandler(submitInlineReply);
+  const feedOpenThread = useStableHandler(openThread);
+  const feedOpenThreadReply = useStableHandler(openThreadReply);
+  const feedLike = useStableHandler(handleLike);
+  const feedWhisper = useStableHandler(toggleWhisper);
+  const feedEdit = useStableHandler(openEdit);
+  const feedPin = useStableHandler(handlePin);
+  const feedPreview = useStableHandler(openPreview);
+  const feedOpenProfile = useStableHandler(openProfile);
+  const feedToggleFavorite = useStableHandler(toggleFavoriteFor);
+  const feedToggleBookmark = useStableHandler(toggleBookmarkFor);
+  const feedQuoteToChat = useStableHandler(quotePostToChat);
+  const feedSendToNeta = useStableHandler(openNeta);
+  const feedVotePoll = useStableHandler(handleVotePoll);
+  const feedEditPoll = useStableHandler(handleEditPoll);
+  const feedSetClub = useStableHandler(handleSetClub);
+  const feedOpenClub = useStableHandler(selectClub);
+
   // ---------- Auth gates ----------
   if (checking) {
     return (
@@ -12003,9 +12172,10 @@ export default function Home() {
                         <circle cx="12" cy="13" r="4" />
                       </svg>
                     </ActionIcon>
-                    <MentionTextarea
-                      value={chatText}
-                      onChange={(v) => setChatText(v)}
+                    <ChatDraftInput
+                      draftRef={chatDraftRef}
+                      sinkRef={chatDraftSinkRef}
+                      onHasText={setChatHasText}
                       inputRef={chatInputRef}
                       maxLength={CHAT_BODY_LIMIT}
                       initialMention={chatMention}
@@ -12081,7 +12251,7 @@ export default function Home() {
                       onPointerDown={(e) => {
                         if (e.pointerType !== "mouse") e.preventDefault();
                       }}
-                      disabled={(!chatText.trim() && chatPhotos.length === 0) || chatPhotoBusy > 0}
+                      disabled={(!chatHasText && chatPhotos.length === 0) || chatPhotoBusy > 0}
                       aria-label="送信"
                       style={{ flexShrink: 0, marginBottom: 4 }}
                     >
@@ -12403,7 +12573,7 @@ export default function Home() {
                               {threadReplyImages.map((src, i) => (
                                 <Box key={i} style={{ position: "relative" }}>
                                   <Image
-                                    src={src}
+                                    src={mediaSized(src, 320)}
                                     width={56}
                                     height={56}
                                     fit="contain"
@@ -12597,29 +12767,29 @@ export default function Home() {
                   mentionMembers={mentionMembers}
                   searchQuery={searchActive ? searchQuery : undefined}
                   inlineReplyFor={inlineReplyFor}
-                  uploadImages={uploadImages}
-                  uploadVideo={uploadVideo}
-                  uploadAudio={uploadAudio}
-                  onToggleInlineReply={toggleInlineReply}
-                  onInlineReplySubmit={submitInlineReply}
-                  onOpenThread={openThread}
-                  onOpenThreadReply={openThreadReply}
-                  onLike={handleLike}
-                  onReply={openThreadReply}
-                  onWhisper={toggleWhisper}
-                  onEdit={openEdit}
+                  uploadImages={feedUploadImages}
+                  uploadVideo={feedUploadVideo}
+                  uploadAudio={feedUploadAudio}
+                  onToggleInlineReply={feedToggleInlineReply}
+                  onInlineReplySubmit={feedSubmitInlineReply}
+                  onOpenThread={feedOpenThread}
+                  onOpenThreadReply={feedOpenThreadReply}
+                  onLike={feedLike}
+                  onReply={feedOpenThreadReply}
+                  onWhisper={feedWhisper}
+                  onEdit={feedEdit}
                   onDelete={setDeleteTarget}
-                  onPin={handlePin}
-                  onPreview={openPreview}
-                  onOpenProfile={openProfile}
-                  onToggleFavorite={auth ? toggleFavoriteFor : undefined}
-                  onToggleBookmark={auth ? toggleBookmarkFor : undefined}
-                  onQuoteToChat={auth ? quotePostToChat : undefined}
-                  onSendToNeta={auth ? openNeta : undefined}
-                  onVotePoll={handleVotePoll}
-                  onEditPoll={handleEditPoll}
-                  onSetClub={handleSetClub}
-                  onOpenClub={selectClub}
+                  onPin={feedPin}
+                  onPreview={feedPreview}
+                  onOpenProfile={feedOpenProfile}
+                  onToggleFavorite={auth ? feedToggleFavorite : undefined}
+                  onToggleBookmark={auth ? feedToggleBookmark : undefined}
+                  onQuoteToChat={auth ? feedQuoteToChat : undefined}
+                  onSendToNeta={auth ? feedSendToNeta : undefined}
+                  onVotePoll={feedVotePoll}
+                  onEditPoll={feedEditPoll}
+                  onSetClub={feedSetClub}
+                  onOpenClub={feedOpenClub}
                 />
                 {/* Infinite scroll sentinel + load-more fallback */}
                 {feedHasMore && feedPosts.length > 0 ? (
