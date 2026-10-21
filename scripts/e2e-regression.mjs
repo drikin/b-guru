@@ -99,6 +99,9 @@ page.on("response", (r) => {
 // all requests). Counted for the whole run — other test pages join and leave,
 // which used to make this page re-fetch every time.
 const presenceGets = [];
+// Each page load fetches the list once on mount (that one is expected).
+let pageLoads = 0;
+page.on("load", () => pageLoads++);
 page.on("request", (r) => {
   const u = new URL(r.url());
   if (r.method() === "GET" && u.pathname === "/api/presence") presenceGets.push(Date.now());
@@ -2952,8 +2955,8 @@ console.log("\nP. Performance (2026-10-20): presence list in SSE, sized images, 
   // self-heal adds at most one more per 5 min of run time.
   check(
     "presence: no GET /api/presence per SSE event",
-    presenceGets.length <= 2 + Math.floor((Date.now() - (presenceGets[0] ?? Date.now())) / 300000),
-    `GETs=${presenceGets.length}`
+    presenceGets.length <= pageLoads + 2 + Math.floor((Date.now() - (presenceGets[0] ?? Date.now())) / 300000),
+    `GETs=${presenceGets.length}, page loads=${pageLoads}`
   );
 
   await page.goto(BASE_URL, { waitUntil: "networkidle", timeout: 60000 });

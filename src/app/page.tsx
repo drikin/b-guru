@@ -6961,7 +6961,7 @@ export default function Home() {
       L.loadClubCounts();
       L.loadClubLeaders();
       L.loadClubCatalog();
-      L.loadOnline();
+      // No loadOnline(): the stream's first presence event carries the list.
       L.loadPollWidget();
       L.loadChat(chatViewRef.current); // recover chat missed during a disconnect
       void loadVoice(); // and who is in the voice room
