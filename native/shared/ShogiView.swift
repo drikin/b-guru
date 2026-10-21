@@ -249,10 +249,11 @@ struct ShogiGameView: View {
     /// I am playing this game (the big board); watching gets the compact one.
     private var playing: Bool { my != nil && g.isActive }
 
-    /// The board's height limit: under half the chat column (45 %), less this bar (and the end's buttons).
+    /// The board's height limit: 38 % of the chat column, less this bar (and the end's buttons). The board
+    /// squashes its squares vertically to fit and keeps the full width (drikin 2026-10-21「少し縦に圧縮してもいい」).
     private var boardMax: CGFloat? {
         guard shogi.areaHeight > 0 else { return nil }
-        return max(220, shogi.areaHeight * 0.45 - 26 - (g.isEnded ? 50 : 0))
+        return max(200, shogi.areaHeight * 0.38 - 26 - (g.isEnded ? 50 : 0))
     }
 
     private func board(maxHeight: CGFloat?) -> some View {

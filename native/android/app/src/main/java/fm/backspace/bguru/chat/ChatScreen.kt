@@ -393,7 +393,9 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                     } else {
                         // As tall as the board needs (+ one band), at most half the column: the chat keeps the
                         // rest — 40 % of the screen, 4 to 5 lines above the composer on a phone (drikin 2026-10-21).
-                        val cap = maxHeight * 0.5f
+                        // 40 %: the board squashes its squares vertically to fit and keeps the full width
+                        // (drikin 2026-10-21「少し縦に圧縮してもいい」).
+                        val cap = maxHeight * 0.4f
                         Column(Modifier.fillMaxSize()) {
                             ShogiPanel(store, visible, cap, Modifier.fillMaxWidth().heightIn(max = cap))
                             chatPane(Modifier.weight(1f).fillMaxWidth())
