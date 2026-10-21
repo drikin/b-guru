@@ -5,9 +5,13 @@
  * 局面・手番・自分の色・最後の手（・合法手）を受け取り、指した手を返すだけ。API もトークンも持たない。
  *
  * 操作（docs/shogi-spec.md「盤面」）: タップ → 行き先、ドラッグでも可。動ける升に点、取れる升は
- * 四隅に印。成れるときは行き先の上に「成｜不成」、行き所のない駒は自動で成る。持ち駒は
- * 自分が下・相手が上で「歩×3」。最後の手は升を薄い黄色＋上の帯に「▲7六歩」。反則の升には
- * 点を出さない（合法手だけを出す）。「指す前に確認」「駒の動きヒント（点）」の設定。 */
+ * 枠。成れるときは行き先の上に「成｜不成」、行き所のない駒は自動で成る。持ち駒は盤の左右の
+ * 駒台（相手は左に上から、自分は右に下から）で「歩×3」。名前と時計は盤の上下の細い 1 行。
+ * 最後の手は升を黄色＋上の帯に「▲7六歩」。反則の升には点を出さない（合法手だけを出す）。
+ * 「指す前に確認」「駒の動きヒント（点）」の設定。
+ *
+ * 見た目はジュークボックス（レコード）に合わせる: 盤の縁はターンテーブルの木の台の色、盤は明るいクリーム、
+ * 駒は白に濃い縁取り、選択・合法手はアプリの緑（#16a34a）、持ち駒の台と帯はレコード棚のチップの色。 */
 import { Color, PieceType, Position, Square } from "tsshogi";
 import { labelFor, legalUsi, type Side } from "../shogi-rules";
 
@@ -32,7 +36,7 @@ export type BoardState = {
   /** 盤全体（持ち駒・帯を含む）をこの高さ（px）に収める。チャットを見えるように残すため（ルームの地図と同じ考え方）。 */
   maxHeight?: number;
   theme?: BoardTheme;
-  /** 持ち駒の行に添える文字（名前・残り時間など）。 */
+  /** 盤の上下の行に出す文字（名前・残り時間など）。上 = 相手、下 = 自分の側。 */
   topLabel?: string;
   bottomLabel?: string;
   /** 帯の右に「✕」（閉じる）を出す。 */
@@ -125,62 +129,55 @@ const STYLE_ID = "bguru-shogi-board-style";
 
 export const BOARD_CSS = `
 @font-face{font-family:"BguruShogiPiece";src:url("/shogi-board/fonts/shogi-piece.ttf") format("truetype");font-display:swap;}
-.sb-root{--sb-board:#e9c98a;--sb-board-edge:#b8893f;--sb-line:rgba(60,40,10,.55);--sb-piece:#f6e2b3;--sb-piece-edge:#a87c3c;--sb-ink:#1d140a;--sb-prom:#c0261b;--sb-last:rgba(255,236,120,.65);--sb-sel:rgba(80,170,90,.45);--sb-dot:rgba(30,110,50,.55);--sb-cap:rgba(200,40,30,.8);--sb-text:#333;--sb-dim:#777;--sb-band:#f3efe4;--sb-btn:#fff;--sb-btn-text:#1d140a;--sb-accent:#2b8a3e;
-  --cw:39px;--ch:43px;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic UI",Meiryo,sans-serif;color:var(--sb-text);user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:none;position:relative;width:100%;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;gap:4px}
-.sb-root[data-theme="dark"]{--sb-board:#8a6a36;--sb-board-edge:#5e4520;--sb-line:rgba(20,12,0,.6);--sb-piece:#e5cf9d;--sb-piece-edge:#7a5a28;--sb-ink:#140d05;--sb-prom:#b3150c;--sb-last:rgba(255,220,90,.45);--sb-sel:rgba(90,190,100,.5);--sb-dot:rgba(190,255,190,.75);--sb-cap:rgba(255,110,90,.95);--sb-text:#e6e6e6;--sb-dim:#9a9a9a;--sb-band:#24262b;--sb-btn:#2c2f35;--sb-btn-text:#eee;--sb-accent:#51cf66}
-@media (prefers-color-scheme: dark){.sb-root[data-theme="auto"]{--sb-board:#8a6a36;--sb-board-edge:#5e4520;--sb-line:rgba(20,12,0,.6);--sb-piece:#e5cf9d;--sb-piece-edge:#7a5a28;--sb-ink:#140d05;--sb-prom:#b3150c;--sb-last:rgba(255,220,90,.45);--sb-sel:rgba(90,190,100,.5);--sb-dot:rgba(190,255,190,.75);--sb-cap:rgba(255,110,90,.95);--sb-text:#e6e6e6;--sb-dim:#9a9a9a;--sb-band:#24262b;--sb-btn:#2c2f35;--sb-btn-text:#eee;--sb-accent:#51cf66}}
-.sb-band{display:flex;align-items:center;gap:6px;width:calc(var(--cw)*9 + 22px);box-sizing:border-box;padding:3px 8px;border-radius:6px;background:var(--sb-band);font-size:14px;font-weight:600;min-height:26px}
+.sb-root{--sb-frame1:#a8784f;--sb-frame2:#7c5434;--sb-frame-ink:#fbf7f0;--sb-board:#fdf0d2;--sb-line:rgba(124,84,52,.34);--sb-star:rgba(90,58,30,.55);--sb-piece1:#ffffff;--sb-piece2:#fbf3e4;--sb-piece-edge:#2a2118;--sb-ink:#2a2118;--sb-prom:#dc2626;--sb-last:rgba(251,191,36,.42);--sb-sel:rgba(22,163,74,.30);--sb-dot:#16a34a;--sb-dot-ring:rgba(255,255,255,.85);--sb-cap:#dc2626;--sb-text:#2a2118;--sb-dim:#7a6a58;--sb-band:#efe5d6;--sb-tray:#efe5d6;--sb-tray-edge:#e2d6c4;--sb-badge:#2a2118;--sb-badge-ink:#fbf7f0;--sb-btn:#fbf7f0;--sb-btn-text:#2a2118;--sb-btn-edge:#e2d6c4;--sb-accent:#16a34a;--sb-accent-ink:#fff;--sb-label:#9e503c;
+  --cw:39px;--ch:43px;--hw:30px;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic UI",Meiryo,sans-serif;color:var(--sb-text);user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:none;position:relative;width:100%;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;gap:3px}
+.sb-root[data-theme="dark"]{--sb-frame1:#6e4b2f;--sb-frame2:#4a3120;--sb-frame-ink:#f1e8dc;--sb-board:#3a3027;--sb-line:rgba(241,232,220,.17);--sb-star:rgba(241,232,220,.45);--sb-piece1:#f6eee2;--sb-piece2:#e6d9c5;--sb-piece-edge:#0d0b09;--sb-ink:#1d1915;--sb-prom:#d42020;--sb-last:rgba(234,108,60,.40);--sb-sel:rgba(34,197,94,.36);--sb-dot:#22c55e;--sb-dot-ring:rgba(13,11,9,.7);--sb-cap:#f87171;--sb-text:#f1e8dc;--sb-dim:#a8988a;--sb-band:#2a241e;--sb-tray:#2a241e;--sb-tray-edge:#3a3128;--sb-badge:#f1e8dc;--sb-badge-ink:#14110e;--sb-btn:#1d1915;--sb-btn-text:#f1e8dc;--sb-btn-edge:#3a3128;--sb-accent:#22c55e;--sb-accent-ink:#06210f}
+@media (prefers-color-scheme: dark){.sb-root[data-theme="auto"]{--sb-frame1:#6e4b2f;--sb-frame2:#4a3120;--sb-frame-ink:#f1e8dc;--sb-board:#3a3027;--sb-line:rgba(241,232,220,.17);--sb-star:rgba(241,232,220,.45);--sb-piece1:#f6eee2;--sb-piece2:#e6d9c5;--sb-piece-edge:#0d0b09;--sb-ink:#1d1915;--sb-prom:#d42020;--sb-last:rgba(234,108,60,.40);--sb-sel:rgba(34,197,94,.36);--sb-dot:#22c55e;--sb-dot-ring:rgba(13,11,9,.7);--sb-cap:#f87171;--sb-text:#f1e8dc;--sb-dim:#a8988a;--sb-band:#2a241e;--sb-tray:#2a241e;--sb-tray-edge:#3a3128;--sb-badge:#f1e8dc;--sb-badge-ink:#14110e;--sb-btn:#1d1915;--sb-btn-text:#f1e8dc;--sb-btn-edge:#3a3128;--sb-accent:#22c55e;--sb-accent-ink:#06210f}}
+.sb-band{display:flex;align-items:center;gap:6px;width:var(--sb-w);box-sizing:border-box;padding:2px 3px 2px 6px;border-radius:999px;background:var(--sb-band);font-size:14px;font-weight:700;min-height:28px}
 .sb-band .sb-label{flex:1;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sb-band button,.sb-confirm button,.sb-promo button{font:inherit;border:1px solid var(--sb-piece-edge);background:var(--sb-btn);color:var(--sb-btn-text);border-radius:6px;padding:2px 8px;cursor:pointer;line-height:1.4}
-.sb-hand{display:flex;align-items:center;gap:2px;flex-wrap:wrap;width:calc(var(--cw)*9 + 22px);box-sizing:border-box;min-height:calc(var(--ch)*.82 + 4px);padding:2px 4px}
-.sb-hand.sb-hand-empty{min-height:18px;padding-top:0;padding-bottom:0}
-.sb-hand .sb-who{font-size:12px;color:var(--sb-dim);margin-right:6px;white-space:nowrap;max-width:64%;min-width:0;display:inline-flex;align-items:baseline;font-variant-numeric:tabular-nums}
+.sb-disc{flex:none;width:18px;height:18px;border-radius:50%;background:radial-gradient(circle,#111 0 1.2px,var(--sb-label) 1.6px 4.6px,#1c1c1c 5px,#111 6px,#222 6.6px,#111 7.4px,#1a1a1a 8.2px,#0d0d0d 9px);box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.sb-band button,.sb-confirm button,.sb-promo button{font:inherit;border:1px solid var(--sb-btn-edge);background:var(--sb-btn);color:var(--sb-btn-text);border-radius:999px;padding:2px 10px;cursor:pointer;line-height:1.4;font-weight:700}
+.sb-who{display:flex;align-items:baseline;width:var(--sb-w);box-sizing:border-box;padding:0 4px;font-size:12px;line-height:16px;height:16px;color:var(--sb-dim);white-space:nowrap;font-variant-numeric:tabular-nums}
+.sb-who-bottom{justify-content:flex-end}
 .sb-who .sb-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.sb-who .sb-tail{flex:none;white-space:nowrap}
-.sb-hand-top{flex-direction:row-reverse}
-.sb-hand-top .sb-who{margin-right:0;margin-left:6px}
-.sb-hp{position:relative;display:inline-flex;align-items:flex-end;border-radius:4px;padding:1px}
+.sb-who .sb-tail{flex:none;white-space:pre;color:var(--sb-text);font-weight:700}
+.sb-main{display:flex;align-items:stretch;gap:3px}
+.sb-hand{width:var(--hw);flex:none;display:flex;flex-direction:column;align-items:stretch;gap:2px;box-sizing:border-box;padding:4px 0;border-radius:10px;background:var(--sb-tray);box-shadow:inset 0 0 0 1px var(--sb-tray-edge)}
+.sb-hand-bottom{flex-direction:column-reverse}
+.sb-hp{position:relative;display:flex;align-items:center;justify-content:flex-start;padding:0 1px;height:calc(var(--ch)*.8);border-radius:8px;flex:none}
+.sb-hand-top .sb-hp{justify-content:flex-end}
 .sb-hp.sb-sel{background:var(--sb-sel)}
-.sb-hp .sb-n{font-size:12px;font-weight:700;margin-left:1px;color:var(--sb-text);font-variant-numeric:tabular-nums}
-.sb-wrap{position:relative;display:grid;grid-template-columns:calc(var(--cw)*9) 16px;grid-template-rows:14px calc(var(--ch)*9);padding:0 3px 3px 3px;background:var(--sb-board);border:1px solid var(--sb-board-edge);border-radius:4px;box-sizing:content-box}
-.sb-files{display:grid;grid-template-columns:repeat(9,var(--cw));font-size:10px;line-height:14px;text-align:center;color:var(--sb-ink);opacity:.75}
-.sb-ranks{display:grid;grid-template-rows:repeat(9,var(--ch));font-size:10px;align-items:center;justify-items:center;color:var(--sb-ink);opacity:.75;font-family:"BguruShogiPiece","Hiragino Mincho ProN","Yu Mincho","Noto Serif CJK JP","Noto Serif JP",serif}
-.sb-grid{display:grid;grid-template-columns:repeat(9,var(--cw));grid-template-rows:repeat(9,var(--ch));border:1px solid var(--sb-line);grid-column:1;grid-row:2}
-.sb-files{grid-column:1;grid-row:1}
-.sb-ranks{grid-column:2;grid-row:2}
+.sb-hp .sb-n{position:absolute;right:-5px;top:-3px;min-width:max(13px,calc(var(--cw)*.42));height:max(13px,calc(var(--cw)*.42));padding:0 3px;box-sizing:border-box;border-radius:999px;background:var(--sb-badge);color:var(--sb-badge-ink);font-size:max(9px,calc(var(--cw)*.3));line-height:max(13px,calc(var(--cw)*.42));font-weight:800;text-align:center;font-variant-numeric:tabular-nums;pointer-events:none;z-index:2;box-shadow:0 0 0 1.5px var(--sb-tray)}
+.sb-hand-top .sb-hp .sb-n{top:auto;bottom:-3px;right:auto;left:-5px}
+.sb-wrap{position:relative;display:grid;grid-template-columns:calc(var(--cw)*9 + 2px) 11px;grid-template-rows:13px calc(var(--ch)*9 + 2px);padding:0 2px 3px 3px;background:linear-gradient(135deg,var(--sb-frame1),var(--sb-frame2));border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,.16);box-sizing:content-box}
+.sb-files{display:grid;grid-template-columns:repeat(9,var(--cw));padding-left:1px;font-size:9.5px;line-height:13px;text-align:center;color:var(--sb-frame-ink);opacity:.85;font-weight:600;grid-column:1;grid-row:1}
+.sb-ranks{display:grid;grid-template-rows:repeat(9,var(--ch));padding-top:1px;font-size:9.5px;align-items:center;justify-items:center;color:var(--sb-frame-ink);opacity:.85;font-family:"BguruShogiPiece","Hiragino Mincho ProN","Yu Mincho","Noto Serif CJK JP","Noto Serif JP",serif;grid-column:2;grid-row:2}
+.sb-grid{position:relative;display:grid;grid-template-columns:repeat(9,var(--cw));grid-template-rows:repeat(9,var(--ch));border:1px solid var(--sb-line);border-radius:7px;background:var(--sb-board);grid-column:1;grid-row:2;box-shadow:inset 0 1px 3px rgba(0,0,0,.12)}
+.sb-star{position:absolute;width:5px;height:5px;margin:-2.5px 0 0 -2.5px;border-radius:50%;background:var(--sb-star);pointer-events:none;z-index:1}
 .sb-cell{position:relative;border-right:1px solid var(--sb-line);border-bottom:1px solid var(--sb-line);box-sizing:border-box;display:flex;align-items:center;justify-content:center}
-.sb-cell:nth-child(9n){border-right:none}
-.sb-cell:nth-last-child(-n+9){border-bottom:none}
+.sb-cell.sb-r{border-right:none}
+.sb-cell.sb-b{border-bottom:none}
 .sb-cell.sb-last{background:var(--sb-last)}
 .sb-cell.sb-sel{background:var(--sb-sel)}
-.sb-dot{position:absolute;width:28%;height:28%;border-radius:50%;background:var(--sb-dot);pointer-events:none}
-.sb-cap{position:absolute;inset:2px;pointer-events:none;background:
- linear-gradient(to right,var(--sb-cap) 30%,transparent 30%) top left/100% 3px no-repeat,
- linear-gradient(to left,var(--sb-cap) 30%,transparent 30%) bottom right/100% 3px no-repeat,
- linear-gradient(to bottom,var(--sb-cap) 30%,transparent 30%) top left/3px 100% no-repeat,
- linear-gradient(to top,var(--sb-cap) 30%,transparent 30%) bottom right/3px 100% no-repeat;
- -webkit-mask:none}
-.sb-cap::after{content:"";position:absolute;inset:0;background:
- linear-gradient(to left,var(--sb-cap) 30%,transparent 30%) top right/100% 3px no-repeat,
- linear-gradient(to right,var(--sb-cap) 30%,transparent 30%) bottom left/100% 3px no-repeat,
- linear-gradient(to bottom,var(--sb-cap) 30%,transparent 30%) top right/3px 100% no-repeat,
- linear-gradient(to top,var(--sb-cap) 30%,transparent 30%) bottom left/3px 100% no-repeat}
-.sb-piece{position:relative;width:calc(var(--cw)*.86);height:calc(var(--ch)*.9);display:flex;align-items:center;justify-content:center;pointer-events:none}
-.sb-piece::before{content:"";position:absolute;inset:0;background:var(--sb-piece-edge);clip-path:polygon(50% 0,86% 16%,100% 100%,0 100%,14% 16%)}
-.sb-piece::after{content:"";position:absolute;inset:1.2px 1.5px 1px 1.5px;background:linear-gradient(160deg,#fbecc6,var(--sb-piece));clip-path:polygon(50% 0,86% 16%,100% 100%,0 100%,14% 16%)}
-.sb-piece span{position:relative;z-index:1;font-family:"BguruShogiPiece","Hiragino Mincho ProN","Yu Mincho","YuMincho","Noto Serif CJK JP","Noto Serif JP",serif;font-weight:600;font-size:calc(var(--cw)*.6);line-height:1;color:var(--sb-ink);margin-top:calc(var(--ch)*.1)}
+.sb-dot{position:absolute;width:30%;height:30%;border-radius:50%;background:var(--sb-dot);box-shadow:0 0 0 2px var(--sb-dot-ring);pointer-events:none;z-index:2}
+.sb-cap{position:absolute;inset:2px;border-radius:7px;pointer-events:none;z-index:2;box-shadow:inset 0 0 0 2.5px var(--sb-cap)}
+.sb-piece{position:relative;width:calc(var(--cw)*.86);height:calc(var(--ch)*.9);display:flex;align-items:center;justify-content:center;pointer-events:none;filter:drop-shadow(0 1.5px 0 rgba(0,0,0,.18))}
+.sb-piece::before{content:"";position:absolute;inset:0;background:var(--sb-piece-edge);clip-path:polygon(50% 0,85% 15%,100% 100%,0 100%,15% 15%)}
+.sb-piece::after{content:"";position:absolute;inset:1.4px 1.6px 1.4px 1.6px;background:linear-gradient(170deg,var(--sb-piece1) 40%,var(--sb-piece2));clip-path:polygon(50% 0,85% 15%,100% 100%,0 100%,15% 15%)}
+.sb-piece span{position:relative;z-index:1;font-family:"BguruShogiPiece","Hiragino Mincho ProN","Yu Mincho","YuMincho","Noto Serif CJK JP","Noto Serif JP",serif;font-weight:700;font-size:calc(var(--cw)*.62);line-height:1;color:var(--sb-ink);margin-top:calc(var(--ch)*.1)}
 .sb-piece.sb-prom span{color:var(--sb-prom)}
 .sb-piece.sb-rot{transform:rotate(180deg)}
-.sb-hand .sb-piece{width:calc(var(--cw)*.74);height:calc(var(--ch)*.78)}
-.sb-hand .sb-piece span{font-size:calc(var(--cw)*.52)}
+.sb-piece.sb-rot{filter:drop-shadow(0 -1.5px 0 rgba(0,0,0,.18))}
+.sb-hand .sb-piece{width:calc(var(--cw)*.68);height:calc(var(--ch)*.74)}
+.sb-hand .sb-piece span{font-size:calc(var(--cw)*.5)}
 .sb-dragging{opacity:.3}
-.sb-ghost{position:fixed;z-index:1000;pointer-events:none;transform:translate(-50%,-60%) scale(1.15);width:var(--cw);height:var(--ch)}
-.sb-ghost .sb-piece{width:100%;height:100%}
-.sb-promo{position:absolute;z-index:20;display:flex;gap:2px;transform:translate(-50%,-100%);background:var(--sb-band);padding:3px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.35)}
-.sb-promo button{font-size:15px;font-weight:700;padding:4px 10px}
-.sb-promo button.sb-yes{color:var(--sb-prom)}
+.sb-ghost{position:fixed;z-index:1000;pointer-events:none;transform:translate(-50%,-60%) scale(1.2);width:var(--cw);height:var(--ch)}
+.sb-ghost .sb-piece{width:100%;height:100%;filter:drop-shadow(0 4px 6px rgba(0,0,0,.3))}
+.sb-promo{position:absolute;z-index:20;display:flex;gap:3px;transform:translate(-50%,-100%);background:var(--sb-band);padding:3px;border-radius:999px;box-shadow:0 3px 12px rgba(0,0,0,.3)}
+.sb-promo button{font-size:15px;padding:4px 12px}
+.sb-promo button.sb-yes{background:var(--sb-prom);border-color:var(--sb-prom);color:#fff}
 .sb-confirm{display:flex;align-items:center;gap:8px;font-size:14px}
-.sb-confirm button.sb-go{background:var(--sb-accent);color:#fff;border-color:var(--sb-accent)}
+.sb-confirm button.sb-go{background:var(--sb-accent);color:var(--sb-accent-ink);border-color:var(--sb-accent)}
 .sb-root.sb-pending .sb-grid{opacity:.92}
 `;
 
@@ -275,8 +272,8 @@ export class ShogiBoardView {
   /** 持ち駒の行の文字だけを変える（時計の表示など。描き直さないので選択・ドラッグ・送信中の局面は残る）。 */
   setLabels(topLabel?: string, bottomLabel?: string): void {
     this.state = { ...this.state, topLabel, bottomLabel };
-    const top = this.el.querySelector(".sb-hand-top .sb-who");
-    const bottom = this.el.querySelector(".sb-hand-bottom .sb-who");
+    const top = this.el.querySelector(".sb-who-top");
+    const bottom = this.el.querySelector(".sb-who-bottom");
     if (!!top !== !!topLabel || !!bottom !== !!bottomLabel) {
       if (!this.drag) this.render();
       return;
@@ -323,26 +320,35 @@ export class ShogiBoardView {
 
   // ─────────────────────────── 寸法
 
+  /** 横幅: 9 升 + 盤の縁と段の数字 + 左右の駒台（升の 0.84 倍ずつ）+ すき間。 */
+  private static readonly FIXED_W = 2 + 11 + 5 + 6;
+  private static readonly HAND_RATIO = 0.84;
+
+  private applyCell(cw: number): void {
+    const hw = Math.round(cw * ShogiBoardView.HAND_RATIO);
+    this.el.style.setProperty("--cw", `${cw}px`);
+    this.el.style.setProperty("--ch", `${Math.round(cw * 1.1)}px`);
+    this.el.style.setProperty("--hw", `${hw}px`);
+    this.el.style.setProperty("--sb-w", `${cw * 9 + 2 * hw + ShogiBoardView.FIXED_W}px`);
+  }
+
   private fit(): void {
     const w = this.el.clientWidth || 360;
-    const maxCell = this.state.compact ? 35 : 44;
-    // 9 升 + 段の数字 16px + 盤の縁 8px
-    const cw = Math.max(22, Math.min(maxCell, Math.floor((w - 16 - 10) / 9)));
-    const ch = Math.round(cw * 1.1);
-    this.el.style.setProperty("--cw", `${cw}px`);
-    this.el.style.setProperty("--ch", `${ch}px`);
-    // 高さの上限: 升の高さに比例する部分（盤 9 升＋持ち駒 2 行 ≒ 10.64 升分）と、帯などの決まった部分に分けて縮める。
+    // 広い画面でも盤が大きくなりすぎないように（升 48px ≒ 盤全体 幅 540px）。観戦は小さめ。
+    const maxCell = this.state.compact ? 35 : 48;
+    const cw = Math.max(22, Math.min(maxCell, Math.floor((w - ShogiBoardView.FIXED_W) / (9 + 2 * ShogiBoardView.HAND_RATIO))));
+    this.applyCell(cw);
+    // 高さの上限: 升の高さに比例する部分（盤 9 升。持ち駒は左右なので高さに足さない）と、帯・名前の行などの決まった部分に分けて縮める。
     const max = this.state.maxHeight;
     if (max && max > 0) {
       // 見積もりで縮めたあと、実際に測って収まるまで 1px ずつ詰める（帯の折り返しなどで見積もりがずれるため）。
       let cur = cw;
       let h = this.el.scrollHeight;
       if (h > max) {
-        const fixed = Math.max(0, h - 10.64 * Math.round(cur * 1.1));
-        cur = Math.max(22, Math.min(cur, Math.floor(Math.floor((max - fixed) / 10.64) / 1.1)));
-        for (let i = 0; i < 12; i++) {
-          this.el.style.setProperty("--cw", `${cur}px`);
-          this.el.style.setProperty("--ch", `${Math.round(cur * 1.1)}px`);
+        const fixed = Math.max(0, h - 9 * Math.round(cur * 1.1));
+        cur = Math.max(22, Math.min(cur, Math.floor(Math.floor((max - fixed) / 9) / 1.1)));
+        for (let i = 0; i < 30; i++) {
+          this.applyCell(cur);
           h = this.el.scrollHeight;
           if (h <= max || cur <= 22) break;
           cur -= 1;
@@ -425,6 +431,10 @@ export class ShogiBoardView {
     // 帯: 最後の手（▲7六歩）と ⇅・✕
     const band = doc.createElement("div");
     band.className = "sb-band";
+    const disc = doc.createElement("i");
+    disc.className = "sb-disc";
+    disc.setAttribute("aria-hidden", "true");
+    band.appendChild(disc);
     const label = doc.createElement("span");
     label.className = "sb-label";
     label.textContent = last ? `${last.label}${this.optimistic ? "（送信中）" : ""}` : "対局開始";
@@ -446,7 +456,10 @@ export class ShogiBoardView {
     }
     if (!st.hideBand) root.appendChild(band);
 
-    root.appendChild(this.renderHand(doc, pos, top, "top", st.topLabel));
+    if (st.topLabel) root.appendChild(this.renderWho(doc, top, "top", st.topLabel));
+    const main = doc.createElement("div");
+    main.className = "sb-main";
+    main.appendChild(this.renderHand(doc, pos, top, "top"));
 
     const wrap = doc.createElement("div");
     wrap.className = "sb-wrap";
@@ -464,12 +477,20 @@ export class ShogiBoardView {
     grid.setAttribute("aria-label", "将棋盤");
     const lastFrom = last && /^[1-9][a-i]/.test(last.usi) ? last.usi.slice(0, 2) : null;
     const lastTo = last ? last.usi.slice(2, 4) : null;
+    // 星（3 と 6 の筋・段の交点）
+    for (const [c, r] of [[3, 3], [6, 3], [3, 6], [6, 6]]) {
+      const star = doc.createElement("i");
+      star.className = "sb-star";
+      star.style.left = `calc(var(--cw) * ${c})`;
+      star.style.top = `calc(var(--ch) * ${r})`;
+      grid.appendChild(star);
+    }
     for (let row = 0; row < 9; row++) {
       for (let col = 0; col < 9; col++) {
         const sq = squareAt(col, row, orient);
         const usi = sq.usi;
         const cell = doc.createElement("div");
-        cell.className = "sb-cell";
+        cell.className = `sb-cell${col === 8 ? " sb-r" : ""}${row === 8 ? " sb-b" : ""}`;
         cell.dataset.sq = usi;
         if (usi === lastTo || usi === lastFrom) cell.classList.add("sb-last");
         if (this.sel?.kind === "square" && this.sel.usi === usi) cell.classList.add("sb-sel");
@@ -501,8 +522,8 @@ export class ShogiBoardView {
       const box = doc.createElement("div");
       box.className = "sb-promo";
       const { col, row } = this.cellPos(this.promo.to);
-      box.style.left = `calc(3px + var(--cw) * ${col + 0.5})`;
-      box.style.top = `calc(14px + var(--ch) * ${row})`;
+      box.style.left = `calc(var(--cw) * ${col + 0.5})`;
+      box.style.top = `calc(var(--ch) * ${row})`;
       const yes = doc.createElement("button");
       yes.type = "button";
       yes.className = "sb-yes";
@@ -513,11 +534,12 @@ export class ShogiBoardView {
       no.dataset.act = "nopromote";
       no.textContent = "不成";
       box.append(yes, no);
-      wrap.appendChild(box);
+      grid.appendChild(box);
     }
-    root.appendChild(wrap);
-
-    root.appendChild(this.renderHand(doc, pos, bottom, "bottom", st.bottomLabel));
+    main.appendChild(wrap);
+    main.appendChild(this.renderHand(doc, pos, bottom, "bottom"));
+    root.appendChild(main);
+    if (st.bottomLabel) root.appendChild(this.renderWho(doc, bottom, "bottom", st.bottomLabel));
 
     if (this.pending) {
       const bar = doc.createElement("div");
@@ -538,25 +560,27 @@ export class ShogiBoardView {
     }
 
     this.el.replaceChildren(root);
-    // 持ち駒の行の高さが変わる（空 ⇄ 駒あり）ので、高さの上限があれば測り直す。
+    // 名前の行・確認の行の有無で高さが変わるので、高さの上限があれば測り直す。
     if (this.state.maxHeight) this.fit();
     else this.reportHeight();
   }
 
-  private renderHand(doc: Document, pos: Position, color: Color, where: "top" | "bottom", who?: string): HTMLElement {
+  /** 盤の上下の細い行（名前・時計）。上 = 左寄せ（相手の駒台の上）、下 = 右寄せ（自分の駒台の下）。 */
+  private renderWho(doc: Document, color: Color, where: "top" | "bottom", who: string): HTMLElement {
+    const w = doc.createElement("div");
+    w.className = `sb-who sb-who-${where}`;
+    this.fillWho(w, color === Color.BLACK ? "☗" : "☖", who);
+    return w;
+  }
+
+  /** 駒台（盤の左右の縦の列）。相手は左で上から、自分は右で下から並べる（CSS の column-reverse）。
+   * 駒がなくても幅を取る（盤の位置が動かないように）。7 種類でも盤の高さに収まる（1 種類 = 升の 0.8 倍）。 */
+  private renderHand(doc: Document, pos: Position, color: Color, where: "top" | "bottom"): HTMLElement {
     const hand = doc.createElement("div");
     hand.className = `sb-hand sb-hand-${where}`;
     hand.setAttribute("aria-label", `${color === Color.BLACK ? "先手" : "後手"}の持ち駒`);
-    if (who) {
-      const w = doc.createElement("span");
-      w.className = "sb-who";
-      this.fillWho(w, color === Color.BLACK ? "☗" : "☖", who);
-      hand.appendChild(w);
-    }
     const bottomColor = colorOf(this.orientation);
     const h = pos.hand(color);
-    // 持ち駒がないときは名前の行の高さだけ（駒 1 個分の高さを空けない。iPhone でチャットを見える量を増やす）。
-    if (HAND_ORDER.every((t) => h.count(t) === 0)) hand.classList.add("sb-hand-empty");
     for (const t of HAND_ORDER) {
       const n = h.count(t);
       if (n === 0) continue;
@@ -572,7 +596,8 @@ export class ShogiBoardView {
       if (n > 1) {
         const c = doc.createElement("span");
         c.className = "sb-n";
-        c.textContent = `×${n}`;
+        // 狭い列なので数字だけ（駒の空いた角に丸い札）。読み上げは「歩×3」。
+        c.textContent = String(n);
         hp.appendChild(c);
       }
       hp.setAttribute("aria-label", `${pieceChar(t, color)}${n > 1 ? `×${n}` : ""}`);
