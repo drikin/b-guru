@@ -23,6 +23,13 @@ final class MediaCache {
 
     private static func key(_ raw: String, _ maxPixel: Int) -> NSString { "\(raw)@\(maxPixel)" as NSString }
 
+    #if DEBUG
+    /// Dev only (the orientation self-test): a picture under a made-up path, at every size asked for.
+    func debugInsert(_ image: PlatformImage, for raw: String) {
+        for px in [MediaImage.defaultPixels, 600, 900, 2560] { cache.setObject(image, forKey: Self.key(raw, px)) }
+    }
+    #endif
+
     func cached(_ raw: String, maxPixel: Int = MediaImage.defaultPixels) -> PlatformImage? {
         cache.object(forKey: Self.key(raw, maxPixel))
     }

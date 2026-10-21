@@ -14,6 +14,22 @@ UPLOAD=1
 BUILD="$(date +%Y%m%d%H%M)"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/../../mac"   # the shared project.yml lives in native/mac
+
+# Upside-down guard (2026-10-19 / 10-21 regressions): screenshots of the offline demo in the simulator, read
+# with Vision. Boots an iPhone simulator when none is running. SKIP_ORIENTATION=1 skips it.
+if [ "${SKIP_ORIENTATION:-0}" != "1" ]; then
+  echo "=== orientation check (simulator, offline demo) ==="
+  SIM="$(xcrun simctl list devices booted | grep -m1 -oE '[0-9A-F-]{36}' || true)"
+  if [ -z "$SIM" ]; then
+    SIM="$(xcrun simctl list devices available | grep -m1 'iPhone' | grep -oE '[0-9A-F-]{36}' || true)"
+    [ -n "$SIM" ] && xcrun simctl boot "$SIM" 2>/dev/null || true
+    [ -n "$SIM" ] && xcrun simctl bootstatus "$SIM" -b >/dev/null 2>&1 || true
+  fi
+  if [ -z "$SIM" ] || ! "$SCRIPT_DIR/orientation-check.sh" "$SIM"; then
+    echo "ORIENTATION CHECK FAILED (or no simulator). Not uploading. SKIP_ORIENTATION=1 to override." >&2
+    exit 1
+  fi
+fi
 OUT="$PWD/build/ios-archive"
 ARCHIVE="$OUT/BguruChat-$VERSION-$BUILD.xcarchive"
 mkdir -p "$OUT"

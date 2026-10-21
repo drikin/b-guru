@@ -1,6 +1,7 @@
 #if DEBUG
 import AppKit
 import SwiftUI
+import Vision
 
 /// Dev-only headless check (no screen recording needed):
 ///   BGURU_DEV_TOKEN=bga_… "B-guru Chat" -selftest OUT_DIR [-selftest-send]
@@ -97,6 +98,141 @@ enum SelfTest {
             try? json?.write(to: URL(fileURLWithPath: outDir).appendingPathComponent("selftest.json"))
             NSApp.terminate(nil)
         }
+    }
+}
+
+// MARK: - Upside-down check (in-process)
+
+extension SelfTest {
+    /// `-selftest DIR -demo -orientation`: draws each screen of the panel (chat, timeline,
+    /// jukebox playing, ☗, 🎮, the picture viewer; light and dark) in an off-screen window,
+    /// reads it with Vision as drawn and mirrored top to bottom, writes DIR/orientation-*.png
+    /// and DIR/orientation.json, and quits with status 1 if any screen is not clearly upright.
+    /// It sees what AppKit draws (the 2026-10-19 glyph-cache kind of flip); what WindowServer
+    /// composites — and the web views (board, game) — is checked by scripts/orientation-tour.sh.
+    static func runOrientation(store: ChatStore, outDir: String) {
+        Task { @MainActor in
+            let dir = URL(fileURLWithPath: outDir)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let timeline = TimelineStore(api: APIClient(token: "demo"))
+            timeline.debugLoadDemo()
+            store.jukebox.debugLoadDemo(base: ProcessInfo.processInfo.environment["BGURU_DEMO_AUDIO"] ?? "http://127.0.0.1:9")
+            let pin = PinState()
+            pin.windowVisible = true
+            let host = NSHostingView(rootView: MainPanelView(store: store, timeline: timeline, pin: pin, onClose: {}, onSignOut: {}))
+            let win = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 380, height: 720),
+                               styleMask: [.borderless], backing: .buffered, defer: false)
+            win.contentView = host
+            win.orderFrontRegardless()
+            store.isVisible = true
+
+            // A picture with words (so the viewer can be told upright), as a local file.
+            let photoFile = dir.appendingPathComponent("orientation-photo.png")
+            writeTestPhoto(to: photoFile)
+            let photo = "selftest/orientation-photo.png"
+            if let img = NSImage(contentsOf: photoFile) { MediaCache.shared.debugInsert(img, for: photo) }
+
+            typealias Step = (name: String, minChars: Int, setup: @MainActor () -> Void)
+            var steps: [Step] = [
+                ("chat", 12, { pin.tab = .chat }),
+                ("timeline", 12, { pin.tab = .timeline }),
+                ("jukebox-playing", 12, {
+                    pin.tab = .jukebox
+                    if let e = store.jukebox.todayEpisode { store.jukebox.play(e) }
+                }),
+                ("chat-after-jukebox", 12, { pin.tab = .chat }),
+                ("viewer", 8, { NotificationCenter.default.post(name: .debugOpenImageViewer, object: photo) }),
+                ("viewer-closed", 12, { NotificationCenter.default.post(name: .closeImageViewer, object: nil) }),
+                ("shogi", 6, { store.shogi.openGame(101) }),
+                ("minigame", 6, { store.minigame.show() }),
+            ]
+            let dark: [Step] = [
+                ("dark-chat", 12, {
+                    RoomModePicker.choose(.text, room: store.room, shogi: store.shogi, minigame: store.minigame)
+                    win.appearance = NSAppearance(named: .darkAqua)
+                }),
+                ("dark-jukebox", 12, { pin.tab = .jukebox }),
+                ("dark-timeline", 12, { pin.tab = .timeline }),
+                ("final-chat", 12, { win.appearance = NSAppearance(named: .aqua); pin.tab = .chat }),
+            ]
+            steps.append(contentsOf: dark)
+
+            var results: [[String: Any]] = []
+            var failed = 0
+            for step in steps {
+                step.setup()
+                try? await Task.sleep(for: .milliseconds(1100))
+                host.layoutSubtreeIfNeeded()
+                guard let image = render(host) else { failed += 1; continue }
+                let png = dir.appendingPathComponent("orientation-\(step.name).png")
+                if let rep = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) { try? rep.write(to: png) }
+                let upright = readChars(image), mirroredChars = mirrored(image).map(readChars) ?? 0
+                let ok = upright >= step.minChars && Double(upright) > Double(mirroredChars) * 1.5
+                if !ok { failed += 1 }
+                print("[orientation] \(ok ? "ok  " : "FAIL") \(step.name): upright \(upright), mirrored \(mirroredChars)")
+                results.append(["screen": step.name, "ok": ok, "upright": upright, "mirrored": mirroredChars])
+            }
+            let json = try? JSONSerialization.data(withJSONObject: ["failed": failed, "screens": results], options: [.prettyPrinted, .sortedKeys])
+            try? json?.write(to: dir.appendingPathComponent("orientation.json"))
+            fflush(stdout)
+            exit(failed == 0 ? 0 : 1)
+        }
+    }
+
+    /// The view as AppKit draws it, at 2× (small text reads better).
+    private static func render(_ view: NSView) -> CGImage? {
+        let b = view.bounds
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(b.width * 2), pixelsHigh: Int(b.height * 2),
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        rep.size = b.size
+        view.cacheDisplay(in: b, to: rep)
+        return rep.cgImage
+    }
+
+    private static func mirrored(_ image: CGImage) -> CGImage? {
+        let w = image.width, h = image.height
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.translateBy(x: 0, y: CGFloat(h))
+        ctx.scaleBy(x: 1, y: -1)
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return ctx.makeImage()
+    }
+
+    /// Characters Vision reads with confidence (Japanese + English).
+    private static func readChars(_ image: CGImage) -> Int {
+        let req = VNRecognizeTextRequest()
+        req.recognitionLevel = .accurate
+        req.recognitionLanguages = ["ja-JP", "en-US"]
+        req.usesLanguageCorrection = false
+        req.minimumTextHeight = 0.008 // small labels count too (the default skips text under 1/32 of the height)
+        try? VNImageRequestHandler(cgImage: image, options: [:]).perform([req])
+        return (req.results ?? []).reduce(0) { n, o in
+            guard let c = o.topCandidates(1).first, c.confidence >= 0.5 else { return n }
+            return n + c.string.count
+        }
+    }
+
+    /// Large words on white, drawn with Core Graphics + Core Text into a bitmap whose
+    /// coordinates are NOT flipped (no SwiftUI, no ImageRenderer: see RecordArtwork).
+    private static func writeTestPhoto(to url: URL) {
+        let w = 900, h = 600
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        ctx.setFillColor(CGColor(gray: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+        let font = CTFontCreateWithName("HiraginoSans-W6" as CFString, 72, nil)
+        for (i, text) in ["写真のテスト", "B-guru Photo", "上が上です"].enumerated() {
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
+                .font: font, .foregroundColor: CGColor(gray: 0, alpha: 1)]))
+            ctx.textPosition = CGPoint(x: 60, y: CGFloat(h - 140 - i * 160))
+            CTLineDraw(line, ctx)
+        }
+        guard let img = ctx.makeImage(), let png = NSBitmapImageRep(cgImage: img).representation(using: .png, properties: [:]) else { return }
+        try? png.write(to: url)
     }
 }
 #endif

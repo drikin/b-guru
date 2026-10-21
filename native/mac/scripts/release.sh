@@ -22,6 +22,22 @@ APP="$DD/Build/Products/Release/B-guru Chat.app"
 DMG="$OUT/BguruChat-$VERSION.dmg"
 mkdir -p "$OUT"
 
+# Upside-down guard (2026-10-19 / 10-21 regressions): draw every screen of the offline demo in a Debug build
+# and read it with Vision; a screen that reads better flipped fails the release. SKIP_ORIENTATION=1 skips it.
+if [ "${SKIP_ORIENTATION:-0}" != "1" ]; then
+  echo "=== 0/6 orientation check (Debug, offline demo) ==="
+  xcodegen generate >/dev/null
+  xcodebuild -project BguruChat.xcodeproj -scheme BguruChat -configuration Debug -derivedDataPath "$ROOT/build/orient" build -quiet
+  ORIENT_OUT="$HOME/Library/Containers/fm.backspace.bguru.chat/Data/tmp/orientation"
+  if ! "$ROOT/build/orient/Build/Products/Debug/B-guru Chat.app/Contents/MacOS/B-guru Chat" \
+      -selftest "$ORIENT_OUT" -demo -demoJukebox -orientation; then
+    echo "ORIENTATION CHECK FAILED: a screen is drawn upside down (see $ORIENT_OUT). Not releasing." >&2
+    exit 1
+  fi
+  defaults delete fm.backspace.bguru.chat panelNarrowed20261019 2>/dev/null || true
+  for k in jukebox.last jukebox.progress jukebox.finished; do defaults delete fm.backspace.bguru.chat "$k" 2>/dev/null || true; done
+fi
+
 echo "=== 1/6 build $VERSION ($BUILD) ==="
 xcodegen generate >/dev/null
 xcodebuild -project BguruChat.xcodeproj -scheme BguruChat -configuration Release -destination "generic/platform=macOS" \

@@ -65,6 +65,10 @@ struct ChatView: View {
         .onChange(of: store.shogi.open) { _, open in if open { pin.wantsHeight?(820) } }
         .imageViewer($viewing)
         #if DEBUG
+        // The orientation tour opens a picture (debugOpenImageViewer, object: its URL).
+        .onReceive(NotificationCenter.default.publisher(for: .debugOpenImageViewer)) { note in
+            if let url = note.object as? String { viewing = ImageViewerItem(images: [url], index: 0) }
+        }
         // -demoViewer: open the picture viewer at once (UI checks).
         .onAppear {
             if CommandLine.arguments.contains("-demoViewer") {
@@ -420,6 +424,10 @@ private struct OnlineLabelStyle: LabelStyle {
 
 
 extension Notification.Name {
+    #if DEBUG
+    /// Dev only: open the picture viewer on this URL (the orientation tour).
+    static let debugOpenImageViewer = Notification.Name("fm.backspace.bguru.debugOpenImageViewer")
+    #endif
     /// ⌘V with an image on the pasteboard while the chat is open (object: image Data).
     static let chatPasteImage = Notification.Name("fm.backspace.bguru.chatPasteImage")
 }

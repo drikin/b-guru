@@ -152,6 +152,11 @@ struct ShogiGameView: View {
 
     private var g: ShogiGame { game }
     private var my: ShogiSide? { shogi.myColor(in: g) }
+    #if os(macOS)
+    private static let inlineResign = true
+    #else
+    private static let inlineResign = false
+    #endif
     private var onScreen: Bool { visibility?.room ?? true }
 
     var body: some View {
@@ -170,12 +175,14 @@ struct ShogiGameView: View {
                 try? await Task.sleep(for: .seconds(30))
             }
         }
+        #if os(iOS)
         .alert("投了しますか？", isPresented: $confirmResign) {
             Button("投了する", role: .destructive) { Task { await shogi.resign(g.id) } }
             Button("やめる", role: .cancel) {}
         } message: {
             Text("この対局は負けになります。")
         }
+        #endif
     }
 
     // MARK: The bar: mode, moves, watchers, whose move, ⋯
@@ -203,7 +210,17 @@ struct ShogiGameView: View {
             .help("ロビーへ")
             .accessibilityLabel("ロビーへ")
             Group {
-                if let n = shogi.notice {
+                // Mac: the question sits in this bar. A SwiftUI alert is a sheet — a separate
+                // window on the floating panel, the kind that once drew the panel upside down
+                // (2026-10-19, the picture viewer): no sheets in the panel.
+                if Self.inlineResign && confirmResign {
+                    HStack(spacing: 6) {
+                        Text("投了しますか？").font(.caption.weight(.semibold))
+                        Button("投了する", role: .destructive) { confirmResign = false; Task { await shogi.resign(g.id) } }
+                            .buttonStyle(.borderedProminent).tint(.red).controlSize(.mini)
+                        Button("やめる") { confirmResign = false }.buttonStyle(.bordered).controlSize(.mini)
+                    }
+                } else if let n = shogi.notice {
                     // A note (3 s) in place of the status, so it adds no line.
                     Text(n).font(.caption).foregroundStyle(.orange)
                         .onTapGesture { shogi.notice = nil }

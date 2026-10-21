@@ -282,6 +282,7 @@ private struct SpinningRecord {
     let spinning: Bool
 }
 
+#if os(iOS)
 @MainActor
 private enum Spin {
     static let key = "bguru.spin"
@@ -311,6 +312,7 @@ private enum Spin {
         }
     }
 }
+#endif
 
 #if os(iOS)
 extension SpinningRecord: UIViewRepresentable {
@@ -369,37 +371,40 @@ extension SpinningRecord: NSViewRepresentable {
     }
 }
 
+/// The Mac's turntable. The record turns about a 1 × 1 view sitting at its centre (the record
+/// hangs off it by half its size), so the turn is about that layer's own corner — AppKit's
+/// anchor. Nothing AppKit owns on a layer (anchorPoint, position, the model transform) is set
+/// by hand any more: the earlier version moved the hosting view's anchor and wrote the angle
+/// into its transform, which AppKit may lay out again at any time; that is undefined for an
+/// AppKit-backed layer and is the prime suspect for the panel drawing upside down (2026-10-21).
+/// Stopping pauses the animation (layer speed 0) where it is; starting resumes from there.
 final class SpinnerView: NSView {
     let host: NSHostingView<RecordDisc>
+    private let rotor = NSView()
     var wantsSpin = false { didSet { if wantsSpin != oldValue { apply() } } }
 
     init(disc: RecordDisc) {
         host = NSHostingView(rootView: disc)
         super.init(frame: .zero)
         wantsLayer = true
-        host.wantsLayer = true
+        rotor.wantsLayer = true
         host.sizingOptions = []
-        addSubview(host)
+        rotor.addSubview(host)
+        addSubview(rotor)
         setAccessibilityElement(false)
+        rotor.setAccessibilityElement(false)
         host.setAccessibilityElement(false)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// The same way up as the hosting view inside (no flipped / unflipped mix in this stack).
+    override var isFlipped: Bool { true }
+
     override func layout() {
         super.layout()
-        host.frame = bounds
-        centreAnchor()
-    }
-
-    /// AppKit backs a view with a layer anchored at its corner: turn it about its centre.
-    private func centreAnchor() {
-        guard let l = host.layer else { return }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        l.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-        l.position = CGPoint(x: host.frame.midX, y: host.frame.midY)
-        CATransaction.commit()
+        rotor.frame = NSRect(x: bounds.midX, y: bounds.midY, width: 1, height: 1)
+        host.frame = NSRect(x: -bounds.width / 2, y: -bounds.height / 2, width: bounds.width, height: bounds.height)
     }
 
     override func viewDidMoveToWindow() {
@@ -409,9 +414,34 @@ final class SpinnerView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+    private static let key = "bguru.spin"
+
     private func apply() {
-        centreAnchor()
-        Spin.set(window == nil ? nil : host.layer, spinning: wantsSpin)
+        guard window != nil, let layer = rotor.layer else { return }
+        if layer.animation(forKey: Self.key) == nil {
+            // (Again) after AppKit dropped it: one endless turn, paused at once if stopped.
+            let a = CABasicAnimation(keyPath: "transform.rotation.z")
+            a.fromValue = 0
+            a.toValue = 2 * Double.pi
+            a.duration = Turntable.secondsPerTurn
+            a.repeatCount = .infinity
+            a.isRemovedOnCompletion = false
+            layer.speed = 1
+            layer.timeOffset = 0
+            layer.beginTime = 0
+            layer.add(a, forKey: Self.key)
+        }
+        if wantsSpin, layer.speed == 0 {
+            let paused = layer.timeOffset
+            layer.speed = 1
+            layer.timeOffset = 0
+            layer.beginTime = 0
+            layer.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil) - paused
+        } else if !wantsSpin, layer.speed != 0 {
+            let now = layer.convertTime(CACurrentMediaTime(), from: nil)
+            layer.speed = 0
+            layer.timeOffset = now
+        }
     }
 }
 #endif

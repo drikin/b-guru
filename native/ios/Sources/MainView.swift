@@ -55,6 +55,14 @@ struct MainView: View {
                 let pager = pager
                 store.showChat = { pager.tab = .chat }
                 Keyboard.startTracking()
+                #if DEBUG
+                // BGURU_DEMO_TAB=timeline|jukebox: start on that page (the orientation check).
+                switch ProcessInfo.processInfo.environment["BGURU_DEMO_TAB"] {
+                case "timeline": pager.tab = .timeline; pager.settledTab = .timeline
+                case "jukebox": pager.tab = .jukebox; pager.settledTab = .jukebox
+                default: break
+                }
+                #endif
             }
     }
 

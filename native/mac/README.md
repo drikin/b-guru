@@ -34,6 +34,24 @@ UI 自動操作でアプリを見つけさせるとき（開発のみ）: `-regu
 ホバー操作の見た目確認（開発のみ）: `-selftest DIR -forceActions`（全行にボタンを出し、picker.png も書き出す）。
 画面録画なしの自己診断: `… -selftest <アプリのコンテナ内のディレクトリ> [-selftest-send] [-dark]`（接続時間・送信遅延・画面 PNG）
 
+## 上下反転のチェック（リリースの前に）
+画面が上下逆さまに描かれる不具合が 2 回あった（2026-10-19 文字ごと逆さ＝ImageRenderer、2026-10-21 パネルが逆さ＝
+ターンテーブルの回転が AppKit の持つ layer の anchorPoint・transform を直接いじっていた疑い）。どちらも通信しないデモで確かめる。
+各画面を Vision で読み、そのままと上下を鏡に映したものを比べて、そのままの方がはっきり読めれば正しい向き（逆さなら鏡の方が読める）。
+```bash
+# 1) アプリ内で描いて読む（画面収録の許可いらず。AppKit が描く文字の逆さを見る）。失敗すると終了コード 1
+"build/dd/Build/Products/Debug/B-guru Chat.app/Contents/MacOS/B-guru Chat" \
+  -selftest ~/Library/Containers/fm.backspace.bguru.chat/Data/tmp/orientation -demo -demoJukebox -orientation
+# 2) 実際のパネルを撮って読む（WindowServer が合成した絵。将棋盤・ゲームの WebView も）。ターミナルに画面収録の許可が要る
+native/mac/scripts/orientation-tour.sh            # Debug をビルドして、チャット・再生中のジュークボックス・止めて大きさを変える・
+                                                  # 閉じて開く・画像ビューア・☗・🎮・ダーク/ライトを順に撮る
+# 3) iPhone（シミュレータ。起動している iPhone を使う）
+native/ios/scripts/orientation-check.sh [UDID]
+```
+1) は native/mac/scripts/release.sh が、3) は native/ios/scripts/testflight.sh が毎回自動で回し、逆さの画面があれば出さずに止まる
+（緊急時だけ `SKIP_ORIENTATION=1`）。2) は画面収録の許可が要るので手で回す（描き方を変えたとき）。撮った画像は表示される出力先に残る。
+デモの後片付け（`panelNarrowed20261019`・`jukebox.*` の設定、シミュレータの外観）はスクリプトがする。
+
 ## フリーズの記録
 - 起動中は見張りのスレッドがメインスレッドを 0.5 秒ごとに確かめ、3 秒応答がないと
   `~/Library/Containers/fm.backspace.bguru.chat/Data/Library/Application Support/Diagnostics/hangs.log`

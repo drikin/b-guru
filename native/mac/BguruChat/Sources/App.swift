@@ -63,6 +63,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
            CommandLine.arguments.contains("-demo") {
             let store = ChatStore(api: APIClient(token: "demo"))
             store.debugLoadDemo()
+            // -orientation: every screen drawn and read for upside-down text; exit 1 if any is.
+            if CommandLine.arguments.contains("-orientation") {
+                SelfTest.runOrientation(store: store, outDir: CommandLine.arguments[i + 1])
+                return
+            }
             SelfTest.run(store: store, outDir: CommandLine.arguments[i + 1], send: false)
             return
         }
@@ -134,6 +139,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 if CommandLine.arguments.contains("-demoMinigame") { store.minigame.show() }
                 if CommandLine.arguments.contains("-demoShogiGame") { store.shogi.openGame(101) }
                 if CommandLine.arguments.contains("-demoShogiWatch") { store.shogi.openGame(101) }
+                // -orientationTour: walk through every screen for the upside-down check
+                // (native/mac/scripts/orientation-tour.sh takes a picture at each step).
+                if CommandLine.arguments.contains("-orientationTour") { self.runOrientationTour(store: store) }
                 if CommandLine.arguments.contains("-demoTimelineTab") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.panel?.pin.tab = .timeline }
                 }
@@ -485,6 +493,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["chat-new", "chat-900004"])
                 }
             }
+        }
+    }
+    #endif
+
+    #if DEBUG
+    /// The screens one after another, each announced on stdout as `[tour] N name` and held
+    /// for 3 s; the script captures the window and reads it (orientation-check.swift).
+    /// Ends with `[tour] done` and quits.
+    private func runOrientationTour(store: ChatStore) {
+        let photo = ProcessInfo.processInfo.environment["BGURU_DEMO_PHOTOS"].map { "\($0)/photo1.jpg" }
+        var steps: [(String, @MainActor () -> Void)] = [
+            ("chat", { self.panel?.pin.tab = .chat }),
+            ("jukebox-playing", {
+                self.panel?.pin.tab = .jukebox
+                if let e = store.jukebox.todayEpisode, !store.jukebox.isPlaying { store.jukebox.play(e) }
+            }),
+            ("chat-after-jukebox", { self.panel?.pin.tab = .chat }),
+            ("timeline", { self.panel?.pin.tab = .timeline }),
+            ("jukebox-again", { self.panel?.pin.tab = .jukebox }),
+            ("chat-again", { self.panel?.pin.tab = .chat }),
+            // The record stopped part way round, then the panel resized / closed and reopened /
+            // turned dark while it shows (the turntable is the one layer the app turns itself).
+            ("jukebox-paused", { self.panel?.pin.tab = .jukebox; store.jukebox.pause() }),
+            ("jukebox-paused-resized", {
+                guard let p = self.panel else { return }
+                var f = p.frame
+                f.size.height += 60
+                f.origin.y -= 60
+                p.setFrame(f, display: true)
+            }),
+            ("jukebox-reopened", {
+                self.panel?.orderOut(nil)
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(0.6))
+                    self.showPanel()
+                    store.jukebox.resume()
+                }
+            }),
+            ("jukebox-dark", { NSApp.appearance = NSAppearance(named: .darkAqua) }),
+            ("chat-after-turntable", { NSApp.appearance = NSAppearance(named: .aqua); self.panel?.pin.tab = .chat }),
+        ]
+        if let photo {
+            steps.append(("image-viewer", { NotificationCenter.default.post(name: .debugOpenImageViewer, object: photo) }))
+            steps.append(("viewer-closed", { NotificationCenter.default.post(name: .closeImageViewer, object: nil) }))
+        }
+        let more: [(String, @MainActor () -> Void)] = [
+            ("shogi", { store.shogi.openGame(101) }),
+            ("minigame", { store.minigame.show() }),
+            ("text", { RoomModePicker.choose(.text, room: store.room, shogi: store.shogi, minigame: store.minigame) }),
+            ("reopened", {
+                self.panel?.orderOut(nil)
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(0.6))
+                    self.showPanel()
+                }
+            }),
+            ("resized", {
+                guard let p = self.panel else { return }
+                var f = p.frame
+                f.size.height += 120
+                f.origin.y -= 120
+                p.setFrame(f, display: true)
+            }),
+            ("dark-chat", { NSApp.appearance = NSAppearance(named: .darkAqua) }),
+            ("dark-jukebox", { self.panel?.pin.tab = .jukebox }),
+            ("dark-shogi", { self.panel?.pin.tab = .chat; store.shogi.openGame(101) }),
+            ("dark-minigame", { store.minigame.show() }),
+            ("light-chat", {
+                NSApp.appearance = NSAppearance(named: .aqua)
+                RoomModePicker.choose(.text, room: store.room, shogi: store.shogi, minigame: store.minigame)
+            }),
+            ("light-timeline", { self.panel?.pin.tab = .timeline }),
+            ("final-chat", { self.panel?.pin.tab = .chat }),
+        ]
+        steps.append(contentsOf: more)
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            for (i, step) in steps.enumerated() {
+                step.1()
+                try? await Task.sleep(for: .seconds(1.2))
+                print("[tour] \(i) \(step.0)"); fflush(stdout)
+                try? await Task.sleep(for: .seconds(1.8))
+            }
+            print("[tour] done"); fflush(stdout)
+            try? await Task.sleep(for: .seconds(0.5))
+            NSApp.terminate(nil)
         }
     }
     #endif
