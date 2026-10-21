@@ -5369,8 +5369,12 @@ export default function Home() {
   const [onlineMembers, setOnlineMembers] = useState<OnlineMember[]>([]);
   /** The posts SSE stream is open (set by the stream effect). */
   const sseOpenRef = useRef(false);
+  // Keyed on "signed in or not", not the auth object: auth is re-fetched now and
+  // then (same member, new object), which re-ran the mount effect below and
+  // fetched the list again each time.
+  const signedIn = !!auth;
   const loadOnline = useCallback(() => {
-    if (!auth) {
+    if (!signedIn) {
       setOnlineMembers([]);
       return;
     }
@@ -5378,7 +5382,7 @@ export default function Home() {
       .then((r) => r.json())
       .then((d) => setOnlineMembers(d.members ?? []))
       .catch(() => setOnlineMembers([]));
-  }, [auth]);
+  }, [signedIn]);
 
   // ---- 投票ウィジェット（右SB） ----
   const [pollWidget, setPollWidget] = useState<
@@ -7011,7 +7015,7 @@ export default function Home() {
   // stream is open the poll only runs every 5th tick (5 min) as a safety net;
   // when the stream is down it polls every minute as before.
   useEffect(() => {
-    if (!auth) return;
+    if (!signedIn) return;
     let t: number | undefined;
     let t2: number | undefined;
     let tick = 0;
@@ -7047,7 +7051,7 @@ export default function Home() {
       stop();
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [auth, loadOnline, loadClubCounts]);
+  }, [signedIn, loadOnline, loadClubCounts]);
 
   // Presence heartbeat: POST /api/presence/ping every 30s so the server keeps
   // us "online" even when the SSE stream is briefly dropped (mobile tab

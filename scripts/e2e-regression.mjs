@@ -101,10 +101,15 @@ page.on("response", (r) => {
 const presenceGets = [];
 // Each page load fetches the list once on mount (that one is expected).
 let pageLoads = 0;
-page.on("load", () => pageLoads++);
+const runStart = Date.now();
+const presenceLog = [];
+page.on("load", () => { pageLoads++; presenceLog.push(`load@${Math.round((Date.now() - runStart) / 1000)}s ${page.url().slice(0, 60)}`); });
 page.on("request", (r) => {
   const u = new URL(r.url());
-  if (r.method() === "GET" && u.pathname === "/api/presence") presenceGets.push(Date.now());
+  if (r.method() === "GET" && u.pathname === "/api/presence") {
+    presenceGets.push(Date.now());
+    presenceLog.push(`GET@${Math.round((Date.now() - runStart) / 1000)}s`);
+  }
 });
 page.on("pageerror", (e) => consoleErrors.push(String(e).slice(0, 200)));
 page.on("console", (m) => {
@@ -2956,7 +2961,7 @@ console.log("\nP. Performance (2026-10-20): presence list in SSE, sized images, 
   check(
     "presence: no GET /api/presence per SSE event",
     presenceGets.length <= pageLoads + 2 + Math.floor((Date.now() - (presenceGets[0] ?? Date.now())) / 300000),
-    `GETs=${presenceGets.length}, page loads=${pageLoads}`
+    `GETs=${presenceGets.length}, page loads=${pageLoads}: ${presenceLog.join(", ")}`
   );
 
   await page.goto(BASE_URL, { waitUntil: "networkidle", timeout: 60000 });
