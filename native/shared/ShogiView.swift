@@ -1,5 +1,9 @@
 import SwiftUI
 
+/// Hidden for now (drikin 2026-10-21「相手を指定と最近の結果は一旦非表示」); the server keeps both.
+private let showInvite = false
+private let showRecent = false
+
 // ☗ 将棋 above the chat: the lobby (募集・指名・届いた申し込み・対局中・最近の結果), a game
 // (the board with names / clocks in its two bands, and a bar with moves, watchers and ⋯),
 // the end (result, 再戦, 閉じる). Same flow as the web (src/components/shogi/ShogiPanel.tsx).
@@ -123,7 +127,7 @@ private struct ShogiLobby: View {
                         Button("募集する") { Task { await shogi.create(mode: mode) } }
                             .buttonStyle(.borderedProminent)
                             .tint(Color.accentGreen)
-                        Menu {
+                        if showInvite { Menu {
                             if others.isEmpty { Text("メンバーを読み込み中…") }
                             ForEach(others) { m in
                                 Button(m.name) { Task { await shogi.create(mode: mode, invitee: m.userId) } }
@@ -131,11 +135,11 @@ private struct ShogiLobby: View {
                         } label: {
                             Label("相手を指名", systemImage: "person.crop.circle.badge.plus")
                         }
-                        .fixedSize()
+                        .fixedSize() }
                     }
                     .disabled(shogi.busy)
                     .controlSize(.small)
-                    Text("先後は振り駒。募集は 15 分、指名は 24 時間で期限切れ。ゆっくりは 72 時間指さないと負けです。")
+                    Text("先後は振り駒。募集は 15 分で期限切れ。ゆっくりは 72 時間指さないと負けです。")
                         .font(.caption2).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -204,7 +208,7 @@ private struct ShogiLobby: View {
 
             }
 
-            if !shogi.recentEnded.isEmpty {
+            if showRecent, !shogi.recentEnded.isEmpty {
                 section("最近の結果") {
                     ForEach(shogi.recentEnded) { g in
                         row {

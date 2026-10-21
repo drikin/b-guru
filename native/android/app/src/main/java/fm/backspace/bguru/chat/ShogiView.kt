@@ -214,17 +214,17 @@ private fun Lobby(store: ChatStore) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(enabled = !shogi.busy, onClick = { shogi.create("blitz") }, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("⚡ 速い") }
                     FilledTonalButton(enabled = !shogi.busy, onClick = { shogi.create("slow") }, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("🐢 ゆっくり") }
-                    OutlinedButton(enabled = !shogi.busy, onClick = { inviting = true }, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("指名…") }
+                    if (SHOW_INVITE) OutlinedButton(enabled = !shogi.busy, onClick = { inviting = true }, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("指名…") }
                 }
                 Text(
-                    "⚡ 10 分、使い切ったら 1 手 30 秒　🐢 時間制限なし（72 時間指さないと負け）。先後は振り駒。募集は 15 分、指名は 24 時間で期限切れ。対局はサイト全体で 1 局ずつ（早い者勝ち）。",
+                    "⚡ 10 分、使い切ったら 1 手 30 秒　🐢 時間制限なし（72 時間指さないと負け）。先後は振り駒。募集は 15 分で期限切れ。対局はサイト全体で 1 局ずつ（早い者勝ち）。",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         } else {
             Text("いまは対局がありません。このトークンでは観戦だけできます（指すにはログインし直してください）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (ended.isNotEmpty()) Section("最近の結果") {
+        if (SHOW_RECENT && ended.isNotEmpty()) Section("最近の結果") {
             for (g in ended) GameRow(ShogiLogic.vsText(g), ShogiLogic.resultText(g)) {
                 TextButton(onClick = { shogi.select(g.id) }) { Text("見る") }
             }
@@ -744,3 +744,7 @@ fun MiniBoard(sfen: String, size: androidx.compose.ui.unit.Dp = 96.dp) {
 
 /** The board page's body padding (index.html: 6 px above and below). */
 private const val BOARD_BODY_PADDING = 12
+
+/** Hidden for now (drikin 2026-10-21「相手を指定と最近の結果は一旦非表示」); the server keeps both. */
+private const val SHOW_INVITE = false
+private const val SHOW_RECENT = false
