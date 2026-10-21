@@ -194,6 +194,20 @@ class ApiClient(val token: String) {
             put("usi", usi); put("expected_ply", expectedPly); put("client_move_id", clientMoveId)
         }, base)
 
+    // MARK: 🎮 締め切りダッシュ (docs/minigame-spec.md) — GET needs read, POST needs chat
+
+    /** One call under `base`; every status comes back with the body as JSON (errors are `{ error, code }`),
+     *  which the app hands to the game as it is. Throws on 401 and transport errors. */
+    suspend fun minigame(method: String, path: String, body: JsonObject? = null, base: String = "/api/agent/minigame", query: Map<String, String> = emptyMap()): Pair<Int, JsonObject?> {
+        val req = request(method, "$base/$path", if (method == "GET") null else (body ?: buildJsonObject {}), query)
+        Net.http.newBuilder().callTimeout(30, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build().newCall(req).await().use { resp ->
+            val text = resp.body.string()
+            val parsed = runCatching { ApiJson.parseToJsonElement(text) as? JsonObject }.getOrNull()
+            if (resp.code == 401) throw ApiError.Unauthorized(null)
+            return resp.code to parsed
+        }
+    }
+
     // MARK: jukebox
 
     /** The whole catalogue as text (it is cached on disk as is). */

@@ -130,6 +130,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 }
                 // -demoShogi: the ☗ 将棋 lobby; -demoShogiGame: my game (my move); -demoShogiWatch: a game to watch.
                 if CommandLine.arguments.contains("-demoShogi") { store.shogi.show() }
+                // -demoMinigame: 🎮 open (answered locally, nothing is sent).
+                if CommandLine.arguments.contains("-demoMinigame") { store.minigame.show() }
                 if CommandLine.arguments.contains("-demoShogiGame") { store.shogi.openGame(101) }
                 if CommandLine.arguments.contains("-demoShogiWatch") { store.shogi.openGame(101) }
                 if CommandLine.arguments.contains("-demoTimelineTab") {

@@ -135,6 +135,16 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var path: String?
         var site: String?
     }
+    /// 🎮 締め切りダッシュ (docs/minigame-spec.md). Absent or enabled:false → nothing of it shows.
+    struct MinigameFeatures: Decodable, Sendable, Equatable {
+        var enabled: Bool?
+        var path: String?
+        var gameUrl: String?
+        var bridgeVersion: Int?
+        var engineVersion: Int?
+        /// This token may play (has the "chat" scope).
+        var play: Bool?
+    }
     /// ☗ 将棋 (docs/shogi-spec.md). Absent or enabled:false → nothing of it shows.
     struct ShogiFeatures: Decodable, Sendable, Equatable {
         struct TimeControl: Decodable, Sendable, Equatable {
@@ -161,6 +171,7 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var jukebox: JukeboxFeatures?
         var neta: NetaFeatures?
         var shogi: ShogiFeatures?
+        var minigame: MinigameFeatures?
     }
     var apiVersion: Int
     var scopes: [String]?
@@ -194,6 +205,11 @@ struct Capabilities: Decodable, Sendable, Equatable {
     }
     var netaEnabled: Bool { features?.neta?.enabled ?? false }
     /// ☗ 将棋 is on for this member, and this app speaks the board's bridge (version 1).
+    /// 🎮 is on for this member, and this app speaks the game's bridge (version 1).
+    var minigameEnabled: Bool {
+        guard features?.minigame?.enabled == true else { return false }
+        return (features?.minigame?.bridgeVersion ?? 1) == 1
+    }
     var shogiEnabled: Bool {
         guard features?.shogi?.enabled == true else { return false }
         return (features?.shogi?.bridgeVersion ?? 1) == 1

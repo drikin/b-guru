@@ -21,14 +21,20 @@ struct ChatScreen: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if store.room.enabled || store.shogi.enabled {
+                if store.room.enabled || store.shogi.enabled || store.minigame.enabled {
                     // The club room: テキスト｜ルーム (the ルーム tab shows who is in the voice) replaces the voice bar.
                     // ☗ 将棋 is a third choice (テキスト｜☗ 将棋 without the room). Centred under the
                     // timeline｜chat switch.
-                    RoomModePicker(room: store.room, shogi: store.shogi)
+                    RoomModePicker(room: store.room, shogi: store.shogi, minigame: store.minigame)
                         .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 12).padding(.vertical, store.shogi.open ? 3 : 6)
-                    if store.shogi.enabled && store.shogi.open {
+                        .padding(.horizontal, 12).padding(.vertical, store.shogi.open || store.minigame.open ? 3 : 6)
+                    if store.minigame.enabled && store.minigame.open {
+                        // 🎮 above the chat: the game's own height (≤ ~45 %), the chat below.
+                        MinigameScreen(minigame: store.minigame)
+                            .frame(maxWidth: 760)
+                            .frame(maxWidth: .infinity)
+                        Divider()
+                    } else if store.shogi.enabled && store.shogi.open {
                         ShogiArea(store: store, composer: composer)
                         Divider()
                     } else if store.room.enabled && store.room.mode == .room {
@@ -46,7 +52,10 @@ struct ChatScreen: View {
                 ChatComposerBar(store: store, composer: composer)
             }
             // The column's height, for how big ☗ 将棋's board may get (half of it).
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { store.shogi.setAreaHeight($0) }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+                store.shogi.setAreaHeight($0)
+                store.minigame.setAreaHeight($0)
+            }
             .imageViewer($viewing)
             .navigationTitle("B-guru チャット")
             .navigationBarTitleDisplayMode(.inline)
@@ -174,6 +183,7 @@ private struct ChatMessageList: View {
                 }
             }
             .onChange(of: composer.focused) { _, focused in
+                store.minigame.inputFocused = focused // typing pauses the game
                 // Keyboard up → keep the latest message visible above it.
                 if focused { proxy.scrollTo("bottom", anchor: .bottom) }
             }

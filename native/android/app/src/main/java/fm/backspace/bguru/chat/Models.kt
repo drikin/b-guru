@@ -91,6 +91,16 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val jukebox: JukeboxFeatures? = null,
         val neta: NetaFeatures? = null,
         val shogi: ShogiFeatures? = null,
+        val minigame: MinigameFeatures? = null,
+    )
+    /** 🎮 締め切りダッシュ (docs/minigame-spec.md), behind MINIGAME_ENABLED. `play` = may play (chat scope). */
+    @Serializable data class MinigameFeatures(
+        val enabled: Boolean? = null,
+        val path: String? = null,
+        val gameUrl: String? = null,
+        val bridgeVersion: Int? = null,
+        val engineVersion: Int? = null,
+        val play: Boolean? = null,
     )
     /** ☗ 将棋 (docs/shogi-spec.md), behind SHOGI_ENABLED. `play` = this token may act (chat scope). */
     @Serializable data class ShogiFeatures(
@@ -171,6 +181,13 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val shogiEnabled get() = features?.shogi?.enabled == true && (features?.shogi?.bridgeVersion ?: 1) == 1
     /** May start, accept and play (the chat scope); otherwise watch only. */
     val canPlayShogi get() = shogiEnabled && (features?.shogi?.play ?: false)
+    /** 🎮 is on for this member (and the game speaks a bridge this app knows). */
+    val minigameEnabled get() = features?.minigame?.enabled == true && (features?.minigame?.bridgeVersion ?: 1) == 1
+    val canPlayMinigame get() = minigameEnabled && (features?.minigame?.play ?: false)
+    /** Only paths on our own server (the request carries the token). */
+    val minigamePath get() = features?.minigame?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/minigame"
+    /** The game page (no token, no cookies): only under /minigame/ on our own server. */
+    val minigameGameUrl get() = features?.minigame?.gameUrl?.takeIf { it.startsWith("/minigame/") && !it.contains("..") } ?: "/minigame/index.html"
     /** 🐶 ビーグルと対局 (practice) is offered. */
     val shogiBeagle get() = canPlayShogi && (features?.shogi?.beagle ?: false)
     /** Only paths on our own server (the request carries the token). */

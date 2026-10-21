@@ -94,25 +94,45 @@ private val ShogiGreen = Color(0xFF16A34A)
 // MARK: switch (when the room is off for this member: テキスト｜☗ 将棋)
 
 @Composable
-fun ShogiModeSwitch(shogi: ShogiStore) {
-    ShogiBackHandler(shogi)
+fun ShogiModeSwitch(shogi: ShogiStore, minigame: MinigameStore) {
+    // テキスト｜☗｜🎮 (each only when on). ☗ and 🎮 never open together.
+    val withShogi = shogi.enabled
+    val withGame = minigame.enabled
+    if (withShogi) ShogiBackHandler(shogi)
+    if (withGame) MinigameBackHandler(minigame)
+    val n = 1 + (if (withShogi) 1 else 0) + (if (withGame) 1 else 0)
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.Center) {
-        SingleChoiceSegmentedButtonRow(Modifier.width(220.dp).height(32.dp)) {
-            SegmentedButton(selected = !shogi.open, onClick = { shogi.open = false }, shape = SegmentedButtonDefaults.itemShape(0, 2), icon = {}) {
+        SingleChoiceSegmentedButtonRow(Modifier.width(if (n == 3) 220.dp else 180.dp).height(32.dp)) {
+            SegmentedButton(selected = !shogi.open && !minigame.open, onClick = { shogi.open = false; minigame.open = false }, shape = SegmentedButtonDefaults.itemShape(0, n), icon = {}) {
                 Text("テキスト", style = MaterialTheme.typography.labelSmall)
             }
-            SegmentedButton(selected = shogi.open, onClick = { shogi.open = true }, shape = SegmentedButtonDefaults.itemShape(1, 2), icon = {}) {
-                ShogiSegmentLabel(shogi)
+            var i = 1
+            if (withShogi) {
+                SegmentedButton(selected = shogi.open, onClick = { minigame.open = false; shogi.open = true }, shape = SegmentedButtonDefaults.itemShape(i++, n), icon = {}) {
+                    ShogiSegmentLabel(shogi)
+                }
+            }
+            if (withGame) {
+                SegmentedButton(selected = minigame.open, onClick = { shogi.open = false; minigame.open = true }, shape = SegmentedButtonDefaults.itemShape(i, n), icon = {}) {
+                    MinigameSegmentLabel()
+                }
             }
         }
     }
 }
 
-/** 「☗ 将棋」 with what waits for me (offers + my turn) or how many games are on. */
+/** 🎮 only (read out as 「ゲーム」). */
+@Composable
+fun MinigameSegmentLabel() {
+    Text("🎮", style = MaterialTheme.typography.labelLarge, maxLines = 1, modifier = Modifier.semantics { contentDescription = "ゲーム" })
+}
+
+/** ☗ only (read out as 「将棋」), with what waits for me (offers + my turn) or how many games are on. */
 @Composable
 fun ShogiSegmentLabel(shogi: ShogiStore) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-        Text("☗ 将棋", style = MaterialTheme.typography.labelSmall, maxLines = 1)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp),
+        modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = "将棋" }) {
+        Text("☗", style = MaterialTheme.typography.labelLarge, maxLines = 1)
         val waiting = shogi.waitingCount
         if (waiting > 0) {
             Box(Modifier.size(15.dp).background(MaterialTheme.colorScheme.error, CircleShape), contentAlignment = Alignment.Center) {
@@ -466,7 +486,7 @@ private class ShogiBridgeJs(private val host: BoardHost) {
 }
 
 /** What the board page may load: our /shogi-board/ files, nothing else (never a cookie or the token). */
-private object BoardFiles {
+internal object BoardFiles {
     private class Cached(val mime: String, val bytes: ByteArray, val at: Long)
     private val cache = ConcurrentHashMap<String, Cached>()
     private const val TTL_MS = 10 * 60_000L
@@ -597,7 +617,7 @@ private fun ShogiBoardWeb(
                         if (!isBoard(u) || request.method != "GET") return BoardFiles.forbidden()
                         val rest = (u.path ?: "").removePrefix("/shogi-board/")
                         if (rest.isEmpty()) return BoardFiles.forbidden()
-                        return if (demo && BuildConfig.DEMO) BoardFiles.fromAssets(ctx.assets, rest)
+                        return if (demo && BuildConfig.DEMO) BoardFiles.fromAssets(ctx.assets, "shogi-board/$rest")
                         else BoardFiles.fromServer(Uri.parse(Net.BASE + u.path).toString(), rest)
                     }
                 }

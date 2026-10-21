@@ -78,6 +78,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
@@ -121,6 +122,8 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
     val focus = remember { FocusRequester() }
     var refreshing by remember { mutableStateOf(false) }
     var selecting by remember { mutableStateOf<ChatMessage?>(null) }
+    // The composer has the focus (typing): 🎮 pauses.
+    var composerFocused by remember { mutableStateOf(false) }
     // What was just sent, to swallow a late echo of it (voice input finalising after Send).
     var justSent by remember { mutableStateOf<Pair<String, Long>?>(null) }
 
@@ -264,9 +267,9 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             // banner in place of the voice bar. Otherwise the voice bar exactly as before.
             // ☗ 将棋 (when on): a third choice beside them, or テキスト｜☗ 将棋 above the voice bar.
             if (store.room.enabled) {
-                RoomModeSwitch(store.room, store.voice, store.shogi)
+                RoomModeSwitch(store.room, store.voice, store.shogi, store.minigame)
             } else {
-                if (store.shogi.enabled) ShogiModeSwitch(store.shogi)
+                if (store.shogi.enabled || store.minigame.enabled) ShogiModeSwitch(store.shogi, store.minigame)
                 VoiceBar(store.voice)
             }
             store.update?.let { u ->
@@ -368,6 +371,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                         editing = editingId != null,
                         photos = photos,
                         focus = focus,
+                        onFocus = { composerFocused = it },
                         onSubmit = ::submit,
                         onCancelEdit = { editingId = null; d.text = "" },
                         onEditLast = {
@@ -380,7 +384,18 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             }
             val room = store.room
             val shogi = store.shogi
-            if (shogi.enabled && shogi.open && !(room.enabled && room.roomView)) {
+            val minigame = store.minigame
+            if (minigame.enabled && minigame.open && !(room.enabled && room.roomView)) {
+                // 🎮: the game above, the chat below (no scrolling; the game is as tall as it says, at most
+                // about 45 % of the column, 150–420 dp — the chat stays in sight). Typing in the chat pauses it.
+                androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                    val cap = (maxHeight * 0.45f).coerceIn(150.dp, 420.dp)
+                    Column(Modifier.fillMaxSize()) {
+                        MinigamePanel(store, active = visible && !composerFocused, maxHeight = cap, modifier = Modifier.fillMaxWidth())
+                        chatPane(Modifier.weight(1f).fillMaxWidth())
+                    }
+                }
+            } else if (shogi.enabled && shogi.open && !(room.enabled && room.roomView)) {
                 // ☗ 将棋: the panel above, the chat below — split like the room, watching or playing
                 // (drikin 2026-10-21: the chat must stay in sight).
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
@@ -505,6 +520,7 @@ private fun Composer(
     editing: Boolean,
     photos: ChatAttachments,
     focus: FocusRequester,
+    onFocus: (Boolean) -> Unit = {},
     onSubmit: () -> Unit,
     onCancelEdit: () -> Unit,
     onEditLast: () -> Boolean,
@@ -568,6 +584,7 @@ private fun Composer(
                             modifier = Modifier
                                 .weight(1f)
                                 .focusRequester(focus)
+                                .onFocusChanged { onFocus(it.isFocused) }
                                 // docs/composer-keys.md: hardware Enter sends (saves while editing),
                                 // ⇧Enter newline, ↑ edits the last message; on-screen return is a newline.
                                 .composerKeys(

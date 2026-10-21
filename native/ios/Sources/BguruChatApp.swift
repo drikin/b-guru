@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 /// B-guru Chat for iPhone / iPad. Same core as the Mac app (native/shared):
 /// agent API, live stream, optimistic send, Keychain token.
@@ -49,11 +50,31 @@ final class Session {
             if ProcessInfo.processInfo.environment["BGURU_DEMO_ROOM"] == "1" { s.room.debugLoadDemo() }
             if ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil {
                 s.jukebox.debugLoadDemo(base: ProcessInfo.processInfo.environment["BGURU_DEMO_AUDIO"])
+                // BGURU_DEMO_JUKEBOX_PLAY=1: start today's record (checks that other sounds do not stop it).
+                if ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX_PLAY"] != nil, let e = s.jukebox.todayEpisode {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { s.jukebox.play(e) }
+                }
+                // BGURU_TRACE_AUDIO=1: log the record's state every 2 s and any audio interruption (checks
+                // that the game's sounds do not stop it).
+                if ProcessInfo.processInfo.environment["BGURU_TRACE_AUDIO"] != nil {
+                    let jukebox = s.jukebox
+                    Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+                        MainActor.assumeIsolated {
+                            NSLog("[audio-trace] playing=%d position=%.1f category=%@", jukebox.isPlaying ? 1 : 0, jukebox.position,
+                                  AVAudioSession.sharedInstance().category.rawValue)
+                        }
+                    }
+                    NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { n in
+                        NSLog("[audio-trace] interruption %@", String(describing: n.userInfo ?? [:]))
+                    }
+                }
             }
             // BGURU_DEMO_SHOGI_OPEN=lobby | <game id>: open ☗ 将棋 at once (101 = my game, 102 = to watch).
             if let open = ProcessInfo.processInfo.environment["BGURU_DEMO_SHOGI_OPEN"] {
                 if let id = Int(open) { s.shogi.openGame(id) } else { s.shogi.show() }
             }
+            // BGURU_DEMO_MINIGAME_OPEN=1: 🎮 open at once (answered locally, nothing is sent).
+            if ProcessInfo.processInfo.environment["BGURU_DEMO_MINIGAME_OPEN"] != nil { s.minigame.show() }
             store = s
             let t = TimelineStore(api: APIClient(token: "demo"))
             t.debugLoadDemo()

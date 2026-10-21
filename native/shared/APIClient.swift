@@ -166,6 +166,23 @@ final class APIClient: Sendable {
         }
     }
 
+    // MARK: 🎮 締め切りダッシュ (docs/minigame-spec.md: GET = scope read, POST = scope chat)
+
+    /// The game's requests, relayed as they are: the HTTP status and the JSON body (status 0 = no answer).
+    func minigameRaw(_ method: String, path: String, query: [URLQueryItem] = [], json: [String: any Sendable]? = nil) async -> (Int, Data) {
+        var req = request(method, path, json: json)
+        if !query.isEmpty, var c = URLComponents(url: APIClient.baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false) {
+            c.queryItems = query
+            req.url = c.url
+        }
+        do {
+            let (data, resp) = try await session.data(for: req)
+            return ((resp as? HTTPURLResponse)?.statusCode ?? 0, data)
+        } catch {
+            return (0, Data())
+        }
+    }
+
     // MARK: Voice room
 
     func voiceState() async throws -> VoiceStateResponse {

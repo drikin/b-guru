@@ -18,6 +18,14 @@ val firebase = props("firebase.properties")
 // Release signing: keystore.properties + the .jks stay outside the repo.
 val signing = props("keystore.properties")
 
+val demoWebDir = layout.buildDirectory.dir("generated/demoWeb")
+val demoWebAssets = tasks.register<Sync>("demoWebAssets") {
+    from(rootProject.file("../../public/shogi-board")) { into("shogi-board") }
+    from(rootProject.file("../../public/minigame")) { into("minigame") }
+    into(demoWebDir)
+}
+tasks.named("preBuild") { dependsOn(demoWebAssets) }
+
 android {
     namespace = "fm.backspace.bguru.chat"
     compileSdk = 37
@@ -79,10 +87,11 @@ android {
         }
     }
 
-    // ☗ 将棋 demo (`--ez demo true`): the board page straight from this repo (public/shogi-board),
-    // so the demo draws the board without the network. Demo-capable builds only, never a release.
+    // Demo (`--ez demo true`): the ☗ board and the 🎮 game pages straight from this repo
+    // (public/shogi-board, public/minigame → assets shogi-board/, minigame/), so the demo runs
+    // without the network. Demo-capable builds only, never a release.
     for (bt in listOf("debug", "benchmark", "profile")) {
-        sourceSets.getByName(bt).assets.directories.add(rootProject.file("../../public/shogi-board").path)
+        sourceSets.getByName(bt).assets.directories.add(demoWebDir.get().asFile.path)
     }
 
     buildFeatures {

@@ -29,7 +29,12 @@ struct ChatView: View {
         VStack(spacing: 0) {
             ChatHeader(store: store, pin: pin, tabPicker: tabPicker, onSignOut: onSignOut)
             Divider()
-            if store.shogi.enabled && store.shogi.open {
+            if store.minigame.enabled && store.minigame.open {
+                // 🎮 (its choice sits in the header): the game above the chat, at its own height.
+                MinigameScreen(minigame: store.minigame)
+                Divider()
+                if !store.room.enabled { VoiceBar(voice: store.voice) }
+            } else if store.shogi.enabled && store.shogi.open {
                 // ☗ 将棋 (its choice sits in the header with テキスト｜ルーム): the board above the chat.
                 ShogiScreen(shogi: store.shogi)
                 Divider()
@@ -51,7 +56,10 @@ struct ChatView: View {
         }
         .background(.regularMaterial)
         // The column's height, for how big ☗ 将棋's board may get (half of it).
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { store.shogi.setAreaHeight($0) }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+            store.shogi.setAreaHeight($0)
+            store.minigame.setAreaHeight($0)
+        }
         // ☗ 将棋 takes up to half the chat (the board shrinks past that): a short panel grows
         // once, so the chat below stays readable.
         .onChange(of: store.shogi.open) { _, open in if open { pin.wantsHeight?(820) } }
@@ -92,7 +100,9 @@ private struct ChatHeader: View {
         HStack(spacing: 8) {
             if let tabPicker {
                 tabPicker
-                if store.room.enabled || store.shogi.enabled { RoomModeIcons(room: store.room, shogi: store.shogi) }
+                if store.room.enabled || store.shogi.enabled || store.minigame.enabled {
+                    RoomModeIcons(room: store.room, shogi: store.shogi, minigame: store.minigame)
+                }
             } else {
                 Image(systemName: store.unreadCount > 0 ? "dog.fill" : "dog")
                     .foregroundStyle(Color.accentGreen)
@@ -336,6 +346,8 @@ private struct ChatComposerBar: View {
             if case let .success(urls) = result { photos.add(fileURLs: urls) }
         }
         .onAppear { composerFocused = true }
+        // 🎮 pauses while the message box has the keys (a click on the game takes them back).
+        .onChange(of: composerFocused) { _, f in if store.minigame.inputFocused != f { store.minigame.inputFocused = f } }
         // 「チャットに引用」 from the timeline: add it to the draft, caret at the end.
         .onChange(of: store.pendingQuote, initial: true) { _, q in
             guard let q else { return }

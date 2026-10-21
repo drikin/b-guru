@@ -106,6 +106,8 @@ final class ChatStore {
     let jukebox: JukeboxStore
     /// ☗ 将棋 (docs/shogi-spec.md), when the server has it on for this member.
     let shogi: ShogiStore
+    /// 🎮 締め切りダッシュ (docs/minigame-spec.md), when the server has it on for this member.
+    let minigame: MinigameStore
 
     init(api: APIClient) {
         self.api = api
@@ -114,8 +116,17 @@ final class ChatStore {
         self.room = room
         let shogi = ShogiStore(api: api)
         self.shogi = shogi
-        // One thing above the chat: opening ☗ 将棋 leaves the club room (テキスト｜ルーム｜☗ 将棋).
-        shogi.willOpen = { [weak room] in
+        let minigame = MinigameStore(api: api)
+        self.minigame = minigame
+        // One thing above the chat (テキスト｜ルーム｜☗｜🎮): opening ☗ or 🎮 leaves the club room
+        // and closes the other.
+        shogi.willOpen = { [weak room, weak minigame] in
+            minigame?.close()
+            guard let room, room.mode == .room else { return }
+            Task { await room.toText() }
+        }
+        minigame.willOpen = { [weak room, weak shogi] in
+            shogi?.close()
             guard let room, room.mode == .room else { return }
             Task { await room.toText() }
         }
@@ -158,6 +169,7 @@ final class ChatStore {
             voice.configure(with: capabilities)
             room.configure(enabled: capabilities?.roomEnabled ?? false)
             shogi.configure(capabilities?.features?.shogi, enabled: capabilities?.shogiEnabled ?? false)
+            minigame.configure(capabilities?.features?.minigame, enabled: capabilities?.minigameEnabled ?? false)
             // Voice is on for me but this token predates the "voice" scope: send the
             // member back to sign in once (a new sign-in gets the scope). Only once per
             // install, so a server that still withholds it cannot loop us.
@@ -243,6 +255,8 @@ final class ChatStore {
             if let p = try? dec.decode(P.self, from: ev.data) { onlineCount = p.userIds.count }
         case "room":
             room.apply(ev.data)
+        case "minigame":
+            minigame.apply(ev.data)
         case "shogi":
             shogi.apply(ev.data)
         case "voice":
@@ -514,7 +528,11 @@ final class ChatStore {
         let shogiOn = shogiSetting == "1"
         let shogiCaps = shogiSetting == "0" ? ""
             : #","shogi":{"enabled":\#(shogiOn),"path":"/api/agent/shogi","board_url":"/shogi-board/index.html","bridge_version":1,"play":\#(shogiOn)}"#
-        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5},"jukebox":{"enabled":\#(ProcessInfo.processInfo.arguments.contains("-demoJukebox") || ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil),"path":"/api/agent/jukebox"}\#(shogiCaps)}}"#
+        // 🎮 (on unless -demoMinigameOff / BGURU_DEMO_MINIGAME=0): answered here, nothing is sent.
+        let minigameOn = !ProcessInfo.processInfo.arguments.contains("-demoMinigameOff") && env["BGURU_DEMO_MINIGAME"] != "0"
+        if minigameOn { minigame.debugLoadDemo() }
+        let minigameCaps = minigameOn ? #","minigame":{"enabled":true,"path":"/api/agent/minigame","game_url":"/minigame/index.html","bridge_version":1,"engine_version":1,"play":true}"# : ""
+        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5},"jukebox":{"enabled":\#(ProcessInfo.processInfo.arguments.contains("-demoJukebox") || ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil),"path":"/api/agent/jukebox"}\#(shogiCaps)\#(minigameCaps)}}"#
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
         capabilities = try? dec.decode(Capabilities.self, from: Data(caps.utf8))
