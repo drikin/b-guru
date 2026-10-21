@@ -75,6 +75,15 @@ struct ShogiGame: Decodable, Equatable, Sendable, Identifiable {
         return nil
     }
 
+    /// ビーグル (the server's system account) is one of the two players.
+    static let beagleName = "ビーグル"
+    var beagleSide: ShogiSide? {
+        if black?.name == Self.beagleName { return .black }
+        if white?.name == Self.beagleName { return .white }
+        return nil
+    }
+    var isBeagleGame: Bool { beagleSide != nil }
+
     /// 「☗A vs ☖B」.
     var playersText: String { "☗\(black?.name ?? "?") vs ☖\(white?.name ?? "?")" }
 
@@ -154,6 +163,8 @@ final class ShogiStore {
     private(set) var enabled = false
     /// This token may play (else watch only).
     private(set) var canPlay = true
+    /// 「🐶 ビーグルと対局（練習）」 is offered (capabilities features.shogi.beagle).
+    private(set) var beagle = false
     private(set) var path = "/api/agent/shogi"
     private(set) var boardPath = "/shogi-board/index.html"
     /// The ☗ 将棋 screen is shown above the chat (the third choice of テキスト｜ルーム｜☗ 将棋).
@@ -165,7 +176,22 @@ final class ShogiStore {
     /// The game on the board (nil = the lobby).
     private(set) var selectedId: Int?
     private(set) var busy = false
-    var notice: String?
+    /// A short note (started / sent / an error). Goes away by itself after 3 s.
+    var notice: String? {
+        didSet {
+            guard let n = notice, n != oldValue else { return }
+            noticeTask?.cancel()
+            noticeTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(3))
+                guard !Task.isCancelled, let self, self.notice == n else { return }
+                self.notice = nil
+            }
+        }
+    }
+    @ObservationIgnored private var noticeTask: Task<Void, Never>?
+    /// The chat column's height (the screen above the chat takes at most half of it).
+    private(set) var areaHeight: CGFloat = 0
+    func setAreaHeight(_ h: CGFloat) { if abs(h - areaHeight) > 1 { areaHeight = h } }
     /// Server clock − this device's clock (s): the clocks are counted here, corrected by it.
     private(set) var skew: TimeInterval = 0
     /// Bumped whenever the server has answered a move: the board then gets the position
@@ -251,6 +277,7 @@ final class ShogiStore {
         if let p = f?.path, p.hasPrefix("/api/") { path = p }
         if let b = f?.boardUrl, b.hasPrefix("/shogi-board/") { boardPath = b }
         canPlay = f?.play ?? true
+        beagle = f?.beagle == true
         enabled = on
         if !on {
             open = false
@@ -310,7 +337,7 @@ final class ShogiStore {
             if selectedId == nil, open { selectedId = g.id; notice = "対局が始まりました" }
         }
         // A slow game came back to me (the other side moved, or it just started with me first).
-        if !g.isBlitz, !g.isSelfPlay, g.turnSide == my, let before, before.ply < g.ply || !before.isActive {
+        if !g.isBlitz, !g.isSelfPlay, !g.isBeagleGame, g.turnSide == my, let before, before.ply < g.ply || !before.isActive {
             onMyTurn?(g)
         }
     }
@@ -389,6 +416,24 @@ final class ShogiStore {
         if rematchOf != nil { selectedId = nil }
     }
 
+    /// ビーグルと対局（練習）: starts at once (active); rematchOf = もう一局（先後交代）.
+    func startBeagle(mode: String, rematchOf: Int? = nil) async {
+        #if DEBUG
+        if offline { demoStartBeagle(mode: mode, rematchOf: rematchOf); return }
+        #endif
+        var json: [String: any Sendable] = ["mode": mode, "opponent": "beagle"]
+        if let rematchOf { json["rematch_of"] = rematchOf }
+        guard let r = await act("games", json) else { return }
+        if r.status == 409, r.code == "busy" {
+            if let g = r.game { select(g.id) }
+            else { notice = "対局は 1 局ずつです。募集中の対局を受けるか、対局中なら観戦してください" }
+            return
+        }
+        guard r.status == 201, let g = r.game else { return }
+        select(g.id)
+        notice = "ビーグルとの対局が始まりました（先後は振り駒）"
+    }
+
     func accept(_ id: Int) async {
         if offline { notice = "（デモ）受けません"; return }
         if let r = await act("games/\(id)/accept"), r.status == 200 { select(id) }
@@ -459,6 +504,7 @@ final class ShogiStore {
         canPlay = true
         me = meId
         selfPlay = true
+        beagle = true
         let now = ISO8601DateFormatter().string(from: Date())
         let started = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-25))
         let json = """
@@ -481,6 +527,11 @@ final class ShogiStore {
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
         games = (try? dec.decode([ShogiGame].self, from: Data(json.utf8))) ?? []
+        // BGURU_DEMO_SHOGI_WATCH=1 / -demoShogiWatch: the game is between others (to watch it).
+        if ProcessInfo.processInfo.environment["BGURU_DEMO_SHOGI_WATCH"] != nil || CommandLine.arguments.contains("-demoShogiWatch"),
+           let i = games.firstIndex(where: { $0.id == 101 }) {
+            games[i].black = ShogiPlayer(userId: "takuto", name: "takuto", avatar: nil)
+        }
         // BGURU_DEMO_SHOGI_IDLE=1 / -demoShogiIdle: no game on (the lobby offers 募集・指名).
         if ProcessInfo.processInfo.environment["BGURU_DEMO_SHOGI_IDLE"] != nil || CommandLine.arguments.contains("-demoShogiIdle") {
             games.removeAll { !$0.isEnded }
@@ -506,6 +557,25 @@ final class ShogiStore {
         n.turnStartedAt = ISO8601DateFormatter().string(from: Date())
         games[i] = n
         moveRevision += 1
+    }
+
+    private func demoStartBeagle(mode: String, rematchOf: Int?) {
+        let now = ISO8601DateFormatter().string(from: Date())
+        let meP = #"{"user_id":"\#(me ?? "me")","name":"ドリキン"}"#
+        let dog = #"{"user_id":"beagle","name":"ビーグル","avatar":"/icon-192.png"}"#
+        let clocks = mode == "blitz" ? #"{"black_ms":600000,"white_ms":600000,"byoyomi_ms":30000,"initial_ms":600000}"# : "null"
+        let json = """
+        {"id":\(200 + (rematchOf ?? 0) % 100),"status":"active","mode":"\(mode)","creator":\(meP),"invitee":\(dog),
+         "black":\(meP),"white":\(dog),"sfen":"lnsgkgsnl/1r5b1/ppppppppp/9/9/9/PPPPPPPPP/1B5R1/LNSGKGSNL b - 1",
+         "ply":0,"turn":"black","clocks":\(clocks),"turn_started_at":"\(now)","server_now":"\(now)","spectators":0}
+        """
+        let dec = JSONDecoder()
+        dec.keyDecodingStrategy = .convertFromSnakeCase
+        guard let g = try? dec.decode(ShogiGame.self, from: Data(json.utf8)) else { return }
+        games.removeAll { $0.id == g.id }
+        games.insert(g, at: 0)
+        selectedId = g.id
+        notice = "ビーグルとの対局が始まりました（先後は振り駒）"
     }
 
     private func demoResign(_ id: Int) {

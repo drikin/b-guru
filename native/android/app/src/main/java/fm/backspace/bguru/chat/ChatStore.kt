@@ -138,7 +138,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             room = Capabilities.RoomFeatures(enabled = withRoom),
             jukebox = Capabilities.JukeboxFeatures(enabled = true),
             neta = Capabilities.NetaFeatures(enabled = true, path = "/api/agent/neta", site = "https://neta.backspace.fm"),
-            shogi = if (!withShogi) null else Capabilities.ShogiFeatures(enabled = true, path = "/api/agent/shogi", boardUrl = "/shogi-board/index.html", bridgeVersion = 1, play = true),
+            shogi = if (!withShogi) null else Capabilities.ShogiFeatures(enabled = true, path = "/api/agent/shogi", boardUrl = "/shogi-board/index.html", bridgeVersion = 1, play = true, beagle = true),
         ))
         // ☗ 将棋: sample games (one in progress against me, one to watch) and the chat's game card.
         if (withShogi) shogi.loadDemo("me", "ドリキン", shogiScenario)

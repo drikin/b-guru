@@ -132,30 +132,43 @@ fun ShogiBackHandler(shogi: ShogiStore) {
 
 // MARK: panel
 
+/** The shogi screen above the chat. As tall as it needs (one band + the board), never more than
+ *  [maxHeight] (the board shrinks itself into it): the chat below keeps most of the screen. */
 @Composable
-fun ShogiPanel(store: ChatStore, visible: Boolean, modifier: Modifier = Modifier) {
+fun ShogiPanel(store: ChatStore, visible: Boolean, maxHeight: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
     val shogi = store.shogi
     Surface(modifier, color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        // Lobby: scrolls. A game: the board takes what is left (passed to it as max_height).
-        Column(Modifier.fillMaxSize()) {
-            GameTabs(shogi)
-            shogi.notice?.let { n ->
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(n, style = MaterialTheme.typography.bodySmall, color = Color(0xFFE08A00), modifier = Modifier.weight(1f))
-                    TextButton(onClick = { shogi.notice = null }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("✕") }
+        Box {
+            Column(Modifier.fillMaxWidth()) {
+                val g = shogi.selected
+                when {
+                    shogi.selectedId == null -> {
+                        GameTabs(shogi)
+                        Column(Modifier.heightIn(max = (maxHeight - 40.dp).coerceAtLeast(80.dp)).verticalScroll(rememberScrollState())) { Lobby(store) }
+                    }
+                    g == null -> { GameTabs(shogi); Text("読み込み中…", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    g.status == "open" || g.status == "offered" -> { GameTabs(shogi); PendingGame(shogi, g) }
+                    // A board (and its WebView) per game: switching games starts a fresh page.
+                    else -> androidx.compose.runtime.key(g.id) { GameView(store, g, visible, boardMax = (maxHeight - GAME_BAND).coerceAtLeast(160.dp)) }
                 }
             }
-            val g = shogi.selected
-            when {
-                shogi.selectedId == null -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) { Lobby(store) }
-                g == null -> Text("読み込み中…", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                g.status == "open" || g.status == "offered" -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) { PendingGame(shogi, g) }
-                // A board (and its WebView) per game: switching games starts a fresh page.
-                else -> Column(Modifier.weight(1f).fillMaxWidth()) { androidx.compose.runtime.key(g.id) { GameView(store, g, visible) } }
+            // Notices float over the top and go by themselves (no extra row).
+            shogi.notice?.let { n ->
+                LaunchedEffect(n) { delay(3000); if (shogi.notice == n) shogi.notice = null }
+                Surface(
+                    color = MaterialTheme.colorScheme.inverseSurface, shape = RoundedCornerShape(8.dp), shadowElevation = 2.dp,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(horizontal = 12.dp, vertical = 2.dp).clickable { shogi.notice = null },
+                ) {
+                    Text(n, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.inverseOnSurface,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
+                }
             }
         }
     }
 }
+
+/** The one band above the board. */
+private val GAME_BAND = 40.dp
 
 /** One game at a time (site-wide): ロビー and, when a game is on the board, that game. No switching UI. */
 @Composable
@@ -200,6 +213,10 @@ private fun Lobby(store: ChatStore) {
     val live = shogi.liveGame
     val ended = shogi.games.filter { it.status == "ended" }.take(10)
     var inviting by remember { mutableStateOf(false) }
+    var beagleOpen by remember { mutableStateOf(false) }
+    // A tapped button that goes away with the screen change hands focus on to the chat's
+    // text field (and up comes the keyboard): drop the focus first.
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
 
     Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (live != null) {
@@ -216,8 +233,22 @@ private fun Lobby(store: ChatStore) {
                     FilledTonalButton(enabled = !shogi.busy, onClick = { shogi.create("slow") }, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("🐢 ゆっくり") }
                     if (SHOW_INVITE) OutlinedButton(enabled = !shogi.busy, onClick = { inviting = true }, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("指名…") }
                 }
+                if (shogi.beagle) {
+                    // ビーグル戦 (practice): starts at once, no offer to wait on.
+                    if (!beagleOpen) {
+                        OutlinedButton(enabled = !shogi.busy, onClick = { beagleOpen = true }, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("🐶 ビーグルと対局（練習）") }
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("🐶 ビーグルと:", style = MaterialTheme.typography.labelLarge)
+                            Button(enabled = !shogi.busy, onClick = { focus.clearFocus(true); beagleOpen = false; shogi.startBeagle("blitz") }, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("⚡ 速い") }
+                            FilledTonalButton(enabled = !shogi.busy, onClick = { focus.clearFocus(true); beagleOpen = false; shogi.startBeagle("slow") }, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("🐢 ゆっくり") }
+                            TextButton(onClick = { beagleOpen = false }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("やめる") }
+                        }
+                    }
+                }
                 Text(
-                    "⚡ 10 分、使い切ったら 1 手 30 秒　🐢 時間制限なし（72 時間指さないと負け）。先後は振り駒。募集は 15 分で期限切れ。対局はサイト全体で 1 局ずつ（早い者勝ち）。",
+                    "⚡ 10 分、使い切ったら 1 手 30 秒　🐢 時間制限なし（72 時間指さないと負け）。先後は振り駒。募集は 15 分で期限切れ。対局はサイト全体で 1 局ずつ（早い者勝ち）。" +
+                        if (shogi.beagle) "ビーグルとの対局は申し込みなしですぐ始まります（初心者向けの練習相手）。" else "",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -364,13 +395,14 @@ private fun PendingGame(shogi: ShogiStore, g: ShogiGame) {
 // MARK: a game (play / watch / result)
 
 @Composable
-private fun androidx.compose.foundation.layout.ColumnScope.GameView(store: ChatStore, g: ShogiGame, visible: Boolean) {
+private fun GameView(store: ChatStore, g: ShogiGame, visible: Boolean, boardMax: androidx.compose.ui.unit.Dp) {
     val shogi = store.shogi
     val my = shogi.myColorIn(g)
     val dark = isSystemInDarkTheme()
     var flip by remember(g.id) { mutableStateOf<String?>(null) }
     var menu by remember { mutableStateOf(false) }
     var confirmResign by remember { mutableStateOf(false) }
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val board = remember(g.id) { BoardHost() }
 
@@ -392,21 +424,39 @@ private fun androidx.compose.foundation.layout.ColumnScope.GameView(store: ChatS
     val canMove = g.isActive && my != null && g.turn == my && shogi.canPlay
     val compact = my == null || !g.isActive
 
-    // Top band: what game, whose turn, ⋯.
-    Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            val turnText = when {
-                g.isEnded -> ShogiLogic.resultText(g)
-                my != null -> if (g.turn == my) "あなたの番" else "相手の番"
-                else -> "${if (g.turn == "black") "☗" else "☖"}の番"
+    // The one band: ‹ (lobby), the game in a line (mode, moves, the last move, whose turn), ⋯.
+    // (The board's own band — last move, ⇅ — is hidden: hide_band.)
+    Row(Modifier.fillMaxWidth().height(GAME_BAND).padding(end = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = { focus.clearFocus(true); shogi.select(null) }, contentPadding = PaddingValues(horizontal = 8.dp),
+            modifier = Modifier.height(36.dp).semantics { contentDescription = "ロビーへ" }) { Text("‹", style = MaterialTheme.typography.titleMedium) }
+        val turnText = when {
+            g.isEnded -> ShogiLogic.resultText(g)
+            my != null -> if (g.turn == my) "あなたの番" else if (ShogiLogic.beagleSide(g) == g.turn) "ビーグルが考え中…🐶" else "相手の番"
+            else -> "${if (g.turn == "black") "☗" else "☖"}の番"
+        }
+        Text(
+            if (g.isEnded) "終局 $turnText"
+            else ShogiLogic.modeMark(g.mode) + " ${g.ply}手" + (g.lastMove?.label?.takeIf { it.isNotBlank() }?.let { " $it" } ?: "") +
+                "・$turnText" + (if (g.spectators > 0) " 👀${g.spectators}" else ""),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (g.isEnded || canMove) FontWeight.Bold else null,
+            color = if (canMove) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        // Ended: the next step right in this band (no extra row: the board keeps its height).
+        if (g.isEnded) {
+            val again = my != null && shogi.canPlay && g.status == "ended" && g.black != null
+            if (again && ShogiLogic.beagleSide(g) != null) {
+                Button(enabled = !shogi.busy, onClick = { focus.clearFocus(true); shogi.startBeagle(g.mode, rematchOf = g.id) }, contentPadding = PaddingValues(horizontal = 10.dp), modifier = Modifier.height(32.dp)) {
+                    Text("🐶 もう一局", style = MaterialTheme.typography.labelMedium)
+                }
+            } else if (again) {
+                Button(enabled = !shogi.busy, onClick = { focus.clearFocus(true); shogi.create(g.mode, rematchOf = g.id) }, contentPadding = PaddingValues(horizontal = 10.dp), modifier = Modifier.height(32.dp)) {
+                    Text("再戦", style = MaterialTheme.typography.labelMedium)
+                }
             }
-            Text(
-                "${ShogiLogic.modeLabel(g.mode)}・${g.ply} 手" + (if (g.spectators > 0) "・👀${g.spectators}" else "") + "・$turnText",
-                style = MaterialTheme.typography.labelMedium,
-                color = if (canMove) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
-            )
-            // (The last move is on the board's own band: no second line here, the board needs the height.)
+            TextButton(onClick = { focus.clearFocus(true); shogi.select(null) }, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.height(32.dp)) { Text("閉じる", style = MaterialTheme.typography.labelMedium) }
         }
         Box {
             IconButton(onClick = { menu = true }, modifier = Modifier.size(36.dp).semantics { contentDescription = "将棋のメニュー" }) { Text("⋯", style = MaterialTheme.typography.titleLarge) }
@@ -423,32 +473,17 @@ private fun androidx.compose.foundation.layout.ColumnScope.GameView(store: ChatS
         }
     }
 
-    if (g.isEnded) {
-        Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
-            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("終局　${ShogiLogic.resultText(g)}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (my != null && shogi.canPlay && g.status == "ended" && g.black != null) {
-                        Button(enabled = !shogi.busy, onClick = { shogi.create(g.mode, rematchOf = g.id) }, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("再戦（先後交代）") }
-                    }
-                    OutlinedButton(onClick = { shogi.select(null) }) { Text("閉じる") }
-                }
-            }
-        }
-    }
-
     val theme = if (dark) "dark" else "light"
     // The board takes this as a whole (it redraws and drops its 「送信中」 move); labels go separately.
     val state = ShogiLogic.stateMessage(
         sfen = g.sfen, myColor = my, canMove = canMove, lastMove = g.lastMove, orientation = orientation,
         confirmMove = shogi.confirmMove, moveHints = shogi.moveHints, compact = compact, theme = theme,
-        topLabel = null, bottomLabel = null,
+        topLabel = null, bottomLabel = null, hideBand = true,
     )
-    // The board fits the rest of the panel (the page's body has 6 px of padding above and below).
-    // If the board cannot get that small (its smallest squares), the rest scrolls rather than being cut off.
-    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-    val room = maxHeight.value.toInt()
-    Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), contentAlignment = Alignment.TopCenter) {
+    // The board's size comes from the width; if that is taller than [boardMax] it shrinks itself
+    // into max_height (the page's body has 6 px of padding above and below). The WebView is as tall
+    // as the board says (its `size`): no blank around the name rows, no scrolling.
+    val room = boardMax.value.toInt()
     ShogiBoardWeb(
         host = board,
         maxHeight = (room - BOARD_BODY_PADDING).coerceAtLeast(120),
@@ -465,8 +500,6 @@ private fun androidx.compose.foundation.layout.ColumnScope.GameView(store: ChatS
         onFlip = { flip = it },
         modifier = Modifier.fillMaxWidth(),
     )
-    }
-    }
 
     if (confirmResign) {
         AlertDialog(
@@ -565,12 +598,7 @@ private fun ShogiBoardWeb(
 ) {
     val moveNow by rememberUpdatedState(onMove)
     val flipNow by rememberUpdatedState(onFlip)
-    // The board shrinks by an estimate and can come out a little taller than max_height: ask
-    // again for less by what it went over (a few rounds at most, and only while it still shrinks).
-    var over by remember(maxHeight) { mutableIntStateOf(0) }
-    var lastSize by remember(maxHeight) { mutableIntStateOf(Int.MAX_VALUE) }
-    val fitTo = maxHeight - over
-    val stateNow by rememberUpdatedState(ShogiLogic.withMaxHeight(state, fitTo))
+    val stateNow by rememberUpdatedState(ShogiLogic.withMaxHeight(state, maxHeight))
     val labelsNow by rememberUpdatedState(topLabel to bottomLabel)
     val base = remember { Uri.parse(Net.BASE) }
 
@@ -583,21 +611,14 @@ private fun ShogiBoardWeb(
             is ShogiLogic.BoardOut.Move -> moveNow(m.usi, m.label)
             is ShogiLogic.BoardOut.Haptic -> host.web?.let { haptic(it, m.kind) }
             is ShogiLogic.BoardOut.Flip -> flipNow(m.orientation)
-            is ShogiLogic.BoardOut.Size -> {
-                host.heightCss = m.height
-                val shrank = m.height < lastSize
-                lastSize = m.height
-                // Only the estimate's small error (the first report comes before max_height applies).
-                val by = m.height - maxHeight
-                if (by in 1..60 && shrank && over < 120) over += by
-            }
+            is ShogiLogic.BoardOut.Size -> host.heightCss = m.height
             ShogiLogic.BoardOut.Close -> Unit
             is ShogiLogic.BoardOut.Error -> android.util.Log.w("BguruShogi", "board: ${m.message}")
         }
     }
 
     // State: on every change (and after a refused move); labels (clock) every second, separately.
-    LaunchedEffect(state, stateEpoch, fitTo, host.ready) { if (host.ready) host.send(withLabels(stateNow, labelsNow)) }
+    LaunchedEffect(state, stateEpoch, maxHeight, host.ready) { if (host.ready) host.send(withLabels(stateNow, labelsNow)) }
     LaunchedEffect(topLabel, bottomLabel, host.ready) { if (host.ready) host.send(ShogiLogic.labelsMessage(topLabel, bottomLabel)) }
 
     val url = remember(boardUrl) {
@@ -608,7 +629,8 @@ private fun ShogiBoardWeb(
     }
     val h = host.heightCss
     AndroidView(
-        modifier = modifier.height((if (h > 0) h + BOARD_BODY_PADDING else available).dp),
+        // Exactly the board's height (its `size` + the body's padding), within the space it has.
+        modifier = modifier.height((if (h > 0) minOf(h + BOARD_BODY_PADDING, available) else available).dp),
         factory = { ctx ->
             WebView(ctx).apply {
                 host.web = this
@@ -684,42 +706,37 @@ private fun haptic(v: View, kind: String) {
 
 // MARK: chat
 
-/** The chat's game card (kind "shogi"): the little board (dots only) and 観戦する. Redrawn by
- *  `shogi` events through the store (the message itself is not rewritten move by move). */
+/** The chat's game card (kind "shogi"), small: one or two lines — 「☗A vs ☖B 対局中 ⚡ 12手 [観戦]」, and
+ *  an ended game just its result. Redrawn by `shogi` events through the store. */
 @Composable
 fun ShogiChatCard(store: ChatStore, m: ChatMessage, modifier: Modifier = Modifier) {
     val shogi = store.shogi
     val id = m.shogiGameId ?: return
     val g = shogi.games.firstOrNull { it.id == id }
+    val live = g != null && g.isActive
     Row(
         modifier
-            .border(1.dp, ShogiGreen.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerLow, RoundedCornerShape(10.dp))
+            .border(1.dp, ShogiGreen.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
             .clickable { store.openShogi(id) }
-            .padding(8.dp)
-            .widthIn(max = 360.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(start = 10.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
+            .widthIn(max = 420.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (g != null) MiniBoard(g.sfen)
-        Column(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                if (g != null && g.isActive) "${ShogiLogic.vsText(g)}（${ShogiLogic.modeLabel(g.mode)}）${g.ply} 手目" else m.body,
-                style = MaterialTheme.typography.bodySmall,
-            )
-            if (g != null && g.isActive && g.lastMove != null) {
-                Text("最後の手 ${g.lastMove.label}" + if (g.spectators > 0) "・👀${g.spectators}" else "",
-                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            FilledTonalButton(onClick = { store.openShogi(id) }, contentPadding = PaddingValues(horizontal = 12.dp), modifier = Modifier.height(32.dp)) {
-                Text(
-                    when {
-                        g == null || g.isEnded -> "盤で見る"
-                        shogi.myColorIn(g) != null -> "盤を開く"
-                        else -> "観戦する"
-                    },
-                    style = MaterialTheme.typography.labelMedium,
-                )
+        Text(
+            when {
+                g == null -> m.body
+                live -> "${ShogiLogic.vsText(g!!)} 対局中 ${ShogiLogic.modeMark(g.mode)} ${g.ply}手"
+                g!!.isEnded -> "☗ ${ShogiLogic.vsText(g)}　${ShogiLogic.resultText(g)}"
+                else -> m.body
+            },
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = if (live) 2 else 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false).padding(vertical = 6.dp),
+        )
+        if (live) {
+            TextButton(onClick = { store.openShogi(id) }, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.height(32.dp)) {
+                Text(if (shogi.myColorIn(g!!) != null) "指す" else "観戦", style = MaterialTheme.typography.labelMedium)
             }
         }
     }

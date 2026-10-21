@@ -122,6 +122,15 @@ object ShogiLogic {
         else -> null
     }
 
+    const val BEAGLE_NAME = "ビーグル"
+
+    /** ビーグル戦: the beagle (the site's system account, name 「ビーグル」) is one of the two sides. */
+    fun beagleSide(g: ShogiGame): String? = when {
+        g.black?.name == BEAGLE_NAME -> "black"
+        g.white?.name == BEAGLE_NAME -> "white"
+        else -> null
+    }
+
     fun modeLabel(mode: String) = if (mode == "slow") "🐢ゆっくり" else "⚡速い"
     fun modeMark(mode: String) = if (mode == "slow") "🐢" else "⚡"
 
@@ -197,6 +206,7 @@ object ShogiLogic {
         theme: String,
         topLabel: String?,
         bottomLabel: String?,
+        hideBand: Boolean = false,
     ): JsonObject = buildJsonObject {
         put("type", "state")
         put("sfen", sfen)
@@ -211,6 +221,8 @@ object ShogiLogic {
         if (topLabel != null) put("top_label", topLabel)
         if (bottomLabel != null) put("bottom_label", bottomLabel)
         put("show_close", false)
+        // The app shows the last move in its own band (and ⇅ in its menu).
+        if (hideBand) put("hide_band", true)
     }
 
     /** The board fits itself into this many CSS px (bridge `max_height`). */

@@ -26,6 +26,8 @@ class ShogiStore(private val api: ApiClient, context: Context) {
     var enabled by mutableStateOf(false); private set
     /** May start / accept / play (the chat scope). */
     var canPlay by mutableStateOf(false); private set
+    /** 🐶 ビーグルと対局 (practice) is on (capabilities.shogi.beagle). */
+    var beagle by mutableStateOf(false); private set
     var basePath = "/api/agent/shogi"; private set
     var boardUrl = "/shogi-board/index.html"; private set
 
@@ -58,6 +60,7 @@ class ShogiStore(private val api: ApiClient, context: Context) {
         val on = caps?.shogiEnabled == true
         enabled = on
         canPlay = caps?.canPlayShogi == true
+        beagle = caps?.shogiBeagle == true
         caps?.let { basePath = it.shogiPath; boardUrl = it.shogiBoardUrl }
         if (!on) { open = false; selectedId = null; detail = null; games = emptyList(); return }
         load()
@@ -209,6 +212,15 @@ class ShogiStore(private val api: ApiClient, context: Context) {
         }
     }
 
+    /** ビーグル戦: starts at once (no offer / accept), active from the reply; opens its board.
+     *  `rematchOf`: もう一局 (sides swapped). */
+    fun startBeagle(mode: String, rematchOf: Long? = null) {
+        if (demo) { demoBeagle(mode, rematchOf); return }
+        act({ api.shogiCreate(mode, null, rematchOf, basePath, opponent = "beagle") }) { _, g ->
+            if (g != null) { notice = "ビーグルとの対局が始まりました（先後は振り駒）"; select(g.id) }
+        }
+    }
+
     fun accept(id: Long) {
         if (demo) { demoAccept(id); return }
         act({ api.shogiAction(id, "accept", basePath) }) { _, _ -> select(id) }
@@ -276,6 +288,7 @@ class ShogiStore(private val api: ApiClient, context: Context) {
         demo = true
         enabled = true
         canPlay = true
+        beagle = true
         selfPlay = true
         me = meId
         val now = Instant.now()
@@ -322,6 +335,23 @@ class ShogiStore(private val api: ApiClient, context: Context) {
             moves = (g.moves ?: emptyList()) + ShogiMove(g.ply + 1, usi, label, next))
         games = ShogiLogic.upsert(games, ng)
         if (detail?.id == id) detail = ng
+    }
+
+    /** Demo: an active game against the beagle (it does not move in the demo: it keeps 「考え中」). */
+    private fun demoBeagle(mode: String, rematchOf: Long?) {
+        if (rematchOf == null && liveGame != null) { notice = "対局は 1 局ずつです（デモ）"; select(liveGame!!.id); return }
+        val id = (games.maxOfOrNull { it.id } ?: 0L) + 1
+        val meP = ShogiPlayer(me ?: "me", "ドリキン")
+        val dog = ShogiPlayer("beagle", ShogiLogic.BEAGLE_NAME, "/icon-192.png")
+        val prev = rematchOf?.let { r -> games.firstOrNull { it.id == r } }
+        val meBlack = prev?.let { it.black?.userId != me } ?: true
+        val now = Instant.now().toString()
+        val g = ShogiGame(id, "active", mode, creator = meP, invitee = dog, black = if (meBlack) meP else dog, white = if (meBlack) dog else meP,
+            clocks = if (mode == "blitz") ShogiClocks(600_000, 600_000, 30_000, 600_000) else null,
+            turnStartedAt = now, serverNow = now, createdAt = now, startedAt = now, rematchOf = rematchOf, moves = emptyList())
+        games = listOf(g) + games
+        notice = "ビーグルとの対局が始まりました（デモ: ビーグルは指しません）"
+        select(id)
     }
 
     private fun demoEnd(id: Long, status: String, reason: String, result: String? = null) {

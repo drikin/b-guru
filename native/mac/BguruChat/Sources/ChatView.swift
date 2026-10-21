@@ -50,7 +50,9 @@ struct ChatView: View {
             ChatComposerBar(store: store, pin: pin, composer: composer, onClose: onClose)
         }
         .background(.regularMaterial)
-        // ☗ 将棋 takes about half the chat (at least ShogiScreen.minHeight): a short panel grows
+        // The column's height, for how big ☗ 将棋's board may get (half of it).
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { store.shogi.setAreaHeight($0) }
+        // ☗ 将棋 takes up to half the chat (the board shrinks past that): a short panel grows
         // once, so the chat below stays readable.
         .onChange(of: store.shogi.open) { _, open in if open { pin.wantsHeight?(820) } }
         .imageViewer($viewing)

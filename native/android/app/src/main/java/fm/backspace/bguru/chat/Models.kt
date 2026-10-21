@@ -99,6 +99,8 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val boardUrl: String? = null,
         val bridgeVersion: Int? = null,
         val play: Boolean? = null,
+        /** ビーグル戦 (practice against the beagle): POST games { mode, opponent: "beagle" }. */
+        val beagle: Boolean? = null,
         val timeControls: List<ShogiTimeControl> = emptyList(),
     )
     @Serializable data class ShogiTimeControl(val mode: String, val label: String = "", val initialMs: Long = 0, val byoyomiMs: Long = 0)
@@ -169,6 +171,8 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val shogiEnabled get() = features?.shogi?.enabled == true && (features?.shogi?.bridgeVersion ?: 1) == 1
     /** May start, accept and play (the chat scope); otherwise watch only. */
     val canPlayShogi get() = shogiEnabled && (features?.shogi?.play ?: false)
+    /** 🐶 ビーグルと対局 (practice) is offered. */
+    val shogiBeagle get() = canPlayShogi && (features?.shogi?.beagle ?: false)
     /** Only paths on our own server (the request carries the token). */
     val shogiPath get() = features?.shogi?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/shogi"
     /** The board page (no token, no cookies): only under /shogi-board/ on our own server. */

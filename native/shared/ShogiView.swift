@@ -18,13 +18,10 @@ struct ShogiScreen: View {
     /// For 指名 (the chat's member list, loaded once per launch).
     let members: [MentionMember]
 
-    /// The smallest the screen gets (tabs, the game's bar and the smallest whole board).
-    static let minHeight: CGFloat = 410
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ShogiGameTabs(shogi: shogi)
-            if let n = shogi.notice {
+        VStack(alignment: .leading, spacing: 4) {
+            // In a game the note takes the game's bar for its 3 s (no extra line).
+            if let n = shogi.notice, shogi.selected == nil {
                 HStack(alignment: .top, spacing: 4) {
                     Text(n).font(.caption).foregroundStyle(.orange)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -43,60 +40,18 @@ struct ShogiScreen: View {
                 Text("読み込み中…").font(.callout).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity).padding(.vertical, 20)
             } else {
-                ScrollView {
+                // As tall as it needs; it scrolls only if it would pass half the chat.
+                ViewThatFits(in: .vertical) {
                     ShogiLobby(shogi: shogi, members: members)
-                        .padding(.bottom, 6)
+                    ScrollView { ShogiLobby(shogi: shogi, members: members) }
                 }
-                .scrollIndicators(.automatic)
+                .frame(maxHeight: shogi.areaHeight > 0 ? shogi.areaHeight * 0.5 : 360, alignment: .top)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 4)
-        .padding(.bottom, 4)
-        .frame(maxHeight: .infinity, alignment: .top)
-        // About half the chat, like the club room's map (the web: clamp(260px, 52%, 640px)):
-        // the chat stays in view below, while watching and while playing. Never under 410 pt:
-        // the board's smallest squares (22 px) with both hands and bands need ~350 of it.
-        .containerRelativeFrame(.vertical) { h, _ in min(640, max(Self.minHeight, h * 0.52)) }
-    }
-}
-
-/// ロビー ・ my games (● = my move) ・ the game I am watching.
-private struct ShogiGameTabs: View {
-    let shogi: ShogiStore
-
-    var body: some View {
-        HStack(spacing: 4) {
-            chip("ロビー", selected: shogi.selectedId == nil, alert: shogi.offersToMe.count > 0) { shogi.select(nil) }
-            ForEach(shogi.myActive.prefix(4)) { g in
-                let my = shogi.myColor(in: g)
-                let opp = my.flatMap { g.player($0.other) }
-                chip("\(g.isBlitz ? "⚡" : "🐢")\(opp?.name ?? "?")", selected: shogi.selectedId == g.id,
-                     alert: my == g.turnSide) { shogi.select(g.id) }
-            }
-            if let g = shogi.selected, shogi.myColor(in: g) == nil || !g.isActive, !shogi.myActive.contains(where: { $0.id == g.id }) {
-                chip("\(g.isEnded ? "🎞" : "👀")\(g.black?.name ?? "?") vs \(g.white?.name ?? "?")", selected: true, alert: false) {}
-            }
-            Spacer(minLength: 0)
-        }
-        .lineLimit(1)
-    }
-
-    private func chip(_ text: String, selected: Bool, alert: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 3) {
-                Text(text).font(.caption.weight(selected ? .semibold : .regular)).lineLimit(1)
-                if alert { Circle().fill(Color.red).frame(width: 6, height: 6) }
-            }
-            .foregroundStyle(selected ? Color.white : Color.primary)
-            .padding(.horizontal, 8)
-            .frame(height: 22)
-            .background(Capsule().fill(selected ? Color.accentGreen : Color.primary.opacity(0.07)))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityLabel(alert ? "\(text)、あなたの番か申し込みあり" : text)
+        .padding(.horizontal, 8)
+        .padding(.top, 2)
+        .padding(.bottom, 2)
     }
 }
 
@@ -106,6 +61,8 @@ private struct ShogiLobby: View {
     let shogi: ShogiStore
     let members: [MentionMember]
     @AppStorage("shogiLobbyMode") private var mode = "blitz"
+    /// 「🐶 ビーグルと対局（練習）」 was pressed: the two time controls show.
+    @State private var beagleOpen = false
 
     private var others: [MentionMember] {
         members.filter { $0.userId != shogi.me && $0.name != "ビーグル" }
@@ -143,6 +100,7 @@ private struct ShogiLobby: View {
                         .font(.caption2).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if shogi.beagle { beagleRow }
             }
 
             if shogi.currentGame == nil, !shogi.offersToMe.isEmpty {
@@ -188,7 +146,7 @@ private struct ShogiLobby: View {
                 }
             }
 
-            if shogi.currentGame == nil {
+            if shogi.currentGame == nil, !shogi.activeGames.isEmpty {
             section("対局中") {
                 if shogi.activeGames.isEmpty {
                     Text("いまはありません").font(.caption).foregroundStyle(.secondary)
@@ -225,6 +183,29 @@ private struct ShogiLobby: View {
         }
         .controlSize(.small)
         .disabled(shogi.busy)
+    }
+
+    /// 🐶 ビーグルと対局（練習）→ ⚡速い／🐢ゆっくり: starts at once, no offer to accept.
+    private var beagleRow: some View {
+        section("練習") {
+            if beagleOpen {
+                HStack(spacing: 8) {
+                    Text("🐶 ビーグルと:").font(.callout)
+                    Button("⚡ 速い") { beagleOpen = false; Task { await shogi.startBeagle(mode: "blitz") } }
+                        .buttonStyle(.borderedProminent).tint(Color.accentGreen)
+                    Button("🐢 ゆっくり") { beagleOpen = false; Task { await shogi.startBeagle(mode: "slow") } }
+                        .buttonStyle(.bordered)
+                    Button("やめる") { beagleOpen = false }.buttonStyle(.borderless)
+                }
+                .lineLimit(1)
+            } else {
+                Button("🐶 ビーグルと対局（練習）") { beagleOpen = true }.buttonStyle(.bordered)
+            }
+            Text("申し込みなしですぐ始まります（初心者向けの練習相手）。")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .disabled(shogi.busy)
+        .controlSize(.small)
     }
 
     private func section<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
@@ -339,13 +320,11 @@ struct ShogiGameView: View {
     private var onScreen: Bool { visibility?.room ?? true }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 2) {
             bar
-            // The board gets what is left: the page shrinks its squares to fit (max_height).
-            GeometryReader { geo in
-                board(maxHeight: geo.size.height)
-                    .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
-            }
+            // Exactly as tall as the board says it is (no room above or below). Its size comes
+            // from the width; past half the chat it is told to shrink (max_height).
+            board(maxHeight: boardMax)
             if g.isEnded { endBanner }
         }
         // 観戦中の合図 (30 s) while this game is on screen and I only watch.
@@ -368,19 +347,40 @@ struct ShogiGameView: View {
 
     private var status: String {
         var s = "\(g.modeLabel)・\(g.ply) 手"
+        // The board's own band (last move, ⇅) is hidden to give the squares its height: the
+        // last move is said here, ⇅ is in ⋯.
+        if let lm = g.lastMove { s += "・\(lm.label)" }
         if let n = g.spectators, n > 0 { s += "・👀\(n)" }
-        if g.isActive, let my { s += g.turnSide == my ? "・あなたの番" : "・相手の番" }
+        if g.isActive, let my {
+            s += g.turnSide == my ? "・あなたの番" : (g.beagleSide == g.turnSide ? "・ビーグルが考え中…🐶" : "・相手の番")
+        }
         if g.isActive, my == nil { s += "・\(g.turnSide.mark)の番" }
         return s
     }
 
     private var bar: some View {
         HStack(spacing: 6) {
-            Text(status)
-                .font(.caption.weight(g.isActive && my == g.turnSide ? .semibold : .regular))
-                .foregroundStyle(g.isActive && my == g.turnSide ? Color.accentGreen : Color.secondary)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            Button { shogi.select(nil) } label: {
+                Image(systemName: "chevron.backward").font(.system(size: 12, weight: .semibold))
+                    .frame(width: 22, height: 22).contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help("ロビーへ")
+            .accessibilityLabel("ロビーへ")
+            Group {
+                if let n = shogi.notice {
+                    // A note (3 s) in place of the status, so it adds no line.
+                    Text(n).font(.caption).foregroundStyle(.orange)
+                        .onTapGesture { shogi.notice = nil }
+                } else {
+                    Text(status)
+                        .font(.caption.weight(g.isActive && my == g.turnSide ? .semibold : .regular))
+                        .foregroundStyle(g.isActive && my == g.turnSide ? Color.accentGreen : Color.secondary)
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+            .frame(maxWidth: .infinity, alignment: .leading)
             Menu {
                 if g.isActive, my != nil, shogi.canPlay {
                     if g.ply < 2 {
@@ -414,7 +414,13 @@ struct ShogiGameView: View {
     /// I am playing this game (the big board); watching gets the compact one.
     private var playing: Bool { my != nil && g.isActive }
 
-    private func board(maxHeight: CGFloat) -> some View {
+    /// The board's height limit: under half the chat column (45 %), less this bar (and the end's buttons).
+    private var boardMax: CGFloat? {
+        guard shogi.areaHeight > 0 else { return nil }
+        return max(220, shogi.areaHeight * 0.45 - 26 - (g.isEnded ? 50 : 0))
+    }
+
+    private func board(maxHeight: CGFloat?) -> some View {
         let blitzLive = g.isActive && g.isBlitz && onScreen
         return TimelineView(.periodic(from: .now, by: blitzLive ? 1 : 3600)) { ctx in
             let state = stateMessage(at: ctx.date, maxHeight: maxHeight)
@@ -429,7 +435,7 @@ struct ShogiGameView: View {
                 height: $boardHeight
             )
         }
-        .frame(height: min(maxHeight, boardHeight > 0 ? boardHeight : maxHeight))
+        .frame(height: boardHeight > 0 ? boardHeight : (maxHeight ?? 360))
         .frame(maxWidth: playing ? 520 : 440)
         .frame(maxWidth: .infinity)
         .accessibilityLabel("将棋盤")
@@ -458,7 +464,7 @@ struct ShogiGameView: View {
         return (label(bottom.other, at: now), label(bottom, at: now))
     }
 
-    private func stateMessage(at now: Date, maxHeight: CGFloat) -> [String: Any] {
+    private func stateMessage(at now: Date, maxHeight: CGFloat?) -> [String: Any] {
         let l = labels(at: now)
         var m: [String: Any] = [
             "type": "state",
@@ -471,9 +477,11 @@ struct ShogiGameView: View {
             "compact": !playing,
             "theme": scheme == .dark ? "dark" : "light",
             "show_close": false,
+            "hide_band": true,
             // The whole board (hands and bands too) fits this height (− the page's 12 px padding).
-            "max_height": max(160, Int(maxHeight) - 12),
         ]
+        // The whole board (hands and labels too) within this height (− the page's 12 px padding).
+        if let maxHeight { m["max_height"] = max(160, Int(maxHeight) - 12) }
         // The clocks change every second: the state itself is compared without them.
         m["top_label"] = l.top
         m["bottom_label"] = l.bottom
@@ -495,19 +503,25 @@ struct ShogiGameView: View {
     // MARK: The end
 
     private var endBanner: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(g.resultText).font(.callout.weight(.semibold))
+        VStack(alignment: .leading, spacing: 4) {
+            Text(g.resultText).font(.caption.weight(.semibold)).lineLimit(1)
             HStack(spacing: 8) {
                 if my != nil, shogi.canPlay {
-                    Button("再戦を申し込む（先後交代）") { Task { await shogi.create(mode: g.mode, rematchOf: g.id) } }
-                        .buttonStyle(.borderedProminent).tint(Color.accentGreen)
+                    if g.isBeagleGame {
+                        Button("🐶 もう一局（先後交代）") { Task { await shogi.startBeagle(mode: g.mode, rematchOf: g.id) } }
+                            .buttonStyle(.borderedProminent).tint(Color.accentGreen)
+                    } else {
+                        Button("再戦を申し込む（先後交代）") { Task { await shogi.create(mode: g.mode, rematchOf: g.id) } }
+                            .buttonStyle(.borderedProminent).tint(Color.accentGreen)
+                    }
                 }
                 Button("閉じる") { shogi.select(nil) }.buttonStyle(.bordered)
             }
             .controlSize(.small)
+            .lineLimit(1)
             .disabled(shogi.busy)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
     }
 }
 
@@ -522,34 +536,34 @@ struct ShogiChatCard: View {
 
     var body: some View {
         let g = shogi.games.first { $0.id == gameId }
-        HStack(alignment: .center, spacing: 10) {
-            if let g { ShogiMiniBoard(sfen: g.sfen) }
-            VStack(alignment: .leading, spacing: 3) {
-                if let g, g.isActive {
-                    Text("\(g.playersText)（\(g.modeLabel)）\(g.ply) 手目").font(.caption)
-                    if let lm = g.lastMove {
-                        Text("最後の手 \(lm.label)\((g.spectators ?? 0) > 0 ? "・👀\(g.spectators ?? 0)" : "")")
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-                } else {
-                    Text(body_).font(.caption).fixedSize(horizontal: false, vertical: true)
-                }
-                Button(buttonTitle(g)) { shogi.openGame(gameId) }
+        if let g, g.isActive {
+            // 「☗A vs ☖B 対局中 ⚡ 12手 [観戦]」 — one line, redrawn by the game's events.
+            HStack(spacing: 8) {
+                Text("\(g.playersText) 対局中 \(g.isBlitz ? "⚡" : "🐢") \(g.ply)手\(g.lastMove.map { " \($0.label)" } ?? "")")
+                    .font(.caption)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(shogi.myColor(in: g) != nil ? "盤を開く" : "観戦") { shogi.openGame(gameId) }
                     .buttonStyle(.bordered)
                     .tint(Color.accentGreen)
-                    .controlSize(.small)
+                    .controlSize(.mini)
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentGreen.opacity(0.07)))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentGreen.opacity(0.4)))
+            .accessibilityElement(children: .combine)
+        } else {
+            // Over (or not known here): the result only, one small line; a tap shows the board.
+            Text(g.map { $0.isEnded ? "\($0.playersText) \($0.resultText)" : body_ } ?? body_)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture { shogi.openGame(gameId) }
+                .accessibilityAddTraits(.isButton)
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.04)))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentGreen.opacity(0.45)))
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
-    }
-
-    private func buttonTitle(_ g: ShogiGame?) -> String {
-        guard let g, !g.isEnded else { return "盤で見る" }
-        return shogi.myColor(in: g) != nil ? "盤を開く" : "観戦する"
     }
 }
 

@@ -164,6 +164,9 @@ class ShogiLogicTest {
         assertEquals(true to false, ShogiLogic.settingsOf(m))
         assertEquals("dark", (m["theme"] as JsonPrimitive).content)
         assertFalse(m.containsKey("bottom_label"))
+        assertFalse(m.containsKey("hide_band"))
+        val hidden = ShogiLogic.stateMessage(ShogiLogic.INITIAL_SFEN, "black", true, null, null, false, true, false, "light", null, null, hideBand = true)
+        assertEquals("true", hidden["hide_band"].toString())
         // max_height: the board fits itself into the panel (a number of CSS px).
         assertEquals("300", ShogiLogic.withMaxHeight(m, 300)["max_height"].toString())
         assertFalse(ShogiLogic.withMaxHeight(m, null).containsKey("max_height"))
@@ -233,5 +236,17 @@ class ShogiLogicTest {
         val r = ApiJson.decodeFromString<ShogiReply>("""{"error":"対局は 1 局ずつです","code":"busy","game":{"id":7,"status":"open"}}""")
         assertEquals("busy", r.code)
         assertEquals(7L, r.game?.id)
+    }
+
+    @Test fun beagleGame() {
+        val dog = ShogiPlayer("b1", "ビーグル", "/icon-192.png")
+        val me = ShogiPlayer("u1", "ドリキン")
+        val g = ShogiGame(20, "active", "blitz", creator = me, invitee = dog, black = dog, white = me, turn = "black")
+        assertEquals("black", ShogiLogic.beagleSide(g))
+        assertEquals("white", ShogiLogic.myColor(g, "u1"))
+        assertNull(ShogiLogic.beagleSide(g.copy(black = ShogiPlayer("x", "mazzo"))))
+        val caps = ApiJson.decodeFromString<Capabilities>("""{"scopes":["read","chat"],"features":{"shogi":{"enabled":true,"bridge_version":1,"play":true,"beagle":true}}}""")
+        assertTrue(caps.shogiBeagle)
+        assertFalse(ApiJson.decodeFromString<Capabilities>("""{"features":{"shogi":{"enabled":true,"play":true}}}""").shogiBeagle)
     }
 }

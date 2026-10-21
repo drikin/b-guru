@@ -180,9 +180,10 @@ class ApiClient(val token: String) {
 
     suspend fun shogiGames(base: String = "/api/agent/shogi") = shogi("GET", "games", base = base, query = mapOf("status" to "open,offered,active,ended"))
     suspend fun shogiGame(id: Long, base: String = "/api/agent/shogi") = shogi("GET", "games/$id", base = base)
-    suspend fun shogiCreate(mode: String, inviteeUserId: String?, rematchOf: Long?, base: String = "/api/agent/shogi") =
+    suspend fun shogiCreate(mode: String, inviteeUserId: String?, rematchOf: Long?, base: String = "/api/agent/shogi", opponent: String? = null) =
         shogi("POST", "games", buildJsonObject {
             put("mode", mode)
+            if (opponent != null) put("opponent", opponent)
             if (inviteeUserId != null) put("invitee_user_id", inviteeUserId)
             if (rematchOf != null) put("rematch_of", rematchOf)
         }, base)

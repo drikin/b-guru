@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -381,17 +382,20 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             val shogi = store.shogi
             if (shogi.enabled && shogi.open && !(room.enabled && room.roomView)) {
                 // ☗ 将棋: the panel above, the chat below — split like the room, watching or playing
-                // (drikin 2026-10-21: the chat must stay in sight). Same share as the web: clamp(260, 52 %, 640).
+                // (drikin 2026-10-21: the chat must stay in sight).
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                    val columnHeight = maxHeight
                     if (maxWidth >= 700.dp && maxWidth > maxHeight) {
                         Row(Modifier.fillMaxSize()) {
-                            ShogiPanel(store, visible, Modifier.weight(1f).fillMaxSize())
+                            ShogiPanel(store, visible, columnHeight, Modifier.weight(1f).fillMaxSize())
                             chatPane(Modifier.width(400.dp).fillMaxSize())
                         }
                     } else {
-                        val panel = (maxHeight * 0.52f).coerceIn(260.dp, 640.dp).coerceAtMost(maxHeight)
+                        // As tall as the board needs (+ one band), at most half the column: the chat keeps the
+                        // rest — 40 % of the screen, 4 to 5 lines above the composer on a phone (drikin 2026-10-21).
+                        val cap = maxHeight * 0.5f
                         Column(Modifier.fillMaxSize()) {
-                            ShogiPanel(store, visible, Modifier.height(panel).fillMaxWidth())
+                            ShogiPanel(store, visible, cap, Modifier.fillMaxWidth().heightIn(max = cap))
                             chatPane(Modifier.weight(1f).fillMaxWidth())
                         }
                     }

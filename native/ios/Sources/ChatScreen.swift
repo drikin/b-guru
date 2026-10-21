@@ -27,7 +27,7 @@ struct ChatScreen: View {
                     // timeline｜chat switch.
                     RoomModePicker(room: store.room, shogi: store.shogi)
                         .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .padding(.horizontal, 12).padding(.vertical, store.shogi.open ? 3 : 6)
                     if store.shogi.enabled && store.shogi.open {
                         ShogiArea(store: store, composer: composer)
                         Divider()
@@ -45,6 +45,8 @@ struct ChatScreen: View {
                 Divider()
                 ChatComposerBar(store: store, composer: composer)
             }
+            // The column's height, for how big ☗ 将棋's board may get (half of it).
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { store.shogi.setAreaHeight($0) }
             .imageViewer($viewing)
             .navigationTitle("B-guru チャット")
             .navigationBarTitleDisplayMode(.inline)

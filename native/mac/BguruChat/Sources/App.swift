@@ -131,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 // -demoShogi: the ☗ 将棋 lobby; -demoShogiGame: my game (my move); -demoShogiWatch: a game to watch.
                 if CommandLine.arguments.contains("-demoShogi") { store.shogi.show() }
                 if CommandLine.arguments.contains("-demoShogiGame") { store.shogi.openGame(101) }
-                if CommandLine.arguments.contains("-demoShogiWatch") { store.shogi.openGame(102) }
+                if CommandLine.arguments.contains("-demoShogiWatch") { store.shogi.openGame(101) }
                 if CommandLine.arguments.contains("-demoTimelineTab") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.panel?.pin.tab = .timeline }
                 }
