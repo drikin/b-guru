@@ -658,5 +658,54 @@ export async function initSchema() {
       reason TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    -- ☗ 将棋（lib/shogi.ts、docs/shogi-spec.md）。対局者は users.user_id（メールは持たない）。
+    -- 正本はここ: 局面（SFEN）・指し手（USI）・持ち時間。残り時間は turn_started_at からその都度出す。
+    CREATE TABLE IF NOT EXISTS shogi_games (
+      id SERIAL PRIMARY KEY,
+      status TEXT NOT NULL,                 -- open | offered | active | ended | closed
+      mode TEXT NOT NULL,                   -- blitz | slow
+      initial_ms INT NOT NULL DEFAULT 0,
+      byoyomi_ms INT NOT NULL DEFAULT 0,
+      creator_uid TEXT NOT NULL,
+      invitee_uid TEXT,                     -- 指名の相手（NULL = 募集）
+      black_uid TEXT,
+      white_uid TEXT,
+      rematch_of INT,
+      sfen TEXT NOT NULL,
+      ply INT NOT NULL DEFAULT 0,
+      last_usi TEXT,                        -- 最後の手（配信のたびに shogi_moves を読まないため）
+      last_label TEXT,
+      clock_b_ms INT NOT NULL DEFAULT 0,
+      clock_w_ms INT NOT NULL DEFAULT 0,
+      turn_started_at TIMESTAMPTZ,
+      reminded_at TIMESTAMPTZ,              -- ゆっくり: この手番で 24 時間の通知を送った
+      result TEXT,                          -- black | white | draw（中断・取り下げは NULL）
+      end_reason TEXT,
+      card_msg_id INT,                      -- チャットの対局中カード（chat_messages.id）
+      result_post_id INT,                   -- ビーグルの終局投稿（posts.id）
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      started_at TIMESTAMPTZ,
+      ended_at TIMESTAMPTZ,
+      last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_shogi_games_live ON shogi_games(status) WHERE status IN ('open', 'offered', 'active');
+    CREATE INDEX IF NOT EXISTS idx_shogi_games_ended ON shogi_games(ended_at DESC) WHERE status = 'ended';
+    CREATE TABLE IF NOT EXISTS shogi_moves (
+      game_id INT NOT NULL REFERENCES shogi_games(id) ON DELETE CASCADE,
+      ply INT NOT NULL,
+      usi TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      sfen_after TEXT NOT NULL,
+      spent_ms INT NOT NULL DEFAULT 0,
+      client_move_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (game_id, ply)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_shogi_moves_client ON shogi_moves(game_id, client_move_id) WHERE client_move_id IS NOT NULL;
+    -- チャットの対局中カード（kind 'shogi'）がどの対局のものか。
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS shogi_game_id INT;
+    -- 将棋の通知（shogi_offer / shogi_turn）を受け取る端末。対応したアプリだけが true を送る
+    -- （古いアプリは知らない kind を「返信がありました」と出してしまうため、既定は送らない）。
+    ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS notify_shogi BOOLEAN NOT NULL DEFAULT FALSE;
   `);
 }

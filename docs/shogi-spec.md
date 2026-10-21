@@ -99,3 +99,72 @@ capabilities の `features.shogi = { enabled, path, board_url, bridge_version, t
 
 待った申請、駒落ち、持ち時間の細かい設定、入玉宣言、ビーグルの対局中の実況、評価値・AI 検討、
 レーティング・ランキング・大会、KIF の読み込み、チャットから局面へのリンク、ルームのボイスとの連動。
+
+## 実装メモ（2026-10-21、v1 のサーバ・盤面・Web）
+
+- 置き場所: `src/lib/shogi.ts`（状態・DB・配信・期限）、`shogi-rules.ts`（tsshogi の上の合法手・詰み・千日手・表記・KIF）、
+  `shogi-clock.ts`（時計・期限の純関数）、`shogi-api.ts`（Web とアプリ共通の道順）、`shogi-text.ts`（カードとビーグルの文面）、
+  `shogi-types.ts`（DTO）。盤は `src/lib/shogi-board/board.ts`（素の DOM）、Web は `src/components/shogi/*`。
+- 機能フラグ `SHOGI_ENABLED`: 未設定・`0` = 誰にも出さない（capabilities `enabled:false`、API 404、Web に「☗ 将棋」なし、
+  配信もしない）。`1`（`*`）= 全員。メールのカンマ区切り = その人だけ。
+- DB: `shogi_games`・`shogi_moves`（`initSchema` が作る）、`chat_messages.shogi_game_id`、`push_devices.notify_shogi` を追加。
+- 時計: 速い将棋は双方が 1 手目を指すまで時計を進めない（60 秒で中断）。遅延の補正は 1 手 1 秒。
+  再起動時は「起動時刻＋10 秒」より前の期限を延ばす（`shogiReady`）。タイマーはプロセス内＋1 分ごとの見回り。
+- 上限: 一人が同時に出せる募集・指名 3 件、同時に指せる対局 5 局。アプリの操作は将棋用のレート枠（900 回/時）。
+
+### API の応答（Web `/api/shogi/*`・アプリ `/api/agent/shogi/*` で同じ）
+
+- 成功: `{ apiVersion, game }`（一覧は `{ apiVersion, me: { user_id }, games: [...] }`、指す は `duplicate` も、観戦は `{ spectators }`）。
+- 失敗: `{ error, code, game? }`。`code`: `not_found` 404 / `invalid_request` 400 / `illegal_move` 400 / `forbidden` 403 /
+  `conflict`（手数違い）・`not_your_turn`・`not_active`・`game_over`（時間切れ。game は終局後）・`expired`・`not_open`・
+  `too_many`・`too_late` 409。409 の `game` は最新の状態。
+- `game`（`ShogiGameDto`）: `id, status(open|offered|active|ended|closed), mode(blitz|slow), creator, invitee, black, white`
+  （各 `{user_id, name, avatar}`、受けるまで black/white は null）`, sfen, ply, turn, last_move{usi,label}, clocks{black_ms,
+  white_ms,byoyomi_ms,initial_ms}|null, turn_started_at, deadline_at, server_now, spectators, result(black|white|draw|null),
+  end_reason(resign|checkmate|timeout|sennichite|perpetual_check|abandon|aborted|cancelled|declined|expired|null),
+  created_at, started_at, ended_at, rematch_of, card_message_id, result_post_id`。
+  `clocks` は手番が始まったときの残り。手番側の今の残り = 残り −（今 − turn_started_at − 1 秒）、`ply < 2` の間は減らない。
+  0 を切ったら秒読み（byoyomi_ms から減る）。
+- `GET games/{id}` は上に `moves[{ply, usi, label, sfen, spent_ms, at}]`, `kif_url`, `my_color` を足したもの。
+- `POST games` は `{ mode, invitee_user_id?, rematch_of? }`（rematch_of = 終局した自分の対局。相手を指名し、受けると先後が入れ替わる）。
+- 配信 `event: shogi` の data: Web は `{ type:"shogi", action, game }`、アプリは `{ action, game }`。
+  `offer`（自分への指名）と、指名の取り下げ・断り・期限切れ（`state`）は二人にだけ。
+- 通知: `shogi_offer` / `shogi_turn` はアプリが `POST /api/agent/devices/push` に `notify_shogi: true` を付けた端末だけ
+  （ペイロードは `kind`, `game_id`、collapse は `shogi-{id}`）。古いアプリには送らない。
+- チャットのカード: `kind:"shogi"`, `shogi_game_id`（アプリの DTO）。本文は文字だけで通じる文。終局で本文が結果に変わる（edit）。
+
+## 盤面の橋渡し（bridge_version 1）
+
+アプリは `capabilities.features.shogi.board_url`（`/shogi-board/index.html`）を WebView で開く。この画面はトークンを持たず、
+盤の JS（`/shogi-board/board.js`）と駒の字（`/shogi-board/fonts/shogi-piece.ttf`）以外は読まない。
+`?theme=light|dark`・`?compact=1`（観戦の寸法）を付けられる。
+
+**アプリ → 盤**: `window.shogiBoard.receive(msg)`（`evaluateJavaScript` / `evaluateJavascript`。msg はオブジェクトか JSON 文字列）。
+`window.postMessage(msg)`（Android の postWebMessage）でもよい。
+
+| type | 中身 |
+|---|---|
+| `state` | `sfen`, `my_color`("black"\|"white"\|null), `can_move`(bool: 自分の番で指せる), `last_move`({usi,label}\|null), `orientation?`(下に来る側), `legal_moves?`(USI の配列。なければ盤が計算), `settings?`({confirm_move, move_hints}), `compact?`, `theme?`("light"\|"dark"\|"auto"), `top_label?`, `bottom_label?`, `show_close?` |
+| `labels` | `top_label`, `bottom_label`（名前・残り時間。毎秒送ってよい。state と違い、送信中の手の表示を消さない） |
+| `settings` | `confirm_move?`, `move_hints?` |
+| `theme` | `theme` |
+| `flip` | （⇅ と同じ） |
+
+`state` を受けると盤は描き直し、指したあとの仮の局面（送信中）を捨てる。サーバの返事・配信のたびに `state` を送る。
+409 のときも最新の `state` を送れば元に戻る。
+
+**盤 → アプリ**: iOS/Mac は `webkit.messageHandlers.shogi.postMessage(obj)`、Android は `ShogiBridge.postMessage(JSON 文字列)`
+（`@JavascriptInterface`）、iframe なら `parent.postMessage({source:"bguru-shogi-board", ...})`。すべて `v: 1` を含む。
+
+| type | 中身 |
+|---|---|
+| `ready` | 読み込み完了。アプリはここで最初の `state` を送る |
+| `move` | `usi`, `label`（例 "▲7六歩"）。アプリが `POST …/move { usi, expected_ply, client_move_id }` を送る |
+| `haptic` | `kind`: select / move / error（振動の合図） |
+| `flip` | `orientation`（⇅ を押した） |
+| `size` | `height`（盤全体の高さ px。WebView の高さ合わせ） |
+| `close` | ✕（`show_close: true` のときだけ出る） |
+| `error` | `message`（盤の JS のエラー） |
+
+盤のソース（`board.ts`・`bridge.ts`・`shogi-rules.ts`）を変えたら `node scripts/build-shogi-board.mjs` で `board.js` を作り直す
+（テストがずれを検出する）。駒の字は Noto Serif JP（OFL）のサブセット（`scripts/shogi-font-subset.sh`、`fonts/OFL.txt`）。

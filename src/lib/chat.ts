@@ -35,8 +35,11 @@ export interface ChatMessage {
   editedAt: string | null; // ISO timestamp of the edit
   /** Attached photos (/api/media/chat-…), at most CHAT_MAX_IMAGES. */
   images?: string[];
-  /** "notice": a quiet one-line note from B-guru (room comings and goings). */
-  kind?: "notice" | null;
+  /** "notice": a quiet one-line note from B-guru (room comings and goings).
+   *  "shogi": the ☗ 将棋 game card (lib/shogi.ts) — `shogiGameId` says which game. Its body
+   *  is plain text that reads fine on its own, so clients that do not know it show a line. */
+  kind?: "notice" | "shogi" | null;
+  shogiGameId?: number;
   /** Only on the create event / POST response of the sender's own message:
    *  the client-generated id of the optimistic bubble it replaces. */
   clientId?: string;
@@ -92,6 +95,7 @@ async function mapRow(
     created_at: Date | string;
     images?: string[] | null;
     kind?: string | null;
+    shogi_game_id?: number | null;
   },
   viewerEmail: string | null,
   authorId: string | null
@@ -108,6 +112,7 @@ async function mapRow(
     editedAt: r.edited_at ? new Date(r.edited_at).toISOString() : null,
     images: r.images ?? [],
     ...(r.kind === "notice" ? { kind: "notice" as const } : {}),
+    ...(r.kind === "shogi" && r.shogi_game_id ? { kind: "shogi" as const, shogiGameId: r.shogi_game_id } : {}),
   };
 }
 
@@ -160,6 +165,29 @@ export async function postChatNotice(body: string, updateId: number | null = nul
         `INSERT INTO chat_messages (author_email, author_name, body, kind) VALUES ($1, 'B-guru', $2, 'notice')
          RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind`,
         [SYSTEM_EMAIL, body]
+      );
+  const row = res.rows[0];
+  if (!row) return null;
+  const message = await mapRow(row, null, await emailToUserId(SYSTEM_EMAIL));
+  const { isAuthor: _perReceiver, ...broadcast } = message;
+  emitLive({ type: "chat", message: broadcast, action: updateId ? "edit" : "create" });
+  return message;
+}
+
+/** The ☗ 将棋 game card (kind "shogi"): one line when a game starts, its body rewritten
+ *  with the result when it ends (`updateId`). Never per move. Broadcast like any chat
+ *  message (create / edit); no push, no unread (same as a notice). */
+export async function postShogiCard(body: string, gameId: number, updateId: number | null = null): Promise<ChatMessage | null> {
+  const res = updateId
+    ? await pool.query(
+        `UPDATE chat_messages SET body = $1 WHERE id = $2 AND kind = 'shogi'
+         RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind, shogi_game_id`,
+        [body, updateId]
+      )
+    : await pool.query(
+        `INSERT INTO chat_messages (author_email, author_name, body, kind, shogi_game_id) VALUES ($1, 'B-guru', $2, 'shogi', $3)
+         RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind, shogi_game_id`,
+        [SYSTEM_EMAIL, body, gameId]
       );
   const row = res.rows[0];
   if (!row) return null;
@@ -454,7 +482,8 @@ export async function getUnreadCount(email: string): Promise<number> {
   const lastRead = res.rows[0].last_read;
   const cnt = await pool.query(
     `SELECT count(*)::int AS c FROM chat_messages
-     WHERE id > $1 AND created_at >= now() - ($2::text)::interval AND kind IS DISTINCT FROM 'notice'`,
+     WHERE id > $1 AND created_at >= now() - ($2::text)::interval
+       AND kind IS DISTINCT FROM 'notice' AND kind IS DISTINCT FROM 'shogi'`,
     [lastRead, CHAT_TTL]
   );
   return cnt.rows[0].c;

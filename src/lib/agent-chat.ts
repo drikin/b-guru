@@ -22,6 +22,10 @@ import { apnsEnabled } from "./apns";
 import { fcmEnabled } from "./fcm";
 import { VOICE_MAX_PARTICIPANTS, VOICE_MAX_SPEAKERS } from "./voice";
 import { resolveDisplayName } from "./display-name";
+import { TIME_CONTROLS } from "./shogi-clock";
+
+/** The board page's postMessage contract (docs/shogi-spec.md「盤面の橋渡し」). */
+export const SHOGI_BRIDGE_VERSION = 1;
 
 export const AGENT_API_VERSION = 1;
 
@@ -40,8 +44,10 @@ export type AgentChatMessageDto = {
   reactions?: ReactionSummary[];
   /** Attached photos (/api/media/chat-…); always present (empty when none). */
   images: string[];
-  /** "notice": a quiet line from B-guru (room comings and goings), not a message to answer. */
-  kind?: "notice";
+  /** "notice": a quiet line from B-guru (room comings and goings), not a message to answer.
+   *  "shogi": the ☗ 将棋 game card — `shogi_game_id` is the game (body reads fine as text). */
+  kind?: "notice" | "shogi";
+  shogi_game_id?: number;
 };
 
 /** The body apps get for a message that is photos only. */
@@ -73,6 +79,7 @@ export function toAgentChatDto(
     body,
     images,
     ...(m.kind === "notice" ? { kind: "notice" } : {}),
+    ...(m.kind === "shogi" && m.shogiGameId ? { kind: "shogi", shogi_game_id: m.shogiGameId } : {}),
     created_at: m.createdAt ?? "",
     edited: !!m.edited,
     edited_at: m.editedAt ?? null,
@@ -145,6 +152,10 @@ export function liveToStreamEvent(ev: LiveEvent, viewer: ChatViewer): StreamEven
   if (ev.type === "voice") {
     return { event: "voice", data: toAgentVoiceDto(ev.state) };
   }
+  // ☗ 将棋 (the stream route drops it for members without the feature).
+  if (ev.type === "shogi") {
+    return { event: "shogi", data: { action: ev.action, game: ev.game } };
+  }
   return null;
 }
 
@@ -165,7 +176,10 @@ export function toAgentVoiceDto(s: VoiceState) {
 
 /** The capabilities document for GET /api/agent/capabilities. `scopes` are the
  *  calling token's, so a client knows up front which actions will be refused. */
-export function agentCapabilities(scopes: AgentScope[], opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean } = {}) {
+export function agentCapabilities(
+  scopes: AgentScope[],
+  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean } = {}
+) {
   const ttlHours = parseInt(CHAT_TTL, 10) || 24;
   const can = (s: AgentScope) => scopes.includes(s);
   return {
@@ -204,12 +218,18 @@ export function agentCapabilities(scopes: AgentScope[], opts: { voice?: boolean;
       },
       stream: {
         path: "/api/agent/stream",
-        events: ["ready", "chat", "presence", "notification", "voice"],
+        events: ["ready", "chat", "presence", "notification", "voice", ...(opts.shogi ? ["shogi"] : [])],
         affects_presence: false,
       },
       notifications: { read: can("read"), stream: true },
       // APNs (iPhone/iPad) and FCM (Android): register with POST /api/agent/devices/push.
-      push: { apns: apnsEnabled(), fcm: fcmEnabled(), register: "/api/agent/devices/push", kinds: ["chat_mention", "chat_new", "reply"] },
+      // shogi_offer / shogi_turn go only to devices registered with notify_shogi: true.
+      push: {
+        apns: apnsEnabled(),
+        fcm: fcmEnabled(),
+        register: "/api/agent/devices/push",
+        kinds: ["chat_mention", "chat_new", "reply", ...(opts.shogi ? ["shogi_offer", "shogi_turn"] : [])],
+      },
       summary: { path: "/api/agent/summary" },
       // Voice room (LiveKit). `enabled` = configured and this member is in the rollout;
       // `join` = this token has the "voice" scope (apps issued before it must sign in again).
@@ -219,6 +239,9 @@ export function agentCapabilities(scopes: AgentScope[], opts: { voice?: boolean;
       neta: { enabled: can("post"), path: "/api/agent/neta", site: "https://neta.backspace.fm" },
       // Past backspace.fm episodes to listen to (Art19), behind a rollout flag.
       jukebox: { enabled: !!opts.jukebox, path: "/api/agent/jukebox" },
+      // ☗ 将棋 (docs/shogi-spec.md), behind SHOGI_ENABLED. The board is a web page the app
+      // shows in a WebView (bridge_version 1); the app keeps the token and the API to itself.
+      shogi: shogiCapability(!!opts.shogi, scopes),
       voice: {
         enabled: !!opts.voice,
         join: !!opts.voice && can("voice"),
@@ -229,6 +252,17 @@ export function agentCapabilities(scopes: AgentScope[], opts: { voice?: boolean;
         admin: !!opts.voice && !!opts.voiceAdmin,
       },
     },
+  };
+}
+
+export function shogiCapability(enabled: boolean, scopes: AgentScope[]) {
+  return {
+    enabled,
+    path: "/api/agent/shogi",
+    board_url: "/shogi-board/index.html",
+    bridge_version: SHOGI_BRIDGE_VERSION,
+    play: enabled && scopes.includes("chat"),
+    time_controls: TIME_CONTROLS,
   };
 }
 

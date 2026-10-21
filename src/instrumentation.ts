@@ -12,6 +12,9 @@ export async function register() {
       ensureHousekeeping();
       const { ensureJukebox } = await import("@/lib/jukebox");
       ensureJukebox();
+      // ☗ 将棋: 止まっていた間の時間切れを延ばし、進行中の対局のタイマーを張り直す。
+      const { ensureShogiSweeper } = await import("@/lib/shogi");
+      ensureShogiSweeper();
     } catch (e) {
       console.error("[bsm] initSchema failed:", e);
     }

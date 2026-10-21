@@ -7,8 +7,13 @@
  * never part of the payload. Single long-lived Node process, as live.ts. */
 import { EventEmitter } from "events";
 import type { Notification } from "./notifications";
+import type { ShogiGameDto, ShogiLiveAction } from "./shogi-types";
 
-export type PersonalEvent = { type: "notification"; notification: Notification };
+export type PersonalEvent =
+  | { type: "notification"; notification: Notification }
+  /** ☗ 将棋: an offer to this member ("offer"), or a change to a game only the two of
+   *  them can see (a declined / cancelled / expired offer: "state"). */
+  | { type: "shogi"; action: ShogiLiveAction; game: ShogiGameDto };
 
 export const personalBus = new EventEmitter();
 personalBus.setMaxListeners(0);

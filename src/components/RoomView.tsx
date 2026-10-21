@@ -72,17 +72,19 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
-export default function RoomPanel({ fallback }: { fallback: ReactNode }) {
+/** `extra` goes next to the テキスト｜ルーム switch (☗ 将棋); without the room it is
+ *  called with inRow = true and sits on its own line above the fallback. */
+export default function RoomPanel({ fallback, extra }: { fallback: ReactNode; extra?: (inRow: boolean) => ReactNode }) {
   const s = useRoom();
   useEffect(() => {
     if (s.status === "unknown") void loadRoom();
     if (!voiceLoaded()) void loadVoice();
   }, [s.status]);
-  if (s.status !== "enabled" || !s.map) return <>{fallback}</>;
-  return <RoomChrome s={s} />;
+  if (s.status !== "enabled" || !s.map) return <>{extra?.(true)}{fallback}</>;
+  return <RoomChrome s={s} extra={extra?.(false)} />;
 }
 
-function RoomChrome({ s }: { s: RoomSnapshot }) {
+function RoomChrome({ s, extra }: { s: RoomSnapshot; extra?: ReactNode }) {
   const v = useVoice();
   const speaking = useMemo(() => speakingIds(v, s.me), [v, s.me]);
   const me = myMember(s);
@@ -113,6 +115,7 @@ function RoomChrome({ s }: { s: RoomSnapshot }) {
             ]}
             aria-label="表示の切り替え"
           />
+          {extra}
           {inRoom && <RoomControls s={s} v={v} me={me} speaking={speaking} />}
         </Group>
         {inRoom && v.needsAudioUnlock && (

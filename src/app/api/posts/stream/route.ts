@@ -11,6 +11,8 @@ import {
 } from "@/lib/presence";
 import { ensureChatSweeper } from "@/lib/chat";
 import { ensureTrendSweeper } from "@/lib/trends";
+import { personalBus, personalKey, type PersonalEvent } from "@/lib/personal-live";
+import { shogiEnabledFor } from "@/lib/shogi";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -28,6 +30,11 @@ export async function GET(req: NextRequest) {
   ensureTrendSweeper();
   const email = await getSessionEmail();
   const roomOn = roomEnabledFor(email);
+  // ☗ 将棋: signed-in members with the feature (SHOGI_ENABLED). Offers to me come over the
+  // personal bus (the same `event: shogi` shape, action "offer").
+  const shogiOn = shogiEnabledFor(email);
+  const shogiKey = email && shogiOn ? personalKey(email) : null;
+  let onPersonal: ((ev: PersonalEvent) => void) | null = null;
 
   let send: (event: LiveEvent | { type: "ping" }) => void = () => {};
   let heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -44,6 +51,7 @@ export async function GET(req: NextRequest) {
       roomDisconnect(email);
     }
     liveBus.off("change", send);
+    if (shogiKey && onPersonal) personalBus.off(shogiKey, onPersonal);
     if (heartbeat) clearInterval(heartbeat);
   };
 
@@ -54,6 +62,7 @@ export async function GET(req: NextRequest) {
         // also open to signed-out visitors). Same DTO as the apps: user_id / name / avatar.
         // The club room likewise: signed-in members who have it (rollout flag).
         if (event.type === "room" && !roomOn) return;
+        if (event.type === "shogi" && !shogiOn) return;
         // Names / avatars of who is online: signed-in members only (same as
         // GET /api/presence, which returns [] to visitors).
         if (event.type === "presence" && !email && event.members) {
@@ -101,6 +110,17 @@ export async function GET(req: NextRequest) {
       }, 25000);
 
       liveBus.on("change", send);
+      if (shogiKey) {
+        onPersonal = (ev) => {
+          if (ev.type !== "shogi") return;
+          try {
+            controller.enqueue(encoder.encode(`event: shogi\ndata: ${JSON.stringify(ev)}\n\n`));
+          } catch {
+            // stream closed
+          }
+        };
+        personalBus.on(shogiKey, onPersonal);
+      }
     },
     cancel() {
       disconnect();

@@ -5,6 +5,7 @@ import type { UrlPreview } from "./urlpreview";
 import type { VoiceState } from "./voice";
 import type { RoomMember } from "./room";
 import type { PresenceMember } from "./presence";
+import type { ShogiGameDto, ShogiLiveAction } from "./shogi-types";
 
 // Chat delete events only carry the message id; create events carry the full
 // message. A chat event's `message` always has at least `id`.
@@ -50,7 +51,10 @@ export type LiveEvent =
   | { type: "voice"; state: VoiceState }
   // The club room (lib/room.ts): someone came in / changed / left, or a reaction.
   | { type: "room"; action: "join" | "update" | "leave"; member: RoomMember }
-  | { type: "room"; action: "react"; userId: string; emoji: string; to: string | null };
+  | { type: "room"; action: "react"; userId: string; emoji: string; to: string | null }
+  /** ☗ 将棋: a public game changed (open / active / ended). Members with the feature only
+   *  (the streams drop it otherwise). Offers to one member go over personal-live.ts. */
+  | { type: "shogi"; action: Exclude<ShogiLiveAction, "offer">; game: ShogiGameDto };
 
 export type ChatReactionLive = { emoji: string; count: number; reactors: string[]; userIds: string[] };
 

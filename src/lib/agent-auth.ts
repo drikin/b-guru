@@ -339,6 +339,13 @@ export const RATE_RULES: Record<AgentScope, RateRule> = {
   voice: { limit: 60, window: "1 hour" }, // 入室トークン発行・モデレーション（再接続込みでも足りる水準）
 };
 
+/** Buckets for features with their own pace (not a scope). ☗ 将棋: moves and the
+ *  30-second watch ping would eat the chat bucket (120/h) in one blitz game. */
+export type RateBucket = "shogi";
+export const BUCKET_RATE_RULES: Record<RateBucket, RateRule> = {
+  shogi: { limit: 900, window: "1 hour" }, // 指し手（1 局 100 手前後）＋観戦の合図（30 秒ごと = 120/時）＋募集・受ける
+};
+
 export interface RateResult {
   allowed: boolean;
   remaining: number;
@@ -349,8 +356,8 @@ export interface RateResult {
  * 固定窓カウンタを 1 クエリで進める。窓が過ぎていればリセット。
  * （UPSERT の CASE で原子的に処理 — 単一プロセスでも競合安全。）
  */
-export async function checkRateLimit(tokenId: number, scope: AgentScope): Promise<RateResult> {
-  const rule = RATE_RULES[scope];
+export async function checkRateLimit(tokenId: number, scope: AgentScope | RateBucket): Promise<RateResult> {
+  const rule = scope in BUCKET_RATE_RULES ? BUCKET_RATE_RULES[scope as RateBucket] : RATE_RULES[scope as AgentScope];
   const key = `${tokenId}:${scope}`;
   const res = await pool.query(
     `INSERT INTO rate_limits (key, window_start, count)
@@ -455,7 +462,7 @@ export async function withAgent(
   handler: (ctx: AgentContext) => Promise<{ status: number; body: unknown; headers?: Record<string, string> }>,
   /** High-frequency endpoints with their own limits (walking in the club room: a
    *  request per step) skip the hourly scope bucket and the per-request audit row. */
-  opts: { ownRateLimit?: boolean } = {}
+  opts: { ownRateLimit?: boolean; rateBucket?: RateBucket } = {}
 ): Promise<{ status: number; body: unknown; headers?: Record<string, string> }> {
   let ctx: AgentContext | null = null;
   let ip: string | null = null;
@@ -467,7 +474,7 @@ export async function withAgent(
     const need = Array.isArray(scope) ? scope.find((s) => c.scopes.includes(s)) ?? scope[0] : scope;
     if (need) requireScope(ctx, need);
     if (need && !opts.ownRateLimit) {
-      const rate = await checkRateLimit(ctx.tokenId, need);
+      const rate = await checkRateLimit(ctx.tokenId, opts.rateBucket ?? need);
       if (!rate.allowed) {
         throw err(429, "rate_limited", "レート制限に達しました", `${rate.retryAfter} 秒後に再試行してください`);
       }

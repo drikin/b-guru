@@ -84,6 +84,8 @@ export interface NewPostInput {
   poll?: { question: string; options: string[]; durationHours: number } | null;
   /** エージェント由来マーク（"agent"）。DB の posts.via に保存される。 */
   via?: string | null;
+  /** リンクカードを取りに行かない（☗ 将棋の終局投稿: 本文のリンクは B-guru 自身の盤・棋譜）。 */
+  noPreview?: boolean;
 }
 
 /**
@@ -106,7 +108,7 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
   // never hold the POST handler on an external OG fetch (which could take up to
   // ~8s). The response returns immediately; the preview card fills in via an SSE
   // "update" event and the next feed refresh.
-  const rawUrl = firstUrl(input.text) || null;
+  const rawUrl = input.noPreview ? null : firstUrl(input.text) || null;
 
   const client = await pool.connect();
   let postId: number = 0;

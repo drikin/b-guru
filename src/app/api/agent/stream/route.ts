@@ -28,6 +28,7 @@ import {
 } from "@/lib/agent-chat";
 import { agentJson } from "../_lib";
 import { clientIp } from "@/lib/client-ip";
+import { shogiEnabledFor } from "@/lib/shogi";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -95,14 +96,19 @@ export async function GET(req: NextRequest) {
   const send = (ev: StreamEvent) => write(`event: ${ev.event}\ndata: ${JSON.stringify(ev.data)}\n\n`);
 
   const roomOn = roomEnabledFor(agent.email);
+  const shogiOn = shogiEnabledFor(agent.email);
   const onLive = (ev: LiveEvent) => {
     if (ev.type === "room" && !roomOn) return; // the club room: only for members who have it
+    if (ev.type === "shogi" && !shogiOn) return; // ☗ 将棋: behind SHOGI_ENABLED
     const out = liveToStreamEvent(ev, viewer);
     if (out) send(out);
   };
   const onPersonal = (ev: PersonalEvent) => {
     if (ev.type === "notification") {
       send({ event: "notification", data: { notification: toAgentNotificationDto(ev.notification) } });
+    } else if (ev.type === "shogi" && shogiOn) {
+      // An offer to me (or a change to an offer only the two of us see): same shape as the broadcast.
+      send({ event: "shogi", data: { action: ev.action, game: ev.game } });
     }
   };
 

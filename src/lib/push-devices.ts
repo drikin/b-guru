@@ -18,6 +18,8 @@ export interface PushDevice {
   quietHours: boolean;
   /** Also new timeline posts (opt-in in the app). */
   notifyTimeline: boolean;
+  /** ☗ 将棋 pushes (shogi_offer / shogi_turn): only apps that know them send true. */
+  notifyShogi: boolean;
 }
 
 export function normalizeNotifyMode(v: unknown): NotifyMode {
@@ -48,6 +50,8 @@ export async function registerPushDevice(input: {
   quietHours?: boolean;
   /** undefined = keep what the device had (apps before 0.2.30 / 0.3.23 never send it). */
   notifyTimeline?: boolean;
+  /** undefined = keep what the device had (apps before ☗ 将棋 never send it → false). */
+  notifyShogi?: boolean;
 }): Promise<void> {
   if (!validPushToken(input.apnsToken, input.environment)) throw new Error("invalid_token");
   const email = input.email.trim().toLowerCase();
@@ -62,18 +66,19 @@ export async function registerPushDevice(input: {
   // when the previous owner's agent token is no longer valid (they signed out
   // on that shared iPad) — never away from a member who is still signed in.
   await pool.query(
-    `INSERT INTO push_devices (email, agent_token_id, apns_token, environment, platform, notify_mode, quiet_hours, notify_timeline)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::boolean, FALSE))
+    `INSERT INTO push_devices (email, agent_token_id, apns_token, environment, platform, notify_mode, quiet_hours, notify_timeline, notify_shogi)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::boolean, FALSE), COALESCE($9::boolean, FALSE))
      ON CONFLICT (apns_token) DO UPDATE SET
        email = EXCLUDED.email, agent_token_id = EXCLUDED.agent_token_id,
        environment = EXCLUDED.environment, platform = EXCLUDED.platform,
        notify_mode = EXCLUDED.notify_mode, quiet_hours = EXCLUDED.quiet_hours,
-       notify_timeline = COALESCE($8::boolean, push_devices.notify_timeline), updated_at = now()
+       notify_timeline = COALESCE($8::boolean, push_devices.notify_timeline),
+       notify_shogi = COALESCE($9::boolean, push_devices.notify_shogi), updated_at = now()
      WHERE push_devices.email = EXCLUDED.email
         OR NOT EXISTS (SELECT 1 FROM agent_tokens t WHERE t.id = push_devices.agent_token_id
                         AND t.revoked_at IS NULL AND t.expires_at > now())`,
     [email, input.agentTokenId, apnsToken, input.environment, input.platform ?? "ios",
-     input.notifyMode ?? "all", input.quietHours ?? true, input.notifyTimeline ?? null]
+     input.notifyMode ?? "all", input.quietHours ?? true, input.notifyTimeline ?? null, input.notifyShogi ?? null]
   );
   // At most MAX_DEVICES_PER_EMAIL devices per member (oldest go first).
   await pool.query(
@@ -112,7 +117,7 @@ export async function removePushDevice(token: string): Promise<void> {
 /** Devices whose agent token is still valid. `emails` null = everyone with a device. */
 export async function activePushDevices(emails: string[] | null): Promise<PushDevice[]> {
   const res = await pool.query(
-    `SELECT d.email, d.apns_token, d.environment, d.notify_mode, d.quiet_hours, d.notify_timeline
+    `SELECT d.email, d.apns_token, d.environment, d.notify_mode, d.quiet_hours, d.notify_timeline, d.notify_shogi
        FROM push_devices d
        JOIN agent_tokens t ON t.id = d.agent_token_id
       WHERE t.revoked_at IS NULL AND t.expires_at > now()
@@ -120,13 +125,14 @@ export async function activePushDevices(emails: string[] | null): Promise<PushDe
     [emails ? emails.map((e) => e.trim().toLowerCase()) : null]
   );
   return res.rows.map(
-    (r: { email: string; apns_token: string; environment: string; notify_mode: string; quiet_hours: boolean; notify_timeline?: boolean }) => ({
+    (r: { email: string; apns_token: string; environment: string; notify_mode: string; quiet_hours: boolean; notify_timeline?: boolean; notify_shogi?: boolean }) => ({
       email: r.email,
       apnsToken: r.apns_token,
       environment: r.environment === "sandbox" ? "sandbox" : r.environment === "fcm" ? "fcm" : "production",
       notifyMode: normalizeNotifyMode(r.notify_mode),
       quietHours: r.quiet_hours !== false,
       notifyTimeline: r.notify_timeline === true,
+      notifyShogi: r.notify_shogi === true,
     })
   );
 }

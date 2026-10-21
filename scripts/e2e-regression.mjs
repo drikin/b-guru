@@ -3021,6 +3021,41 @@ console.log("\nP. Performance (2026-10-20): presence list in SSE, sized images, 
   }
 }
 
+// ------------------------------------------------------------ ☗ 将棋（SHOGI_ENABLED）
+// 2026-10-21: 将棋は SHOGI_ENABLED で切り替える（未設定 = 誰にも出さない）。ここでは
+// 「無効の間は本番に何も出ていない・壊していない」ことを確かめる。有効にしたあとの確認（盤が出る・
+// 指せる）はリードが足す。盤の静的ファイル（アプリの WebView 用）はフラグに関係なく配られる。
+console.log("\nS. ☗ 将棋: 無効の間は出ない（SHOGI_ENABLED）");
+{
+  const probe = await page
+    .evaluate(`(async () => {
+      const r = await fetch('/api/shogi/games', { cache: 'no-store' }).catch(() => null);
+      const b = await fetch('/shogi-board/index.html', { cache: 'no-store' }).catch(() => null);
+      const js = await fetch('/shogi-board/board.js', { cache: 'no-store' }).catch(() => null);
+      return { api: r ? r.status : 0, board: b ? b.status : 0, js: js ? js.status : 0 };
+    })()`)
+    .catch((e) => ({ error: String(e) }));
+  check("shogi board page is served (/shogi-board/index.html, board.js)", probe.board === 200 && probe.js === 200, JSON.stringify(probe));
+  if (probe.api === 404) {
+    check("shogi API answers 404 while disabled", true, "GET /api/shogi/games → 404");
+    await page.evaluate(clickTab("チャット"));
+    await page.waitForTimeout(1200);
+    const shown = await page.evaluate(`(() => {
+      const chat = document.querySelector('[class*="bguru-chat-view"]');
+      if (!chat) return null;
+      return {
+        toggle: [...chat.querySelectorAll('button')].some((b) => (b.textContent || '').includes('将棋')),
+        panel: !!chat.querySelector('[data-cx="shogi-panel"]'),
+      };
+    })()`);
+    check("「☗ 将棋」 is not shown in the chat while disabled", shown && !shown.toggle && !shown.panel, JSON.stringify(shown));
+    await page.evaluate(clickTab("タイムライン"));
+    await page.waitForTimeout(400);
+  } else {
+    console.log(`  [skip] shogi is enabled for this account (GET /api/shogi/games → ${probe.api}); enabled checks are added separately`);
+  }
+}
+
 // ------------------------------------------------------------ cleanup
 // ★ 最後の安全網: この run が作ったテスト投稿を必ず消す。
 //

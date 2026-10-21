@@ -83,6 +83,8 @@ import VoiceBar, { VoiceMini } from "@/components/VoiceBar";
 import { applyVoiceEvent, loadVoice, type VoiceRoomInfo } from "@/lib/voice-client";
 import RoomPanel from "@/components/RoomView";
 import { applyRoomEvent, reloadRoomIfOn, roomChatBubble } from "@/lib/room-client";
+import { ShogiChatCard, ShogiPanel, ShogiToggle } from "@/components/shogi/ShogiPanel";
+import { applyShogiEvent, openShogiGame, reloadShogi } from "@/lib/shogi-client";
 import { bubbleText } from "@/lib/room-logic";
 import { EDIT_HINT, SAVE_HINT, SEND_HINT, handleComposerKeyDown, useEnterSends } from "@/lib/composer-keys";
 import { mediaSized, mediaSrcSet } from "@/lib/media-url";
@@ -5121,6 +5123,8 @@ export default function Home() {
   // captures a stale closure (openThread is a plain fn recreated every render).
   const openThreadRef = useRef<(postId: number) => void>(() => {});
   const openProfileRef = useRef<(userId: string) => void>(() => {});
+  // ☗ 将棋の「盤で再生」リンク（#/shogi/<id>）: チャットを開いて盤を出す。
+  const openShogiRef = useRef<(gameId: number) => void>(() => {});
 
   useEffect(() => {
     checkAuth();
@@ -5150,6 +5154,11 @@ export default function Home() {
     // hashchange, so this never loops.
     const onHash = () => {
       const h = window.location.hash || "";
+      if (h.startsWith("#/shogi/")) {
+        const gid = Number(h.slice("#/shogi/".length));
+        if (gid > 0) openShogiRef.current(gid);
+        return;
+      }
       if (h.startsWith("#/user/")) {
         const id = decodeURIComponent(h.slice("#/user/".length));
         if (id) openProfileRef.current(id);
@@ -5224,6 +5233,15 @@ export default function Home() {
       const pid = Number(postHash.slice("#/post/".length));
       if (pid && pid > 0) {
         const t = window.setTimeout(() => openThread(pid), 300);
+        return () => window.clearTimeout(t);
+      }
+    }
+    // ☗ 将棋: #/shogi/<id>（ビーグルの終局投稿の「盤で再生」）
+    const shogiHash = window.location.hash || "";
+    if (shogiHash.startsWith("#/shogi/")) {
+      const gid = Number(shogiHash.slice("#/shogi/".length));
+      if (gid > 0) {
+        const t = window.setTimeout(() => openShogiRef.current(gid), 300);
         return () => window.clearTimeout(t);
       }
     }
@@ -5604,6 +5622,18 @@ export default function Home() {
     setChatView(true);
     loadChat(true);
   }, [loadChat]);
+  useEffect(() => {
+    openShogiRef.current = (gameId: number) => {
+      // ハッシュは残さない（#/post/ などの判定に紛れないように）。
+      try {
+        history.replaceState(history.state, "", window.location.pathname + window.location.search);
+      } catch {
+        /* ignore */
+      }
+      openChat();
+      openShogiGame(gameId);
+    };
+  }, [openChat]);
 
   // Open the chat pre-filled with a mention to `name` and focus the composer.
   // Used when the user clicks an online member: open + @mention + focus.
@@ -6876,7 +6906,7 @@ export default function Home() {
         // 自分の楽観送信（clientId 付き）は pending 行をその場で置き換える。
         setChatMessages((prev) => reconcileChat(prev, { ...msg, isAuthor: isMine }));
         // A quiet note (room comings and goings): shown in the list, but no unread, no bark, no bubble.
-        if (msg.kind === "notice") return;
+        if (msg.kind === "notice" || msg.kind === "shogi") return; // ☗ 将棋の対局中カードも数えない
         // Club room: a speech bubble over the author on the map (📷 for photos only).
         roomChatBubble(msg.authorId, bubbleText(msg.body, msg.images?.length ?? 0));
         if (chatViewRef.current) {
@@ -6937,6 +6967,14 @@ export default function Home() {
         /* ignore a malformed event */
       }
     });
+    // ☗ 将棋: a game changed (moves, accepted, ended) or an offer to me.
+    es.addEventListener("shogi", (e: MessageEvent) => {
+      try {
+        applyShogiEvent(JSON.parse(e.data));
+      } catch {
+        /* ignore a malformed event */
+      }
+    });
     // Club room (ルーム): members joining / moving / leaving and reactions.
     es.addEventListener("room", (e: MessageEvent) => {
       try {
@@ -6970,6 +7008,7 @@ export default function Home() {
       L.loadChat(chatViewRef.current); // recover chat missed during a disconnect
       void loadVoice(); // and who is in the voice room
       reloadRoomIfOn(); // and the club room
+      reloadShogi(); // and ☗ 将棋 (missed moves while disconnected)
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) L.silentRefreshFeed();
     };
     es.onerror = () => {
@@ -11862,8 +11901,11 @@ export default function Home() {
                     overscrollBehavior: "contain",
                   }}
                 >
-                  {/* Club room on: テキスト｜ルーム switch + map; off: the voice bar as before. */}
-                  <RoomPanel fallback={<VoiceBar />} />
+                  {/* Club room on: テキスト｜ルーム switch + map; off: the voice bar as before.
+                      ☗ 将棋 sits next to the switch (its own line without the room); open = the
+                      board above the chat log (spectate while chatting). */}
+                  <RoomPanel fallback={<VoiceBar />} extra={(row) => <ShogiToggle row={row} />} />
+                  <ShogiPanel />
                   {/* Message list */}
                   <ScrollArea.Autosize
                     type="auto"
@@ -11893,6 +11935,10 @@ export default function Home() {
                                 {m.body}
                               </Text>
                             );
+                          }
+                          // ☗ 将棋の対局中カード（盤の小さな絵・観戦する）。
+                          if (m.kind === "shogi" && m.shogiGameId) {
+                            return <ShogiChatCard key={m.id} gameId={m.shogiGameId} body={m.body} />;
                           }
                           const mine = !!auth && m.isAuthor;
                           const editing = chatEditingId === m.id;

@@ -15,7 +15,7 @@ import { activePushDevices, markPushSent, pushDeviceOwners, removePushDevice, ty
 import { isMentionedIn, mentionNamesFor } from "./chat-mention";
 import { resolveDisplayNames } from "./display-name";
 
-export type PushKind = "chat_mention" | "chat_new" | "reply" | "timeline_new";
+export type PushKind = "chat_mention" | "chat_new" | "reply" | "timeline_new" | "shogi_offer" | "shogi_turn";
 
 /** 0:00–7:00 JST — new-message pushes wait (mentions still go out). */
 export function isQuietHourJst(now = new Date()): boolean {
@@ -24,7 +24,11 @@ export function isQuietHourJst(now = new Date()): boolean {
 }
 
 /** The APNs payload (pure — tested). */
-export function buildPushPayload(kind: PushKind, ids: { messageId?: number; postId?: number | null; replyId?: number | null }) {
+export function buildPushPayload(
+  kind: PushKind,
+  ids: { messageId?: number; postId?: number | null; replyId?: number | null; gameId?: number }
+) {
+  if (kind === "shogi_offer" || kind === "shogi_turn") return buildShogiPayload(kind, ids.gameId ?? 0);
   const alert =
     kind === "chat_mention"
       ? { title: "B-guru チャット", body: "あなたへのメンションがあります" }
@@ -45,6 +49,23 @@ export function buildPushPayload(kind: PushKind, ids: { messageId?: number; post
     ...(ids.messageId != null ? { message_id: ids.messageId } : {}),
     ...(ids.postId != null ? { post_id: ids.postId } : {}),
     ...(ids.replyId != null ? { reply_id: ids.replyId } : {}),
+  };
+}
+
+/** ☗ 将棋: ids only (the app reads the game with its own token), one notification per game. */
+export function buildShogiPayload(kind: "shogi_offer" | "shogi_turn", gameId: number) {
+  return {
+    aps: {
+      alert:
+        kind === "shogi_offer"
+          ? { title: "☗ 将棋", body: "対局の申し込みが届きました" }
+          : { title: "☗ 将棋", body: "あなたの番です" },
+      sound: "default",
+      category: kind === "shogi_offer" ? "shogioffer" : "shogiturn",
+      "thread-id": `shogi-${gameId}`,
+    },
+    kind,
+    game_id: gameId,
   };
 }
 
@@ -165,4 +186,14 @@ export async function pushNewPost(postId: number, authorEmail: string): Promise<
     buildPushPayload("timeline_new", { postId }),
     `post-${postId}`
   );
+}
+
+/** ☗ 将棋の通知（指名された・ゆっくり対局で自分の番）。対応したアプリ（notify_shogi）だけに、
+ *  静かな時間（0〜7 時、端末の設定どおり）は送らない。対局ごとに 1 件にまとめる（collapse）。 */
+export async function pushShogi(recipientEmail: string, kind: "shogi_offer" | "shogi_turn", gameId: number): Promise<number> {
+  if (!pushEnabled()) return 0;
+  const quiet = isQuietHourJst();
+  const devices = (await activePushDevices([recipientEmail])).filter((d) => d.notifyShogi && !(quiet && d.quietHours));
+  if (devices.length === 0) return 0;
+  return deliver(devices, buildShogiPayload(kind, gameId), `shogi-${gameId}`);
 }

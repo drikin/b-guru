@@ -1,0 +1,744 @@
+/* ☗ 将棋の盤面（描くだけの部品。React も Next も使わない素の DOM）。
+ *
+ * Web は React の包み（components/shogi/ShogiBoard.tsx）からこのクラスを直接使い、アプリは
+ * /shogi-board/index.html（bridge.ts を束ねた board.js）を WebView で開いて postMessage で話す。
+ * 局面・手番・自分の色・最後の手（・合法手）を受け取り、指した手を返すだけ。API もトークンも持たない。
+ *
+ * 操作（docs/shogi-spec.md「盤面」）: タップ → 行き先、ドラッグでも可。動ける升に点、取れる升は
+ * 四隅に印。成れるときは行き先の上に「成｜不成」、行き所のない駒は自動で成る。持ち駒は
+ * 自分が下・相手が上で「歩×3」。最後の手は升を薄い黄色＋上の帯に「▲7六歩」。反則の升には
+ * 点を出さない（合法手だけを出す）。「指す前に確認」「駒の動きヒント（点）」の設定。 */
+import { Color, PieceType, Position, Square } from "tsshogi";
+import { labelFor, legalUsi, type Side } from "../shogi-rules";
+
+export type BoardSettings = { confirmMove: boolean; moveHints: boolean };
+export type BoardTheme = "light" | "dark" | "auto";
+export type Haptic = "select" | "move" | "error";
+
+export type BoardState = {
+  sfen: string;
+  /** 自分の色（観戦は null）。 */
+  myColor: Side | null;
+  /** 下に来る側（省略時は自分の色、観戦なら先手）。 */
+  orientation?: Side;
+  lastMove?: { usi: string; label: string } | null;
+  /** 自分の番で指せるとき true。 */
+  canMove: boolean;
+  /** 合法手（USI）。渡されなければ局面から計算する。 */
+  legalMoves?: string[] | null;
+  settings?: Partial<BoardSettings>;
+  /** 観戦の寸法（1 升 約 35×38）。 */
+  compact?: boolean;
+  theme?: BoardTheme;
+  /** 持ち駒の行に添える文字（名前・残り時間など）。 */
+  topLabel?: string;
+  bottomLabel?: string;
+  /** 帯の右に「✕」（閉じる）を出す。 */
+  showClose?: boolean;
+};
+
+export type BoardCallbacks = {
+  onMove?: (usi: string, label: string) => void;
+  onHaptic?: (kind: Haptic) => void;
+  onFlip?: (orientation: Side) => void;
+  onClose?: () => void;
+  /** 盤の高さが変わったとき（WebView の高さ合わせ用）。 */
+  onResize?: (height: number) => void;
+};
+
+const KANJI_RANK = ["一", "二", "三", "四", "五", "六", "七", "八", "九"];
+const HAND_ORDER: PieceType[] = [
+  PieceType.ROOK,
+  PieceType.BISHOP,
+  PieceType.GOLD,
+  PieceType.SILVER,
+  PieceType.KNIGHT,
+  PieceType.LANCE,
+  PieceType.PAWN,
+];
+const USI_PIECE: Partial<Record<PieceType, string>> = {
+  [PieceType.ROOK]: "R",
+  [PieceType.BISHOP]: "B",
+  [PieceType.GOLD]: "G",
+  [PieceType.SILVER]: "S",
+  [PieceType.KNIGHT]: "N",
+  [PieceType.LANCE]: "L",
+  [PieceType.PAWN]: "P",
+};
+const PROMOTED = new Set<PieceType>([
+  PieceType.DRAGON,
+  PieceType.HORSE,
+  PieceType.PROM_SILVER,
+  PieceType.PROM_KNIGHT,
+  PieceType.PROM_LANCE,
+  PieceType.PROM_PAWN,
+]);
+
+/** 駒の字（先手の玉・後手の王）。 */
+export function pieceChar(t: PieceType, color: Color): string {
+  switch (t) {
+    case PieceType.KING:
+      return color === Color.BLACK ? "玉" : "王";
+    case PieceType.ROOK:
+      return "飛";
+    case PieceType.BISHOP:
+      return "角";
+    case PieceType.GOLD:
+      return "金";
+    case PieceType.SILVER:
+      return "銀";
+    case PieceType.KNIGHT:
+      return "桂";
+    case PieceType.LANCE:
+      return "香";
+    case PieceType.PAWN:
+      return "歩";
+    case PieceType.DRAGON:
+      return "龍";
+    case PieceType.HORSE:
+      return "馬";
+    case PieceType.PROM_SILVER:
+      return "全";
+    case PieceType.PROM_KNIGHT:
+      return "圭";
+    case PieceType.PROM_LANCE:
+      return "杏";
+    case PieceType.PROM_PAWN:
+      return "と";
+  }
+}
+
+const colorOf = (s: Side): Color => (s === "black" ? Color.BLACK : Color.WHITE);
+
+/** 画面上の (列, 行) → 升。orientation = 下に来る側。 */
+export function squareAt(col: number, row: number, orientation: Side): Square {
+  return orientation === "black" ? new Square(9 - col, row + 1) : new Square(col + 1, 9 - row);
+}
+
+type Selection = { kind: "square"; usi: string } | { kind: "hand"; letter: string } | null;
+
+const STYLE_ID = "bguru-shogi-board-style";
+
+export const BOARD_CSS = `
+@font-face{font-family:"BguruShogiPiece";src:url("/shogi-board/fonts/shogi-piece.ttf") format("truetype");font-display:swap;}
+.sb-root{--sb-board:#e9c98a;--sb-board-edge:#b8893f;--sb-line:rgba(60,40,10,.55);--sb-piece:#f6e2b3;--sb-piece-edge:#a87c3c;--sb-ink:#1d140a;--sb-prom:#c0261b;--sb-last:rgba(255,236,120,.65);--sb-sel:rgba(80,170,90,.45);--sb-dot:rgba(30,110,50,.55);--sb-cap:rgba(200,40,30,.8);--sb-text:#333;--sb-dim:#777;--sb-band:#f3efe4;--sb-btn:#fff;--sb-btn-text:#1d140a;--sb-accent:#2b8a3e;
+  --cw:39px;--ch:43px;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic UI",Meiryo,sans-serif;color:var(--sb-text);user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:none;position:relative;width:100%;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;gap:4px}
+.sb-root[data-theme="dark"]{--sb-board:#8a6a36;--sb-board-edge:#5e4520;--sb-line:rgba(20,12,0,.6);--sb-piece:#e5cf9d;--sb-piece-edge:#7a5a28;--sb-ink:#140d05;--sb-prom:#b3150c;--sb-last:rgba(255,220,90,.45);--sb-sel:rgba(90,190,100,.5);--sb-dot:rgba(190,255,190,.75);--sb-cap:rgba(255,110,90,.95);--sb-text:#e6e6e6;--sb-dim:#9a9a9a;--sb-band:#24262b;--sb-btn:#2c2f35;--sb-btn-text:#eee;--sb-accent:#51cf66}
+@media (prefers-color-scheme: dark){.sb-root[data-theme="auto"]{--sb-board:#8a6a36;--sb-board-edge:#5e4520;--sb-line:rgba(20,12,0,.6);--sb-piece:#e5cf9d;--sb-piece-edge:#7a5a28;--sb-ink:#140d05;--sb-prom:#b3150c;--sb-last:rgba(255,220,90,.45);--sb-sel:rgba(90,190,100,.5);--sb-dot:rgba(190,255,190,.75);--sb-cap:rgba(255,110,90,.95);--sb-text:#e6e6e6;--sb-dim:#9a9a9a;--sb-band:#24262b;--sb-btn:#2c2f35;--sb-btn-text:#eee;--sb-accent:#51cf66}}
+.sb-band{display:flex;align-items:center;gap:6px;width:calc(var(--cw)*9 + 22px);box-sizing:border-box;padding:3px 8px;border-radius:6px;background:var(--sb-band);font-size:14px;font-weight:600;min-height:26px}
+.sb-band .sb-label{flex:1;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-band button,.sb-confirm button,.sb-promo button{font:inherit;border:1px solid var(--sb-piece-edge);background:var(--sb-btn);color:var(--sb-btn-text);border-radius:6px;padding:2px 8px;cursor:pointer;line-height:1.4}
+.sb-hand{display:flex;align-items:center;gap:2px;flex-wrap:wrap;width:calc(var(--cw)*9 + 22px);box-sizing:border-box;min-height:calc(var(--ch)*.82 + 4px);padding:2px 4px}
+.sb-hand .sb-who{font-size:12px;color:var(--sb-dim);margin-right:6px;white-space:nowrap;max-width:45%;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.sb-hand-top{flex-direction:row-reverse}
+.sb-hand-top .sb-who{margin-right:0;margin-left:6px}
+.sb-hp{position:relative;display:inline-flex;align-items:flex-end;border-radius:4px;padding:1px}
+.sb-hp.sb-sel{background:var(--sb-sel)}
+.sb-hp .sb-n{font-size:12px;font-weight:700;margin-left:1px;color:var(--sb-text);font-variant-numeric:tabular-nums}
+.sb-wrap{position:relative;display:grid;grid-template-columns:calc(var(--cw)*9) 16px;grid-template-rows:14px calc(var(--ch)*9);padding:0 3px 3px 3px;background:var(--sb-board);border:1px solid var(--sb-board-edge);border-radius:4px;box-sizing:content-box}
+.sb-files{display:grid;grid-template-columns:repeat(9,var(--cw));font-size:10px;line-height:14px;text-align:center;color:var(--sb-ink);opacity:.75}
+.sb-ranks{display:grid;grid-template-rows:repeat(9,var(--ch));font-size:10px;align-items:center;justify-items:center;color:var(--sb-ink);opacity:.75;font-family:"BguruShogiPiece","Hiragino Mincho ProN","Yu Mincho","Noto Serif CJK JP","Noto Serif JP",serif}
+.sb-grid{display:grid;grid-template-columns:repeat(9,var(--cw));grid-template-rows:repeat(9,var(--ch));border:1px solid var(--sb-line);grid-column:1;grid-row:2}
+.sb-files{grid-column:1;grid-row:1}
+.sb-ranks{grid-column:2;grid-row:2}
+.sb-cell{position:relative;border-right:1px solid var(--sb-line);border-bottom:1px solid var(--sb-line);box-sizing:border-box;display:flex;align-items:center;justify-content:center}
+.sb-cell:nth-child(9n){border-right:none}
+.sb-cell:nth-last-child(-n+9){border-bottom:none}
+.sb-cell.sb-last{background:var(--sb-last)}
+.sb-cell.sb-sel{background:var(--sb-sel)}
+.sb-dot{position:absolute;width:28%;height:28%;border-radius:50%;background:var(--sb-dot);pointer-events:none}
+.sb-cap{position:absolute;inset:2px;pointer-events:none;background:
+ linear-gradient(to right,var(--sb-cap) 30%,transparent 30%) top left/100% 3px no-repeat,
+ linear-gradient(to left,var(--sb-cap) 30%,transparent 30%) bottom right/100% 3px no-repeat,
+ linear-gradient(to bottom,var(--sb-cap) 30%,transparent 30%) top left/3px 100% no-repeat,
+ linear-gradient(to top,var(--sb-cap) 30%,transparent 30%) bottom right/3px 100% no-repeat;
+ -webkit-mask:none}
+.sb-cap::after{content:"";position:absolute;inset:0;background:
+ linear-gradient(to left,var(--sb-cap) 30%,transparent 30%) top right/100% 3px no-repeat,
+ linear-gradient(to right,var(--sb-cap) 30%,transparent 30%) bottom left/100% 3px no-repeat,
+ linear-gradient(to bottom,var(--sb-cap) 30%,transparent 30%) top right/3px 100% no-repeat,
+ linear-gradient(to top,var(--sb-cap) 30%,transparent 30%) bottom left/3px 100% no-repeat}
+.sb-piece{position:relative;width:calc(var(--cw)*.86);height:calc(var(--ch)*.9);display:flex;align-items:center;justify-content:center;pointer-events:none}
+.sb-piece::before{content:"";position:absolute;inset:0;background:var(--sb-piece-edge);clip-path:polygon(50% 0,86% 16%,100% 100%,0 100%,14% 16%)}
+.sb-piece::after{content:"";position:absolute;inset:1.2px 1.5px 1px 1.5px;background:linear-gradient(160deg,#fbecc6,var(--sb-piece));clip-path:polygon(50% 0,86% 16%,100% 100%,0 100%,14% 16%)}
+.sb-piece span{position:relative;z-index:1;font-family:"BguruShogiPiece","Hiragino Mincho ProN","Yu Mincho","YuMincho","Noto Serif CJK JP","Noto Serif JP",serif;font-weight:600;font-size:calc(var(--cw)*.6);line-height:1;color:var(--sb-ink);margin-top:calc(var(--ch)*.1)}
+.sb-piece.sb-prom span{color:var(--sb-prom)}
+.sb-piece.sb-rot{transform:rotate(180deg)}
+.sb-hand .sb-piece{width:calc(var(--cw)*.74);height:calc(var(--ch)*.78)}
+.sb-hand .sb-piece span{font-size:calc(var(--cw)*.52)}
+.sb-dragging{opacity:.3}
+.sb-ghost{position:fixed;z-index:1000;pointer-events:none;transform:translate(-50%,-60%) scale(1.15);width:var(--cw);height:var(--ch)}
+.sb-ghost .sb-piece{width:100%;height:100%}
+.sb-promo{position:absolute;z-index:20;display:flex;gap:2px;transform:translate(-50%,-100%);background:var(--sb-band);padding:3px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.35)}
+.sb-promo button{font-size:15px;font-weight:700;padding:4px 10px}
+.sb-promo button.sb-yes{color:var(--sb-prom)}
+.sb-confirm{display:flex;align-items:center;gap:8px;font-size:14px}
+.sb-confirm button.sb-go{background:var(--sb-accent);color:#fff;border-color:var(--sb-accent)}
+.sb-root.sb-pending .sb-grid{opacity:.92}
+`;
+
+function ensureStyles(doc: Document): void {
+  if (doc.getElementById(STYLE_ID)) return;
+  const st = doc.createElement("style");
+  st.id = STYLE_ID;
+  st.textContent = BOARD_CSS;
+  doc.head.appendChild(st);
+}
+
+/** 盤面の部品。mount した要素の中に描き、setState で描き直す。 */
+export class ShogiBoardView {
+  private el: HTMLElement;
+  private cb: BoardCallbacks;
+  private state: BoardState;
+  private pos: Position;
+  private legal: Set<string> = new Set();
+  private legalFor = "";
+  private orientation: Side;
+  private sel: Selection = null;
+  private promo: { from: string; to: string } | null = null;
+  private pending: { usi: string; label: string } | null = null;
+  /** 指したあと、ホストから次の状態が来るまでの仮の局面。 */
+  private optimistic: { sfen: string; lastMove: { usi: string; label: string } } | null = null;
+  private drag: {
+    id: number;
+    x: number;
+    y: number;
+    moved: boolean;
+    /** 選んでいた駒をもう一度押した（タップなら選択を外す）。 */
+    same: boolean;
+    ghost: HTMLElement | null;
+    srcEl: HTMLElement | null;
+  } | null = null;
+  private ro: ResizeObserver | null = null;
+  private lastHeight = 0;
+  private destroyed = false;
+
+  constructor(el: HTMLElement, state: BoardState, cb: BoardCallbacks = {}) {
+    this.el = el;
+    this.cb = cb;
+    this.state = state;
+    this.orientation = state.orientation ?? state.myColor ?? "black";
+    this.pos = Position.newBySFEN(state.sfen) ?? new Position();
+    ensureStyles(el.ownerDocument);
+    el.classList.add("sb-root");
+    el.addEventListener("pointerdown", this.onDown);
+    el.addEventListener("pointermove", this.onMoveEv);
+    el.addEventListener("pointerup", this.onUp);
+    el.addEventListener("pointercancel", this.onCancel);
+    el.addEventListener("click", this.onClick);
+    if (typeof ResizeObserver !== "undefined") {
+      this.ro = new ResizeObserver(() => this.fit());
+      this.ro.observe(el);
+    }
+    this.fit();
+    this.render();
+  }
+
+  destroy(): void {
+    this.destroyed = true;
+    this.ro?.disconnect();
+    this.el.removeEventListener("pointerdown", this.onDown);
+    this.el.removeEventListener("pointermove", this.onMoveEv);
+    this.el.removeEventListener("pointerup", this.onUp);
+    this.el.removeEventListener("pointercancel", this.onCancel);
+    this.el.removeEventListener("click", this.onClick);
+    this.drag?.ghost?.remove();
+    this.el.innerHTML = "";
+    this.el.classList.remove("sb-root");
+  }
+
+  setState(next: BoardState): void {
+    const prev = this.state;
+    this.state = next;
+    // 向き: ホストが決めていればそれ。決めていなければ、自分の色が変わったときだけ合わせる（⇅ は残す）。
+    if (next.orientation != null) this.orientation = next.orientation;
+    else if (next.myColor !== prev.myColor && next.myColor) this.orientation = next.myColor;
+    const prevSfen = prev.sfen;
+    this.optimistic = null;
+    if (next.sfen !== prevSfen || !next.canMove) {
+      this.sel = null;
+      this.promo = null;
+      this.pending = null;
+    }
+    this.render();
+  }
+
+  /** 持ち駒の行の文字だけを変える（時計の表示など。描き直さないので選択・ドラッグ・送信中の局面は残る）。 */
+  setLabels(topLabel?: string, bottomLabel?: string): void {
+    this.state = { ...this.state, topLabel, bottomLabel };
+    const top = this.el.querySelector(".sb-hand-top .sb-who");
+    const bottom = this.el.querySelector(".sb-hand-bottom .sb-who");
+    if (!!top !== !!topLabel || !!bottom !== !!bottomLabel) {
+      if (!this.drag) this.render();
+      return;
+    }
+    const mark = (where: "top" | "bottom") => {
+      const bottomSide = this.orientation;
+      const s = where === "bottom" ? bottomSide : bottomSide === "black" ? "white" : "black";
+      return s === "black" ? "☗" : "☖";
+    };
+    if (top && topLabel) top.textContent = `${mark("top")}${topLabel}`;
+    if (bottom && bottomLabel) bottom.textContent = `${mark("bottom")}${bottomLabel}`;
+  }
+
+  /** ⇅（下に来る側を入れ替える）。 */
+  flip(): void {
+    this.orientation = this.orientation === "black" ? "white" : "black";
+    this.promo = null;
+    this.render();
+    this.cb.onFlip?.(this.orientation);
+  }
+
+  getOrientation(): Side {
+    return this.orientation;
+  }
+
+  // ─────────────────────────── 寸法
+
+  private fit(): void {
+    const w = this.el.clientWidth || 360;
+    const maxCell = this.state.compact ? 35 : 44;
+    // 9 升 + 段の数字 16px + 盤の縁 8px
+    const cw = Math.max(22, Math.min(maxCell, Math.floor((w - 16 - 10) / 9)));
+    const ch = Math.round(cw * 1.1);
+    this.el.style.setProperty("--cw", `${cw}px`);
+    this.el.style.setProperty("--ch", `${ch}px`);
+    this.reportHeight();
+  }
+
+  private reportHeight(): void {
+    const h = Math.ceil(this.el.scrollHeight);
+    if (h && h !== this.lastHeight) {
+      this.lastHeight = h;
+      this.cb.onResize?.(h);
+    }
+  }
+
+  // ─────────────────────────── 局面
+
+  private shownSfen(): string {
+    return this.optimistic?.sfen ?? this.state.sfen;
+  }
+
+  private canMoveNow(): boolean {
+    return !!this.state.canMove && !!this.state.myColor && !this.optimistic;
+  }
+
+  private legalMoves(): Set<string> {
+    if (!this.canMoveNow()) return new Set();
+    const key = `${this.state.sfen}|${this.state.legalMoves ? this.state.legalMoves.length : "auto"}`;
+    if (key !== this.legalFor) {
+      this.legalFor = key;
+      this.legal = new Set(this.state.legalMoves ?? legalUsi(this.state.sfen));
+    }
+    return this.legal;
+  }
+
+  private settings(): BoardSettings {
+    return { confirmMove: !!this.state.settings?.confirmMove, moveHints: this.state.settings?.moveHints !== false };
+  }
+
+  /** 選んでいる駒の行き先 → { 不成で行けるか, 成って行けるか }。 */
+  private targets(): Map<string, { plain: boolean; promo: boolean }> {
+    const out = new Map<string, { plain: boolean; promo: boolean }>();
+    const sel = this.sel;
+    if (!sel || this.pending) return out;
+    const prefix = sel.kind === "square" ? sel.usi : `${sel.letter}*`;
+    for (const m of this.legalMoves()) {
+      if (!m.startsWith(prefix)) continue;
+      const to = m.slice(2, 4);
+      const t = out.get(to) ?? { plain: false, promo: false };
+      if (m.endsWith("+")) t.promo = true;
+      else t.plain = true;
+      out.set(to, t);
+    }
+    return out;
+  }
+
+  // ─────────────────────────── 描画
+
+  private render(): void {
+    if (this.destroyed) return;
+    const doc = this.el.ownerDocument;
+    const st = this.state;
+    this.el.dataset.theme = st.theme ?? "auto";
+    this.el.classList.toggle("sb-pending", !!this.optimistic);
+    this.fit();
+    const sfen = this.shownSfen();
+    const pos = Position.newBySFEN(sfen) ?? new Position();
+    this.pos = pos;
+    const last = this.optimistic?.lastMove ?? st.lastMove ?? null;
+    const orient = this.orientation;
+    const bottom = colorOf(orient);
+    const top = bottom === Color.BLACK ? Color.WHITE : Color.BLACK;
+    const targets = this.targets();
+    const hints = this.settings().moveHints;
+
+    const root = doc.createDocumentFragment();
+
+    // 帯: 最後の手（▲7六歩）と ⇅・✕
+    const band = doc.createElement("div");
+    band.className = "sb-band";
+    const label = doc.createElement("span");
+    label.className = "sb-label";
+    label.textContent = last ? `${last.label}${this.optimistic ? "（送信中）" : ""}` : "対局開始";
+    band.appendChild(label);
+    const flipBtn = doc.createElement("button");
+    flipBtn.type = "button";
+    flipBtn.dataset.act = "flip";
+    flipBtn.textContent = "⇅";
+    flipBtn.title = "盤を反転";
+    flipBtn.setAttribute("aria-label", "盤を反転");
+    band.appendChild(flipBtn);
+    if (st.showClose) {
+      const close = doc.createElement("button");
+      close.type = "button";
+      close.dataset.act = "close";
+      close.textContent = "✕";
+      close.setAttribute("aria-label", "閉じる");
+      band.appendChild(close);
+    }
+    root.appendChild(band);
+
+    root.appendChild(this.renderHand(doc, pos, top, "top", st.topLabel));
+
+    const wrap = doc.createElement("div");
+    wrap.className = "sb-wrap";
+    const files = doc.createElement("div");
+    files.className = "sb-files";
+    for (let c = 0; c < 9; c++) {
+      const s = doc.createElement("span");
+      s.textContent = String(orient === "black" ? 9 - c : c + 1);
+      files.appendChild(s);
+    }
+    wrap.appendChild(files);
+    const grid = doc.createElement("div");
+    grid.className = "sb-grid";
+    grid.setAttribute("role", "grid");
+    grid.setAttribute("aria-label", "将棋盤");
+    const lastFrom = last && /^[1-9][a-i]/.test(last.usi) ? last.usi.slice(0, 2) : null;
+    const lastTo = last ? last.usi.slice(2, 4) : null;
+    for (let row = 0; row < 9; row++) {
+      for (let col = 0; col < 9; col++) {
+        const sq = squareAt(col, row, orient);
+        const usi = sq.usi;
+        const cell = doc.createElement("div");
+        cell.className = "sb-cell";
+        cell.dataset.sq = usi;
+        if (usi === lastTo || usi === lastFrom) cell.classList.add("sb-last");
+        if (this.sel?.kind === "square" && this.sel.usi === usi) cell.classList.add("sb-sel");
+        const p = pos.board.at(sq);
+        if (p) {
+          cell.appendChild(this.pieceEl(doc, p.type, p.color, p.color !== bottom));
+          cell.setAttribute("aria-label", `${sq.file}${KANJI_RANK[sq.rank - 1]} ${p.color === Color.BLACK ? "先手" : "後手"}の${pieceChar(p.type, p.color)}`);
+        }
+        const t = targets.get(usi);
+        if (t && hints) {
+          const mark = doc.createElement("i");
+          mark.className = p ? "sb-cap" : "sb-dot";
+          cell.appendChild(mark);
+        }
+        grid.appendChild(cell);
+      }
+    }
+    wrap.appendChild(grid);
+    const ranks = doc.createElement("div");
+    ranks.className = "sb-ranks";
+    for (let r = 0; r < 9; r++) {
+      const s = doc.createElement("span");
+      s.textContent = KANJI_RANK[orient === "black" ? r : 8 - r];
+      ranks.appendChild(s);
+    }
+    wrap.appendChild(ranks);
+
+    if (this.promo) {
+      const box = doc.createElement("div");
+      box.className = "sb-promo";
+      const { col, row } = this.cellPos(this.promo.to);
+      box.style.left = `calc(3px + var(--cw) * ${col + 0.5})`;
+      box.style.top = `calc(14px + var(--ch) * ${row})`;
+      const yes = doc.createElement("button");
+      yes.type = "button";
+      yes.className = "sb-yes";
+      yes.dataset.act = "promote";
+      yes.textContent = "成";
+      const no = doc.createElement("button");
+      no.type = "button";
+      no.dataset.act = "nopromote";
+      no.textContent = "不成";
+      box.append(yes, no);
+      wrap.appendChild(box);
+    }
+    root.appendChild(wrap);
+
+    root.appendChild(this.renderHand(doc, pos, bottom, "bottom", st.bottomLabel));
+
+    if (this.pending) {
+      const bar = doc.createElement("div");
+      bar.className = "sb-confirm";
+      const t = doc.createElement("span");
+      t.textContent = `${this.pending.label} を指しますか？`;
+      const go = doc.createElement("button");
+      go.type = "button";
+      go.className = "sb-go";
+      go.dataset.act = "confirm";
+      go.textContent = "指す";
+      const back = doc.createElement("button");
+      back.type = "button";
+      back.dataset.act = "unconfirm";
+      back.textContent = "やめる";
+      bar.append(t, go, back);
+      root.appendChild(bar);
+    }
+
+    this.el.replaceChildren(root);
+    this.reportHeight();
+  }
+
+  private renderHand(doc: Document, pos: Position, color: Color, where: "top" | "bottom", who?: string): HTMLElement {
+    const hand = doc.createElement("div");
+    hand.className = `sb-hand sb-hand-${where}`;
+    hand.setAttribute("aria-label", `${color === Color.BLACK ? "先手" : "後手"}の持ち駒`);
+    if (who) {
+      const w = doc.createElement("span");
+      w.className = "sb-who";
+      w.textContent = `${color === Color.BLACK ? "☗" : "☖"}${who}`;
+      hand.appendChild(w);
+    }
+    const bottomColor = colorOf(this.orientation);
+    const h = pos.hand(color);
+    for (const t of HAND_ORDER) {
+      const n = h.count(t);
+      if (n === 0) continue;
+      const letter = USI_PIECE[t]!;
+      const hp = doc.createElement("span");
+      hp.className = "sb-hp";
+      hp.dataset.hand = letter;
+      hp.dataset.color = color === Color.BLACK ? "black" : "white";
+      if (this.sel?.kind === "hand" && this.sel.letter === letter && this.state.myColor && colorOf(this.state.myColor) === color) {
+        hp.classList.add("sb-sel");
+      }
+      hp.appendChild(this.pieceEl(doc, t, color, color !== bottomColor));
+      if (n > 1) {
+        const c = doc.createElement("span");
+        c.className = "sb-n";
+        c.textContent = `×${n}`;
+        hp.appendChild(c);
+      }
+      hp.setAttribute("aria-label", `${pieceChar(t, color)}${n > 1 ? `×${n}` : ""}`);
+      hand.appendChild(hp);
+    }
+    return hand;
+  }
+
+  private pieceEl(doc: Document, t: PieceType, color: Color, rotate: boolean): HTMLElement {
+    const el = doc.createElement("div");
+    el.className = `sb-piece${PROMOTED.has(t) ? " sb-prom" : ""}${rotate ? " sb-rot" : ""}`;
+    const s = doc.createElement("span");
+    s.textContent = pieceChar(t, color);
+    el.appendChild(s);
+    return el;
+  }
+
+  private cellPos(usi: string): { col: number; row: number } {
+    const sq = Square.newByUSI(usi)!;
+    return this.orientation === "black" ? { col: 9 - sq.file, row: sq.rank - 1 } : { col: sq.file - 1, row: 9 - sq.rank };
+  }
+
+  // ─────────────────────────── 操作
+
+  private onClick = (e: MouseEvent): void => {
+    const btn = (e.target as HTMLElement).closest("button[data-act]") as HTMLElement | null;
+    if (!btn || !this.el.contains(btn)) return;
+    e.preventDefault();
+    const act = btn.dataset.act;
+    if (act === "flip") this.flip();
+    else if (act === "close") this.cb.onClose?.();
+    else if (act === "promote" && this.promo) this.commit(`${this.promo.from}${this.promo.to}+`);
+    else if (act === "nopromote" && this.promo) this.commit(`${this.promo.from}${this.promo.to}`);
+    else if (act === "confirm" && this.pending) this.send(this.pending.usi, this.pending.label);
+    else if (act === "unconfirm") {
+      this.pending = null;
+      this.render();
+    }
+  };
+
+  private hit(x: number, y: number): { sq?: string; hand?: string; handColor?: string } {
+    const doc = this.el.ownerDocument;
+    const t = doc.elementFromPoint(x, y) as HTMLElement | null;
+    if (!t || !this.el.contains(t)) return {};
+    const cell = t.closest("[data-sq]") as HTMLElement | null;
+    if (cell) return { sq: cell.dataset.sq };
+    const hp = t.closest("[data-hand]") as HTMLElement | null;
+    if (hp) return { hand: hp.dataset.hand, handColor: hp.dataset.color };
+    return {};
+  }
+
+  private isMine(sq: string): boolean {
+    const my = this.state.myColor;
+    if (!my) return false;
+    const p = this.pos.board.at(Square.newByUSI(sq)!);
+    return !!p && p.color === colorOf(my);
+  }
+
+  private onDown = (e: PointerEvent): void => {
+    if ((e.target as HTMLElement).closest("button")) return;
+    if (this.pending) return;
+    const h = this.hit(e.clientX, e.clientY);
+    if (!h.sq && !h.hand) {
+      if (this.promo || this.sel) {
+        this.promo = null;
+        this.sel = null;
+        this.render();
+      }
+      return;
+    }
+    if (this.promo) {
+      this.promo = null;
+      this.render();
+      return;
+    }
+    if (!this.canMoveNow()) return;
+    const my = this.state.myColor!;
+    // 行き先のタップ（選んでいる駒がある）
+    if (h.sq && this.sel) {
+      const t = this.targets().get(h.sq);
+      if (t) {
+        this.choose(h.sq, t);
+        return;
+      }
+    }
+    // 自分の駒（盤上・持ち駒）を選ぶ／ドラッグを始める
+    const ownHand = !!h.hand && h.handColor === my;
+    const ownSq = !!h.sq && this.isMine(h.sq);
+    if (ownHand || ownSq) {
+      const next: Selection = ownSq ? { kind: "square", usi: h.sq! } : { kind: "hand", letter: h.hand! };
+      const same =
+        (this.sel?.kind === "square" && next.kind === "square" && this.sel.usi === next.usi) ||
+        (this.sel?.kind === "hand" && next.kind === "hand" && this.sel.letter === next.letter);
+      this.sel = next;
+      if (!same) this.cb.onHaptic?.("select");
+      this.render();
+      const src = ownSq
+        ? (this.el.querySelector(`[data-sq="${h.sq}"] .sb-piece`) as HTMLElement | null)
+        : (this.el.querySelector(`[data-hand="${h.hand}"][data-color="${my}"] .sb-piece`) as HTMLElement | null);
+      this.drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false, same, ghost: null, srcEl: src };
+      try {
+        this.el.setPointerCapture(e.pointerId);
+      } catch {
+        /* not capturable (synthetic event) */
+      }
+      e.preventDefault();
+      return;
+    }
+    // それ以外: 選択を外す（反則の升には点を出さないので、ここは「指せない」）
+    if (this.sel) {
+      this.sel = null;
+      this.cb.onHaptic?.("error");
+      this.render();
+    }
+  };
+
+  private onMoveEv = (e: PointerEvent): void => {
+    const d = this.drag;
+    if (!d || d.id !== e.pointerId) return;
+    if (!d.moved && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 6) return;
+    if (!d.moved) {
+      d.moved = true;
+      const doc = this.el.ownerDocument;
+      const g = doc.createElement("div");
+      g.className = "sb-ghost sb-root";
+      g.dataset.theme = this.el.dataset.theme ?? "auto";
+      g.style.setProperty("--cw", this.el.style.getPropertyValue("--cw"));
+      g.style.setProperty("--ch", this.el.style.getPropertyValue("--ch"));
+      if (d.srcEl) {
+        const clone = d.srcEl.cloneNode(true) as HTMLElement;
+        g.appendChild(clone);
+        d.srcEl.classList.add("sb-dragging");
+      }
+      doc.body.appendChild(g);
+      d.ghost = g;
+    }
+    if (d.ghost) {
+      d.ghost.style.left = `${e.clientX}px`;
+      d.ghost.style.top = `${e.clientY}px`;
+    }
+  };
+
+  private onUp = (e: PointerEvent): void => {
+    const d = this.drag;
+    if (!d || d.id !== e.pointerId) return;
+    this.drag = null;
+    d.ghost?.remove();
+    d.srcEl?.classList.remove("sb-dragging");
+    if (!d.moved) {
+      // タップで同じ駒をもう一度押したら選択を外す
+      if (d.same) {
+        this.sel = null;
+        this.render();
+      }
+      return;
+    }
+    const h = this.hit(e.clientX, e.clientY);
+    if (h.sq) {
+      const t = this.targets().get(h.sq);
+      if (t) {
+        this.choose(h.sq, t);
+        return;
+      }
+      if (h.sq !== (this.sel?.kind === "square" ? this.sel.usi : null)) this.cb.onHaptic?.("error");
+    }
+    this.render();
+  };
+
+  private onCancel = (e: PointerEvent): void => {
+    const d = this.drag;
+    if (!d || d.id !== e.pointerId) return;
+    this.drag = null;
+    d.ghost?.remove();
+    d.srcEl?.classList.remove("sb-dragging");
+  };
+
+  private choose(to: string, t: { plain: boolean; promo: boolean }): void {
+    const sel = this.sel;
+    if (!sel) return;
+    if (sel.kind === "hand") {
+      this.commit(`${sel.letter}*${to}`);
+      return;
+    }
+    if (t.plain && t.promo) {
+      this.promo = { from: sel.usi, to };
+      this.render();
+      return;
+    }
+    // 行き所のない駒は自動で成る（成りしか合法手がない）
+    this.commit(t.promo ? `${sel.usi}${to}+` : `${sel.usi}${to}`);
+  }
+
+  private commit(usi: string): void {
+    this.promo = null;
+    const label = this.legalMoves().has(usi) ? labelFor(this.pos, usi, this.state.lastMove?.usi ?? null) : null;
+    if (!label) {
+      this.cb.onHaptic?.("error");
+      this.render();
+      return;
+    }
+    if (this.settings().confirmMove) {
+      this.pending = { usi, label };
+      this.render();
+      return;
+    }
+    this.send(usi, label);
+  }
+
+  private send(usi: string, label: string): void {
+    this.pending = null;
+    this.sel = null;
+    const after = this.pos.clone();
+    const m = after.createMoveByUSI(usi);
+    if (m && after.doMove(m)) this.optimistic = { sfen: after.sfen, lastMove: { usi, label } };
+    this.cb.onHaptic?.("move");
+    this.render();
+    this.cb.onMove?.(usi, label);
+  }
+}
