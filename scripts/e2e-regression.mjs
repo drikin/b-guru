@@ -2957,6 +2957,35 @@ check("no uncaught page errors at the end", consoleErrors.length === 0, consoleE
   );
 }
 
+// ------------------------------------------------- chat never scrolls sideways
+// 2026-10-22: a one-line shogi card (white-space: nowrap) widened the whole chat list (Mantine's
+// ScrollArea content grows with its widest child) and the chat scrolled sideways on phones and
+// desktops. Open the chat at phone and desktop widths and check that nothing in it is wider.
+console.log("\nU. Chat never scrolls sideways (2026-10-22)");
+for (const [label, viewport] of [["phone 390", { width: 390, height: 844 }], ["desktop 1280", { width: 1280, height: 900 }]]) {
+  const uctx = await browser.newContext({ viewport });
+  await uctx.addCookies([{ name: "bsm_session", value: SESSION, domain: new URL(BASE_URL).hostname, path: "/", secure: BASE_URL.startsWith("https"), httpOnly: true }]);
+  const upage = await uctx.newPage();
+  await upage.goto(BASE_URL, { waitUntil: "networkidle", timeout: 60000 });
+  await upage.waitForTimeout(1200);
+  await upage.evaluate(clickTab("チャット"));
+  await upage.waitForTimeout(3000);
+  const w = await upage.evaluate(() => {
+    const chat = document.querySelector('[class*="bguru-chat-view"]');
+    const vp = chat?.querySelector(".mantine-ScrollArea-viewport");
+    if (!vp) return null;
+    const edge = vp.getBoundingClientRect().right;
+    let widest = null;
+    for (const el of chat.querySelectorAll("*")) {
+      const r = el.getBoundingClientRect();
+      if (r.width && r.right > edge + 2 && (!widest || r.right > widest.right)) widest = { right: Math.round(r.right), cx: el.getAttribute("data-cx"), text: (el.textContent || "").slice(0, 40) };
+    }
+    return { sw: vp.scrollWidth, cw: vp.clientWidth, doc: document.documentElement.scrollWidth, vw: document.documentElement.clientWidth, widest };
+  });
+  check(`chat never scrolls sideways (${label})`, !!w && w.sw <= w.cw + 1 && w.doc <= w.vw + 1 && !w.widest, JSON.stringify(w));
+  await uctx.close();
+}
+
 // ------------------------------------------------- performance round 2
 console.log("\nP. Performance (2026-10-20): presence list in SSE, sized images, chat input");
 {

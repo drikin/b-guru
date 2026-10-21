@@ -535,3 +535,8 @@ body {
     opacity: 1;
   }
 }
+
+/* チャット欄は横に広がらない（Mantine の ScrollArea は中身に合わせて横に伸びる作り。長い対局カードで
+   チャット全体が横スクロールした。2026-10-22。e2e の「chat never scrolls sideways」で見張る） */
+.bguru-chat-view .mantine-ScrollArea-viewport { overflow-x: hidden !important; }
+.bguru-chat-view .mantine-ScrollArea-content { display: block !important; min-width: 0 !important; width: 100% !important; }

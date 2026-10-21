@@ -578,7 +578,8 @@ export function ShogiChatCard({ gameId, body }: { gameId: number; body: string }
         maxWidth: "94%",
       }}
     >
-      <Text size="xs" style={{ lineHeight: 1.4, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={text}>
+      {/* 2 行まで折り返す（折り返さない 1 行にすると、長いカードでチャット欄全体が横に広がった。2026-10-22） */}
+      <Text size="xs" lineClamp={2} style={{ lineHeight: 1.4, minWidth: 0, overflowWrap: "anywhere" }} title={text}>
         {text}
       </Text>
       {enabled && (
