@@ -48,4 +48,15 @@ class PushContentTest {
         assertEquals(3_000_042, PushContent.notificationId("timeline_new", null, 42, 1))
         assertTrue(PushContent.notificationId("timeline_new", null, 42, 1) != PushContent.notificationId("timeline_new", null, 43, 1))
     }
+
+    @Test fun registrationSignatureChangesWithAnyInput() {
+        val base = PushContent.registrationSignature("fcm", "all", true, false, "tok")
+        assertEquals(base, PushContent.registrationSignature("fcm", "all", true, false, "tok"))
+        assertTrue(base != PushContent.registrationSignature("fcm2", "all", true, false, "tok"))
+        assertTrue(base != PushContent.registrationSignature("fcm", "mentions", true, false, "tok"))
+        assertTrue(base != PushContent.registrationSignature("fcm", "all", false, false, "tok"))
+        assertTrue(base != PushContent.registrationSignature("fcm", "all", true, true, "tok"))
+        assertTrue(base != PushContent.registrationSignature("fcm", "all", true, false, "tok2"))
+        assertFalse(base.contains("fcm") || base.contains("tok"))
+    }
 }

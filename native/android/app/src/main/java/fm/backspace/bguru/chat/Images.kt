@@ -42,7 +42,10 @@ object ImageCache {
     }
     /** Uploaded images (/api/media/…) need the member's token: the app has no web session. */
     @Volatile var token: String? = null
-    private val inFlight = HashMap<String, kotlinx.coroutines.Deferred<ImageBitmap?>>()
+    /** One download per image, shared by the rows that want it; cancelled (the HTTP call
+     *  too) when every one of them has gone — a row scrolled past before its photo came. */
+    private class Load(val job: kotlinx.coroutines.Deferred<ImageBitmap?>) { var waiters = 0 }
+    private val inFlight = HashMap<String, Load>()
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main.immediate)
     /** Decoding is memory-heavy: a few at a time, off the main thread. */
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -63,25 +66,45 @@ object ImageCache {
     suspend fun load(url: String, maxPx: Int): ImageBitmap? {
         val k = key(url, maxPx)
         cache.get(k)?.let { return it }
-        val job = inFlight[k] ?: scope.async {
+        val load = inFlight[k] ?: Load(scope.async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             try {
                 withContext(decoding) { fetch(url, maxPx) }?.also { cache.put(k, it) }
             } finally {
-                inFlight.remove(k)
+                if (inFlight[k]?.job === coroutineContext[kotlinx.coroutines.Job]) inFlight.remove(k)
             }
-        }.also { inFlight[k] = it }
-        return job.await()
+        }).also { inFlight[k] = it; it.job.start() }
+        load.waiters++
+        try {
+            return load.job.await()
+        } finally {
+            if (--load.waiters == 0 && !load.job.isCompleted) {
+                load.job.cancel()
+                if (inFlight[k] === load) inFlight.remove(k)
+            }
+        }
     }
 
-    private fun fetch(url: String, maxPx: Int): ImageBitmap? = runCatching {
+    private suspend fun fetch(url: String, maxPx: Int): ImageBitmap? {
         val req = Request.Builder().url(url).apply {
             // Only our own server (same scheme, host, port) ever gets the token.
             val t = token
             if (t != null && url.startsWith(Net.BASE + "/")) header("Authorization", "Bearer $t")
         }.build()
-        http.newCall(req).execute().use { r ->
+        val call = http.newCall(req)
+        // Cancelled (nobody wants it any more): abort the download itself.
+        val hook = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.invokeOnCompletion { if (it != null) call.cancel() }
+        try {
+            return runCatching { decode(call, maxPx) }.getOrNull()
+        } finally {
+            hook?.dispose()
+        }
+    }
+
+    private fun decode(call: okhttp3.Call, maxPx: Int): ImageBitmap? =
+        call.execute().use { r ->
             if (!r.isSuccessful) return@use null
             val bytes = r.body.bytes()
+            if (call.isCanceled()) return@use null
             // ImageDecoder scales while decoding (no full-size bitmap ever exists) and
             // applies the EXIF rotation. Hardware bitmaps live in GPU memory, not the heap.
             ImageDecoder.decodeBitmap(ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes))) { d, info, _ ->
@@ -91,7 +114,6 @@ object ImageCache {
                 if (scale < 1.0) d.setTargetSize((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1))
             }.asImageBitmap()
         }
-    }.getOrNull()
 }
 
 /** `maxPx`: the longest side the image is shown at (decoded no larger). */

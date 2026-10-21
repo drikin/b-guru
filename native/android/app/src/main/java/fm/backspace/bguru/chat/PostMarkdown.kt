@@ -40,7 +40,7 @@ import androidx.compose.ui.unit.sp
  *  no Markdown in it is drawn exactly as before. */
 @Composable
 fun PostText(text: String) {
-    val blocks = remember(text) { PostMarkdown.blocks(text) }
+    val blocks = remember(text) { PostMarkdown.cached(text) }
     val single = blocks.singleOrNull() as? PostMarkdown.Block.Paragraph
     if (single != null) {
         Text(single.text, fontSize = 16.sp)
@@ -101,6 +101,15 @@ object PostMarkdown {
     fun looksLikeMarkdown(s: String) = HINT.containsMatchIn(s)
 
     fun blocks(s: String): List<Block> = if (!looksLikeMarkdown(s)) listOf(Block.Paragraph(linkified(s))) else parse(s)
+
+    /** Parsed posts by text: the timeline parses them when they arrive ([warm], off the
+     *  main thread), so a row coming on screen while scrolling only looks them up. */
+    private val parsed = android.util.LruCache<String, List<Block>>(400)
+
+    fun cached(s: String): List<Block> = parsed.get(s) ?: blocks(s).also { parsed.put(s, it) }
+
+    /** Any thread. */
+    fun warm(texts: List<String>) { texts.forEach { if (parsed.get(it) == null) parsed.put(it, blocks(it)) } }
 
     fun parse(s: String): List<Block> {
         val out = mutableListOf<Block>()

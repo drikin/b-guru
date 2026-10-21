@@ -9,8 +9,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Chat or timeline (phone pages / the switch at the top). */
 enum class MainTab { TIMELINE, CHAT }
@@ -31,7 +31,6 @@ class TimelineStore(val api: ApiClient) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val pendingRead = mutableSetOf<Long>()
     private var readJob: Job? = null
-    private var pollJob: Job? = null
     var demo = false
 
     val unreadCount get() = posts.count { it.unread == true }
@@ -40,10 +39,18 @@ class TimelineStore(val api: ApiClient) {
 
     suspend fun refresh() {
         if (demo) return
+        lastRefreshAt = android.os.SystemClock.elapsedRealtime() // tried (failures wait a minute too)
         if (clubs.isEmpty()) runCatching { clubs = api.clubs().associate { it.key to it.name } }
         try {
             val r = api.posts()
-            posts = r.posts.map { if (it.id in pendingRead) it.copy(unread = false) else it }
+            // Unchanged posts keep their instance (their rows skip recomposition), and an
+            // unchanged list is not even assigned (posts uses structural equality).
+            val old = posts.associateBy { it.id }
+            withContext(Dispatchers.Default) { PostMarkdown.warm(r.posts.map { it.text }) }
+            posts = r.posts.map { p ->
+                val q = if (p.id in pendingRead) p.copy(unread = false) else p
+                old[q.id]?.takeIf { it == q } ?: q
+            }
             nextCursor = r.nextCursor
             failed = false
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -62,6 +69,7 @@ class TimelineStore(val api: ApiClient) {
         loadingMore = true
         scope.launch {
             runCatching { api.posts(cursor) }.getOrNull()?.let { r ->
+                withContext(Dispatchers.Default) { PostMarkdown.warm(r.posts.map { it.text }) }
                 val known = posts.map { it.id }.toSet()
                 posts = posts + r.posts.filter { it.id !in known }
                 nextCursor = r.nextCursor
@@ -70,17 +78,20 @@ class TimelineStore(val api: ApiClient) {
         }
     }
 
-    fun startPolling() {
-        pollJob?.cancel()
-        pollJob = scope.launch {
-            while (isActive) {
-                delay(60_000)
-                refresh()
-            }
+    private var lastRefreshAt = 0L
+    private val POLL_MS = 60_000L
+
+    /** While the timeline is on screen (and the app in front): refresh every minute — at
+     *  once when [now], or when the last refresh is already a minute old. Cancel to stop. */
+    suspend fun pollWhileOnScreen(now: Boolean) {
+        if (now && hasLoaded) refresh()
+        while (true) {
+            val wait = POLL_MS - (android.os.SystemClock.elapsedRealtime() - lastRefreshAt)
+            if (wait > 0) delay(wait)
+            refresh()
+            if (demo) return
         }
     }
-
-    fun stopPolling() { pollJob?.cancel(); pollJob = null }
 
     /** A post was on screen for a second: read (per post, debounced, batched — like the web). */
     fun sawPost(id: Long) {

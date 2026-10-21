@@ -16,6 +16,7 @@ val ApiJson = Json {
 }
 
 /** Mirrors `AgentChatMessageDto` in src/lib/agent-chat.ts. */
+@androidx.compose.runtime.Immutable
 @Serializable
 data class ChatMessage(
     val id: Long,
@@ -46,6 +47,7 @@ data class ChatMessage(
     }
 }
 
+@androidx.compose.runtime.Immutable
 @Serializable
 data class Reaction(val emoji: String, val count: Int, val mine: Boolean = false, val reactors: List<String> = emptyList())
 
@@ -55,6 +57,7 @@ enum class SendState { SENT, PENDING, FAILED }
  *  (clientId when we sent it), so the bubble is never re-created on confirm.
  *  `localImages`: previews of photos this device sent, shown at once while uploading
  *  and kept after the swap so the bubble does not flash while the URLs load. */
+@androidx.compose.runtime.Immutable
 data class ChatRow(
     val message: ChatMessage,
     val state: SendState = SendState.SENT,
@@ -209,6 +212,7 @@ data class RoomMap(
 )
 
 /** Someone in the house: in the room view (mode "room") or at a chat seat ("text"). */
+@androidx.compose.runtime.Immutable
 @Serializable
 data class RoomMember(
     val userId: String,
@@ -240,6 +244,7 @@ data class RoomStateResponse(
 // MARK: timeline
 
 /** Mirrors `agentPostDto` (+ include=reactions,read) in src/app/api/agent/posts/route.ts. */
+@androidx.compose.runtime.Immutable
 @Serializable
 data class Post(
     val id: Long,
@@ -273,6 +278,7 @@ data class Post(
 }
 
 /** Link preview (posts.url_preview — the same object the web uses, camelCase inside). */
+@androidx.compose.runtime.Immutable
 @Serializable
 data class UrlPreview(
     val url: String,
@@ -303,6 +309,7 @@ data class UrlPreview(
 
 /** One episode of backspace.fm (GET /api/agent/jukebox). `audioUrl` is used exactly as
  *  given: the redirects through it are how the show counts downloads. */
+@androidx.compose.runtime.Immutable
 @Serializable
 data class JukeboxEpisode(
     val id: String,

@@ -285,15 +285,22 @@ private fun RoomCanvas(room: RoomStore, voice: VoiceStore, focus: FocusRequester
     val painter = remember { RoomPainter() }
     var menu by remember { mutableStateOf<Pair<String, Offset>?>(null) }
     val density = LocalDensity.current
+    // Every frame while something moves; asleep (no frames at all) while the room is
+    // still, until RoomStore.wake() or the next timed change (a bubble ending, the beagle).
     LaunchedEffect(room) {
         var last = 0L
+        var slept = false
         while (true) {
             withFrameMillis { t ->
-                val dt = if (last == 0L) 16L else min(100L, t - last)
+                // After a sleep nothing was walking: pass the real gap (the beagle's clock).
+                val dt = if (last == 0L) 16L else min(if (slept) 2_000L else 100L, t - last)
                 last = t
+                slept = false
                 room.update(dt)
                 frame = t
             }
+            val idle = room.idleMillis()
+            if (idle > 0) { room.awaitWake(idle); slept = true }
         }
     }
     Box(Modifier.fillMaxSize()) {

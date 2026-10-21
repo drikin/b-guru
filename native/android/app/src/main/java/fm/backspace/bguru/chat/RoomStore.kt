@@ -9,8 +9,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -229,6 +231,7 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
     private var requestInFlight = 0
 
     private fun place(a: Actor, x: Int, y: Int) {
+        wake()
         a.path.clear()
         a.moveT = null
         a.x = x; a.y = y; a.fx = x.toFloat(); a.fy = y.toFloat(); a.step = 0
@@ -236,6 +239,7 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
 
     /** Members to the UI (my entry with my local position), then the voice. */
     private fun publish() {
+        wake()
         val mine = myActor
         members = mem.values.map { m ->
             if (m.userId == me && mine != null && m.inRoom && roomView) m.copy(x = mine.x, y = mine.y) else m
@@ -391,6 +395,7 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
         if (p.isEmpty()) { place(a, to.x, to.y); entering = null; return }
         a.path.addAll(p)
         entering = to
+        wake()
     }
 
     /** The user moved during the entry walk: jump to where the server has me, then go on. */
@@ -517,6 +522,7 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
 
     private fun showReact(id: String, emoji: String, to: String?) {
         val t = now()
+        wake()
         actors[id]?.reacts?.add(Floating(emoji, t))
         if (to != null) actors[to]?.reacts?.add(Floating("👋", t + 300, small = true))
     }
@@ -528,12 +534,14 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
         val a = actors[id] ?: return
         val text = bubbleText(m.visibleBody, m.images.size) ?: return
         a.bubble = Bubble(text, now() + 4500)
+        wake()
     }
 
     // MARK: walking (input)
 
     fun press(d: Dir) {
         if (!roomView) return
+        wake()
         if (entering != null) finishEntry()
         held.remove(d)
         held.add(d)
@@ -561,6 +569,7 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
         }
         a.path.clear()
         a.path.addAll(bfs(a.x, a.y, target.first, target.second, a))
+        wake()
         return null
     }
 
@@ -574,6 +583,7 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
             .minByOrNull { (x, y) -> hypot((x - a.x).toDouble(), (y - a.y).toDouble()) } ?: return
         a.path.clear()
         a.path.addAll(bfs(a.x, a.y, near.first, near.second, a))
+        wake()
     }
 
     private fun showHint() {
@@ -582,7 +592,37 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
         hintJob = scope.launch { delay(9000); hint = false }
     }
 
-    // MARK: frame loop (called by the room view every frame)
+    // MARK: frame loop (called by the room view while something moves)
+
+    /** Nudged by anything that moves, appears or changes in the room: the view's frame
+     *  loop sleeps while nothing animates and wakes on this (or at the next timed change). */
+    private val wakeups = Channel<Unit>(Channel.CONFLATED)
+    fun wake() { wakeups.trySend(Unit) }
+
+    /** The view's loop, idle: wait for [wake] or [timeoutMs] (Long.MAX_VALUE = no timer). */
+    suspend fun awaitWake(timeoutMs: Long) {
+        if (timeoutMs == Long.MAX_VALUE) wakeups.receive() else withTimeoutOrNull(timeoutMs) { wakeups.receive() }
+    }
+
+    /** 0 when the next frame must be drawn (someone walking or about to, a reaction
+     *  floating, the beagle easing); otherwise ms until the next timed change (a bubble
+     *  ending, the beagle's next step, a demo character's next move). */
+    fun idleMillis(): Long {
+        if (held.isNotEmpty() || entering != null) return 0
+        val now = now()
+        var next = Long.MAX_VALUE
+        for (a in actors.values) {
+            if (a.moveT != null || a.path.isNotEmpty() || a.reacts.isNotEmpty()) return 0
+            a.bubble?.let { next = min(next, it.until - now) }
+        }
+        beagle?.let { b ->
+            if (abs(b.x - b.fx) > 0.02f) return 0
+            next = min(next, 900 - b.t)
+            b.bubble?.let { next = min(next, it.until - now) }
+        }
+        if (demo) for (n in npcs.values) { if (n.nextAt == 0L) return 0; next = min(next, n.nextAt - now) }
+        return if (next <= 0) 0 else next
+    }
 
     fun update(dt: Long) {
         val now = now()

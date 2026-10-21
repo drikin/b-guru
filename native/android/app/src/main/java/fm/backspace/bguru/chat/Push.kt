@@ -81,15 +81,28 @@ object Push {
         App.session(context).api?.let { register(context, it) }
     }
 
-    /** After sign-in, on a new FCM token and when settings change. */
+    /** After sign-in / at launch, on a new FCM token and when settings change. Sent only
+     *  when something changed since the last successful registration (the FCM token, the
+     *  settings, the agent token) or it is a week old — not on every launch. */
     fun register(context: Context, api: ApiClient) {
         if (!configured) return
         val app = context.applicationContext
         FirebaseMessaging.getInstance().token.addOnSuccessListener { t ->
-            prefs(app).edit().putString("fcmToken", t).apply()
-            scope.launch { runCatching { api.registerPush(t, notifyMode(app), quietHours(app), notifyTimeline(app)) } }
+            scope.launch {
+                val p = prefs(app)
+                val mode = notifyMode(app); val quiet = quietHours(app); val timeline = notifyTimeline(app)
+                val sig = PushContent.registrationSignature(t, mode, quiet, timeline, api.token)
+                val now = System.currentTimeMillis()
+                if (p.getString("registered", null) == sig && now - p.getLong("registeredAt", 0L) in 0 until REREGISTER_MS) return@launch
+                p.edit().putString("fcmToken", t).apply()
+                runCatching { api.registerPush(t, mode, quiet, timeline) }
+                    .onSuccess { p.edit().putString("registered", sig).putLong("registeredAt", now).apply() }
+            }
         }
     }
+
+    private const val REREGISTER_MS = 7L * 24 * 60 * 60 * 1000
+
 
     /** Sign-out: stop pushes to this device (the token is revoked right after,
      *  which stops them server-side too). */
@@ -97,7 +110,7 @@ object Push {
         val t = prefs(context).getString("fcmToken", null) ?: return
         api.unregisterPush(t)
         if (configured) runCatching { FirebaseMessaging.getInstance().deleteToken() }
-        prefs(context).edit().remove("fcmToken").apply()
+        prefs(context).edit().remove("fcmToken").remove("registered").remove("registeredAt").apply()
         NotificationManagerCompat.from(context).cancelAll()
     }
 
@@ -124,7 +137,8 @@ object Push {
         val session = App.session(context)
         // In the foreground the chat is already on screen.
         if ((kind == "chat_mention" || kind == "chat_new") && session.store?.isVisible == true) return
-        val api = session.api ?: TokenStore.load(context)?.let(::ApiClient) ?: return
+        // (FCM's worker thread: the token is decrypted here, not on the main thread.)
+        val api = session.api ?: session.savedToken()?.let(::ApiClient) ?: return
 
         var title = PushContent.defaultTitle(kind)
         var text = PushContent.defaultText(kind)
@@ -254,6 +268,14 @@ object PushContent {
         return if (t.length > TIMELINE_TEXT_MAX) t.take(TIMELINE_TEXT_MAX).trimEnd() + "…" else t
     }
 
+    /** What a push registration was made with (a hash: the tokens are not stored again in
+     *  clear). Push.register sends again only when this changes (or after a week). */
+    fun registrationSignature(fcmToken: String, mode: String, quiet: Boolean, timeline: Boolean, agentToken: String): String {
+        val md = java.security.MessageDigest.getInstance("SHA-256")
+        md.update("$fcmToken\n$mode\n$quiet\n$timeline\n$agentToken".toByteArray())
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
     /** A tap opens the post's thread in the timeline. */
     fun opensThread(kind: String) = kind == "reply" || kind == TIMELINE_NEW
 
@@ -268,7 +290,8 @@ object PushContent {
 
 class PushService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
-        App.session(this).api?.let { Push.register(this, it) }
+        val session = App.session(this)
+        (session.api ?: session.savedToken()?.let(::ApiClient))?.let { Push.register(this, it) }
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
@@ -289,10 +312,11 @@ class ActionReceiver : BroadcastReceiver() {
         if (context.getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked) return
         val messageId = intent.getLongExtra(Push.EXTRA_MESSAGE_ID, 0L)
         val notifId = intent.getIntExtra("notif", 0)
-        val api = App.session(context).api ?: TokenStore.load(context)?.let(::ApiClient) ?: return
+        val session = App.session(context)
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
+                val api = session.api ?: session.savedToken()?.let(::ApiClient) ?: return@launch
                 when (intent.action) {
                     REPLY -> {
                         val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(KEY_TEXT)?.toString()?.trim().orEmpty()

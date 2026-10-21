@@ -96,6 +96,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.flow.collectLatest
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import java.time.Duration
@@ -123,18 +124,20 @@ fun TimelineScreen(
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { if (!timeline.hasLoaded) timeline.refresh() }
-    // On screen: refresh when the app comes back, and every minute while it stays.
+    // On screen (this page, the app in front): refresh when the app comes back, and every
+    // minute while it stays. Off screen (another page, background): no polling.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
-    androidx.compose.runtime.DisposableEffect(lifecycle) {
-        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
-            when (e) {
-                androidx.lifecycle.Lifecycle.Event.ON_START -> { if (timeline.hasLoaded) timeline.refreshAsync(); timeline.startPolling() }
-                androidx.lifecycle.Lifecycle.Event.ON_STOP -> timeline.stopPolling()
-                else -> Unit
+    val visibleNow by androidx.compose.runtime.rememberUpdatedState(visible)
+    LaunchedEffect(timeline, lifecycle) {
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            var cameBack = true
+            androidx.compose.runtime.snapshotFlow { visibleNow }.collectLatest { v ->
+                if (!v) return@collectLatest
+                val now = cameBack
+                cameBack = false
+                timeline.pollWhileOnScreen(now)
             }
         }
-        lifecycle.addObserver(obs)
-        onDispose { lifecycle.removeObserver(obs); timeline.stopPolling() }
     }
     // Kept here, outside the list: coming back from a thread returns to where you were.
     val listState = rememberLazyListState()

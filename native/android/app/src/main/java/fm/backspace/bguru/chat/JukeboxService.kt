@@ -22,6 +22,9 @@ class JukeboxService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        // Started by the system (Bluetooth / lock-screen resumption) with no activity: the
+        // jukebox store (progress saving) comes with the signed-in session.
+        App.session(this).restore()
         setMediaNotificationProvider(DefaultMediaNotificationProvider.Builder(this).build().apply {
             setSmallIcon(R.drawable.ic_notification)
         })

@@ -186,12 +186,17 @@ class JukeboxStore(private val app: Context, private val api: ApiClient, private
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val prefs = app.getSharedPreferences(if (demoBase != null) "jukebox_demo" else "jukebox", Context.MODE_PRIVATE)
+    /** Where each episode was left ("p:<id>" → "pos,dur,done"), in a file of its own: a save
+     *  rewrites only this, not the rest of the jukebox's settings. */
+    private val progressPrefs = app.getSharedPreferences(if (demoBase != null) "jukebox_demo_progress" else "jukebox_progress", Context.MODE_PRIVATE)
     private val cacheFile = File(app.filesDir, "jukebox.json")
     private var fetchStarted = false
     private var ticker: Job? = null
+    private var saver: Job? = null
+    /** The jukebox screen is on screen with the app in front (JukeboxScreen says). */
+    private var screenVisible = false
     private var switchJob: Job? = null
     private var sleepJob: Job? = null
-    private var lastSave = 0L
     private var retried = 0
     private var controller: ListenableFuture<MediaController>? = null
     private var attached = false
@@ -205,7 +210,7 @@ class JukeboxStore(private val app: Context, private val api: ApiClient, private
             val now = ours && p.playWhenReady && (p.playbackState == Player.STATE_READY || p.playbackState == Player.STATE_BUFFERING)
             if (now != playing) {
                 playing = now
-                if (now) startTicker() else { stopTicker(); save() }
+                if (now) startPlayingJobs() else { stopPlayingJobs(); save() }
             }
             if (ours && p.duration != C.TIME_UNSET) durationMs = p.duration
             if (ours && events.contains(Player.EVENT_POSITION_DISCONTINUITY)) positionMs = p.currentPosition
@@ -236,7 +241,8 @@ class JukeboxStore(private val app: Context, private val api: ApiClient, private
     }
 
     init {
-        prefs.all.forEach { (k, v) ->
+        migrateProgress()
+        progressPrefs.all.forEach { (k, v) ->
             if (k.startsWith("p:") && v is String) parseProgress(v)?.let { progress[k.removePrefix("p:")] = it }
         }
         if (demoBase != null) applyDemo(demoCatalogue(demoBase))
@@ -433,7 +439,19 @@ class JukeboxStore(private val app: Context, private val api: ApiClient, private
     private fun startPositionMs(item: JbItem): Long =
         progress[item.id]?.takeIf { !it.done }?.pos?.times(1000L) ?: 0L
 
-    /** Saved every 10 s while playing and on pause; heard when under 30 s remain. */
+    /** Before 2026-10: the progress lived in the main jukebox prefs. Move it (once) to its
+     *  own file; an entry already in the new file wins. */
+    private fun migrateProgress() {
+        val old = prefs.all.filter { (k, v) -> k.startsWith("p:") && v is String }
+        if (old.isEmpty()) return
+        val e = progressPrefs.edit()
+        old.forEach { (k, v) -> if (!progressPrefs.contains(k)) e.putString(k, v as String) }
+        e.commit() // written before the old copies go
+        prefs.edit().apply { old.keys.forEach(::remove) }.apply()
+    }
+
+    /** Saved every 30 s while playing, on pause / stop / switching episodes and at the end;
+     *  heard when under 30 s remain. */
     private fun save(ended: Boolean = false) {
         val c = current ?: return
         val p = player
@@ -443,20 +461,39 @@ class JukeboxStore(private val app: Context, private val api: ApiClient, private
         if (pos <= 0 && !ended && progress[c.id] == null) return
         val done = ended || (dur > 0 && dur - pos < 30)
         val pr = JbProgress(pos, dur, done)
+        if (progress[c.id] == pr) return
         progress[c.id] = pr
-        prefs.edit().putString("p:${c.id}", "${pr.pos},${pr.dur},${if (done) 1 else 0}").apply()
-        lastSave = System.currentTimeMillis()
+        progressPrefs.edit().putString("p:${c.id}", "${pr.pos},${pr.dur},${if (done) 1 else 0}").apply()
     }
 
+    /** JukeboxScreen: whether the screen is up (the position ticker only runs then). */
+    fun setScreenVisible(v: Boolean) {
+        if (screenVisible == v) return
+        screenVisible = v
+        if (v && playing) startTicker() else if (!v) stopTicker()
+    }
+
+    private fun startPlayingJobs() {
+        saver?.cancel()
+        saver = scope.launch {
+            while (isActive) { delay(SAVE_EVERY_MS); save() }
+        }
+        if (screenVisible) startTicker()
+    }
+
+    private fun stopPlayingJobs() {
+        saver?.cancel(); saver = null
+        stopTicker()
+    }
+
+    /** The position and length on screen, twice a second (only while it is on screen). */
     private fun startTicker() {
         ticker?.cancel()
-        lastSave = System.currentTimeMillis()
         ticker = scope.launch {
             while (isActive) {
                 val p = player
-                positionMs = p.currentPosition
+                if (p.currentMediaItem?.mediaId == current?.id) positionMs = p.currentPosition
                 if (p.duration != C.TIME_UNSET) durationMs = p.duration
-                if (System.currentTimeMillis() - lastSave >= 10_000) save()
                 delay(500)
             }
         }
@@ -464,7 +501,8 @@ class JukeboxStore(private val app: Context, private val api: ApiClient, private
 
     private fun stopTicker() {
         ticker?.cancel(); ticker = null
-        if (player.currentMediaItem?.mediaId == current?.id) positionMs = player.currentPosition
+        // `attached`: never create the player just for this (leaving a tab never played on).
+        if (attached && player.currentMediaItem?.mediaId == current?.id) positionMs = player.currentPosition
     }
 
     /** Binding a controller creates JukeboxService (and its session); Media3 then puts it in
@@ -513,6 +551,7 @@ class JukeboxStore(private val app: Context, private val api: ApiClient, private
         val SERIES_CHIPS = listOf(ALL_SERIES) + JbItem.MAIN_SERIES + OTHER_SERIES
         val SPEEDS = listOf(1f, 1.25f, 1.5f, 1.75f, 2f)
         const val SLEEP_END_OF_EPISODE = -1
+        private const val SAVE_EVERY_MS = 30_000L
 
         /** Debug only: a fake catalogue (a few hand-written episodes + filler to ~1,170 for
          *  scrolling) whose audio is ONE local test file (`--es demo_jukebox http://10.0.2.2:8098`).

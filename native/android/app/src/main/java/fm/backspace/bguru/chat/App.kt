@@ -21,7 +21,10 @@ class App : Application() {
         ImageCache.init(this)
         session = Session(this)
         Push.init(this)
-        session.restore()
+        // No stores here: a process woken by FCM (or a notification action) only needs the
+        // token, not the chat, timeline and jukebox. The UI and the jukebox's service call
+        // session.restore(). The Keystore decryption starts now, off the main thread.
+        session.prefetchToken()
     }
 
     companion object {
@@ -38,9 +41,28 @@ class Session(private val app: Context) {
     var jukebox by mutableStateOf<JukeboxStore?>(null); private set
     val api: ApiClient? get() = store?.api
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var restored = false
+    @Volatile private var tokenTask: java.util.concurrent.FutureTask<String?>? = null
 
+    /** Decrypt the saved token on a background thread (App.onCreate). */
+    fun prefetchToken() {
+        val t = java.util.concurrent.FutureTask { TokenStore.load(app) }
+        tokenTask = t
+        Thread(t, "token-load").start()
+    }
+
+    /** The saved token (prefetched when possible). Blocks; call it off the main thread
+     *  unless the UI needs it right now. */
+    fun savedToken(): String? = store?.api?.token ?: (tokenTask?.let { runCatching { it.get() }.getOrNull() } ?: TokenStore.load(app))
+
+    /** Main thread. The signed-in stores, once per process: by the activity and the
+     *  jukebox's media service — not by a push waking the process. */
     fun restore() {
-        TokenStore.load(app)?.let(::start)
+        if (restored) return
+        restored = true
+        val t = savedToken()
+        tokenTask = null
+        t?.let(::start)
     }
 
     /** Debug / benchmark builds only (`adb shell am start ... --ez demo true`): sample chat,
@@ -63,6 +85,8 @@ class Session(private val app: Context) {
 
     fun signIn(token: String) {
         TokenStore.save(app, token)
+        restored = true
+        tokenTask = null
         start(token)
     }
 
@@ -75,6 +99,7 @@ class Session(private val app: Context) {
         jukebox?.stop()
         jukebox = null
         ImageCache.token = null
+        tokenTask = null
         TokenStore.delete(app)
         scope.launch {
             Push.unregister(app, s.api)

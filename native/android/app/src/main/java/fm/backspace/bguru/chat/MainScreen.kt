@@ -122,11 +122,13 @@ private fun Pages(
     val switch: @Composable () -> Unit = {
         segments(labels, pager.currentPage) { i -> scope.launch { pager.animateScrollToPage(i) } }
     }
+    // The neighbours stay composed from the start: deferring them saved ~30 ms of the first
+    // frame but added one 150–220 ms frame right after launch (measured 2026-10-20).
     HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
         when (page) {
             0 -> TimelineScreen(timeline, store.capabilities, tabSwitch = switch, onReconnect = onSignOut, visible = pager.currentPage == 0)
             1 -> PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch, visible = pager.currentPage == 1) }
-            else -> if (jb != null) JukeboxScreen(jb, store.capabilities, switch, visible = pager.currentPage == 2,
+            else -> if (jb != null) JukeboxScreen(jb, store.capabilities, switch, visible = { pager.currentPage == 2 },
                 onOpenThread = { timeline.openThread = it })
         }
     }

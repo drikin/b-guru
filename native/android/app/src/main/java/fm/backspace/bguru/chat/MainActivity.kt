@@ -12,6 +12,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val session = App.session(this)
+        session.restore()
         if (BuildConfig.DEMO && intent?.getBooleanExtra("demo", false) == true) {
             session.startDemo(intent.getStringExtra("demo_images"), intent.getStringExtra("demo_jukebox"))
             // Debug: `--es voice_url ws://10.0.2.2:7880 --es voice_token <jwt>` joins a local LiveKit dev server.

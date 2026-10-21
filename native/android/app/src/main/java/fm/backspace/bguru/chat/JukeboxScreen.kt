@@ -55,6 +55,8 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -66,6 +68,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -92,6 +95,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 
 /** The prototype's palette (warm paper and wood), light and dark. */
 @Immutable
@@ -122,21 +130,33 @@ fun reduceMotion(): Boolean {
     return remember { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
 }
 
-/** Degrees the record has turned: 33⅓ rpm (1.8 s a turn) while [spinning]. Read it inside
- *  graphicsLayer {} so only the layer redraws each frame. */
+/** Degrees the record has turned: 33⅓ rpm (1.8 s a turn) while [spinning] says so. Read
+ *  it inside graphicsLayer {} so only the layer's rotation changes. [spinning] is read in
+ *  the loop (a snapshot read): the record stops the moment the page leaves the screen or
+ *  the needle lifts, without waiting for a recomposition. About 30 updates a second: a
+ *  slow label turning does not need 60 (or 120), and each one costs a frame. */
 @Composable
-fun rememberSpin(spinning: Boolean): () -> Float {
+fun rememberSpin(spinning: () -> Boolean): () -> Float {
     val angle = remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(spinning) {
-        if (!spinning) return@LaunchedEffect
-        var last = 0L
-        while (true) withFrameNanos { t ->
-            if (last != 0L) angle.floatValue = (angle.floatValue + (t - last) / 1.8e9f * 360f) % 360f
-            last = t
+    val on by rememberUpdatedState(spinning)
+    LaunchedEffect(Unit) {
+        snapshotFlow { on() }.collectLatest { turning ->
+            if (!turning) return@collectLatest
+            var last = 0L
+            while (true) {
+                withFrameNanos { t ->
+                    if (last != 0L) angle.floatValue = (angle.floatValue + (t - last) / 1.8e9f * 360f) % 360f
+                    last = t
+                }
+                delay(SPIN_FRAME_GAP_MS)
+            }
         }
     }
     return { angle.floatValue }
 }
+
+/** Sleep between turntable frames: the next frame comes ~33 ms after the last one. */
+private const val SPIN_FRAME_GAP_MS = 20L
 
 private val Mono = FontFamily.Monospace
 
@@ -148,12 +168,28 @@ fun JukeboxScreen(
     jukebox: JukeboxStore,
     capabilities: Capabilities?,
     tabSwitch: (@Composable () -> Unit)?,
-    visible: Boolean = true,
+    /** The page is the one on screen (the phone pager composes its neighbours too). Read in
+     *  effects only, so a page change does not recompose the whole screen. */
+    visible: () -> Boolean = { true },
     onOpenThread: (Long) -> Unit,
 ) {
     val c = jbColors()
     val focus = LocalFocusManager.current
-    LaunchedEffect(visible) { if (visible) jukebox.open(capabilities?.jukeboxPath ?: "/api/agent/jukebox") }
+    val isVisible by rememberUpdatedState(visible)
+    val path = capabilities?.jukeboxPath ?: "/api/agent/jukebox"
+    LaunchedEffect(jukebox, path) { snapshotFlow { isVisible() }.collect { if (it) jukebox.open(path) } }
+    // The position ticker (twice a second) runs only while the screen is up and the app is
+    // in front; saving the place goes on regardless (JukeboxStore).
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(jukebox, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            try {
+                snapshotFlow { isVisible() }.collect { jukebox.setScreenVisible(it) }
+            } finally {
+                jukebox.setScreenVisible(false)
+            }
+        }
+    }
     val listState = rememberLazyListState()
     val filtered = jukebox.filtered
     // Opened from the mini player / the notification: back up to the turntable.
@@ -177,7 +213,7 @@ fun JukeboxScreen(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
         ) {
             item(key = "deck", contentType = "deck") {
-                Turntable(jukebox, visible, c, Modifier.widthIn(max = 440.dp).fillMaxWidth())
+                Turntable(jukebox, isVisible, c, Modifier.widthIn(max = 440.dp).fillMaxWidth())
                 Spacer(Modifier.height(16.dp))
             }
             item(key = "now", contentType = "now") {
@@ -215,10 +251,10 @@ fun JukeboxScreen(
 // MARK: turntable
 
 @Composable
-private fun Turntable(jukebox: JukeboxStore, visible: Boolean, c: JbColors, modifier: Modifier) {
+private fun Turntable(jukebox: JukeboxStore, visible: () -> Boolean, c: JbColors, modifier: Modifier) {
     val still = reduceMotion()
     val playing = jukebox.playing
-    val spin = rememberSpin(playing && visible && !still)
+    val spin = rememberSpin { !still && jukebox.playing && visible() }
     val arm by animateFloatAsState(
         if (playing) 2f else -24f,
         if (still) snap() else tween(900, easing = CubicBezierEasing(.5f, .1f, .2f, 1f)), label = "arm",
@@ -259,11 +295,12 @@ private fun Turntable(jukebox: JukeboxStore, visible: Boolean, c: JbColors, modi
                     r += step
                 }
             }
-            // The label (turns).
+            // The label (turns). An offscreen layer: its texts, clip and border are drawn
+            // once into a texture, and each frame only turns that texture.
             val labelSize = p * 0.84f * 0.34f
             Box(
                 Modifier.align(Alignment.Center).size(labelSize)
-                    .graphicsLayer { rotationZ = spin() }
+                    .graphicsLayer { rotationZ = spin(); compositingStrategy = CompositingStrategy.Offscreen }
                     .clip(CircleShape)
                     .background(cur?.color ?: JbItem.labelColor(0))
                     .border(2.dp, Color.Black.copy(alpha = 0.18f), CircleShape),
@@ -568,7 +605,7 @@ fun JukeboxMiniPlayer(jukebox: JukeboxStore, inVoice: Boolean, onOpen: () -> Uni
     val cur = jukebox.current ?: return
     val c = jbColors()
     val still = reduceMotion()
-    val spin = rememberSpin(jukebox.playing && !still)
+    val spin = rememberSpin { !still && jukebox.playing }
     val offerResume = jukebox.pausedForVoice && !inVoice
     Column(Modifier.fillMaxWidth().background(c.panel.copy(alpha = 0.97f))) {
         Box(Modifier.fillMaxWidth().height(1.dp).background(c.line))

@@ -94,7 +94,10 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -141,10 +144,10 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
         onDispose { lifecycle.removeObserver(obs) }
     }
 
-    val rows = store.rows
     // Newest at the bottom; the list is laid out bottom-up (reverseLayout), so
     // index 0 is the newest message and "scroll to bottom" is scroll to 0.
-    val reversed = remember(rows) { rows.asReversed() }
+    // store.rows is read only inside the LazyColumn and in effects: a new message
+    // recomposes the list, not this whole screen (top bar, composer, …).
 
     // Where the list scrolls (drikin 2026-10-19, from member feedback): it follows new
     // messages only while at the bottom (or after sending); reading further up it stays
@@ -155,12 +158,12 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
     }
     var newBelow by remember { mutableIntStateOf(0) }
     var prevLastKey by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(rows.lastOrNull()?.key) {
-        val last = rows.lastOrNull() ?: return@LaunchedEffect
+    LaunchedEffect(store) { snapshotFlow { store.rows.lastOrNull() }.distinctUntilChangedBy { it?.key }.collectLatest { last ->
+        if (last == null) return@collectLatest
         val before = prevLastKey
         prevLastKey = last.key
         // First list: a bottom-up list already starts at the bottom (or opens at the unread line).
-        if (before == null || store.scrollTarget != null) return@LaunchedEffect
+        if (before == null || store.scrollTarget != null) return@collectLatest
         // The list keeps the item that was at the bottom in place, so the new one is below it.
         val first = listState.layoutInfo.visibleItemsInfo.firstOrNull()
         val wasAtBottom = first == null || atBottom ||
@@ -168,11 +171,12 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
         val mineSending = last.message.isAuthor && last.message.id < 0
         if (wasAtBottom || mineSending) listState.animateScrollToItem(0)
         else if (!last.message.isAuthor && !last.message.isNotice) newBelow += 1
-    }
+    } }
     LaunchedEffect(store.openSeq) {
         if (store.openSeq == 0) return@LaunchedEffect
         val id = store.unreadMarkerId ?: return@LaunchedEffect
-        val i = reversed.indexOfFirst { it.message.id == id }
+        val rows = store.rows
+        val i = rows.asReversed().indexOfFirst { it.message.id == id }
         if (i < 0) return@LaunchedEffect
         val unread = rows.count { it.message.id >= id && !it.message.isAuthor && !it.message.isNotice }
         // Bottom-up list: scrollToItem puts it at the bottom edge; then bring it up to the top.
@@ -186,14 +190,14 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
         newBelow = if (atBottom) 0 else unread
     }
     LaunchedEffect(atBottom) { if (atBottom) newBelow = 0 }
-    LaunchedEffect(store.scrollTarget, rows.size) {
-        val target = store.scrollTarget ?: return@LaunchedEffect
-        val i = reversed.indexOfFirst { it.message.id == target }
+    LaunchedEffect(store) { snapshotFlow { store.scrollTarget to store.rows.size }.collectLatest { (target, _) ->
+        if (target == null) return@collectLatest
+        val i = store.rows.asReversed().indexOfFirst { it.message.id == target }
         if (i >= 0) {
             listState.animateScrollToItem(i)
             store.scrollTarget = null
         }
-    }
+    } }
 
     fun submit() {
         val text = d.text
@@ -292,7 +296,8 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom),
                         ) {
-                            if (rows.isEmpty()) {
+                            val reversed = store.rows.asReversed()
+                            if (reversed.isEmpty()) {
                                 item {
                                     Text(
                                         if (store.hasLoaded) "今日はまだ静かだわん" else "読み込み中…",
