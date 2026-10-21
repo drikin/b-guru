@@ -28,6 +28,8 @@ struct MainView: View {
     @State private var pager = PagerState()
     /// What can be seen (the settled page, the app active), for the views inside.
     @State private var visibility = ScreenVisibility()
+    /// iPhone: how much of the pager the software keyboard covers.
+    @State private var keyboard = KeyboardOverlap()
 
     var body: some View {
         // No mini player under the timeline and the chat (drikin 2026-10-20: not needed —
@@ -69,23 +71,46 @@ struct MainView: View {
             }
         } else {
             let picker = PagePicker(store: store, pager: pager, jukeboxOn: jukeboxOn)
-            TabView(selection: $pager.tab) {
-                TimelineScreen(timeline: timeline, capabilities: store.capabilities, tabPicker: picker, onReconnect: onSignOut)
-                    .tag(MainTab.timeline)
-                ChatScreen(store: store, onSignOut: onSignOut, tabPicker: picker)
-                    .tag(MainTab.chat)
-                if jukeboxOn {
-                    JukeboxScreen(jukebox: store.jukebox, path: jukeboxPath, tabPicker: picker)
-                        .tag(MainTab.jukebox)
+            // A paging ScrollView, not TabView(.page): the paged TabView is a UICollectionView
+            // that re-lays out and re-uses its cells while a swipe is under way (the keyboard
+            // going down as the page changes did it every time), and a page's navigation
+            // stack could end up shown in another cell's navigation bar — UIKit then threw
+            // "Layout requested for visible navigation bar … when the top item belongs to a
+            // different navigation bar" (iOS 27, swiping from the chat with the keyboard up;
+            // simulator 10 of 20 swipes). Here the pages are plain views that stay put.
+            GeometryReader { g in
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 0) {
+                            TimelineScreen(timeline: timeline, capabilities: store.capabilities, tabPicker: picker, onReconnect: onSignOut)
+                                .modifier(AvoidsKeyboard(keyboard: keyboard))
+                                .frame(width: g.size.width, height: g.size.height)
+                                .id(MainTab.timeline)
+                            ChatScreen(store: store, onSignOut: onSignOut, tabPicker: picker)
+                                .modifier(AvoidsKeyboard(keyboard: keyboard))
+                                .frame(width: g.size.width, height: g.size.height)
+                                .id(MainTab.chat)
+                            if jukeboxOn {
+                                JukeboxScreen(jukebox: store.jukebox, path: jukeboxPath, tabPicker: picker)
+                                    .modifier(AvoidsKeyboard(keyboard: keyboard))
+                                    .frame(width: g.size.width, height: g.size.height)
+                                    .id(MainTab.jukebox)
+                            }
+                        }
+                        .scrollTargetLayout()
+                    }
+                    .scrollTargetBehavior(.paging)
+                    .scrollIndicators(.hidden)
+                    .scrollPosition(id: Binding<MainTab?>(get: { pager.tab }, set: { if let t = $0 { pager.tab = t } }))
+                    .onAppear { proxy.scrollTo(pager.tab) }
                 }
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            // The jukebox page appears once the server says it is on (after launch). Paged
-            // TabView is a collection view underneath: a page inserted mid-layout tripped
-            // UIKit's item-count assertion and the app crashed at launch (0.2.16–0.2.20).
-            // A different set of pages is a new TabView instead of an update.
-            .id(jukeboxOn)
             .ignoresSafeArea(.container, edges: .bottom)
+            // A ScrollView does not move its content out of the keyboard's way: the pages stay
+            // full height and each lifts its own content (AvoidsKeyboard), so the chat
+            // composer, a thread's reply box and the record shelf's search stay above it.
+            .ignoresSafeArea(.keyboard)
+            .background(KeyboardOverlapReader(keyboard: keyboard).ignoresSafeArea(.keyboard))
         }
     }
 }
@@ -220,5 +245,88 @@ private struct UnreadDot: View {
             .allowsHitTesting(false)
             .accessibilityHidden(store.unreadCount == 0)
             .accessibilityLabel("チャットに未読あり")
+    }
+}
+
+/// How far the software keyboard covers the pager from its bottom edge (0 when hidden).
+@MainActor
+@Observable
+final class KeyboardOverlap {
+    var height: CGFloat = 0
+}
+
+/// A page's own keyboard avoidance (the pager ignores the keyboard): the page's content
+/// ends at the keyboard's top, so the chat composer, a thread's reply box and the record
+/// shelf's search field stay above it. Reads the height itself, so only this redraws.
+private struct AvoidsKeyboard: ViewModifier {
+    let keyboard: KeyboardOverlap
+    func body(content: Content) -> some View {
+        content.padding(.bottom, keyboard.height)
+    }
+}
+
+/// Follows the software keyboard's frame (UIKit's keyboard notifications) and turns it into
+/// how much of the pager it covers. Moves with the keyboard's own animation.
+private struct KeyboardOverlapReader: UIViewRepresentable {
+    let keyboard: KeyboardOverlap
+
+    func makeUIView(context: Context) -> ReaderView {
+        let view = ReaderView()
+        let keyboard = keyboard
+        view.onChange = { height, animated in
+            guard keyboard.height != height else { return }
+            if animated {
+                // The keyboard's curve (UIView.AnimationCurve 7) as a spring.
+                withAnimation(.interpolatingSpring(mass: 3, stiffness: 1000, damping: 500)) { keyboard.height = height }
+            } else {
+                keyboard.height = height
+            }
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: ReaderView, context: Context) {}
+
+    final class ReaderView: UIView {
+        var onChange: ((CGFloat, Bool) -> Void)?
+        /// The keyboard's last frame, in screen coordinates (nil = hidden).
+        private var keyboardFrame: CGRect?
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = false
+            let nc = NotificationCenter.default
+            nc.addObserver(self, selector: #selector(keyboardWillChange(_:)), name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+            nc.addObserver(self, selector: #selector(keyboardWillHide(_:)), name: UIResponder.keyboardWillHideNotification, object: nil)
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        @objc private func keyboardWillChange(_ note: Notification) {
+            keyboardFrame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+            report(animated: ((note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0) > 0)
+        }
+
+        @objc private func keyboardWillHide(_ note: Notification) {
+            keyboardFrame = nil
+            report(animated: ((note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0) > 0)
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            report(animated: false) // rotation, Split View: the pager's frame changed
+        }
+
+        private func report(animated: Bool) {
+            guard let window else { return }
+            var height: CGFloat = 0
+            if let frame = keyboardFrame, !frame.isEmpty {
+                let inWindow = window.convert(frame, from: window.screen.coordinateSpace)
+                let mine = convert(inWindow, from: window)
+                // Only a keyboard docked at the bottom (one that reaches our bottom edge) moves the page.
+                if mine.maxY >= bounds.maxY - 1 { height = max(0, bounds.maxY - mine.minY) }
+            }
+            onChange?(height.rounded(), animated)
+        }
     }
 }
