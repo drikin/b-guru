@@ -4,7 +4,7 @@ import WebKit
 import UIKit
 #endif
 
-// 🎮 締め切りダッシュ above the chat: the server's /minigame/index.html in a WKWebView (the same
+// 🎮 散財ダッシュ above the chat: the server's /minigame/index.html in a WKWebView (the same
 // part the web uses), docs/minigame-spec.md「橋渡し」(bridge_version 1). Like the ☗ board: no
 // token and no cookie reach the page (a fresh non-persistent data store), it may not navigate
 // anywhere, and the web view lives only while the game is open (made with the view, torn down
@@ -36,7 +36,7 @@ struct MinigameScreen: View {
         .frame(height: height > 0 ? min(height, CGFloat(maxHeight)) : CGFloat(maxHeight) * 0.6)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 2)
-        .accessibilityLabel("ゲーム（締め切りダッシュ）")
+        .accessibilityLabel("ゲーム（散財ダッシュ）")
     }
 }
 

@@ -1,4 +1,4 @@
-/* 🎮 締め切りダッシュ — アプリの WebView 用の橋渡し（bridge_version 1）。
+/* 🎮 散財ダッシュ — アプリの WebView 用の橋渡し（bridge_version 1）。
  * /minigame/index.html が読み込む game.js の入口（scripts/build-minigame.mjs で束ねる）。
  * 約束の正本は docs/minigame-spec.md「橋渡し」。トークンは受け取らない・持たない・送らない（API はアプリが中継）。
  *

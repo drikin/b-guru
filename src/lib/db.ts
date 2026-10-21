@@ -707,7 +707,7 @@ export async function initSchema() {
     -- 将棋の通知（shogi_offer / shogi_turn）を受け取る端末。対応したアプリだけが true を送る
     -- （古いアプリは知らない kind を「返信がありました」と出してしまうため、既定は送らない）。
     ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS notify_shogi BOOLEAN NOT NULL DEFAULT FALSE;
-    -- 🎮 締め切りダッシュ（lib/minigame.ts、docs/minigame-spec.md）。遊んだ人は users.user_id（メールは持たない）。
+    -- 🎮 散財ダッシュ（lib/minigame.ts、docs/minigame-spec.md）。遊んだ人は users.user_id（メールは持たない）。
     -- 1 回ごとに番号と種を発行し（issued、30 分で期限切れ）、操作の記録をサーバで再生してスコアを決める（verified）。
     CREATE TABLE IF NOT EXISTS minigame_plays (
       id SERIAL PRIMARY KEY,

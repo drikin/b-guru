@@ -166,7 +166,7 @@ final class APIClient: Sendable {
         }
     }
 
-    // MARK: 🎮 締め切りダッシュ (docs/minigame-spec.md: GET = scope read, POST = scope chat)
+    // MARK: 🎮 散財ダッシュ (docs/minigame-spec.md: GET = scope read, POST = scope chat)
 
     /// The game's requests, relayed as they are: the HTTP status and the JSON body (status 0 = no answer).
     func minigameRaw(_ method: String, path: String, query: [URLQueryItem] = [], json: [String: any Sendable]? = nil) async -> (Int, Data) {

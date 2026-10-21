@@ -1,4 +1,4 @@
-/* 🎮 締め切りダッシュの HTTP（Web の /api/minigame/* とアプリの /api/agent/minigame/* で共用）。
+/* 🎮 散財ダッシュの HTTP（Web の /api/minigame/* とアプリの /api/agent/minigame/* で共用）。
  * 認証は呼び出し側（Web はセッション、アプリは withAgent）。ここは道順・入力・応答の形だけ。
  *
  *   GET  me                                  情報（今日の種・自分のベスト・今日の 1 位・今日遊んだ回数）

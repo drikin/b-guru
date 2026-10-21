@@ -1,4 +1,4 @@
-/* 🎮 締め切りダッシュ — ゲームの部品（canvas ＋ 文字は DOM の重ね）。Web 版は直接、アプリは WebView（bridge.ts）で使う。
+/* 🎮 散財ダッシュ — ゲームの部品（canvas ＋ 文字は DOM の重ね）。Web 版は直接、アプリは WebView（bridge.ts）で使う。
  *
  *   画面: title（キャラ選び・今日のチャレンジ／自由・自分のベスト・今日の 1 位）→ loading → playing ⇄ choosing（500m ごと）
  *         → dead（結果: 距離・自己ベスト・今日の順位・前回より +m・もう一回・死因）／board（ランキング）／paused
@@ -851,7 +851,7 @@ export class DashGame {
           .join(" ・ ");
         html =
           `<div class="mg-panel">` +
-          `<div class="mg-row"><span class="mg-title">締め切りダッシュ</span><span class="mg-dim">${bestLine}</span></div>` +
+          `<div class="mg-row"><span class="mg-title">散財ダッシュ</span><span class="mg-dim">${bestLine}</span></div>` +
           `<div class="mg-chars">${chars}</div>` +
           `<div class="mg-dim">${esc(CHARACTER_INFO[this.character].trait)}</div>` +
           `<div class="mg-row">` +

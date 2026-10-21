@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* 🎮 締め切りダッシュを束ねる（scripts/build-shogi-board.mjs・build-shogi-beagle-worker.mjs と同じ考え方）。
+/* 🎮 散財ダッシュを束ねる（scripts/build-shogi-board.mjs・build-shogi-beagle-worker.mjs と同じ考え方）。
  *   1. public/minigame/game.js        WebView・ブラウザ用（入口 src/lib/minigame/bridge.ts、iife）
  *   2. src/lib/minigame-sim-worker.generated.ts  サーバの検算 worker（入口 src/lib/minigame/sim-worker.ts、文字列）
  *   使い方: node scripts/build-minigame.mjs
@@ -52,7 +52,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     const chunk = res.output.find((o) => o.type === "chunk");
     if (!chunk) throw new Error("no output");
     const out = path.join(root, "public/minigame/game.js");
-    const banner = `/* B-guru 🎮 締め切りダッシュ（bridge_version 1） source:${gameSourceHash()} — scripts/build-minigame.mjs で生成。手で直さない。 */\n`;
+    const banner = `/* B-guru 🎮 散財ダッシュ（bridge_version 1） source:${gameSourceHash()} — scripts/build-minigame.mjs で生成。手で直さない。 */\n`;
     writeFileSync(out, banner + chunk.code);
     console.log(`wrote ${path.relative(root, out)} (${(Buffer.byteLength(banner + chunk.code) / 1024).toFixed(1)} KB)`);
   }
@@ -69,7 +69,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     if (!chunk) throw new Error("no output");
     const out = path.join(root, "src/lib/minigame-sim-worker.generated.ts");
     const text =
-      `/* 🎮 締め切りダッシュの検算 worker（scripts/build-minigame.mjs で生成。手で直さない）。 */\n` +
+      `/* 🎮 散財ダッシュの検算 worker（scripts/build-minigame.mjs で生成。手で直さない）。 */\n` +
       `export const MINIGAME_WORKER_SOURCE_HASH = ${JSON.stringify(workerSourceHash())};\n` +
       `export const MINIGAME_WORKER_SRC = ${JSON.stringify(chunk.code)};\n`;
     writeFileSync(out, text);

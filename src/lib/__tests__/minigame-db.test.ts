@@ -1,5 +1,5 @@
 /**
- * 🎮 締め切りダッシュの DB を通した確認（lib/minigame.ts・lib/minigame-api.ts）。
+ * 🎮 散財ダッシュの DB を通した確認（lib/minigame.ts・lib/minigame-api.ts）。
  *
  * 本物の PostgreSQL が要る。事故を避けるため DATABASE_URL ではなく専用の
  * MINIGAME_TEST_DATABASE_URL があるときだけ動く（使い捨ての DB を指すこと。テーブルを作り、行を消す）。
@@ -65,7 +65,7 @@ async function expectErr(p: Promise<unknown>, status: number, code: string) {
   await expect(p).rejects.toMatchObject({ status, code });
 }
 
-d("🎮 締め切りダッシュ（DB）", () => {
+d("🎮 散財ダッシュ（DB）", () => {
   beforeAll(async () => {
     m = {
       db: await import("../db"),
@@ -98,7 +98,7 @@ d("🎮 締め切りダッシュ（DB）", () => {
     personal.length = 0;
     process.env.MINIGAME_ENABLED = "1";
     await sql(`DELETE FROM minigame_plays; DELETE FROM minigame_bests; DELETE FROM minigame_announces; DELETE FROM minigame_weekly;
-               DELETE FROM chat_messages WHERE body LIKE '%締め切りダッシュ%'`);
+               DELETE FROM chat_messages WHERE body LIKE '%散財ダッシュ%'`);
   });
 
   afterAll(async () => {
@@ -293,24 +293,24 @@ d("🎮 締め切りダッシュ（DB）", () => {
     await age(ti.play_id, 30);
     await m.mg.finishPlay(a, ti.play_id, { inputs: [], engine_version: m.sim.ENGINE_VERSION });
     await new Promise((r) => setTimeout(r, 50));
-    expect((await sql(`SELECT count(*) AS n FROM chat_messages WHERE body LIKE '%締め切りダッシュ%'`)).rows[0].n).toBe("0");
+    expect((await sql(`SELECT count(*) AS n FROM chat_messages WHERE body LIKE '%散財ダッシュ%'`)).rows[0].n).toBe("0");
 
     process.env.MINIGAME_ENABLED = "1";
     await playHonest(b, "daily", { lapse: 0, rngSeed: 2 }); // B が 1 位に（1 位交代）
     await new Promise((r) => setTimeout(r, 100));
-    const rows = (await sql(`SELECT id, body, kind FROM chat_messages WHERE body LIKE '%締め切りダッシュ%' ORDER BY id`)).rows;
+    const rows = (await sql(`SELECT id, body, kind FROM chat_messages WHERE body LIKE '%散財ダッシュ%' ORDER BY id`)).rows;
     expect(rows.length).toBe(1);
     expect(rows[0].kind).toBe("notice");
-    expect(rows[0].body).toContain("みけさんが「締め切りダッシュ」今日の 1 位に！");
+    expect(rows[0].body).toContain("みけさんが「散財ダッシュ」今日の 1 位に！");
 
     // 10 分以内の続きは同じ行を書き換える、10 分を過ぎたら新しい行、1 日 10 行まで
     const base = Date.now();
-    await m.mg.postAnnounce("🐶 テスト 締め切りダッシュ 1", base + 60_000);
-    let n = (await sql(`SELECT count(*) AS n FROM chat_messages WHERE body LIKE '%締め切りダッシュ%'`)).rows[0].n;
+    await m.mg.postAnnounce("🐶 テスト 散財ダッシュ 1", base + 60_000);
+    let n = (await sql(`SELECT count(*) AS n FROM chat_messages WHERE body LIKE '%散財ダッシュ%'`)).rows[0].n;
     expect(n).toBe("1");
-    expect((await sql(`SELECT body FROM chat_messages WHERE id = $1`, [rows[0].id])).rows[0].body).toBe("🐶 テスト 締め切りダッシュ 1");
-    for (let i = 0; i < 15; i++) await m.mg.postAnnounce(`🐶 テスト 締め切りダッシュ ${i + 2}`, base + (i + 1) * 11 * 60_000);
-    n = (await sql(`SELECT count(*) AS n FROM chat_messages WHERE body LIKE '%締め切りダッシュ%'`)).rows[0].n;
+    expect((await sql(`SELECT body FROM chat_messages WHERE id = $1`, [rows[0].id])).rows[0].body).toBe("🐶 テスト 散財ダッシュ 1");
+    for (let i = 0; i < 15; i++) await m.mg.postAnnounce(`🐶 テスト 散財ダッシュ ${i + 2}`, base + (i + 1) * 11 * 60_000);
+    n = (await sql(`SELECT count(*) AS n FROM chat_messages WHERE body LIKE '%散財ダッシュ%'`)).rows[0].n;
     expect(Number(n)).toBe(m.mg.ANNOUNCE_MAX_PER_DAY);
   });
 
@@ -334,7 +334,7 @@ d("🎮 締め切りダッシュ（DB）", () => {
     expect(id).toBeGreaterThan(0);
     const post = (await sql(`SELECT author_name, text FROM posts WHERE id = $1`, [id])).rows[0];
     expect(post.author_name).toBe("ビーグル");
-    expect(post.text).toContain("先週の「締め切りダッシュ」王者は みけさん！ 7,000 点");
+    expect(post.text).toContain("先週の「散財ダッシュ」王者は みけさん！ 7,000 点");
     expect(await m.mg.weeklyKingCheck(mon + 60_000)).toBeNull(); // 二重に投稿しない
     await sql(`DELETE FROM posts WHERE id = $1`, [id]);
   });

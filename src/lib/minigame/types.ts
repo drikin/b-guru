@@ -1,4 +1,4 @@
-/* 🎮 締め切りダッシュ — サーバ・Web・アプリの橋渡しで共通の形（snake_case。docs/minigame-spec.md が正）。 */
+/* 🎮 散財ダッシュ — サーバ・Web・アプリの橋渡しで共通の形（snake_case。docs/minigame-spec.md が正）。 */
 
 export type MinigameMode = "daily" | "free";
 export type MinigamePeriod = "today" | "week" | "all";

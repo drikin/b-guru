@@ -106,7 +106,7 @@ final class ChatStore {
     let jukebox: JukeboxStore
     /// ☗ 将棋 (docs/shogi-spec.md), when the server has it on for this member.
     let shogi: ShogiStore
-    /// 🎮 締め切りダッシュ (docs/minigame-spec.md), when the server has it on for this member.
+    /// 🎮 散財ダッシュ (docs/minigame-spec.md), when the server has it on for this member.
     let minigame: MinigameStore
 
     init(api: APIClient) {

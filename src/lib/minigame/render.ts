@@ -1,4 +1,4 @@
-/* 🎮 締め切りダッシュ — 描画（canvas）。sim.ts の状態を読むだけで、状態は変えない。
+/* 🎮 散財ダッシュ — 描画（canvas）。sim.ts の状態を読むだけで、状態は変えない。
  *
  * 論理解像度は高さ 144・幅 256〜384（枠の横幅に合わせる）。canvas はその大きさで描き、CSS で
  * 端末の画素の整数倍に拡大する（image-rendering: pixelated、devicePixelRatio は 2 まで）。

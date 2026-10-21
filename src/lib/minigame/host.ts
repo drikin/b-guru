@@ -1,4 +1,4 @@
-/* 🎮 締め切りダッシュ — ゲームの部品とサーバの間の窓口の形（Web は fetch、アプリは橋渡しで中継）。
+/* 🎮 散財ダッシュ — ゲームの部品とサーバの間の窓口の形（Web は fetch、アプリは橋渡しで中継）。
  * Web の main の束に game.ts（描画・ドット絵）を入れないため、ここだけ別にしてある。 */
 import type { Character } from "./sim";
 import type { FinishResultDto, LeaderboardDto, MinigameMode, MinigamePeriod, PlayTicket } from "./types";

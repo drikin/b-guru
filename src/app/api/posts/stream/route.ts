@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
   // ☗ 将棋: signed-in members with the feature (SHOGI_ENABLED). Offers to me come over the
   // personal bus (the same `event: shogi` shape, action "offer").
   const shogiOn = shogiEnabledFor(email);
-  // 🎮 締め切りダッシュ (MINIGAME_ENABLED): today's top 10 over the broadcast bus, my own best over the personal bus.
+  // 🎮 散財ダッシュ (MINIGAME_ENABLED): today's top 10 over the broadcast bus, my own best over the personal bus.
   const minigameOn = minigameEnabledFor(email);
   const shogiKey = email && (shogiOn || minigameOn) ? personalKey(email) : null;
   let onPersonal: ((ev: PersonalEvent) => void) | null = null;

@@ -582,7 +582,7 @@ struct RoomModeIcons: View {
                 }
             }
             if gameOn {
-                segment(selected: choice == .game, help: "ゲーム（締め切りダッシュ）") {
+                segment(selected: choice == .game, help: "ゲーム（散財ダッシュ）") {
                     Text("🎮")
                 } action: {
                     RoomModePicker.choose(.game, room: room, shogi: shogi, minigame: minigame)

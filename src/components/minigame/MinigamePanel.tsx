@@ -1,5 +1,5 @@
 "use client";
-/* 🎮 締め切りダッシュ（Web）。チャットの上の「テキスト｜ルーム｜☗」の隣に「🎮」、開くと上にゲーム・下にチャット。
+/* 🎮 散財ダッシュ（Web）。チャットの上の「テキスト｜ルーム｜☗」の隣に「🎮」、開くと上にゲーム・下にチャット。
  *
  *   GameToggles     ☗ と 🎮 のボタン（どちらも出していない人には何も出さない。ルームが無いときは 1 行に並べる）
  *   MinigameToggle  「🎮」（アイコンだけ。ラベル「ゲーム」。MINIGAME_ENABLED で出していない人には出さない）
@@ -35,7 +35,7 @@ export function MinigameToggle() {
   }, [s.status]);
   if (s.status !== "enabled") return null;
   return (
-    <Tooltip label="ゲーム（締め切りダッシュ）" openDelay={400}>
+    <Tooltip label="ゲーム（散財ダッシュ）" openDelay={400}>
       <ActionIcon
         size="md"
         variant={s.open ? "filled" : "light"}

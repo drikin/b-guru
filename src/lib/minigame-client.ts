@@ -1,5 +1,5 @@
 "use client";
-/* 🎮 締め切りダッシュの Web クライアントの状態（React の外。shogi-client.ts と同じ形で useSyncExternalStore から読む）。
+/* 🎮 散財ダッシュの Web クライアントの状態（React の外。shogi-client.ts と同じ形で useSyncExternalStore から読む）。
  *
  *   loadMinigame()        GET /api/minigame/me — 200 = 使える（情報）、404 = 出していない（「🎮」を出さない）
  *   applyMinigameEvent()  /api/posts/stream の `event: minigame`（今日の上位 10・自分のベスト）

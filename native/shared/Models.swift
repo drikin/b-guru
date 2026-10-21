@@ -135,7 +135,7 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var path: String?
         var site: String?
     }
-    /// 🎮 締め切りダッシュ (docs/minigame-spec.md). Absent or enabled:false → nothing of it shows.
+    /// 🎮 散財ダッシュ (docs/minigame-spec.md). Absent or enabled:false → nothing of it shows.
     struct MinigameFeatures: Decodable, Sendable, Equatable {
         var enabled: Bool?
         var path: String?

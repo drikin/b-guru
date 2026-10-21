@@ -1,4 +1,4 @@
-/* 🎮 締め切りダッシュ — ドット絵の窓口。
+/* 🎮 散財ダッシュ — ドット絵の窓口。
  * 正本はドット絵担当の sprites.generated.ts（scripts/minigame-sprites.py が作る。ここからは書き換えない）。
  * そこに無い名前・コマは、v2 で足した物なら sprites.extra.ts、それ以外は sprites.placeholder.ts の仮の絵で埋める。
  * どちらもパレットが違うので、1 枚ごとに自分のパレットを持たせて返す。 */

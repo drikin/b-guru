@@ -1,4 +1,4 @@
-/* 🎮 締め切りダッシュ — 1 人で遊ぶミニゲームのハイスコア競争（docs/minigame-spec.md が正）。
+/* 🎮 散財ダッシュ — 1 人で遊ぶミニゲームのハイスコア競争（docs/minigame-spec.md が正）。
  *
  *   1 回ごとに番号と種を発行（POST plays、1 回限り・30 分で期限切れ）→ 端末で遊ぶ → 操作の記録を送る（finish）
  *   → サーバが同じシミュレーション（minigame/sim.ts）を worker で再生してスコアを決める（申告値は照合だけ）。
@@ -442,8 +442,8 @@ function fmt(n: number): string {
 }
 
 export function announceText(kind: "leader" | "top5", name: string, score: number, distance: number, rank: number | null): string {
-  if (kind === "leader") return `🐶 ${name}さんが「締め切りダッシュ」今日の 1 位に！ ${fmt(score)} 点（${fmt(distance)}m）`;
-  return `🐶 ${name}さんが「締め切りダッシュ」今日の ${rank} 位に入ったわん（自己ベスト ${fmt(score)} 点）`;
+  if (kind === "leader") return `🐶 ${name}さんが「散財ダッシュ」今日の 1 位に！ ${fmt(score)} 点（${fmt(distance)}m）`;
+  return `🐶 ${name}さんが「散財ダッシュ」今日の ${rank} 位に入ったわん（自己ベスト ${fmt(score)} 点）`;
 }
 
 /** 今日のチャレンジの自己ベスト: 1 位交代か、上位 5 位なら、チャットに 1 行（公開後だけ）。 */
@@ -483,7 +483,7 @@ export function postAnnounce(text: string, now = Date.now()): Promise<void> {
 
 export function weeklyText(top: LeaderEntry[]): string {
   const [k, ...rest] = top;
-  const lines = [`🏆 先週の「締め切りダッシュ」王者は ${k.name}さん！ ${fmt(k.score)} 点（${fmt(k.distance)}m）`];
+  const lines = [`🏆 先週の「散財ダッシュ」王者は ${k.name}さん！ ${fmt(k.score)} 点（${fmt(k.distance)}m）`];
   for (const e of rest) lines.push(`${e.rank} 位 ${e.name}さん ${fmt(e.score)} 点`);
   lines.push("今週も締め切りから逃げ切るわん🐶（自由プレイの週間ランキング・月曜 0 時区切り）");
   return lines.join("\n");

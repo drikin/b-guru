@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-// 🎮 締め切りダッシュ (docs/minigame-spec.md). The game itself — title, run, results and the
+// 🎮 散財ダッシュ (docs/minigame-spec.md). The game itself — title, run, results and the
 // rankings — is the server's web page in a WKWebView (MinigameView.swift); this app is its
 // frame and relays what it asks for to /api/agent/minigame/* with the member's token (the
 // page never sees it). Main-actor only.

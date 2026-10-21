@@ -1,5 +1,5 @@
 /**
- * 🎮 締め切りダッシュの配信・アプリ向けの形・束（DB なし）:
+ * 🎮 散財ダッシュの配信・アプリ向けの形・束（DB なし）:
  *  - liveToStreamEvent: minigame は { action, period, key, top }。ネイティブ向けの既存イベントの形は変わらない
  *  - capabilities: features.minigame、無効なら enabled:false、stream.events は有効なときだけ増える
  *  - MINIGAME_ENABLED の読み方（featureEnabledFor。SHOGI_ENABLED も同じ読み方のまま）
@@ -156,10 +156,10 @@ describe("日付と順位表", () => {
     expect(boardFor("all", null)).toBe("v2:all");
   });
   it("チャットの 1 行・週の王者の文", () => {
-    expect(announceText("leader", "まつお", 2980, 2100, 1)).toBe("🐶 まつおさんが「締め切りダッシュ」今日の 1 位に！ 2,980 点（2,100m）");
+    expect(announceText("leader", "まつお", 2980, 2100, 1)).toBe("🐶 まつおさんが「散財ダッシュ」今日の 1 位に！ 2,980 点（2,100m）");
     expect(announceText("top5", "ねこ", 1500, 1200, 4)).toContain("今日の 4 位");
     const t = weeklyText([entry(1, "ぜんじ", 12000), entry(2, "まつお", 9000), entry(3, "ねこ", 100)]);
-    expect(t.split("\n")[0]).toBe("🏆 先週の「締め切りダッシュ」王者は ぜんじさん！ 12,000 点（11,900m）");
+    expect(t.split("\n")[0]).toBe("🏆 先週の「散財ダッシュ」王者は ぜんじさん！ 12,000 点（11,900m）");
     expect(t).toContain("2 位 まつおさん 9,000 点");
   });
 });

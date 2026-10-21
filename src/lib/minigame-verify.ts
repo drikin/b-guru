@@ -1,4 +1,4 @@
-/* 🎮 締め切りダッシュの検算: 操作の記録を同じシミュレーション（minigame/sim.ts）で再生してスコアを決める。
+/* 🎮 散財ダッシュの検算: 操作の記録を同じシミュレーション（minigame/sim.ts）で再生してスコアを決める。
  *
  * 別スレッド（worker_threads）に 1 つだけ作り、順番待ちで 1 件ずつ。1 件 2 秒まで（正直な 4 分の記録で数 ms）。
  * worker は scripts/build-minigame.mjs が束ねた文字列（minigame-sim-worker.generated.ts）から作る

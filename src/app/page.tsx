@@ -6977,7 +6977,7 @@ export default function Home() {
         /* ignore a malformed event */
       }
     });
-    // 🎮 締め切りダッシュ: today's top 10 changed, or my own best.
+    // 🎮 散財ダッシュ: today's top 10 changed, or my own best.
     es.addEventListener("minigame", (e: MessageEvent) => {
       try {
         applyMinigameEvent(JSON.parse(e.data));
@@ -11913,7 +11913,7 @@ export default function Home() {
                   }}
                 >
                   {/* Club room on: テキスト｜ルーム switch + map; off: the voice bar as before.
-                      ☗ 将棋 and 🎮 締め切りダッシュ (icons only) sit next to the switch (their own line
+                      ☗ 将棋 and 🎮 散財ダッシュ (icons only) sit next to the switch (their own line
                       without the room); open = the board / the game above the chat log (one at a time). */}
                   <RoomPanel fallback={<VoiceBar />} extra={(row) => <GameToggles row={row} />} />
                   <ShogiPanel />

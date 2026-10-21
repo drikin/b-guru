@@ -1,4 +1,4 @@
-/* /api/agent/minigame/* — 🎮 締め切りダッシュ（アプリ）。読む（GET）はスコープ read、操作（POST）は chat。
+/* /api/agent/minigame/* — 🎮 散財ダッシュ（アプリ）。読む（GET）はスコープ read、操作（POST）は chat。
  * 操作のレート制限はミニゲーム用の枠（agent-auth.ts の BUCKET_RATE_RULES.minigame）。チャットの枠は減らさない。
  * 道順と応答の形は lib/minigame-api.ts（Web の /api/minigame/* と同じ）。MINIGAME_ENABLED で出していない人には 404。 */
 import { NextRequest } from "next/server";

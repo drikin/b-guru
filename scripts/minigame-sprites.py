@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""締め切りダッシュ（B-guru ミニゲーム）のドット絵をコードで描き、
+"""散財ダッシュ（B-guru ミニゲーム）のドット絵をコードで描き、
 src/lib/minigame/sprites.generated.ts と確認用 PNG を書き出す。
 
     python3 -I scripts/minigame-sprites.py [--out DIR]

@@ -15,7 +15,7 @@ export type PersonalEvent =
   /** ☗ 将棋: an offer to this member ("offer"), or a change to a game only the two of
    *  them can see (a declined / cancelled / expired offer: "state"). */
   | { type: "shogi"; action: ShogiLiveAction; game: ShogiGameDto }
-  /** 🎮 締め切りダッシュ: 自分のベストが更新された（本人だけ）。 */
+  /** 🎮 散財ダッシュ: 自分のベストが更新された（本人だけ）。 */
   | {
       type: "minigame";
       action: "best";

@@ -102,7 +102,7 @@ export async function GET(req: NextRequest) {
   const onLive = (ev: LiveEvent) => {
     if (ev.type === "room" && !roomOn) return; // the club room: only for members who have it
     if (ev.type === "shogi" && !shogiOn) return; // ☗ 将棋: behind SHOGI_ENABLED
-    if (ev.type === "minigame" && !minigameOn) return; // 🎮 締め切りダッシュ: behind MINIGAME_ENABLED
+    if (ev.type === "minigame" && !minigameOn) return; // 🎮 散財ダッシュ: behind MINIGAME_ENABLED
     const out = liveToStreamEvent(ev, viewer);
     if (out) send(out);
   };

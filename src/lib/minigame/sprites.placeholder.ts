@@ -1,4 +1,4 @@
-/* 🎮 締め切りダッシュ — 仮のドット絵（sprites.generated.ts と同じ形）。
+/* 🎮 散財ダッシュ — 仮のドット絵（sprites.generated.ts と同じ形）。
  * ドット絵担当の生成ファイル（scripts/minigame-sprites.py → sprites.generated.ts）に無い名前・コマだけ、
  * sprites.ts がこちらで埋める。形は 1 文字 = 1 ドット、"." 透明、"0-9a-z" は PLACEHOLDER_PALETTE の索引。 */
 

@@ -160,7 +160,7 @@ export function liveToStreamEvent(ev: LiveEvent, viewer: ChatViewer): StreamEven
   if (ev.type === "shogi") {
     return { event: "shogi", data: { action: ev.action, game: ev.game } };
   }
-  // 🎮 締め切りダッシュ: 今日の上位 10 (the stream route drops it for members without the feature).
+  // 🎮 散財ダッシュ: 今日の上位 10 (the stream route drops it for members without the feature).
   if (ev.type === "minigame") {
     return { event: "minigame", data: { action: ev.action, period: ev.period, key: ev.key, top: ev.top } };
   }
@@ -250,7 +250,7 @@ export function agentCapabilities(
       // ☗ 将棋 (docs/shogi-spec.md), behind SHOGI_ENABLED. The board is a web page the app
       // shows in a WebView (bridge_version 1); the app keeps the token and the API to itself.
       shogi: shogiCapability(!!opts.shogi, scopes),
-      // 🎮 締め切りダッシュ (docs/minigame-spec.md), behind MINIGAME_ENABLED. The game is a web page the app
+      // 🎮 散財ダッシュ (docs/minigame-spec.md), behind MINIGAME_ENABLED. The game is a web page the app
       // shows in a WebView (bridge_version 1); the app keeps the token and relays the API.
       minigame: minigameCapability(!!opts.minigame, scopes),
       voice: {

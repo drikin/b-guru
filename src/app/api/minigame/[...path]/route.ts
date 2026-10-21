@@ -1,4 +1,4 @@
-/* /api/minigame/* — 🎮 締め切りダッシュ（Web、ログインのセッション）。道順と応答の形は lib/minigame-api.ts。
+/* /api/minigame/* — 🎮 散財ダッシュ（Web、ログインのセッション）。道順と応答の形は lib/minigame-api.ts。
  * MINIGAME_ENABLED で出していない人には 404（機能がないのと同じに見える）。 */
 import { NextRequest } from "next/server";
 import { getSessionEmail } from "@/lib/session";
