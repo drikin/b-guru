@@ -74,10 +74,6 @@ class ShogiStore(private val api: ApiClient, context: Context) {
 
     val liveCount: Int get() = games.count { it.isActive }
 
-    /** I am playing the game on the board (the board gets big, the chat folds to one line). */
-    val playingSelected: Boolean
-        get() = selected?.let { it.isActive && myColorIn(it) != null } == true
-
     // MARK: loading
 
     fun load() {
@@ -181,7 +177,12 @@ class ShogiStore(private val api: ApiClient, context: Context) {
             try {
                 val (status, r) = work()
                 r?.game?.let { applyGame("state", it) }
-                if (status >= 400) notice = r?.error ?: "うまくいきませんでした"
+                if (status == 409 && r?.code == "busy") {
+                    // One game at a time, site-wide: someone else's open / offered / active game is up.
+                    val g = r.game
+                    if (g != null) select(g.id)
+                    notice = if (g != null) r.error ?: "対局は 1 局ずつです" else "対局は 1 局ずつです。募集中の対局を受けるか、対局中なら観戦してください"
+                } else if (status >= 400) notice = r?.error ?: "うまくいきませんでした"
                 else onOk(status, r?.game)
             } catch (e: CancellationException) {
                 throw e
@@ -195,7 +196,13 @@ class ShogiStore(private val api: ApiClient, context: Context) {
         }
     }
 
+    /** The one game on the site (docs/shogi-spec.md: one at a time, first come first served):
+     *  open, offered or active. While there is one, nobody can start another. */
+    val liveGame: ShogiGame?
+        get() = ShogiLogic.liveGame(games)
+
     fun create(mode: String, inviteeUserId: String? = null, rematchOf: Long? = null, inviteeName: String? = null) {
+        if (demo && liveGame != null) { notice = "対局は 1 局ずつです（デモ）"; select(liveGame!!.id); return }
         if (demo) { demoCreate(mode, inviteeUserId, inviteeName, rematchOf); return }
         act({ api.shogiCreate(mode, inviteeUserId, rematchOf, basePath) }) { _, g ->
             notice = if (g?.status == "offered") "${g.invitee?.name ?: "相手"} さんに申し込みました" else "募集しました（15 分）"
@@ -264,7 +271,8 @@ class ShogiStore(private val api: ApiClient, context: Context) {
 
     // MARK: demo (`--ez demo true`): nothing leaves the device
 
-    fun loadDemo(meId: String, meName: String) {
+    /** `scenario` (`--es demo_shogi_game`): play (me vs mazzo, default) / watch / offer / open / none. */
+    fun loadDemo(meId: String, meName: String, scenario: String = "play") {
         demo = true
         enabled = true
         canPlay = true
@@ -277,7 +285,7 @@ class ShogiStore(private val api: ApiClient, context: Context) {
         val watched = listOf("7g7f", "3c3d", "8h2b+", "3a2b", "B*4e")
         fun sfenAfter(moves: List<String>) = moves.fold(ShogiLogic.INITIAL_SFEN) { s, m -> ShogiLogic.applyUsi(s, m) ?: s }
         val labels = mapOf("8c8d" to "△8四歩", "B*4e" to "▲4五角打")
-        games = listOf(
+        val all = listOf(
             ShogiGame(12, "active", "blitz", creator = p("mazzo", "mazzo"), black = p(meId, meName), white = p("mazzo", "mazzo"),
                 sfen = sfenAfter(mine), ply = 4, turn = "black", lastMove = ShogiLastMove("8c8d", labels["8c8d"]!!),
                 clocks = ShogiClocks(571_000, 583_000, 30_000, 600_000), turnStartedAt = iso(4_000), serverNow = now.toString(),
@@ -294,7 +302,13 @@ class ShogiStore(private val api: ApiClient, context: Context) {
                 sfen = sfenAfter(watched), ply = 87, result = "white", endReason = "resign", serverNow = now.toString(),
                 createdAt = iso(7_200_000), endedAt = iso(5_000_000)),
         )
+        // One live game at a time (site-wide): the scenario picks which.
+        val live = when (scenario) { "watch" -> 13L; "offer" -> 14L; "open" -> 15L; "none" -> -1L; else -> 12L }
+        games = all.filter { it.isEnded || it.id == live }
     }
+
+    /** The game the demo's chat card shows (the live one when it is in play). */
+    val demoCardGame: Long? get() = games.firstOrNull { it.isActive }?.id
 
     private fun demoMove(id: Long, usi: String, label: String) {
         val g = games.firstOrNull { it.id == id } ?: return

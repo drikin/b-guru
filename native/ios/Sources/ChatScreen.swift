@@ -21,21 +21,27 @@ struct ChatScreen: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if store.room.enabled {
+                if store.room.enabled || store.shogi.enabled {
                     // The club room: テキスト｜ルーム (the ルーム tab shows who is in the voice) replaces the voice bar.
-                    // Centred under the timeline｜chat switch.
-                    RoomModePicker(room: store.room)
+                    // ☗ 将棋 is a third choice (テキスト｜☗ 将棋 without the room). Centred under the
+                    // timeline｜chat switch.
+                    RoomModePicker(room: store.room, shogi: store.shogi)
                         .frame(maxWidth: .infinity)
                         .padding(.horizontal, 12).padding(.vertical, 6)
-                    if store.room.mode == .room {
+                    if store.shogi.enabled && store.shogi.open {
+                        ShogiArea(store: store, composer: composer)
+                        Divider()
+                    } else if store.room.enabled && store.room.mode == .room {
                         RoomView(room: store.room)
                             .padding(.horizontal, 8)
                             .containerRelativeFrame(.vertical) { h, _ in h * 0.5 }
                     }
+                    if !store.room.enabled { VoiceBar(voice: store.voice) }
                 } else {
                     VoiceBar(voice: store.voice)
                 }
                 ChatMessageList(store: store, composer: composer, viewing: $viewing)
+                    .environment(\.shogi, store.shogi.enabled ? store.shogi : nil)
                 Divider()
                 ChatComposerBar(store: store, composer: composer)
             }
@@ -318,5 +324,22 @@ private struct ChatComposerBar: View {
     private func pickMention(_ m: MentionMember) {
         composer.draft = Mention.complete(composer.draft, with: m.name)
         composer.focused = true
+    }
+}
+
+/// ☗ 将棋 above the chat. While typing (the keyboard takes half the screen) the board folds to
+/// one line, so the message box and the latest messages stay in view.
+private struct ShogiArea: View {
+    let store: ChatStore
+    let composer: ChatComposerModel
+
+    var body: some View {
+        if composer.focused {
+            ShogiFoldedBar(shogi: store.shogi) { composer.focused = false }
+        } else {
+            ShogiScreen(shogi: store.shogi, members: store.members)
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
+        }
     }
 }

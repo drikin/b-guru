@@ -50,6 +50,10 @@ final class Session {
             if ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil {
                 s.jukebox.debugLoadDemo(base: ProcessInfo.processInfo.environment["BGURU_DEMO_AUDIO"])
             }
+            // BGURU_DEMO_SHOGI_OPEN=lobby | <game id>: open ☗ 将棋 at once (101 = my game, 102 = to watch).
+            if let open = ProcessInfo.processInfo.environment["BGURU_DEMO_SHOGI_OPEN"] {
+                if let id = Int(open) { s.shogi.openGame(id) } else { s.shogi.show() }
+            }
             store = s
             let t = TimelineStore(api: APIClient(token: "demo"))
             t.debugLoadDemo()

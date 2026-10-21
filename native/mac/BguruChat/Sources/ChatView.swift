@@ -29,7 +29,12 @@ struct ChatView: View {
         VStack(spacing: 0) {
             ChatHeader(store: store, pin: pin, tabPicker: tabPicker, onSignOut: onSignOut)
             Divider()
-            if store.room.enabled {
+            if store.shogi.enabled && store.shogi.open {
+                // ☗ 将棋 (its choice sits in the header with テキスト｜ルーム): the board above the chat.
+                ShogiScreen(shogi: store.shogi, members: store.members)
+                Divider()
+                if !store.room.enabled { VoiceBar(voice: store.voice) }
+            } else if store.room.enabled {
                 // The club room (its テキスト｜ルーム sits in the header) replaces the voice bar.
                 if store.room.mode == .room {
                     RoomView(room: store.room)
@@ -40,10 +45,14 @@ struct ChatView: View {
                 VoiceBar(voice: store.voice)
             }
             ChatMessageList(store: store, composer: composer, viewing: $viewing)
+                .environment(\.shogi, store.shogi.enabled ? store.shogi : nil)
             Divider()
             ChatComposerBar(store: store, pin: pin, composer: composer, onClose: onClose)
         }
         .background(.regularMaterial)
+        // ☗ 将棋 takes about half the chat (at least ShogiScreen.minHeight): a short panel grows
+        // once, so the chat below stays readable.
+        .onChange(of: store.shogi.open) { _, open in if open { pin.wantsHeight?(820) } }
         .imageViewer($viewing)
         #if DEBUG
         // -demoViewer: open the picture viewer at once (UI checks).
@@ -81,7 +90,7 @@ private struct ChatHeader: View {
         HStack(spacing: 8) {
             if let tabPicker {
                 tabPicker
-                if store.room.enabled { RoomModeIcons(room: store.room) }
+                if store.room.enabled || store.shogi.enabled { RoomModeIcons(room: store.room, shogi: store.shogi) }
             } else {
                 Image(systemName: store.unreadCount > 0 ? "dog.fill" : "dog")
                     .foregroundStyle(Color.accentGreen)

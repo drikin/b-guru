@@ -475,8 +475,13 @@ private struct DPad: View {
 
 /// テキスト｜ルーム inside the chat. The ルーム tab shows how many are in the room's
 /// voice (🟢 while someone talks) — the text view's way in, no separate banner.
+/// With ☗ 将棋 on, a third choice (or テキスト｜☗ 将棋 when the room is not on for this
+/// member — the two are independent).
 struct RoomModePicker: View {
     let room: RoomStore
+    var shogi: ShogiStore? = nil
+
+    enum Choice: Hashable { case text, room, shogi }
 
     private var roomLabel: String {
         let n = room.inVoice.count
@@ -485,18 +490,40 @@ struct RoomModePicker: View {
         return "ルーム 🎧\(n)" + (talking ? " 🟢" : "")
     }
 
+    private var shogiOn: Bool { shogi?.enabled == true }
+
     var body: some View {
-        Picker("表示", selection: Binding(
-            get: { room.mode == .room },
-            set: { on in Task { if on { await room.enter() } else { await room.toText() } } }
+        Picker("表示", selection: Binding<Choice>(
+            get: { RoomModePicker.current(room: room, shogi: shogi) },
+            set: { RoomModePicker.choose($0, room: room, shogi: shogi) }
         )) {
-            Text("テキスト").tag(false)
-            Text(roomLabel).tag(true)
+            Text("テキスト").tag(Choice.text)
+            if room.enabled { Text(roomLabel).tag(Choice.room) }
+            if shogiOn { Text(shogi?.attention ?? 0 > 0 ? "☗ 将棋 ●" : "☗ 将棋").tag(Choice.shogi) }
         }
         .pickerStyle(.segmented)
         .labelsHidden()
         .controlSize(.small)
         .fixedSize()
+        .id("\(room.enabled)|\(shogiOn)") // a new control for a different number of segments
+    }
+
+    static func current(room: RoomStore, shogi: ShogiStore?) -> Choice {
+        if shogi?.enabled == true, shogi?.open == true { return .shogi }
+        return room.mode == .room ? .room : .text
+    }
+
+    static func choose(_ c: Choice, room: RoomStore, shogi: ShogiStore?) {
+        switch c {
+        case .text:
+            shogi?.close()
+            Task { await room.toText() }
+        case .room:
+            shogi?.close()
+            Task { await room.enter() }
+        case .shogi:
+            shogi?.show() // leaves the room first (ChatStore sets that up)
+        }
     }
 }
 
@@ -506,32 +533,54 @@ struct RoomModePicker: View {
 /// system segmented control drops symbols embedded in text.
 struct RoomModeIcons: View {
     let room: RoomStore
+    /// ☗ 将棋: a third segment (or テキスト｜☗ when the room is off for this member).
+    var shogi: ShogiStore? = nil
 
     var body: some View {
         let n = room.inVoice.count
         let talking = room.voice.members.contains { $0.speaking }
-        let inRoom = room.mode == .room
+        let choice = RoomModePicker.current(room: room, shogi: shogi)
+        let shogiOn = shogi?.enabled == true
         HStack(spacing: 2) {
-            segment(selected: !inRoom, help: "テキスト") {
+            segment(selected: choice == .text, help: "テキスト") {
                 Image(systemName: "list.bullet") // not a bubble: 💬 is the chat tab itself
             } action: {
-                Task { await room.toText() }
+                RoomModePicker.choose(.text, room: room, shogi: shogi)
             }
-            segment(selected: inRoom, help: n > 0 ? "ルーム（部室のボイスに \(n) 人）" : "ルーム（部室）") {
-                HStack(spacing: 3) {
-                    Image(systemName: "house")
-                    if n > 0 { Text("\(n)").monospacedDigit() }
-                    if talking { Circle().fill(Color.accentGreen).frame(width: 5, height: 5) }
+            if room.enabled {
+                segment(selected: choice == .room, help: n > 0 ? "ルーム（部室のボイスに \(n) 人）" : "ルーム（部室）") {
+                    HStack(spacing: 3) {
+                        Image(systemName: "house")
+                        if n > 0 { Text("\(n)").monospacedDigit() }
+                        if talking { Circle().fill(Color.accentGreen).frame(width: 5, height: 5) }
+                    }
+                } action: {
+                    RoomModePicker.choose(.room, room: room, shogi: shogi)
                 }
-            } action: {
-                Task { await room.enter() }
+            }
+            if shogiOn, let shogi {
+                let attention = shogi.attention
+                segment(selected: choice == .shogi, help: attention > 0 ? "☗ 将棋（申し込みかあなたの番が \(attention) 件）" : "☗ 将棋") {
+                    HStack(spacing: 3) {
+                        Text("☗")
+                        if attention > 0 { Circle().fill(Color.red).frame(width: 5, height: 5) }
+                    }
+                } action: {
+                    RoomModePicker.choose(.shogi, room: room, shogi: shogi)
+                }
             }
         }
         .padding(2)
         .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.08)))
         .fixedSize()
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(n > 0 ? "表示：テキストかルーム。部室のボイスに \(n) 人" : "表示：テキストかルーム")
+        .accessibilityLabel(accessibilityText(n: n, shogiOn: shogiOn))
+    }
+
+    private func accessibilityText(n: Int, shogiOn: Bool) -> String {
+        let choices = ["テキスト"] + (room.enabled ? ["ルーム"] : []) + (shogiOn ? ["将棋"] : [])
+        let head = "表示：" + choices.joined(separator: "か")
+        return room.enabled && n > 0 ? "\(head)。部室のボイスに \(n) 人" : head
     }
 
     private func segment<L: View>(selected: Bool, help: String, @ViewBuilder label: () -> L, action: @escaping () -> Void) -> some View {

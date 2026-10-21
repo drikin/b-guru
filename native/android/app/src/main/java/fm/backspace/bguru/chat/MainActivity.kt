@@ -16,7 +16,9 @@ class MainActivity : ComponentActivity() {
         if (BuildConfig.DEMO && intent?.getBooleanExtra("demo", false) == true) {
             // `--ez demo_room false` / `--ez demo_shogi false`: the demo without the room / ☗ 将棋.
             session.startDemo(intent.getStringExtra("demo_images"), intent.getStringExtra("demo_jukebox"),
-                withRoom = intent.getBooleanExtra("demo_room", true), withShogi = intent.getBooleanExtra("demo_shogi", true))
+                withRoom = intent.getBooleanExtra("demo_room", true), withShogi = intent.getBooleanExtra("demo_shogi", true),
+                // `--es demo_shogi_game play|watch|offer|open|none`: which one game is on (one at a time, site-wide).
+                shogiScenario = intent.getStringExtra("demo_shogi_game") ?: "play")
             // Debug: `--es voice_url ws://10.0.2.2:7880 --es voice_token <jwt>` joins a local LiveKit dev server.
             val url = intent.getStringExtra("voice_url")
             val token = intent.getStringExtra("voice_token")

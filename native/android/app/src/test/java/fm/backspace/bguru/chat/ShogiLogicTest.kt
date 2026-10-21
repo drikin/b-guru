@@ -164,6 +164,9 @@ class ShogiLogicTest {
         assertEquals(true to false, ShogiLogic.settingsOf(m))
         assertEquals("dark", (m["theme"] as JsonPrimitive).content)
         assertFalse(m.containsKey("bottom_label"))
+        // max_height: the board fits itself into the panel (a number of CSS px).
+        assertEquals("300", ShogiLogic.withMaxHeight(m, 300)["max_height"].toString())
+        assertFalse(ShogiLogic.withMaxHeight(m, null).containsKey("max_height"))
         // The script hands it over as one JSON string literal.
         val js = ShogiLogic.receiveScript(ShogiLogic.labelsMessage("a\"</script>", "b"))
         assertTrue(js.startsWith("window.shogiBoard&&window.shogiBoard.receive(\""))
@@ -219,5 +222,16 @@ class ShogiLogicTest {
         assertEquals("lnsgkg1nl/1r5s1/pppppp1pp/6p2/5B3/2P6/PP1PPPPPP/7R1/LNSGKGSNL w b 6", t)
         assertNull(ShogiLogic.applyUsi(t, "R*5e")) // nothing in hand
         assertNull(ShogiLogic.applyUsi("garbage", "7g7f"))
+    }
+
+    @Test fun oneLiveGameAtATime() {
+        val ended = ShogiGame(1, "ended")
+        assertNull(ShogiLogic.liveGame(listOf(ended, ShogiGame(2, "closed"))))
+        assertEquals(3L, ShogiLogic.liveGame(listOf(ended, ShogiGame(3, "open")))?.id)
+        assertEquals(4L, ShogiLogic.liveGame(listOf(ShogiGame(3, "offered"), ShogiGame(4, "active")))?.id)
+        // 409 busy carries the game that is up
+        val r = ApiJson.decodeFromString<ShogiReply>("""{"error":"対局は 1 局ずつです","code":"busy","game":{"id":7,"status":"open"}}""")
+        assertEquals("busy", r.code)
+        assertEquals(7L, r.game?.id)
     }
 }

@@ -109,6 +109,10 @@ object ShogiLogic {
 
     // MARK: who / texts
 
+    /** The one game on the site (one at a time, first come first served): active first, else open / offered. */
+    fun liveGame(games: List<ShogiGame>): ShogiGame? =
+        games.firstOrNull { it.status == "active" } ?: games.firstOrNull { it.status == "open" || it.status == "offered" }
+
     fun myColor(g: ShogiGame, me: String?): String? = when {
         me.isNullOrEmpty() -> null
         // A game against oneself (test): I play the side to move, every move.
@@ -208,6 +212,10 @@ object ShogiLogic {
         if (bottomLabel != null) put("bottom_label", bottomLabel)
         put("show_close", false)
     }
+
+    /** The board fits itself into this many CSS px (bridge `max_height`). */
+    fun withMaxHeight(state: JsonObject, maxHeight: Int?): JsonObject =
+        if (maxHeight == null || maxHeight <= 0) state else JsonObject(state + ("max_height" to JsonPrimitive(maxHeight)))
 
     fun labelsMessage(top: String, bottom: String): JsonObject = buildJsonObject {
         put("type", "labels"); put("top_label", top); put("bottom_label", bottom)

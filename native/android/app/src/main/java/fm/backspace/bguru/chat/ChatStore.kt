@@ -111,7 +111,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     /** Debug only: sample chat, sends "succeed" locally (no network). */
     var demo = false
 
-    fun loadDemo(scale: Boolean = false, images: String? = null, withRoom: Boolean = true, withShogi: Boolean = true) {
+    fun loadDemo(scale: Boolean = false, images: String? = null, withRoom: Boolean = true, withShogi: Boolean = true, shogiScenario: String = "play") {
         demo = true
         fun msg(id: Long, who: String, body: String, mine: Boolean = false, reactions: List<Reaction>? = null) =
             ChatRow(ChatMessage(id, authorId = if (mine) "me" else who, authorName = if (mine) "ドリキン" else who, body = body,
@@ -141,9 +141,10 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             shogi = if (!withShogi) null else Capabilities.ShogiFeatures(enabled = true, path = "/api/agent/shogi", boardUrl = "/shogi-board/index.html", bridgeVersion = 1, play = true),
         ))
         // ☗ 将棋: sample games (one in progress against me, one to watch) and the chat's game card.
-        if (withShogi) shogi.loadDemo("me", "ドリキン")
-        if (withShogi) rows = rows + ChatRow(ChatMessage(6000, authorName = "B-guru", body = "☗takuto vs ☖coban 対局中 → 将棋で観戦",
-            createdAt = "2026-10-16T09:30:00Z", kind = "shogi", shogiGameId = 13))
+        if (withShogi) shogi.loadDemo("me", "ドリキン", shogiScenario)
+        val card = if (withShogi) shogi.demoCardGame?.let { id -> shogi.games.first { it.id == id } } else null
+        if (card != null) rows = rows + ChatRow(ChatMessage(6000, authorName = "B-guru", body = "${ShogiLogic.vsText(card)} 対局中 → 将棋で観戦",
+            createdAt = "2026-10-16T09:30:00Z", kind = "shogi", shogiGameId = card.id))
         // A local fake room: its people talk in the chat too (bubbles come from these rows).
         if (withRoom) room.loadDemo { id, name, text ->
             val next = (rows.maxOfOrNull { it.message.id } ?: 0L) + 1

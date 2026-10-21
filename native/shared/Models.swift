@@ -20,8 +20,12 @@ struct ChatMessage: Codable, Equatable, Sendable {
     var images: [String]? = nil
     /// "notice": a quiet one-line note from B-guru (who came into / left the room).
     var kind: String? = nil
+    /// kind "shogi": the ☗ 将棋 game this card is about (docs/shogi-spec.md「チャットの対局中カード」).
+    var shogiGameId: Int? = nil
 
     var isNotice: Bool { kind == "notice" }
+    /// The game card: drawn as a small board when this app has ☗ 将棋 on (else the body as text).
+    var isShogiCard: Bool { kind == "shogi" && shogiGameId != nil }
 
     /// The server gives a photo-only message the body "📷 写真" (for apps that predate
     /// photos and for notifications); this app shows the photos instead.
@@ -131,6 +135,22 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var path: String?
         var site: String?
     }
+    /// ☗ 将棋 (docs/shogi-spec.md). Absent or enabled:false → nothing of it shows.
+    struct ShogiFeatures: Decodable, Sendable, Equatable {
+        struct TimeControl: Decodable, Sendable, Equatable {
+            var mode: String
+            var label: String?
+            var initialMs: Int?
+            var byoyomiMs: Int?
+        }
+        var enabled: Bool?
+        var path: String?
+        var boardUrl: String?
+        var bridgeVersion: Int?
+        /// This token may play (has the "chat" scope).
+        var play: Bool?
+        var timeControls: [TimeControl]?
+    }
     struct Features: Decodable, Sendable, Equatable {
         var chat: ChatFeatures?
         var posts: PostFeatures?
@@ -138,6 +158,7 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var room: RoomFeatures?
         var jukebox: JukeboxFeatures?
         var neta: NetaFeatures?
+        var shogi: ShogiFeatures?
     }
     var apiVersion: Int
     var scopes: [String]?
@@ -170,6 +191,11 @@ struct Capabilities: Decodable, Sendable, Equatable {
         return "/api/agent/jukebox"
     }
     var netaEnabled: Bool { features?.neta?.enabled ?? false }
+    /// ☗ 将棋 is on for this member, and this app speaks the board's bridge (version 1).
+    var shogiEnabled: Bool {
+        guard features?.shogi?.enabled == true else { return false }
+        return (features?.shogi?.bridgeVersion ?? 1) == 1
+    }
     var netaPath: String {
         if let p = features?.neta?.path, p.hasPrefix("/api/") { return p }
         return "/api/agent/neta"

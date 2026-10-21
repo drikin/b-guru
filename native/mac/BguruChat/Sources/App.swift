@@ -128,6 +128,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 if CommandLine.arguments.contains("-demoJukeboxPlay"), let e = store.jukebox.todayEpisode {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { store.jukebox.play(e) }
                 }
+                // -demoShogi: the ☗ 将棋 lobby; -demoShogiGame: my game (my move); -demoShogiWatch: a game to watch.
+                if CommandLine.arguments.contains("-demoShogi") { store.shogi.show() }
+                if CommandLine.arguments.contains("-demoShogiGame") { store.shogi.openGame(101) }
+                if CommandLine.arguments.contains("-demoShogiWatch") { store.shogi.openGame(102) }
                 if CommandLine.arguments.contains("-demoTimelineTab") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.panel?.pin.tab = .timeline }
                 }
@@ -186,6 +190,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         store.onNewMessage = { [weak self] m in self?.notifyNewMessage(m) }
         store.onPostCreated = { [weak self] in self?.timelinePostCreated() }
         store.onBecameVisible = { [weak self] in self?.clearBundledNotification() }
+        store.shogi.onOffer = { [weak self] g in self?.notifyShogi(g, offer: true) }
+        store.shogi.onMyTurn = { [weak self] g in self?.notifyShogi(g, offer: false) }
         self.store = store
         store.start()
         Updater.shared.start(token: token)
@@ -353,6 +359,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "chat-\(m.id)", content: content, trigger: nil))
     }
 
+    /// ☗ 将棋: an offer to me, or my move in a slow game — like a mention (always; no sound in
+    /// the quiet hours). Not while that game is on screen.
+    private func notifyShogi(_ g: ShogiGame, offer: Bool) {
+        if let store, store.isVisible, panel?.pin.tab == .chat, store.shogi.open, store.shogi.selectedId == g.id { return }
+        let content = UNMutableNotificationContent()
+        content.title = "☗ 将棋"
+        if offer {
+            content.body = "\(g.creator?.name ?? "だれか") さんから対局の申し込みが届きました（\(g.modeLabel)\(g.rematchOf != nil ? "・再戦" : "")）"
+        } else {
+            let opponent = store?.shogi.myColor(in: g).flatMap { g.player($0.other)?.name } ?? "相手"
+            content.body = "\(opponent) さんが\(g.lastMove.map { "\($0.label) と" } ?? "")指しました。あなたの番です"
+        }
+        content.threadIdentifier = "shogi-\(g.id)"
+        content.userInfo = ["shogiGameId": g.id]
+        if !settings.isQuietNow() { content.sound = .default }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "shogi-\(g.id)", content: content, trigger: nil))
+    }
+
     /// 「タイムラインの新しい投稿も通知する」: the stream says a post or comment was made;
     /// a moment later the timeline is read again and posts newer than any seen before
     /// (not mine, still unread) become one notification each (at most 3 at a time).
@@ -467,6 +491,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                                             didReceive response: UNNotificationResponse) async {
         let id = response.notification.request.content.userInfo["messageId"] as? Int
         let postId = response.notification.request.content.userInfo["postId"] as? Int
+        let shogiGameId = response.notification.request.content.userInfo["shogiGameId"] as? Int
         let action = response.actionIdentifier
         let text = (response as? UNTextInputNotificationResponse)?.userText
         await MainActor.run {
@@ -478,7 +503,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             default:
                 // Click: open the chat at that message, or the post's thread in the timeline.
                 self.showPanel()
-                if let id { self.store?.reveal(id) }
+                if let shogiGameId {
+                    self.panel?.pin.tab = .chat
+                    self.store?.shogi.openGame(shogiGameId)
+                } else if let id { self.store?.reveal(id) }
                 else if let postId { self.timeline?.openThread = postId }
             }
         }

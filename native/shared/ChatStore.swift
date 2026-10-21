@@ -104,11 +104,21 @@ final class ChatStore {
     /// Past backspace.fm episodes and their player (lives as long as the sign-in, so it
     /// plays on with the panel closed / the phone locked).
     let jukebox: JukeboxStore
+    /// ☗ 将棋 (docs/shogi-spec.md), when the server has it on for this member.
+    let shogi: ShogiStore
 
     init(api: APIClient) {
         self.api = api
         self.voice = VoiceStore(api: api)
-        self.room = RoomStore(api: api, voice: voice)
+        let room = RoomStore(api: api, voice: voice)
+        self.room = room
+        let shogi = ShogiStore(api: api)
+        self.shogi = shogi
+        // One thing above the chat: opening ☗ 将棋 leaves the club room (テキスト｜ルーム｜☗ 将棋).
+        shogi.willOpen = { [weak room] in
+            guard let room, room.mode == .room else { return }
+            Task { await room.toText() }
+        }
         let jukebox = JukeboxStore(api: api)
         self.jukebox = jukebox
         voice.onWillJoin = { [weak jukebox] in jukebox?.pauseForVoice() }
@@ -147,6 +157,7 @@ final class ChatStore {
             capabilities = try await api.capabilities()
             voice.configure(with: capabilities)
             room.configure(enabled: capabilities?.roomEnabled ?? false)
+            shogi.configure(capabilities?.features?.shogi, enabled: capabilities?.shogiEnabled ?? false)
             // Voice is on for me but this token predates the "voice" scope: send the
             // member back to sign in once (a new sign-in gets the scope). Only once per
             // install, so a server that still withholds it cannot loop us.
@@ -199,6 +210,7 @@ final class ChatStore {
             connection = .live
             if voice.enabled { Task { await voice.loadState() } } // resync after a reconnect
             if room.enabled { Task { await room.load() } }
+            if shogi.enabled { Task { await shogi.reload() } } // moves missed while away
             await reload()
         case "chat":
             struct ChatEvent: Decodable { var action: String; var message: ChatMessage?; var id: Int?; var reactions: [Reaction]? }
@@ -231,6 +243,8 @@ final class ChatStore {
             if let p = try? dec.decode(P.self, from: ev.data) { onlineCount = p.userIds.count }
         case "room":
             room.apply(ev.data)
+        case "shogi":
+            shogi.apply(ev.data)
         case "voice":
             if let v = try? dec.decode(VoiceRoomInfo.self, from: ev.data) { voice.apply(v) }
         case "revoked":
@@ -476,13 +490,31 @@ final class ChatStore {
                                      isAuthor: false, mentionsMe: false, clientId: nil, reactions: nil))
             }
         }
+        // ☗ 将棋 (on unless -demoShogiOff / BGURU_DEMO_SHOGI=0; =false sends enabled:false):
+        // the games' cards in the chat, and sample games (no network).
+        let env = ProcessInfo.processInfo.environment
+        let shogiSetting = ProcessInfo.processInfo.arguments.contains("-demoShogiOff") ? "0"
+            : (ProcessInfo.processInfo.arguments.contains("-demoShogiFalse") ? "false" : (env["BGURU_DEMO_SHOGI"] ?? "1"))
+        if shogiSetting == "1" {
+            var card = msg(7, "ビーグル", "☗takuto vs ☖coban（🐢ゆっくり）☗takuto の勝ち（投了）・3 手")
+            card.message.kind = "shogi"
+            card.message.shogiGameId = 102
+            var mine = msg(8, "ビーグル", "☗ドリキン vs ☖mazzo 対局中（⚡速い）→ ☗ 将棋で観戦")
+            mine.message.kind = "shogi"
+            mine.message.shogiGameId = 101
+            rows += [card, mine, msg(9, "mazzo", "よろしくお願いします！")]
+            shogi.debugLoadDemo()
+        }
         members = ["ビーグル", "mazzo", "NORIO TAKAHASHI", "takuto", "coban", "ポンコツ散財王ドリキン", "りとる"]
             .map { MentionMember(userId: $0, name: $0, avatar: nil) }
         latestId = rows.map(\.message.id).max() ?? 0
         hasLoaded = true
         connection = .live
         onlineCount = 12
-        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5},"jukebox":{"enabled":\#(ProcessInfo.processInfo.arguments.contains("-demoJukebox") || ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil),"path":"/api/agent/jukebox"}}}"#
+        let shogiOn = shogiSetting == "1"
+        let shogiCaps = shogiSetting == "0" ? ""
+            : #","shogi":{"enabled":\#(shogiOn),"path":"/api/agent/shogi","board_url":"/shogi-board/index.html","bridge_version":1,"play":\#(shogiOn)}"#
+        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5},"jukebox":{"enabled":\#(ProcessInfo.processInfo.arguments.contains("-demoJukebox") || ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil),"path":"/api/agent/jukebox"}\#(shogiCaps)}}"#
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
         capabilities = try? dec.decode(Capabilities.self, from: Data(caps.utf8))

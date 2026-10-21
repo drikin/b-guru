@@ -26,7 +26,8 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
             kind: info["kind"] as? String ?? "",
             messageId: (info["message_id"] as? NSNumber)?.intValue,
             postId: (info["post_id"] as? NSNumber)?.intValue,
-            replyId: (info["reply_id"] as? NSNumber)?.intValue
+            replyId: (info["reply_id"] as? NSNumber)?.intValue,
+            gameId: (info["game_id"] as? NSNumber)?.intValue
         )
         Task {
             if let text = await Self.lookup(ask, token: token) { self.apply(text) }
@@ -69,6 +70,7 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
         var messageId: Int?
         var postId: Int?
         var replyId: Int?
+        var gameId: Int?
     }
 
     /// The real (title, body) for a push, or nil to keep the generic text.
@@ -92,6 +94,24 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
                   let post = await get("/api/agent/posts/\(postId)", token: token)?["post"] as? [String: Any],
                   let text = post["text"] as? String else { return nil }
             return ("\((post["author_name"] as? String) ?? "誰か") が投稿しました", clip(text))
+        case "shogi_offer", "shogi_turn":
+            // ☗ 将棋: who asked (and how fast), or who just moved and what. The generic line
+            // （「対局の申し込みが届きました」「あなたの番です」）stays when this cannot be read.
+            guard let id = q.gameId,
+                  let g = await get("/api/agent/shogi/games/\(id)", token: token)?["game"] as? [String: Any] else { return nil }
+            let mode = (g["mode"] as? String) == "blitz" ? "⚡速い" : "🐢ゆっくり"
+            func name(_ key: String) -> String? { (g[key] as? [String: Any])?["name"] as? String }
+            if q.kind == "shogi_offer" {
+                guard let who = name("creator") else { return nil }
+                let rematch = g["rematch_of"] is NSNumber ? "・再戦" : ""
+                return ("☗ 将棋", "\(who) さんから対局の申し込みが届きました（\(mode)\(rematch)）")
+            }
+            let mine = (g["my_color"] as? String) ?? ""
+            let opponent = mine == "black" ? name("white") : (mine == "white" ? name("black") : nil)
+            let label = (g["last_move"] as? [String: Any])?["label"] as? String
+            guard let opponent else { return nil }
+            let move = label.map { "\($0) と指しました。" } ?? "指しました。"
+            return ("☗ 将棋（\(opponent) さんとの対局）", "\(opponent) さんが\(move)あなたの番です")
         default:
             return nil
         }

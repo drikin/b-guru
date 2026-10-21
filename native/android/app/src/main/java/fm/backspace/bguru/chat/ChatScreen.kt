@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -379,32 +380,18 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             val room = store.room
             val shogi = store.shogi
             if (shogi.enabled && shogi.open && !(room.enabled && room.roomView)) {
-                // ☗ 将棋: the panel above, the chat below. Playing: the board gets the room and the
-                // chat folds to one line (tap to open it again).
-                var chatOpen by remember(shogi.selectedId) { mutableStateOf(false) }
-                val playing = shogi.playingSelected
+                // ☗ 将棋: the panel above, the chat below — split like the room, watching or playing
+                // (drikin 2026-10-21: the chat must stay in sight). Same share as the web: clamp(260, 52 %, 640).
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                     if (maxWidth >= 700.dp && maxWidth > maxHeight) {
                         Row(Modifier.fillMaxSize()) {
                             ShogiPanel(store, visible, Modifier.weight(1f).fillMaxSize())
                             chatPane(Modifier.width(400.dp).fillMaxSize())
                         }
-                    } else if (playing && !chatOpen) {
-                        Column(Modifier.fillMaxSize()) {
-                            ShogiPanel(store, visible, Modifier.weight(1f).fillMaxWidth())
-                            FoldedChatLine(store) { chatOpen = true }
-                        }
                     } else {
+                        val panel = (maxHeight * 0.52f).coerceIn(260.dp, 640.dp).coerceAtMost(maxHeight)
                         Column(Modifier.fillMaxSize()) {
-                            ShogiPanel(store, visible, Modifier.weight(if (playing) 1.3f else 1.1f).fillMaxWidth())
-                            if (playing) {
-                                Text(
-                                    "▾ チャットを畳む",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.fillMaxWidth().clickable { chatOpen = false }.padding(horizontal = 14.dp, vertical = 6.dp),
-                                )
-                            }
+                            ShogiPanel(store, visible, Modifier.height(panel).fillMaxWidth())
                             chatPane(Modifier.weight(1f).fillMaxWidth())
                         }
                     }

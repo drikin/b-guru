@@ -19,6 +19,8 @@ struct MessageRow: View {
     /// Tap on a photo: open it full screen (index into `m.images`).
     var onOpenImage: ((Int) -> Void)? = nil
 
+    /// ☗ 将棋 (nil when it is off): a kind "shogi" message is drawn as its game card.
+    @Environment(\.shogi) private var shogi
     @State private var hovering = false
     @State private var pickerOpen = false
     @State private var selecting = false
@@ -29,7 +31,11 @@ struct MessageRow: View {
     private var mine: Bool { m.isAuthor }
 
     var body: some View {
-        if m.isNotice {
+        if m.isShogiCard, let shogi, let id = m.shogiGameId {
+            // The game card from ビーグル: a small board and 「観戦する」 (redrawn by the game's events).
+            ShogiChatCard(shogi: shogi, gameId: id, body_: m.body)
+                .padding(.vertical, 2)
+        } else if m.isNotice {
             // A quiet note from B-guru (who came into / left the room): one small grey line.
             Text(m.body)
                 .font(.caption2)

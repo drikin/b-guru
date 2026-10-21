@@ -70,11 +70,11 @@ class Session(private val app: Context) {
      *  served from this Mac, for measuring scrolling. The jukebox gets fake episodes whose
      *  audio is one local test file (`--es demo_jukebox http://10.0.2.2:8098` serves
      *  test.mp3 from this Mac) — never the real audio hosts. */
-    fun startDemo(images: String? = null, jukeboxBase: String? = null, withRoom: Boolean = true, withShogi: Boolean = true) {
+    fun startDemo(images: String? = null, jukeboxBase: String? = null, withRoom: Boolean = true, withShogi: Boolean = true, shogiScenario: String = "play") {
         if (!BuildConfig.DEMO || store?.demo == true) return
         val base = jukeboxBase ?: "http://10.0.2.2:8098"
         jukebox?.stop()
-        store = ChatStore(ApiClient("demo"), app).also { it.loadDemo(scale = images != null, images = images, withRoom = withRoom, withShogi = withShogi) }
+        store = ChatStore(ApiClient("demo"), app).also { it.loadDemo(scale = images != null, images = images, withRoom = withRoom, withShogi = withShogi, shogiScenario = shogiScenario) }
         timeline = TimelineStore(ApiClient("demo")).also { it.loadDemo(images, jukeboxAudio = JukeboxStore.demoAudioUrl(base)) }
         jukebox = JukeboxStore(app, ApiClient("demo"), demoBase = base)
         // Debug: print this emulator's FCM token so a test push can be sent to it.

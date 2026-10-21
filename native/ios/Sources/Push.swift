@@ -40,8 +40,9 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
         let platform = UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "ios"
         let mode = notifyMode, quiet = quietHours, timeline = notifyTimeline
         Task {
+            // notify_shogi: this app opens ☗ 将棋 notifications (shogi_offer / shogi_turn) at the game.
             try? await api.registerPush(deviceToken: hex, environment: Self.environment, platform: platform,
-                                        notifyMode: mode, quietHours: quiet, notifyTimeline: timeline)
+                                        notifyMode: mode, quietHours: quiet, notifyTimeline: timeline, notifyShogi: true)
         }
     }
 
@@ -65,6 +66,9 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
             UNNotificationCategory(identifier: "newmsg", actions: [reply], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: "reply", actions: [open], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: "newpost", actions: [open], intentIdentifiers: [], options: []),
+            // ☗ 将棋: an offer to me / my move in a slow game (a tap opens the game).
+            UNNotificationCategory(identifier: "shogioffer", actions: [open], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: "shogiturn", actions: [open], intentIdentifiers: [], options: []),
         ])
     }
 
@@ -105,9 +109,14 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
                                             willPresent notification: UNNotification,
                                             withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void) {
         let kind = notification.request.content.userInfo["kind"] as? String
+        let gameId = (notification.request.content.userInfo["game_id"] as? NSNumber)?.intValue
         // In the app, the chat and the timeline show what is new themselves.
         let options: UNNotificationPresentationOptions = kind == "chat_mention" || kind == "chat_new" || kind == "timeline_new" ? [] : [.banner, .sound]
-        DispatchQueue.main.async { completionHandler(options) }
+        DispatchQueue.main.async {
+            // ☗ 将棋: not while that very game is on screen.
+            let watching = gameId.map { id in MainActor.assumeIsolated { PushCenter.shared.isShowingShogi(id) } } ?? false
+            completionHandler(watching ? [] : options)
+        }
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
@@ -116,17 +125,25 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
         let info = response.notification.request.content.userInfo
         let messageId = (info["message_id"] as? NSNumber)?.intValue
         let postId = (info["post_id"] as? NSNumber)?.intValue
+        let kind = info["kind"] as? String
+        let gameId = kind?.hasPrefix("shogi_") == true ? (info["game_id"] as? NSNumber)?.intValue : nil
         let action = response.actionIdentifier
         let text = (response as? UNTextInputNotificationResponse)?.userText
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
-                PushCenter.shared.handle(action: action, messageId: messageId, postId: postId, text: text)
+                PushCenter.shared.handle(action: action, messageId: messageId, postId: postId, shogiGameId: gameId, text: text)
             }
             completionHandler()
         }
     }
 
-    private func handle(action: String, messageId: Int?, postId: Int?, text: String?) {
+    /// That ☗ 将棋 game is on screen now (its notification would only repeat it).
+    func isShowingShogi(_ id: Int) -> Bool {
+        guard UIApplication.shared.applicationState == .active, let shogi = session?.store?.shogi else { return false }
+        return shogi.open && shogi.selectedId == id
+    }
+
+    private func handle(action: String, messageId: Int?, postId: Int?, shogiGameId: Int? = nil, text: String?) {
         switch action {
         case "reply":
             if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -135,7 +152,11 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
         case "heart":
             if let messageId { session?.store?.toggleReaction(messageId, emoji: "❤️") }
         default:
-            if let messageId {
+            if let shogiGameId, let store = session?.store {
+                // ☗ 将棋 (an offer / my move): the chat page with the game on the board.
+                store.showChat?()
+                store.shogi.openGame(shogiGameId)
+            } else if let messageId {
                 session?.store?.reveal(messageId)
             } else if let postId {
                 // A reply to your post or a new post: open the thread in the app's timeline.

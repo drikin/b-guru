@@ -133,6 +133,39 @@ final class APIClient: Sendable {
         }
     }
 
+    // MARK: ☗ 将棋 (docs/shogi-spec.md: GET = scope read, POST = scope chat)
+
+    /// GET {path}/games?status=… — the lobby (ended: the latest 20).
+    func shogiGames(path: String, statuses: [String] = ["open", "offered", "active", "ended"]) async throws -> ShogiListResponse {
+        var comps = URLComponents(url: APIClient.baseURL.appendingPathComponent("\(path)/games"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = [.init(name: "status", value: statuses.joined(separator: ","))]
+        var req = request("GET", "\(path)/games")
+        req.url = comps.url
+        return try await send(req)
+    }
+
+    /// GET {path}/games/{id} — the whole game (moves, my_color).
+    func shogiGame(path: String, id: Int) async throws -> ShogiGame {
+        struct R: Decodable { var game: ShogiGame }
+        let r: R = try await send(request("GET", "\(path)/games/\(id)"))
+        return r.game
+    }
+
+    /// POST {path}/games[/{id}/{action}]. Never throws: a 409 carries the latest game,
+    /// which the caller shows (the board goes back to it). status 0 = no answer.
+    func shogiPost(path: String, _ sub: String, json: [String: any Sendable] = [:]) async -> ShogiPostOutcome {
+        do {
+            let (data, resp) = try await session.data(for: request("POST", "\(path)/\(sub)", json: json))
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            struct Body: Decodable { var game: ShogiGame?; var error: String?; var code: String?; var duplicate: Bool?; var spectators: Int? }
+            let body = try? decoder.decode(Body.self, from: data)
+            return ShogiPostOutcome(status: status, game: body?.game, error: body?.error, code: body?.code,
+                                    spectators: body?.spectators)
+        } catch {
+            return ShogiPostOutcome(status: 0, game: nil, error: nil, code: nil, spectators: nil)
+        }
+    }
+
     // MARK: Voice room
 
     func voiceState() async throws -> VoiceStateResponse {
@@ -193,11 +226,14 @@ final class APIClient: Sendable {
 
     /// APNs device token for this iPhone/iPad (hex). environment: "sandbox" | "production".
     func registerPush(deviceToken: String, environment: String, platform: String,
-                      notifyMode: String = "all", quietHours: Bool = true, notifyTimeline: Bool? = nil) async throws {
+                      notifyMode: String = "all", quietHours: Bool = true, notifyTimeline: Bool? = nil,
+                      notifyShogi: Bool? = nil) async throws {
         struct OK: Decodable { var ok: Bool }
         var body: [String: Any] = ["token": deviceToken, "environment": environment, "platform": platform,
                                    "notify_mode": notifyMode, "quiet_hours": quietHours]
         if let notifyTimeline { body["notify_timeline"] = notifyTimeline }
+        // ☗ 将棋 pushes (shogi_offer / shogi_turn) come only to apps that say they know them.
+        if let notifyShogi { body["notify_shogi"] = notifyShogi }
         let _: OK = try await send(request("POST", "/api/agent/devices/push", json: body))
     }
 
