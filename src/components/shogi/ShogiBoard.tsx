@@ -47,6 +47,7 @@ export default function ShogiBoard(
     legalMoves,
     settings,
     compact,
+    maxHeight,
     theme,
     topLabel,
     bottomLabel,
@@ -62,6 +63,7 @@ export default function ShogiBoard(
       legalMoves,
       settings,
       compact,
+      maxHeight,
       theme,
       topLabel: cbs.current.topLabel,
       bottomLabel: cbs.current.bottomLabel,
@@ -69,7 +71,7 @@ export default function ShogiBoard(
     });
     // settings はオブジェクト: 中身で比べる。名前・時計の文字は下の setLabels で（毎秒描き直さない）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sfen, myColor, orientation, lastMove?.usi, lastMove?.label, canMove, legalMoves, settings?.confirmMove, settings?.moveHints, compact, theme, showClose]);
+  }, [sfen, myColor, orientation, lastMove?.usi, lastMove?.label, canMove, legalMoves, settings?.confirmMove, settings?.moveHints, compact, maxHeight, theme, showClose]);
 
   useEffect(() => {
     view.current?.setLabels(topLabel, bottomLabel);

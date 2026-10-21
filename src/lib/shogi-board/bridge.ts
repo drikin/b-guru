@@ -76,6 +76,7 @@ export function toBoardState(m: Record<string, unknown>, prev: BoardState): Boar
       moveHints: typeof settings.move_hints === "boolean" ? settings.move_hints : prev.settings?.moveHints,
     },
     compact: typeof m.compact === "boolean" ? m.compact : prev.compact,
+    maxHeight: typeof m.max_height === "number" && m.max_height > 0 ? m.max_height : m.max_height === null ? undefined : prev.maxHeight,
     theme: "theme" in m ? theme(m.theme) : prev.theme,
     topLabel: "top_label" in m ? str(m.top_label) : prev.topLabel,
     bottomLabel: "bottom_label" in m ? str(m.bottom_label) : prev.bottomLabel,

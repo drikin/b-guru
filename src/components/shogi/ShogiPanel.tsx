@@ -5,7 +5,7 @@
  *   ShogiPanel      ロビー（募集・指名・届いた申し込み・対局中・最近の結果）と盤（対局・観戦・再生）
  *   ShogiChatCard   チャットに流れる kind "shogi" の対局中カード（盤の小さな絵・観戦する）
  * 状態は lib/shogi-client.ts（React の外）。盤は lib/shogi-board/board.ts（アプリの WebView と同じ部品）。 */
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ActionIcon, Badge, Button, CloseButton, Group, Select, Switch, Text, useComputedColorScheme } from "@mantine/core";
 import ShogiBoard from "./ShogiBoard";
 import {
@@ -77,16 +77,39 @@ export function ShogiToggle({ row = false }: { row?: boolean }) {
   );
 }
 
+/** 将棋の画面はチャット欄の高さの約半分まで（ルームの地図と同じ考え方）。残りでチャットが見える。 */
+function usePanelMax(ref: React.RefObject<HTMLDivElement | null>, on: boolean): number {
+  const [max, setMax] = useState(420);
+  useEffect(() => {
+    const col = ref.current?.parentElement;
+    if (!on || !col || typeof ResizeObserver === "undefined") return;
+    const update = () => setMax(Math.round(Math.max(260, Math.min(640, col.clientHeight * 0.52))));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(col);
+    return () => ro.disconnect();
+  }, [ref, on]);
+  return max;
+}
+
+/** 盤の周り（上の行・再生ボタン・余白）の分。盤はパネルの高さからこれを引いた高さに収める。 */
+const BOARD_CHROME_PX = 96;
+
 export function ShogiPanel() {
   const s = useShogi();
-  if (s.status !== "enabled" || !s.open) return null;
+  const ref = useRef<HTMLDivElement>(null);
+  const on = s.status === "enabled" && s.open;
+  const max = usePanelMax(ref, on);
+  if (!on) return null;
   return (
     <div
+      ref={ref}
       data-cx="shogi-panel"
       style={{
         borderBottom: "1px solid var(--border-green-soft, var(--mantine-color-default-border))",
         padding: "6px 8px 8px",
-        maxHeight: "72vh",
+        flex: "0 0 auto",
+        maxHeight: max,
         overflowY: "auto",
         overscrollBehavior: "contain",
       }}
@@ -104,7 +127,7 @@ export function ShogiPanel() {
         </Group>
       )}
       {/* key: 別の対局に移ったら再生位置・反転・投了の確認を戻す */}
-      {s.selectedId ? <GameView key={s.selectedId} s={s} /> : <Lobby s={s} />}
+      {s.selectedId ? <GameView key={s.selectedId} s={s} boardMax={max - BOARD_CHROME_PX} /> : <Lobby s={s} />}
     </div>
   );
 }
@@ -356,7 +379,7 @@ function resultText(g: ShogiGameDto): string {
 
 // ─────────────────────────── 盤（対局・観戦・再生）
 
-function GameView({ s }: { s: ShogiSnapshot }) {
+function GameView({ s, boardMax }: { s: ShogiSnapshot; boardMax?: number }) {
   const listed = s.games.find((g) => g.id === s.selectedId) ?? null;
   const d = s.detail && s.detail.id === s.selectedId ? s.detail : null;
   const g: ShogiGameDto | null = d ?? listed;
@@ -427,6 +450,7 @@ function GameView({ s }: { s: ShogiSnapshot }) {
         canMove={canMove}
         settings={s.settings}
         theme={scheme === "dark" ? "dark" : "light"}
+        maxHeight={boardMax}
         topLabel={label(top)}
         bottomLabel={label(orientation)}
         onFlip={(o) => setFlip(o)}

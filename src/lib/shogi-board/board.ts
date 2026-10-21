@@ -29,6 +29,8 @@ export type BoardState = {
   settings?: Partial<BoardSettings>;
   /** 観戦の寸法（1 升 約 35×38）。 */
   compact?: boolean;
+  /** 盤全体（持ち駒・帯を含む）をこの高さ（px）に収める。チャットを見えるように残すため（ルームの地図と同じ考え方）。 */
+  maxHeight?: number;
   theme?: BoardTheme;
   /** 持ち駒の行に添える文字（名前・残り時間など）。 */
   topLabel?: string;
@@ -250,6 +252,7 @@ export class ShogiBoardView {
   setState(next: BoardState): void {
     const prev = this.state;
     this.state = next;
+    const refit = next.maxHeight !== prev.maxHeight || next.compact !== prev.compact;
     // 向き: ホストが決めていればそれ。決めていなければ、自分の色が変わったときだけ合わせる（⇅ は残す）。
     if (next.orientation != null) this.orientation = next.orientation;
     else if (next.myColor !== prev.myColor && next.myColor) this.orientation = next.myColor;
@@ -261,6 +264,7 @@ export class ShogiBoardView {
       this.pending = null;
     }
     this.render();
+    if (refit) this.fit();
   }
 
   /** 持ち駒の行の文字だけを変える（時計の表示など。描き直さないので選択・ドラッグ・送信中の局面は残る）。 */
@@ -303,6 +307,18 @@ export class ShogiBoardView {
     const ch = Math.round(cw * 1.1);
     this.el.style.setProperty("--cw", `${cw}px`);
     this.el.style.setProperty("--ch", `${ch}px`);
+    // 高さの上限: 升の高さに比例する部分（盤 9 升＋持ち駒 2 行 ≒ 10.64 升分）と、帯などの決まった部分に分けて縮める。
+    const max = this.state.maxHeight;
+    if (max && max > 0) {
+      const h = this.el.scrollHeight;
+      if (h > max) {
+        const fixed = Math.max(0, h - 10.64 * ch);
+        const ch2 = Math.floor((max - fixed) / 10.64);
+        const cw2 = Math.max(22, Math.min(cw, Math.floor(ch2 / 1.1)));
+        this.el.style.setProperty("--cw", `${cw2}px`);
+        this.el.style.setProperty("--ch", `${Math.round(cw2 * 1.1)}px`);
+      }
+    }
     this.reportHeight();
   }
 
