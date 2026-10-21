@@ -61,8 +61,19 @@ const SERVER_SNAPSHOT = snap;
 const listeners = new Set<() => void>();
 let settingsLoaded = false;
 
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+
 function set(patch: Partial<ShogiSnapshot>): void {
+  const before = snap.notice;
   snap = { ...snap, ...patch };
+  // お知らせは 4 秒で消す（行を取り続けない。ドリキン 2026-10-21「もっと詰め込む」）。
+  if (snap.notice && snap.notice !== before && typeof window !== "undefined") {
+    if (noticeTimer) clearTimeout(noticeTimer);
+    const shown = snap.notice;
+    noticeTimer = setTimeout(() => {
+      if (snap.notice === shown) set({ notice: null });
+    }, 4000);
+  }
   for (const l of listeners) l();
 }
 

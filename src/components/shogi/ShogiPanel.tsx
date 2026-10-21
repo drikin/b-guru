@@ -639,38 +639,34 @@ export function ShogiChatCard({ gameId, body }: { gameId: number; body: string }
   const s = useShogi();
   const g = s.games.find((x) => x.id === gameId) ?? null;
   const enabled = s.status === "enabled";
+  const active = !!g && g.status === "active";
+  // 1 行に詰める（盤の絵は出さない。チャットを流さないため。ドリキン 2026-10-21「もっと詰め込む」）。
+  const text = active
+    ? `☗${g!.black?.name} vs ☖${g!.white?.name} 対局中 ${g!.mode === "blitz" ? "⚡" : "🐢"} ${g!.ply}手${g!.last_move ? `・${g!.last_move.label}` : ""}${g!.spectators ? `・👀${g!.spectators}` : ""}`
+    : body;
   return (
     <div
       data-cx="shogi-card"
       style={{
         display: "flex",
-        gap: 10,
+        gap: 8,
         alignItems: "center",
-        padding: "6px 8px",
-        borderRadius: 10,
+        padding: "2px 8px",
+        borderRadius: 8,
         border: "1px solid var(--border-green, var(--mantine-color-default-border))",
         background: "var(--bg-subtle)",
         alignSelf: "center",
         maxWidth: "94%",
       }}
     >
-      {g && <MiniBoard sfen={g.sfen} />}
-      <div style={{ minWidth: 0 }}>
-        <Text size="xs" style={{ lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-          {g && g.status === "active" ? `☗${g.black?.name} vs ☖${g.white?.name}（${MODE[g.mode]}）${g.ply} 手目` : body}
-        </Text>
-        {g && g.status === "active" && g.last_move && (
-          <Text size="xs" c="dimmed">
-            最後の手 {g.last_move.label}
-            {g.spectators ? `・👀${g.spectators}` : ""}
-          </Text>
-        )}
-        {enabled && (
-          <Button size="compact-xs" variant="light" color="green" mt={4} onClick={() => openShogiGame(gameId)}>
-            {!g || g.status === "ended" ? "盤で見る" : myColorIn(g, s.me) ? "盤を開く" : "観戦する"}
-          </Button>
-        )}
-      </div>
+      <Text size="xs" style={{ lineHeight: 1.4, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={text}>
+        {text}
+      </Text>
+      {enabled && (
+        <Button size="compact-xs" variant="subtle" color="green" style={{ flex: "none" }} onClick={() => openShogiGame(gameId)}>
+          {!g || g.status === "ended" ? "盤" : myColorIn(g, s.me) ? "指す" : "観戦"}
+        </Button>
+      )}
     </div>
   );
 }
