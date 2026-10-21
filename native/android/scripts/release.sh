@@ -15,6 +15,17 @@ cd "$(dirname "$0")/.."
 [ -f keystore.properties ] || { echo "keystore.properties がありません（scripts/make-key.sh を先に）" >&2; exit 1; }
 [ -f firebase.properties ] || echo "注意: firebase.properties が無いので通知なしのビルドになります" >&2
 
+# Upside-down guard (2026-10-21 report of the screen drawn flipped): screenshots of the offline
+# demo in the emulator, read with Vision (scripts/orientation-check.sh starts the emulator when
+# none is running). Anything upside down → no release. SKIP_ORIENTATION=1 skips it (emergencies only).
+if [ "${SKIP_ORIENTATION:-0}" != "1" ]; then
+  echo "=== orientation check (emulator, offline demo) ==="
+  if ! scripts/orientation-check.sh; then
+    echo "ORIENTATION CHECK FAILED. Not releasing. SKIP_ORIENTATION=1 to override." >&2
+    exit 1
+  fi
+fi
+
 # Monotonic build number: minutes since the epoch (fits an Int for centuries).
 CODE=$(( $(date +%s) / 60 ))
 ./gradlew -q :app:assembleRelease -PversionName="$VERSION" -PversionCode="$CODE"

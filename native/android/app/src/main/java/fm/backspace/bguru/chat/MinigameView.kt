@@ -40,7 +40,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 
-/** 🎮 締め切りダッシュ (docs/minigame-spec.md): the game page in a WebView above the chat. The game
+/** 🎮 散財ダッシュ (docs/minigame-spec.md): the game page in a WebView above the chat. The game
  *  draws everything; the app relays the API (its own token), passes stream events, pauses and resumes. */
 
 /** Back from 🎮 to the text view. */

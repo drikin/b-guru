@@ -93,7 +93,7 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val shogi: ShogiFeatures? = null,
         val minigame: MinigameFeatures? = null,
     )
-    /** 🎮 締め切りダッシュ (docs/minigame-spec.md), behind MINIGAME_ENABLED. `play` = may play (chat scope). */
+    /** 🎮 散財ダッシュ (docs/minigame-spec.md), behind MINIGAME_ENABLED. `play` = may play (chat scope). */
     @Serializable data class MinigameFeatures(
         val enabled: Boolean? = null,
         val path: String? = null,

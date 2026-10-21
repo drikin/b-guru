@@ -68,7 +68,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -295,12 +294,15 @@ private fun Turntable(jukebox: JukeboxStore, visible: () -> Boolean, c: JbColors
                     r += step
                 }
             }
-            // The label (turns). An offscreen layer: its texts, clip and border are drawn
-            // once into a texture, and each frame only turns that texture.
+            // The label (turns). Its own layer (RenderNode): each frame only the layer's rotation
+            // changes; the texts, clip and border are recorded once. No CompositingStrategy.Offscreen
+            // (2026-10-21, a report of the screen drawn upside down): an offscreen layer is an
+            // intermediate texture that some GPU drivers composite flipped, and rotationZ alone
+            // keeps the cost low without one.
             val labelSize = p * 0.84f * 0.34f
             Box(
                 Modifier.align(Alignment.Center).size(labelSize)
-                    .graphicsLayer { rotationZ = spin(); compositingStrategy = CompositingStrategy.Offscreen }
+                    .graphicsLayer { rotationZ = spin() }
                     .clip(CircleShape)
                     .background(cur?.color ?: JbItem.labelColor(0))
                     .border(2.dp, Color.Black.copy(alpha = 0.18f), CircleShape),

@@ -21,7 +21,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 
-/** 🎮 締め切りダッシュ — the pure parts (unit-tested): the game page's messages (bridge_version 1,
+/** 🎮 散財ダッシュ — the pure parts (unit-tested): the game page's messages (bridge_version 1,
  *  docs/minigame-spec.md「橋渡し」) and the replies the app hands back. The game draws everything
  *  (title, run, result, leaderboard); the app is the box and relays the API with its own token. */
 object MinigameLogic {

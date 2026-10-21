@@ -194,7 +194,7 @@ class ApiClient(val token: String) {
             put("usi", usi); put("expected_ply", expectedPly); put("client_move_id", clientMoveId)
         }, base)
 
-    // MARK: 🎮 締め切りダッシュ (docs/minigame-spec.md) — GET needs read, POST needs chat
+    // MARK: 🎮 散財ダッシュ (docs/minigame-spec.md) — GET needs read, POST needs chat
 
     /** One call under `base`; every status comes back with the body as JSON (errors are `{ error, code }`),
      *  which the app hands to the game as it is. Throws on 401 and transport errors. */

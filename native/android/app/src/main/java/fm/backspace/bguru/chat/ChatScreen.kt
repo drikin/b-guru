@@ -452,6 +452,11 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             dismissButton = { TextButton(onClick = { selecting = null }) { Text("閉じる") } },
         )
     }
+    // Demo (`--es demo_open viewer`): the viewer on the first photo in the chat.
+    LaunchedEffect(store.demoViewer, store.rows.size) {
+        if (!store.demoViewer) return@LaunchedEffect
+        store.rows.firstOrNull { it.message.images.isNotEmpty() }?.let { viewing = it.message.images to 0; store.demoViewer = false }
+    }
     viewing?.let { (urls, at) -> ImageViewer(urls, at) { viewing = null } }
 }
 

@@ -115,6 +115,8 @@ private fun Pages(
     LaunchedEffect(timeline.openThread) { if (timeline.openThread != null) scope.launch { pager.animateScrollToPage(0) } }
     // 「チャットに引用」 from a post's menu: show the chat (it takes the quote, then clears it).
     LaunchedEffect(ChatQuote.pending) { if (ChatQuote.pending != null) scope.launch { pager.animateScrollToPage(1) } }
+    // Demo (`--es demo_tab`): start on that page.
+    LaunchedEffect(store.demoPage) { store.demoPage?.let { p -> pager.scrollToPage(p.coerceIn(0, count - 1)); store.demoPage = null } }
     // ☗ 将棋 from a notification: show the chat (the shogi panel opens above it).
     LaunchedEffect(store.shogi.revealTick) { if (store.shogi.revealTick > 0) scope.launch { pager.animateScrollToPage(1) } }
     // The playback notification / the mini player: show the jukebox.

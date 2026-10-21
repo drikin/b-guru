@@ -47,7 +47,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     val room = RoomStore(api, voice)
     /** ☗ 将棋 — only when the server turns it on for this member (capabilities.shogi). */
     val shogi = ShogiStore(api, app)
-    /** 🎮 締め切りダッシュ — only when the server turns it on for this member (capabilities.minigame). */
+    /** 🎮 散財ダッシュ — only when the server turns it on for this member (capabilities.minigame). */
     val minigame = MinigameStore(api)
     private val voiceApp = app.applicationContext
 
@@ -109,6 +109,10 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
 
     val lastOwnMessage: ChatMessage?
         get() = rows.lastOrNull { it.message.isAuthor && it.message.id > 0 }?.message
+
+    /** Demo only: the page to show at launch (0 timeline, 1 chat, 2 jukebox), and the picture viewer. */
+    var demoPage by mutableStateOf<Int?>(null)
+    var demoViewer by mutableStateOf(false)
 
     /** Debug only: sample chat, sends "succeed" locally (no network). */
     var demo = false
