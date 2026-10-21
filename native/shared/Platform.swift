@@ -134,6 +134,34 @@ enum Keyboard {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         #endif
     }
+
+    #if os(iOS)
+    private static var shown = false
+    private static var observers: [NSObjectProtocol] = []
+    #endif
+
+    /// Follow whether the software keyboard is up (call once, early).
+    static func startTracking() {
+        #if os(iOS)
+        guard observers.isEmpty else { return }
+        let nc = NotificationCenter.default
+        observers = [
+            nc.addObserver(forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { shown = true }
+            },
+            nc.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { shown = false }
+            },
+        ]
+        #endif
+    }
+
+    /// Hides the keyboard only when it is up (a page switch does this on every swipe).
+    static func dismissIfShown() {
+        #if os(iOS)
+        if shown || observers.isEmpty { dismiss() }
+        #endif
+    }
 }
 
 extension View {

@@ -22,30 +22,28 @@ struct MainPanelView: View {
         self.onClose = onClose
         self.onSignOut = onSignOut
         pin.tab = initialTab
+        store.showChat = { [weak pin] in pin?.tab = .chat }
     }
 
-    /// The jukebox is built the first time it is opened, then kept like the others.
-    @State private var jukeboxBuilt = false
+    /// What can be seen (the tab shown, the panel open), for the views inside the tabs.
+    @State private var visibility = ScreenVisibility()
 
     var body: some View {
         // All tabs stay built; switching only shows one and hides the others (instant,
         // and each keeps its scroll place — drikin 2026-10-19「さらにチューニング」).
+        // This body never reads the tab: each slot reads it itself, so a switch (or the
+        // panel coming and going) re-runs only the slots, not this view and its modifiers.
         ZStack {
-            // Each tab in an Equatable wrapper: switching re-runs this body, and rebuilding
-            // the tabs with a fresh picker / closures redrew every row of all three (measured).
-            ChatTab(store: store, pin: pin, onClose: onClose, onSignOut: onSignOut)
-                .equatable()
-                .shown(pin.tab == .chat)
-            TimelineTab(store: store, timeline: timeline, pin: pin, onSignOut: onSignOut)
-                .equatable()
-                .environment(\.timelineOnScreen, pin.tab == .timeline)
-                .shown(pin.tab == .timeline)
-            if jukeboxOn && (jukeboxBuilt || pin.tab == .jukebox) {
-                JukeboxTab(store: store, pin: pin)
-                    .equatable()
-                    .environment(\.jukeboxOnScreen, pin.tab == .jukebox)
-                    .shown(pin.tab == .jukebox)
-                    .onAppear { jukeboxBuilt = true }
+            // Each tab in an Equatable wrapper: rebuilding the tabs with a fresh picker /
+            // closures redrew every row of all three (measured).
+            TabSlot(pin: pin, tab: .chat) {
+                ChatTab(store: store, pin: pin, onClose: onClose, onSignOut: onSignOut).equatable()
+            }
+            TabSlot(pin: pin, tab: .timeline) {
+                TimelineTab(store: store, timeline: timeline, pin: pin, onSignOut: onSignOut).equatable()
+            }
+            if jukeboxOn {
+                JukeboxSlot(store: store, pin: pin)
             }
             // 「ネタ帳に送る」 inside the panel (a sheet bigger than the panel drew wrongly).
             if let post = store.netaPost {
@@ -63,17 +61,14 @@ struct MainPanelView: View {
         // No mini player under the chat and the timeline (drikin 2026-10-20): the jukebox
         // tab, the media keys and Control Center play and pause.
         .environment(\.jukebox, jukeboxOn ? store.jukebox : nil)
-        // 「チャットに引用」: the quote goes into the chat's composer, the chat shows.
-        .environment(\.quoteToChat, store.quoteAction { tab = .chat })
-        .environment(\.sendToNeta, store.netaAction())
-        // A post's link in the chat opens its thread here, not in the browser.
-        .environment(\.openURL, ChatStore.openPostLinks(in: timeline))
+        // 「チャットに引用」 / 「ネタ帳に送る」 / a post's link in the chat: closures made once
+        // (store.showChat, set in init, shows the chat).
+        .environment(\.quoteToChat, store.quoteToChat)
+        .environment(\.sendToNeta, store.sendToNeta)
+        .environment(\.openURL, timeline.postLinkAction)
+        .environment(\.screenVisibility, visibility)
         .task(id: jukeboxOn) { if jukeboxOn { await store.jukebox.load(path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox") } }
-        .onChange(of: jukeboxOn) { _, on in if !on && tab == .jukebox { tab = .chat } }
-        .onChange(of: pin.tab) { _, t in if t == .jukebox { pin.wantsHeight?(780) } }
-        // ⌃⌥B / the menu-bar icon always comes back to the chat input.
-        .onChange(of: pin.focusRequest) { _, _ in tab = .chat }
-        .onChange(of: timeline.openThread) { _, id in if id != nil { tab = .timeline } }
+        .background(PanelTabWatcher(store: store, timeline: timeline, pin: pin, visibility: visibility, jukeboxOn: jukeboxOn))
         .background {
             Button("") { tab = .timeline }.keyboardShortcut("1", modifiers: .command).hidden()
             Button("") { tab = .chat }.keyboardShortcut("2", modifiers: .command).hidden()
@@ -84,6 +79,71 @@ struct MainPanelView: View {
     private var jukeboxOn: Bool { store.capabilities?.jukeboxEnabled ?? false }
 
 }
+
+/// One tab of the panel: shown or kept hidden, from the tab it reads itself.
+private struct TabSlot<Content: View>: View {
+    let pin: PinState
+    let tab: MainTab
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        content.shown(pin.tab == tab)
+    }
+}
+
+/// The jukebox: built the first time it is opened, then kept like the others.
+private struct JukeboxSlot: View {
+    let store: ChatStore
+    let pin: PinState
+    @State private var built = false
+
+    var body: some View {
+        let on = pin.tab == .jukebox
+        if built || on {
+            JukeboxTab(store: store, pin: pin)
+                .equatable()
+                .shown(on)
+                .onAppear { built = true }
+        }
+    }
+}
+
+/// What follows the tab and the stores' requests to switch, kept out of the panel's body.
+private struct PanelTabWatcher: View {
+    let store: ChatStore
+    let timeline: TimelineStore
+    let pin: PinState
+    let visibility: ScreenVisibility
+    let jukeboxOn: Bool
+
+    /// The tab shown, while the panel can be seen: the timeline's read marks and polling,
+    /// the room's map and the record's turning follow this.
+    private func updateVisibility() {
+        let seen = pin.windowVisible
+        visibility.set(timeline: seen && pin.tab == .timeline, chat: seen && pin.tab == .chat,
+                       jukebox: seen && pin.tab == .jukebox, room: seen && pin.tab == .chat)
+        // Every minute only while the timeline can be seen (the tab stays built when hidden,
+        // so appearing / disappearing said nothing about that).
+        if visibility.timeline { timeline.startPolling() } else { timeline.stopPolling() }
+    }
+
+    var body: some View {
+        Color.clear
+            .onAppear { updateVisibility() }
+            .onChange(of: pin.windowVisible) { _, _ in updateVisibility() }
+            .onChange(of: jukeboxOn) { _, on in if !on && pin.tab == .jukebox { pin.tab = .chat } }
+            .onChange(of: pin.tab) { _, t in
+                updateVisibility()
+                if t == .jukebox { pin.wantsHeight?(780) }
+            }
+            // ⌃⌥B / the menu-bar icon always comes back to the chat input.
+            .onChange(of: pin.focusRequest) { _, _ in pin.tab = .chat }
+            .onChange(of: timeline.openThread) { _, id in if id != nil { pin.tab = .timeline } }
+    }
+}
+
+/// The switch shown at the top of every tab (shared screens take it as their picker).
+typealias MainTabPicker = PanelTabSwitch
 
 /// The switch at the top of every tab: チャット｜タイムライン（｜📻）. Reads the tab and the
 /// unread count itself, so only it redraws when they change.
@@ -113,7 +173,7 @@ private struct ChatTab: View, @MainActor Equatable {
     static func == (a: Self, b: Self) -> Bool { a.store === b.store && a.pin === b.pin }
     var body: some View {
         ChatView(store: store, pin: pin, onClose: onClose, onSignOut: onSignOut,
-                 tabPicker: AnyView(PanelTabSwitch(store: store, pin: pin)))
+                 tabPicker: PanelTabSwitch(store: store, pin: pin))
     }
 }
 
@@ -125,7 +185,7 @@ private struct TimelineTab: View, @MainActor Equatable {
     static func == (a: Self, b: Self) -> Bool { a.store === b.store && a.timeline === b.timeline && a.pin === b.pin }
     var body: some View {
         TimelineScreen(timeline: timeline, capabilities: store.capabilities,
-                       tabPicker: AnyView(PanelTabSwitch(store: store, pin: pin)), onReconnect: onSignOut)
+                       tabPicker: PanelTabSwitch(store: store, pin: pin), onReconnect: onSignOut)
             .background(.regularMaterial)
     }
 }
@@ -136,7 +196,7 @@ private struct JukeboxTab: View, @MainActor Equatable {
     static func == (a: Self, b: Self) -> Bool { a.store === b.store && a.pin === b.pin }
     var body: some View {
         JukeboxScreen(jukebox: store.jukebox, path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox",
-                      tabPicker: AnyView(PanelTabSwitch(store: store, pin: pin)))
+                      tabPicker: PanelTabSwitch(store: store, pin: pin))
             .background(.regularMaterial)
     }
 }

@@ -14,6 +14,30 @@ enum RoomArt {
     static let tile = 16
 
     nonisolated(unsafe) private static var floorCache: (key: [String], image: CGImage)?
+    nonisolated(unsafe) private static var bedCache: (key: [String], bed: (Int, Int)?)?
+    nonisolated(unsafe) private static var labelSizes: [String: CGSize] = [:]
+
+    /// The beagle's bed (the first "b" tile), found once per map (it was searched for
+    /// across the whole map on every frame).
+    static func cachedBed(_ geo: RoomGeometry) -> (Int, Int)? {
+        if let c = bedCache, c.key == geo.map.tiles { return c.bed }
+        var bed: (Int, Int)?
+        if let bx = (0..<geo.map.w).first(where: { x in (0..<geo.map.h).contains { geo.tile(x, $0) == "b" } }),
+           let by = (0..<geo.map.h).first(where: { geo.tile(bx, $0) == "b" }) {
+            bed = (bx, by)
+        }
+        bedCache = (geo.map.tiles, bed)
+        return bed
+    }
+
+    /// A label's measured size, measured once per text (zone names, signs, member names).
+    static func labelSize(_ s: String, measure: () -> CGSize) -> CGSize {
+        if let hit = labelSizes[s] { return hit }
+        let size = measure()
+        if labelSizes.count > 500 { labelSizes.removeAll() }
+        labelSizes[s] = size
+        return size
+    }
 
     /// The floor plan for this map, made once and reused every frame.
     static func cachedFloor(_ geo: RoomGeometry) -> CGImage? {
@@ -178,6 +202,9 @@ struct RoomView: View {
     @Bindable var room: RoomStore
     @State private var menuFor: RoomMember?
     @FocusState private var focused: Bool
+    /// The chat (and the panel / app) can be seen: the map is drawn only then.
+    @Environment(\.screenVisibility) private var visibility
+    private var onScreen: Bool { visibility?.room ?? true }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -269,7 +296,11 @@ struct RoomView: View {
 
     private func map(size: CGSize) -> some View {
         let z = zoom(for: size)
-        return TimelineView(.animation(minimumInterval: 1.0 / 30)) { tl in
+        // 30 frames a second only while someone walks or a bubble / reaction is up; the
+        // rest of the time the beagle's steps (every 0.45 s) are all that moves. It drew 30
+        // a second all the time (≈ 10 % CPU on the Mac, also with the panel closed), and
+        // not at all while the room cannot be seen.
+        return TimelineView(RoomSchedule(busyUntil: room.busyUntil, paused: !onScreen)) { tl in
             let now = tl.date
             let cam = camera(size, z, now)
             Canvas { g, _ in
@@ -283,7 +314,7 @@ struct RoomView: View {
             .accessibilityLabel("部室のマップ")
             .accessibilityHint("タップした場所へ歩きます")
         }
-        .id(room.revision % 1) // keep identity; the timeline redraws every frame
+        .id(room.revision % 1) // keep identity; reading revision redraws the map on every change
     }
 
     private func tap(_ p: CGPoint, size: CGSize, z: CGFloat, cam: CGPoint) {
@@ -312,8 +343,7 @@ struct RoomView: View {
         for z in geo.map.zones { label(&g, z.name, x: CGFloat(z.x * 16 + 3), y: CGFloat(z.y * 16 + 2), fg: col(0x3ccf74)) }
         for l in geo.map.labels { label(&g, l.name, x: CGFloat(l.x * 16 + 2), y: CGFloat(l.y * 16 + 3), fg: col(0xf2b24c)) }
         // The beagle pads around its bed.
-        if let bedX = (0..<geo.map.w).first(where: { x in (0..<geo.map.h).contains { geo.tile(x, $0) == "b" } }),
-           let bedY = (0..<geo.map.h).first(where: { geo.tile(bedX, $0) == "b" }) {
+        if let (bedX, bedY) = RoomArt.cachedBed(geo) {
             let t = now.timeIntervalSinceReferenceDate
             let phase = Int(t / 0.9) % 8
             let off = [0, 1, 2, 2, 1, 0, -1, -1][phase]
@@ -350,7 +380,7 @@ struct RoomView: View {
 
     private func label(_ g: inout GraphicsContext, _ s: String, x: CGFloat, y: CGFloat, fg: Color, bg: Color = col(0x120e14, 0.75), center: Bool = false) {
         let t = g.resolve(Text(s).font(.system(size: 7, weight: .bold)).foregroundStyle(fg))
-        let size = t.measure(in: CGSize(width: 400, height: 20))
+        let size = RoomArt.labelSize(s) { t.measure(in: CGSize(width: 400, height: 20)) }
         let lx = center ? x - size.width / 2 - 2 : x
         g.fill(Path(CGRect(x: lx, y: y, width: size.width + 4, height: 9)), with: .color(bg))
         g.draw(t, at: CGPoint(x: lx + 2, y: y + 4.5), anchor: .leading)
@@ -390,6 +420,24 @@ struct RoomView: View {
         default: return .ignored
         }
         return .handled
+    }
+}
+
+/// Smooth (30 a second) until `busyUntil`, then every 0.45 s on the beagle's step; nothing
+/// while paused.
+struct RoomSchedule: TimelineSchedule {
+    let busyUntil: Date
+    let paused: Bool
+
+    func entries(from start: Date, mode: TimelineScheduleMode) -> UnfoldFirstSequence<Date> {
+        let step = 0.45
+        return sequence(first: start) { t in
+            if paused { return nil }
+            if t < busyUntil { return t.addingTimeInterval(1.0 / 30) }
+            // Next step boundary (the beagle's frames are counted from the reference date).
+            let n = (t.timeIntervalSinceReferenceDate / step).rounded(.down) + 1
+            return Date(timeIntervalSinceReferenceDate: n * step)
+        }
     }
 }
 

@@ -88,8 +88,8 @@ struct SummaryResponse: Decodable, Sendable {
 
 /// GET /api/agent/capabilities. Every field optional: a feature the server does
 /// not report is treated as absent and its UI is hidden.
-struct Capabilities: Decodable, Sendable {
-    struct ChatFeatures: Decodable, Sendable {
+struct Capabilities: Decodable, Sendable, Equatable {
+    struct ChatFeatures: Decodable, Sendable, Equatable {
         var read: Bool?
         var send: Bool?
         var editOwn: Bool?
@@ -102,7 +102,7 @@ struct Capabilities: Decodable, Sendable {
         var maxImages: Int?
         var imageMaxSide: Int?
     }
-    struct PostFeatures: Decodable, Sendable {
+    struct PostFeatures: Decodable, Sendable, Equatable {
         var read: Bool?
         var publish: Bool?
         var upload: Bool?
@@ -110,28 +110,28 @@ struct Capabilities: Decodable, Sendable {
         var markRead: Bool?
         var maxImages: Int?
     }
-    struct RoomFeatures: Decodable, Sendable {
+    struct RoomFeatures: Decodable, Sendable, Equatable {
         var enabled: Bool?
         var path: String?
     }
-    struct VoiceFeatures: Decodable, Sendable {
+    struct VoiceFeatures: Decodable, Sendable, Equatable {
         var enabled: Bool?
         var join: Bool?
         var admin: Bool?
         var maxParticipants: Int?
         var maxSpeakers: Int?
     }
-    struct JukeboxFeatures: Decodable, Sendable {
+    struct JukeboxFeatures: Decodable, Sendable, Equatable {
         var enabled: Bool?
         var path: String?
     }
     /// 「ネタ帳に送る」: a post's article into BS ネタ帳 (docs/neta-client-spec.md).
-    struct NetaFeatures: Decodable, Sendable {
+    struct NetaFeatures: Decodable, Sendable, Equatable {
         var enabled: Bool?
         var path: String?
         var site: String?
     }
-    struct Features: Decodable, Sendable {
+    struct Features: Decodable, Sendable, Equatable {
         var chat: ChatFeatures?
         var posts: PostFeatures?
         var voice: VoiceFeatures?
@@ -374,13 +374,25 @@ struct Episode: Codable, Equatable, Sendable, Identifiable {
     var webUrl: String?
 
     var year: String { String(publishedAt.prefix(4)) }
-    /// "2019.10.20" in Japan.
+    /// "2019.10.20" in Japan. Worked out once per date (the shelf asked again for every row
+    /// on every redraw; JukeboxStore fills this when the archive comes in).
     var dateText: String {
-        guard let d = Episode.isoParser.date(from: publishedAt) ?? ISO8601DateFormatter().date(from: publishedAt) else {
-            return String(publishedAt.prefix(10)).replacingOccurrences(of: "-", with: ".")
+        if let hit = Episode.dateTexts.object(forKey: publishedAt as NSString) { return hit as String }
+        let t: String
+        if let d = Episode.isoParser.date(from: publishedAt) ?? ISO8601DateFormatter().date(from: publishedAt) {
+            t = Episode.dayFormatter.string(from: d)
+        } else {
+            t = String(publishedAt.prefix(10)).replacingOccurrences(of: "-", with: ".")
         }
-        return Episode.dayFormatter.string(from: d)
+        Episode.dateTexts.setObject(t as NSString, forKey: publishedAt as NSString)
+        return t
     }
+    /// NSCache is safe to use from any thread (the archive is prepared off the main thread).
+    nonisolated(unsafe) private static let dateTexts: NSCache<NSString, NSString> = {
+        let c = NSCache<NSString, NSString>()
+        c.countLimit = 5000
+        return c
+    }()
     /// "#313" / "ep666" / "特別回" for the record's label.
     var label: String {
         guard let number else { return "特別回" }

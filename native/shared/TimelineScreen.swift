@@ -5,7 +5,7 @@ import SwiftUI
 struct TimelineScreen: View {
     @Bindable var timeline: TimelineStore
     let capabilities: Capabilities?
-    var tabPicker: AnyView? = nil
+    var tabPicker: MainTabPicker? = nil
     let onReconnect: () -> Void
 
     @Environment(\.scenePhase) private var scenePhase
@@ -16,10 +16,6 @@ struct TimelineScreen: View {
     @State private var composing = false
     @State private var needsReconnect = false
     @State private var viewing: ImageViewerItem?
-    /// The top of the list (the newest posts) is on screen.
-    @State private var atTop = true
-    /// Posts that arrived above while reading further down.
-    @State private var newAbove = 0
 
     var body: some View {
         content
@@ -32,9 +28,9 @@ struct TimelineScreen: View {
             .task {
                 if !timeline.hasLoaded { await timeline.refresh() }
             }
-            .onAppear { timeline.startPolling() }
+            // Polling every minute is started and stopped by the window (MainView on iOS,
+            // MainPanelView on the Mac): only while the timeline can be seen.
             .modifier(OpenThreadWhenShown(timeline: timeline, open: open))
-            .onDisappear { timeline.stopPolling() }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { Task { await timeline.refresh() } }
             }
@@ -120,11 +116,27 @@ struct TimelineScreen: View {
             if needsReconnect {
                 ReconnectBanner(onReconnect: onReconnect, onClose: { needsReconnect = false })
             }
-            posts
+            TimelinePostList(timeline: timeline, capabilities: capabilities, threadOpen: macThread != nil,
+                             open: open, viewing: $viewing)
         }
     }
+}
 
-    private var posts: some View {
+/// The posts. Its own view: a post read, a reaction or a refresh re-runs this list, not the
+/// screen around it (the navigation stack and its toolbar on the iPhone).
+private struct TimelinePostList: View {
+    let timeline: TimelineStore
+    let capabilities: Capabilities?
+    /// macOS: a thread is open over the list (nothing under it is being read).
+    let threadOpen: Bool
+    let open: (Int) -> Void
+    @Binding var viewing: ImageViewerItem?
+    /// The top of the list (the newest posts) is on screen.
+    @State private var atTop = true
+    /// Posts that arrived above while reading further down.
+    @State private var newAbove = 0
+
+    var body: some View {
         ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
@@ -134,17 +146,19 @@ struct TimelineScreen: View {
                         .font(.callout).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity).padding(.top, 40)
                 }
+                let canReact = capabilities?.canReactPosts ?? false
+                let lastId = timeline.posts.last?.id
                 ForEach(timeline.posts) { post in
                     Button { open(post.id) } label: {
                         PostRow(post: post, clubName: timeline.clubName(post.club),
-                                canReact: capabilities?.canReactPosts ?? false,
+                                canReact: canReact,
                                 onReact: { timeline.toggleReaction(post.id, emoji: $0) },
                                 onOpenImage: { HangWatch.note("open image (post \(post.id))"); viewing = ImageViewerItem(images: post.images ?? [], index: $0) })
                     }
                     .buttonStyle(.plain)
-                    .readWhenSeen(post.unread == true && macThread == nil) { timeline.sawPost(post.id) }
+                    .readWhenSeen(post.unread == true && !threadOpen) { timeline.sawPost(post.id) }
                     .onAppear {
-                        if post.id == timeline.posts.last?.id { Task { await timeline.loadMore() } }
+                        if post.id == lastId { Task { await timeline.loadMore() } }
                     }
                     Divider()
                 }
@@ -389,12 +403,33 @@ struct PostRow: View {
 
     /// 「たった今」「5分前」「3時間前」、それより前は日付。
     static func relative(_ s: String, now: Date = Date()) -> String {
-        guard let d = isoFrac.date(from: s) ?? iso.date(from: s) else { return "" }
-        let sec = now.timeIntervalSince(d)
+        guard let p = parsed(s) else { return "" }
+        let sec = now.timeIntervalSince(p.date)
         if sec < 60 { return "たった今" }
         if sec < 3600 { return "\(Int(sec / 60))分前" }
         if sec < 86400 { return "\(Int(sec / 3600))時間前" }
-        return md.string(from: d)
+        return p.day
+    }
+
+    /// Each timestamp is parsed (and its "M/d" made) once: parsing ISO 8601 on every redraw
+    /// was about three quarters of a row's time (measured).
+    private final class Parsed {
+        let date: Date
+        let day: String
+        init(date: Date, day: String) { self.date = date; self.day = day }
+    }
+    private static let parsedCache: NSCache<NSString, Parsed> = {
+        let c = NSCache<NSString, Parsed>()
+        c.countLimit = 2000
+        return c
+    }()
+
+    private static func parsed(_ s: String) -> Parsed? {
+        if let hit = parsedCache.object(forKey: s as NSString) { return hit }
+        guard let d = isoFrac.date(from: s) ?? iso.date(from: s) else { return nil }
+        let p = Parsed(date: d, day: md.string(from: d))
+        parsedCache.setObject(p, forKey: s as NSString)
+        return p
     }
 }
 
@@ -560,12 +595,49 @@ enum ImageViewerOverlay {
 extension EnvironmentValues {
     /// 「チャットに引用」: puts the post into the chat's composer and shows the chat
     /// (nil when this member cannot send to the chat).
-    @Entry var quoteToChat: (@MainActor (Post) -> Void)? = nil
+    @Entry var quoteToChat: PostAction? = nil
     /// 「ネタ帳に送る」: opens the confirmation for the article the post links to
     /// (nil when this member cannot).
-    @Entry var sendToNeta: (@MainActor (Post) -> Void)? = nil
-    /// The timeline is the page on screen (iPhone pages keep the other one alive).
-    @Entry var timelineOnScreen = true
+    @Entry var sendToNeta: PostAction? = nil
+    /// What can be seen right now (set once per window; nil = everything).
+    @Entry var screenVisibility: ScreenVisibility? = nil
+}
+
+/// Which parts of the window can be seen: the page / tab on screen, with the app active
+/// (iPhone) or the panel open (Mac). An object handed down once, read by observation: the
+/// tabs and pages are Equatable views, and a plain environment value changed above them
+/// never reached the views inside (measured: the chat stayed "visible", read and un-badged,
+/// while the iPhone showed the timeline).
+@MainActor
+@Observable
+final class ScreenVisibility {
+    private(set) var timeline = true
+    private(set) var chat = true
+    private(set) var jukebox = true
+    /// The club room's map (inside the chat).
+    private(set) var room = true
+
+    init() {}
+
+    func set(timeline: Bool, chat: Bool, jukebox: Bool, room: Bool) {
+        if self.timeline != timeline { self.timeline = timeline }
+        if self.chat != chat { self.chat = chat }
+        if self.jukebox != jukebox { self.jukebox = jukebox }
+        if self.room != room { self.room = room }
+    }
+}
+
+/// Something to do with a timeline post, handed down the environment (「チャットに引用」,
+/// 「ネタ帳に送る」). Compared by who made it and what it is: a bare closure cannot be
+/// compared, so every update of the view that set it counted as a new value and redrew
+/// every post row that reads it.
+struct PostAction: Equatable {
+    let owner: ObjectIdentifier
+    let kind: String
+    let run: @MainActor (Post) -> Void
+
+    @MainActor func callAsFunction(_ post: Post) { run(post) }
+    static func == (a: Self, b: Self) -> Bool { a.owner == b.owner && a.kind == b.kind }
 }
 
 extension View {
@@ -584,7 +656,8 @@ extension View {
 private struct OpenThreadWhenShown: ViewModifier {
     let timeline: TimelineStore
     let open: (Int) -> Void
-    @Environment(\.timelineOnScreen) private var onScreen
+    @Environment(\.screenVisibility) private var visibility
+    private var onScreen: Bool { visibility?.timeline ?? true }
     @State private var waiting: Int?
 
     func body(content: Content) -> some View {
@@ -615,7 +688,8 @@ private struct OpenThreadWhenShown: ViewModifier {
 
 /// Disabled while the timeline is not the page showing (reads the environment itself).
 private struct DisabledOffScreen: ViewModifier {
-    @Environment(\.timelineOnScreen) private var onScreen
+    @Environment(\.screenVisibility) private var visibility
+    private var onScreen: Bool { visibility?.timeline ?? true }
     func body(content: Content) -> some View { content.disabled(!onScreen) }
 }
 
@@ -624,7 +698,8 @@ private struct ReadWhenSeen: ViewModifier {
     let onRead: () -> Void
     /// Read here, not by the list: the list does not redraw every row when the page
     /// (or the Mac's tab) comes and goes.
-    @Environment(\.timelineOnScreen) private var onScreen
+    @Environment(\.screenVisibility) private var visibility
+    private var onScreen: Bool { visibility?.timeline ?? true }
     @State private var visible = false
     @State private var timer: Task<Void, Never>?
 

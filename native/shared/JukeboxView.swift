@@ -6,7 +6,7 @@ import SwiftUI
 struct JukeboxScreen: View {
     let jukebox: JukeboxStore
     let path: String
-    var tabPicker: AnyView? = nil
+    var tabPicker: MainTabPicker? = nil
 
     @State private var query = ""
     @State private var year: String?
@@ -70,17 +70,18 @@ struct JukeboxScreen: View {
 
     // MARK: The shelf
 
-    private var years: [String] {
-        Array(Set(jukebox.episodes.map(\.year))).sorted(by: >)
-    }
+    private var years: [String] { jukebox.years }
+
+    private static let mainSeries = Set(seriesChoices.dropFirst().dropLast())
 
     private var filtered: [Episode] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        let main = Set(Self.seriesChoices.dropFirst().dropLast())
+        if year == nil && series == "すべて" && q.isEmpty { return jukebox.episodes }
+        let main = Self.mainSeries
         return jukebox.episodes.filter { e in
             (year == nil || e.year == year)
                 && (series == "すべて" || (series == "その他" ? !main.contains(e.series) : e.series == series))
-                && (q.isEmpty || e.title.lowercased().contains(q) || e.summary.lowercased().contains(q))
+                && (q.isEmpty || jukebox.matches(e, query: q))
         }
     }
 
@@ -101,7 +102,7 @@ struct JukeboxScreen: View {
             }
             LazyVStack(spacing: 0) {
                 ForEach(list.prefix(shown)) { e in
-                    EpisodeRow(episode: e, isCurrent: jukebox.current?.id == e.id, fraction: jukebox.fraction(e)) { jukebox.play(e) }
+                    EpisodeRow(episode: e, isCurrent: jukebox.current?.id == e.id, jukebox: jukebox)
                     Divider()
                 }
                 if list.count > shown {
@@ -208,20 +209,29 @@ struct RecordSheen: View {
 struct Turntable: View {
     let jukebox: JukeboxStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.jukeboxOnScreen) private var onScreen
-    /// Where the record stopped, so it does not jump when it starts again.
-    @State private var restAngle: Double = 0
-    @State private var spinStart = Date()
+    @Environment(\.screenVisibility) private var visibility
+    private var onScreen: Bool { visibility?.jukebox ?? true }
+    #if os(iOS)
+    @Environment(\.scenePhase) private var scenePhase
+    #endif
 
-    private static let secondsPerTurn = 1.8 // 33⅓ rpm
+    static let secondsPerTurn = 1.8 // 33⅓ rpm
     #if os(macOS)
     private static let maxSide: CGFloat = 250 // the panel is small: leave room for the controls
     #else
     private static let maxSide: CGFloat = 420
     #endif
 
+    private var spinning: Bool {
+        #if os(iOS)
+        let active = scenePhase == .active
+        #else
+        let active = true
+        #endif
+        return jukebox.isPlaying && !reduceMotion && onScreen && active
+    }
+
     var body: some View {
-        let spinning = jukebox.isPlaying && !reduceMotion && onScreen
         ZStack {
             RoundedRectangle(cornerRadius: 18)
                 .fill(LinearGradient(colors: [Color(red: 0.66, green: 0.47, blue: 0.31), Color(red: 0.49, green: 0.33, blue: 0.2)],
@@ -235,14 +245,12 @@ struct Turntable: View {
                 ZStack {
                     Circle().fill(Color(white: 0.16)).padding(side * 0.06)
                         .shadow(color: .black.opacity(0.45), radius: 6, y: 4)
-                    TimelineView(.animation(paused: !spinning)) { tl in
-                        let turned = spinning ? tl.date.timeIntervalSince(spinStart) / Self.secondsPerTurn * 360 : 0
-                        RecordDisc(episode: jukebox.current, showSheen: false)
-                            .equatable()
-                            .rotationEffect(.degrees(restAngle + turned))
-                            .overlay { RecordSheen() }
-                            .padding(side * 0.085)
-                    }
+                    // Core Animation turns the record (the render server does it): no view
+                    // update per frame. A TimelineView redrew it every frame, also while the
+                    // Mac panel was closed (≈ 6 % CPU while a record played).
+                    SpinningRecord(disc: RecordDisc(episode: jukebox.current, showSheen: false), spinning: spinning)
+                        .overlay { RecordSheen() }
+                        .padding(side * 0.085)
                     Tonearm(down: jukebox.isPlaying)
                         .frame(width: side * 0.44, height: side * 0.7)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
@@ -262,17 +270,151 @@ struct Turntable: View {
         .aspectRatio(1, contentMode: .fit)
         .frame(maxWidth: Self.maxSide)
         .frame(maxWidth: .infinity)
-        .onChange(of: spinning) { _, now in
-            if now {
-                spinStart = Date()
-            } else {
-                restAngle = (restAngle + Date().timeIntervalSince(spinStart) / Self.secondsPerTurn * 360).truncatingRemainder(dividingBy: 360)
-            }
-        }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(jukebox.current.map { "ターンテーブル：\($0.title)" } ?? "ターンテーブル")
     }
 }
+
+/// The record in its own hosting view, turned by a Core Animation rotation on that view's
+/// layer. Stopping keeps the angle it stopped at, so starting again does not jump.
+private struct SpinningRecord {
+    let disc: RecordDisc
+    let spinning: Bool
+}
+
+@MainActor
+private enum Spin {
+    static let key = "bguru.spin"
+
+    /// Starts or stops turning `layer` (about its centre).
+    static func set(_ layer: CALayer?, spinning: Bool) {
+        guard let layer else { return }
+        let running = layer.animation(forKey: key) != nil
+        if spinning {
+            guard !running else { return }
+            let from = (layer.value(forKeyPath: "transform.rotation.z") as? Double) ?? 0
+            let a = CABasicAnimation(keyPath: "transform.rotation.z")
+            a.fromValue = from
+            a.toValue = from + 2 * .pi
+            a.duration = Turntable.secondsPerTurn
+            a.repeatCount = .infinity
+            a.isRemovedOnCompletion = false
+            layer.add(a, forKey: key)
+        } else {
+            guard running else { return }
+            let now = (layer.presentation()?.value(forKeyPath: "transform.rotation.z") as? Double) ?? 0
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer.setValue(now, forKeyPath: "transform.rotation.z")
+            layer.removeAnimation(forKey: key)
+            CATransaction.commit()
+        }
+    }
+}
+
+#if os(iOS)
+extension SpinningRecord: UIViewRepresentable {
+    func makeUIView(context: Context) -> SpinnerView { SpinnerView(disc: disc) }
+    func updateUIView(_ view: SpinnerView, context: Context) {
+        if view.host.rootView != disc { view.host.rootView = disc }
+        view.wantsSpin = spinning
+    }
+}
+
+final class SpinnerView: UIView {
+    let host: UIHostingController<RecordDisc>
+    var wantsSpin = false { didSet { if wantsSpin != oldValue { apply() } } }
+
+    init(disc: RecordDisc) {
+        host = UIHostingController(rootView: disc)
+        super.init(frame: .zero)
+        host.view.backgroundColor = .clear
+        host.safeAreaRegions = []
+        host.view.isUserInteractionEnabled = false
+        addSubview(host.view)
+        isUserInteractionEnabled = false
+        accessibilityElementsHidden = true
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // bounds + center (not frame): the view is rotated.
+        host.view.bounds = CGRect(origin: .zero, size: bounds.size)
+        host.view.center = CGPoint(x: bounds.midX, y: bounds.midY)
+    }
+
+    /// UIKit drops a layer's animations when it leaves the window (a page scrolled away):
+    /// stop first, keeping the angle, and start again from there when it is back.
+    override func willMove(toWindow newWindow: UIWindow?) {
+        if newWindow == nil { Spin.set(host.view.layer, spinning: false) }
+        super.willMove(toWindow: newWindow)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        host.view.layer.removeAnimation(forKey: Spin.key)
+        apply()
+    }
+
+    private func apply() { Spin.set(window == nil ? nil : host.view.layer, spinning: wantsSpin) }
+}
+#else
+extension SpinningRecord: NSViewRepresentable {
+    func makeNSView(context: Context) -> SpinnerView { SpinnerView(disc: disc) }
+    func updateNSView(_ view: SpinnerView, context: Context) {
+        if view.host.rootView != disc { view.host.rootView = disc }
+        view.wantsSpin = spinning
+    }
+}
+
+final class SpinnerView: NSView {
+    let host: NSHostingView<RecordDisc>
+    var wantsSpin = false { didSet { if wantsSpin != oldValue { apply() } } }
+
+    init(disc: RecordDisc) {
+        host = NSHostingView(rootView: disc)
+        super.init(frame: .zero)
+        wantsLayer = true
+        host.wantsLayer = true
+        host.sizingOptions = []
+        addSubview(host)
+        setAccessibilityElement(false)
+        host.setAccessibilityElement(false)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        host.frame = bounds
+        centreAnchor()
+    }
+
+    /// AppKit backs a view with a layer anchored at its corner: turn it about its centre.
+    private func centreAnchor() {
+        guard let l = host.layer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        l.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        l.position = CGPoint(x: host.frame.midX, y: host.frame.midY)
+        CATransaction.commit()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        apply()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    private func apply() {
+        centreAnchor()
+        Spin.set(window == nil ? nil : host.layer, spinning: wantsSpin)
+    }
+}
+#endif
 
 /// The tonearm: up at rest, down on the record while playing.
 struct Tonearm: View {
@@ -459,14 +601,16 @@ private struct Chips: View {
     }
 }
 
+/// One record on the shelf. Reads how far it was listened to itself: the playing record's
+/// bar moves every 10 s, and only its row redraws for that.
 private struct EpisodeRow: View {
     let episode: Episode
     let isCurrent: Bool
-    let fraction: Double?
-    let onPlay: () -> Void
+    let jukebox: JukeboxStore
 
     var body: some View {
-        Button(action: onPlay) {
+        let fraction = jukebox.fraction(episode, isCurrent: isCurrent)
+        Button { jukebox.play(episode) } label: {
             HStack(spacing: 10) {
                 MiniDisc(year: episode.year, size: 30)
                 VStack(alignment: .leading, spacing: 3) {
@@ -511,9 +655,6 @@ struct MiniDisc: View {
 }
 
 extension EnvironmentValues {
-    /// The jukebox tab is the one showing (the Mac keeps hidden tabs built): the record
-    /// turns only then.
-    @Entry var jukeboxOnScreen = true
     /// The jukebox when it is on for this member (timeline posts with an episode's
     /// audio play it here instead of saying "Web で再生").
     @Entry var jukebox: JukeboxStore? = nil

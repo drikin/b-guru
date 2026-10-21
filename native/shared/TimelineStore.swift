@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SwiftUI
 
 /// Chat or timeline (iPhone pages, the Mac panel switch).
 enum MainTab: Hashable { case timeline, chat, jukebox }
@@ -28,6 +29,13 @@ final class TimelineStore {
 
     init(api: APIClient) { self.api = api }
 
+    /// A post's link in the chat opens its thread here, not in the browser. Made once: a new
+    /// action on every body run was a new environment value for everything below it.
+    @ObservationIgnored private(set) lazy var postLinkAction = OpenURLAction { [weak self] url in
+        if let id = ChatStore.postId(in: url) { self?.openThread = id; return .handled }
+        return .systemAction
+    }
+
     var unreadCount: Int { posts.filter { $0.unread == true }.count }
 
     func refresh() async {
@@ -35,26 +43,33 @@ final class TimelineStore {
         if api.token == "demo" { return }
         #endif
         HangWatch.note("timeline refresh (\(posts.count) posts)")
+        lastRefresh = Date()
         if clubs.isEmpty, let c = try? await api.clubs() {
             clubs = Dictionary(c.map { ($0.key, $0.name) }, uniquingKeysWith: { a, _ in a })
         }
         do {
             let r = try await api.posts()
             // Keep "read on this device" marks the server has not echoed yet.
-            posts = r.posts.map { p in
+            let fresh = r.posts.map { p in
                 var p = p
                 if pendingRead.contains(p.id) { p.unread = false }
                 return p
             }
-            nextCursor = r.nextCursor
-            failed = false
+            // Nothing new (most minutes): leave the list alone. Every assignment, even of
+            // the same posts, made the whole list (and everything reading it) update.
+            if fresh != posts { posts = fresh }
+            if nextCursor != r.nextCursor { nextCursor = r.nextCursor }
+            if failed { failed = false }
             HangWatch.note("timeline refreshed → \(posts.count) posts")
         } catch {
-            failed = posts.isEmpty
+            if failed != posts.isEmpty { failed = posts.isEmpty }
             HangWatch.note("timeline refresh failed: \(error.localizedDescription)")
         }
-        hasLoaded = true
+        if !hasLoaded { hasLoaded = true }
     }
+
+    /// When the list was last fetched (polling resumes with a fetch if that is over a minute ago).
+    @ObservationIgnored private var lastRefresh: Date?
 
     func loadMore() async {
         guard let cursor = nextCursor, !loadingMore else { return }
@@ -69,10 +84,12 @@ final class TimelineStore {
         }
     }
 
-    /// While the timeline is on screen: refresh every minute.
+    /// While the timeline can be seen: refresh every minute (and now, if the list is older).
     func startPolling() {
-        pollTask?.cancel()
+        guard pollTask == nil else { return }
+        let stale = lastRefresh.map { Date().timeIntervalSince($0) >= 60 } ?? false
         pollTask = Task { [weak self] in
+            if stale { await self?.refresh() }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(60))
                 guard !Task.isCancelled else { return }

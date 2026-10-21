@@ -166,3 +166,50 @@ extension View {
         modifier(ChatScrolling(store: store, proxy: proxy, atBottom: atBottom, newBelow: newBelow))
     }
 }
+
+// MARK: - The composer's state, shared by the list and the composer
+
+/// What the message box holds. A class the list and the composer both see, so that typing
+/// (draft), mention suggestions and the send button re-run only the composer — not the
+/// whole chat with every row (each keystroke used to re-evaluate all of them).
+@MainActor
+@Observable
+final class ChatComposerModel {
+    var draft: String
+    /// The message open in the composer for editing (the list marks its row).
+    var editingId: Int?
+    /// Photos attached to the next message (up to 4).
+    let photos = PostDraft(maxImages: 4)
+    /// iOS: the message box has the keyboard (bound to the text view).
+    var focused = false
+    /// Bumped when something asks the composer to take the focus (reply, edit, quote).
+    private(set) var focusRequest = 0
+
+    init(draft: String = "") { self.draft = draft }
+
+    func requestFocus() {
+        focused = true
+        focusRequest += 1
+    }
+
+    /// Reply to someone: `@name ` at the start of the composer (keeps what was typed).
+    func replyTo(_ name: String) {
+        let token = Mention.token(name)
+        if !draft.hasPrefix(token) {
+            draft = token + draft.trimmingCharacters(in: .whitespaces)
+        }
+        editingId = nil
+        requestFocus()
+    }
+
+    func beginEdit(_ m: ChatMessage) {
+        editingId = m.id
+        draft = m.displayBody
+        requestFocus()
+    }
+
+    func cancelEdit() {
+        editingId = nil
+        draft = ""
+    }
+}

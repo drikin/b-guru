@@ -1,4 +1,5 @@
 import Foundation
+import MachO
 import MetricKit
 import os
 #if os(macOS)
@@ -12,7 +13,13 @@ import AppKit
 /// - what the main thread is doing: busy (a layout loop, CPU ≈ 100 %) or waiting (a lock),
 ///   and its call stack (the thread is paused for a moment and its frames are read);
 /// - the last things the app did (tab, thread, refresh, window size …).
-/// Then again at 8 s and 20 s, and a line when it recovers. The log survives a force quit:
+/// Then again at 8 s and 20 s, and a line when it recovers. At 3 s it takes several stacks
+/// 100 ms apart (one stack can catch a loop at any point; a few show where it keeps going).
+/// Shorter stalls are counted too: every time the main thread is busy for 250 ms or more
+/// in one go (a run loop observer times each step), with what the app was doing — the
+/// "freezes for a moment" members feel before anything reaches 3 s. Each report names the
+/// app binary's UUID, so its offsets can be symbolicated with that build's dSYM.
+/// The log survives a force quit:
 /// ~/Library/Containers/fm.backspace.bguru.chat/Data/Library/Application Support/Diagnostics/hangs.log
 /// (⋯ menu → 「フリーズの記録を Finder で表示」). MetricKit's own hang reports (with
 /// symbolicated stacks) are saved next to it when the system delivers them.
@@ -54,6 +61,18 @@ final class HangWatch: NSObject, @unchecked Sendable {
     private var pingSentAt: UInt64?
     private var reportedStage = 0
 
+    // Short stalls (≥ 250 ms), timed on the main thread; the totals are read under `lock`.
+    private static let slowThreshold = 0.25
+    private var lastActivityAt: UInt64 = 0
+    private var lastActivityWasSleep = true
+    private var slowCount = 0
+    private var slowLongest = 0.0
+    private var lastSlowWrite: UInt64 = 0
+    private var runLoopObserver: CFRunLoopObserver?
+    /// "B-guru Chat UUID … at 0x…" for the binary this code is in (and the app's main
+    /// executable when that is another file, as in Debug builds).
+    private let imageLine: String = HangWatch.describeImages()
+
     /// Start watching. Call once, on the main thread, early at launch.
     @MainActor func start() {
         guard timer == nil else { return }
@@ -65,7 +84,56 @@ final class HangWatch: NSObject, @unchecked Sendable {
         let info = Bundle.main.infoDictionary
         add("launch \(info?["CFBundleShortVersionString"] ?? "?") (\(info?["CFBundleVersion"] ?? "?")) "
             + ProcessInfo.processInfo.operatingSystemVersionString)
+        add(imageLine)
         startTimer()
+        startRunLoopObserver()
+    }
+
+    /// Times every step of the main run loop (in every mode, so also while scrolling or
+    /// with a menu open). The gap between two of its callbacks — other than the sleep
+    /// that follows "before waiting" — is time the main thread spent busy in one go.
+    private func startRunLoopObserver() {
+        let obs = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.allActivities.rawValue, true, Int.max) { [weak self] _, activity in
+            self?.runLoopStep(activity)
+        }
+        CFRunLoopAddObserver(CFRunLoopGetMain(), obs, .commonModes)
+        runLoopObserver = obs
+    }
+
+    /// On the main thread. Cheap: a clock read and a compare.
+    private func runLoopStep(_ activity: CFRunLoopActivity) {
+        let now = DispatchTime.now().uptimeNanoseconds
+        if !lastActivityWasSleep, lastActivityAt != 0 {
+            let busy = Double(now &- lastActivityAt) / 1e9
+            if busy >= Self.slowThreshold { slow(busy, now: now) }
+        }
+        lastActivityAt = now
+        lastActivityWasSleep = activity == .beforeWaiting
+    }
+
+    private func slow(_ seconds: Double, now: UInt64) {
+        lock.lock()
+        slowCount += 1
+        let longest = seconds > slowLongest
+        if longest { slowLongest = seconds }
+        let count = slowCount, max = slowLongest
+        lock.unlock()
+        add("slow main thread \(String(format: "%.2f", seconds)) s")
+        // Into the file: a new longest, anything over a second, else at most every 30 s
+        // (the count and the longest are in every line and every hang report).
+        guard longest || seconds >= 1 || now &- lastSlowWrite > 30_000_000_000 else { return }
+        lastSlowWrite = now
+        let recent = recentCrumbs().suffix(6).map { "  " + $0 }.joined(separator: "\n")
+        let line = "--- main thread busy \(String(format: "%.2f", seconds)) s at \(clock.string(from: Date())) "
+            + "(\(count) times ≥ 0.25 s since launch, longest \(String(format: "%.2f", max)) s) ---\nrecent:\n\(recent)\n\n"
+        queue.async { [weak self] in self?.write(line) }
+    }
+
+    /// How many short stalls so far and the longest (for the reports).
+    private func slowSummary() -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        return "\(slowCount) stalls ≥ 0.25 s since launch, longest \(String(format: "%.2f", slowLongest)) s"
     }
 
     /// Kept out of start(): a closure written inside a @MainActor method is main-actor
@@ -123,10 +191,24 @@ final class HangWatch: NSObject, @unchecked Sendable {
 
     private func report(stalled: Double, first: Bool) {
         let (cpu, state) = mainThreadUsage()
-        let n = sampleMainStack()
         var out = "=== main thread not responding for \(String(format: "%.1f", stalled)) s "
             + "(\(clock.string(from: Date())), main CPU \(cpu) %, \(state)) ===\n"
-        out += "stack:\n" + symbolicate(n).joined(separator: "\n") + "\n"
+        out += imageLine + "\n" + slowSummary() + "\n"
+        // The first time, a few stacks 100 ms apart: the same frames in all of them are
+        // where it is stuck; frames that change show a loop going round.
+        let samples = first ? 5 : 1
+        var previous: [String] = []
+        for i in 0..<samples {
+            if i > 0 { usleep(100_000) }
+            let stack = symbolicate(sampleMainStack())
+            let title = samples > 1 ? "stack \(i + 1)/\(samples) (+\(i * 100) ms)" : "stack"
+            if i > 0, stack == previous {
+                out += "\(title): same as the one before\n"
+            } else {
+                out += "\(title):\n" + stack.joined(separator: "\n") + "\n"
+            }
+            previous = stack
+        }
         if first { out += "recent:\n" + recentCrumbs().map { "  " + $0 }.joined(separator: "\n") + "\n" }
         write(out)
         logger.error("main thread not responding for \(stalled, format: .fixed(precision: 1)) s, CPU \(cpu) %, \(state, privacy: .public)")
@@ -214,6 +296,41 @@ final class HangWatch: NSObject, @unchecked Sendable {
             let symOffset = a &- UInt(bitPattern: info.dli_saddr)
             return String(format: "  %2d %@ +0x%lx %@ + %lu", i, image, offset, sym, symOffset)
         }
+    }
+
+    // MARK: the binary (to symbolicate the offsets)
+
+    /// LC_UUID and load address of the image this code is in, and of the main executable
+    /// when that is another file (Debug builds put the app's code in a .debug.dylib).
+    private static func describeImages() -> String {
+        var parts: [String] = []
+        var seen = Set<UInt>()
+        func describe(_ header: UnsafeRawPointer) {
+            let base = UInt(bitPattern: header)
+            guard seen.insert(base).inserted else { return }
+            var info = Dl_info()
+            let name = dladdr(header, &info) != 0
+                ? info.dli_fname.map { (String(cString: $0) as NSString).lastPathComponent } ?? "?" : "?"
+            parts.append("\(name) UUID \(uuid(of: header) ?? "?") at 0x\(String(base, radix: 16))")
+        }
+        describe(UnsafeRawPointer(#dsohandle))
+        if let main = _dyld_get_image_header(0) { describe(UnsafeRawPointer(main)) }
+        return "binary: " + parts.joined(separator: "; ")
+    }
+
+    private static func uuid(of header: UnsafeRawPointer) -> String? {
+        let h = header.load(as: mach_header_64.self)
+        guard h.magic == MH_MAGIC_64 else { return nil }
+        var p = header.advanced(by: MemoryLayout<mach_header_64>.size)
+        for _ in 0..<h.ncmds {
+            let lc = p.load(as: load_command.self)
+            if lc.cmd == UInt32(LC_UUID) {
+                let u = p.load(as: uuid_command.self).uuid
+                return UUID(uuid: u).uuidString
+            }
+            p = p.advanced(by: Int(lc.cmdsize))
+        }
+        return nil
     }
 
     // MARK: the log file

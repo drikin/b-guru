@@ -153,6 +153,20 @@ final class RoomStore {
         return to.1 < from.1 ? .up : .down
     }
 
+    /// Until when something on the map moves smoothly (a walk, a floating reaction). After
+    /// that only the beagle moves, a step every 0.45 s: the map can be drawn that often
+    /// instead of 30 times a second (a speech bubble stands still; it goes at the next step).
+    var busyUntil: Date {
+        var until = Date.distantPast
+        for w in walks.values {
+            until = max(until, w.start.addingTimeInterval(Double(w.steps.count) * Self.stepTime))
+        }
+        for list in reactions.values {
+            for r in list { until = max(until, r.at.addingTimeInterval(1.8)) }
+        }
+        return until
+    }
+
     func bubble(_ id: String, at now: Date) -> String? {
         guard let b = bubbles[id], b.until > now else { return nil }
         return b.text

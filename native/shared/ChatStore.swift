@@ -565,6 +565,24 @@ final class ChatStore {
         }
     }
 
+    /// Shows the chat (set once by the window / page that owns the tabs).
+    @ObservationIgnored var showChat: (@MainActor () -> Void)?
+    /// 「チャットに引用」 for the environment (nil when this member cannot send).
+    var quoteToChat: PostAction? {
+        guard capabilities?.canSend == true else { return nil }
+        return PostAction(owner: ObjectIdentifier(self), kind: "quote") { [weak self] post in
+            self?.pendingQuote = ChatStore.quoteText(authorName: post.authorName, text: post.text,
+                                                     hasImages: !(post.images ?? []).isEmpty, postId: post.parentId ?? post.id,
+                                                     linkTitle: post.urlPreview?.title)
+            self?.showChat?()
+        }
+    }
+    /// 「ネタ帳に送る」 for the environment (nil when this member cannot).
+    var sendToNeta: PostAction? {
+        guard capabilities?.netaEnabled == true else { return nil }
+        return PostAction(owner: ObjectIdentifier(self), kind: "neta") { [weak self] post in self?.netaPost = post }
+    }
+
     /// 「ネタ帳に送る」 (nil when this member cannot): the post to send waits in `netaPost`.
     var netaPost: Post?
     func netaAction() -> (@MainActor (Post) -> Void)? {

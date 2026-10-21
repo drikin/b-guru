@@ -13,6 +13,10 @@ final class JukeboxStore {
     // MARK: The archive
 
     private(set) var episodes: [Episode] = []
+    /// The years on the shelf, newest first (made once per archive, not on every redraw).
+    private(set) var years: [String] = []
+    /// Lower-cased title + summary per episode, for the shelf's search (made once per archive).
+    @ObservationIgnored private var searchKeys: [String: String] = [:]
     private(set) var today: JukeboxResponse.Today?
     private(set) var loading = false
     private(set) var loadFailed = false
@@ -78,15 +82,15 @@ final class JukeboxStore {
         loading = true
         defer { loading = false }
         if episodes.isEmpty, let url = Self.cacheURL,
-           let r = await Task.detached(priority: .userInitiated, operation: { () -> JukeboxResponse? in
+           let r = await Task.detached(priority: .userInitiated, operation: { () -> Prepared? in
                guard let data = try? Data(contentsOf: url) else { return nil }
-               return try? Self.decode(data)
+               return try? Self.prepare(Self.decode(data))
            }).value {
             apply(r)
         }
         do {
             let data = try await api.jukeboxData(path: path)
-            let r = try await Task.detached(priority: .userInitiated) { try Self.decode(data) }.value
+            let r = try await Task.detached(priority: .userInitiated) { try Self.prepare(Self.decode(data)) }.value
             apply(r)
             loadFailed = false
             loadedAt = Date()
@@ -107,10 +111,37 @@ final class JukeboxStore {
         return try d.decode(JukeboxResponse.self, from: data)
     }
 
-    private func apply(_ r: JukeboxResponse) {
-        episodes = r.episodes
-        today = r.today
-        if let c = current, let fresh = r.episodes.first(where: { $0.id == c.id }) { current = fresh }
+    /// The archive with what the shelf needs worked out once, off the main thread.
+    struct Prepared: Sendable {
+        var response: JukeboxResponse
+        var years: [String]
+        var searchKeys: [String: String]
+    }
+
+    private nonisolated static func prepare(_ r: JukeboxResponse) -> Prepared {
+        var keys: [String: String] = [:]
+        keys.reserveCapacity(r.episodes.count)
+        for e in r.episodes {
+            keys[e.id] = (e.title + "\n" + e.summary).lowercased()
+            _ = e.dateText // parsed once here, then cached
+        }
+        return Prepared(response: r, years: Array(Set(r.episodes.map(\.year))).sorted(by: >), searchKeys: keys)
+    }
+
+    private func apply(_ p: Prepared) {
+        let r = p.response
+        if episodes != r.episodes {
+            episodes = r.episodes
+            searchKeys = p.searchKeys
+            if years != p.years { years = p.years }
+        }
+        if today != r.today { today = r.today }
+        if let c = current, let fresh = r.episodes.first(where: { $0.id == c.id }), fresh != c { current = fresh }
+    }
+
+    /// Whether the episode's title or summary contains `query` (already lower-cased).
+    func matches(_ e: Episode, query: String) -> Bool {
+        (searchKeys[e.id] ?? (e.title + "\n" + e.summary).lowercased()).contains(query)
     }
 
     var todayEpisode: Episode? {
@@ -128,14 +159,30 @@ final class JukeboxStore {
     private static let finishedKey = "jukebox.finished"
     private static let rateKey = "jukebox.rate"
     private static let lastKey = "jukebox.last"
-    private(set) var progress: [String: Double] = [:]
+    /// Where each episode was left. Not observed: saving it every 10 s while playing made the
+    /// whole jukebox screen (every shelf row) update; the screen sees `currentFraction`.
+    @ObservationIgnored private(set) var progress: [String: Double] = [:]
     private(set) var finished: Set<String> = []
+    /// How far the record on the turntable has been listened to (0…1), for its shelf row.
+    private(set) var currentFraction: Double?
 
     /// 0…1 listened, or nil when never started.
-    func fraction(_ e: Episode) -> Double? {
+    /// `isCurrent`: the caller already knows whether it is the record playing (rows then do
+    /// not each follow `current`).
+    func fraction(_ e: Episode, isCurrent: Bool? = nil) -> Double? {
         if finished.contains(e.id) { return 1 }
-        guard let p = progress[e.id], p > 0, let d = e.durationSec, d > 0 else { return nil }
+        if isCurrent ?? (e.id == current?.id) { return currentFraction }
+        return Self.fraction(progress[e.id], e)
+    }
+
+    private static func fraction(_ position: Double?, _ e: Episode) -> Double? {
+        guard let p = position, p > 0, let d = e.durationSec, d > 0 else { return nil }
         return min(1, p / Double(d))
+    }
+
+    private func updateCurrentFraction() {
+        let f = current.flatMap { Self.fraction(progress[$0.id], $0) }
+        if f != currentFraction { currentFraction = f }
     }
 
     /// `markFinished`: only while listening (a seek near the end is not "聴いた").
@@ -144,7 +191,8 @@ final class JukeboxStore {
         guard force || abs(position - lastSaved) >= 10 else { return }
         lastSaved = position
         progress[c.id] = position
-        if markFinished, let d = c.durationSec, Double(d) - position < 30 { finished.insert(c.id) }
+        updateCurrentFraction()
+        if markFinished, let d = c.durationSec, Double(d) - position < 30, !finished.contains(c.id) { finished.insert(c.id) }
         UserDefaults.standard.set(progress, forKey: Self.progressKey)
         UserDefaults.standard.set(Array(finished), forKey: Self.finishedKey)
         UserDefaults.standard.set(c.id, forKey: Self.lastKey)
@@ -182,7 +230,8 @@ final class JukeboxStore {
         retriedExpired = false
         // Listened to before: hear it again from the top (it is marked again at the end).
         let resumeAt = finished.contains(e.id) ? 0 : (progress[e.id] ?? 0)
-        finished.remove(e.id)
+        if finished.contains(e.id) { finished.remove(e.id) }
+        updateCurrentFraction()
         position = resumeAt
         lastSaved = resumeAt
         startPlayer(at: resumeAt)
@@ -360,7 +409,12 @@ final class JukeboxStore {
     /// up): the record stops too, and the place is kept.
     private func controlStatusChanged() {
         guard let p = player else { return }
-        isBuffering = p.timeControlStatus == .waitingToPlayAtSpecifiedRate
+        let buffering = p.timeControlStatus == .waitingToPlayAtSpecifiedRate
+        if buffering != isBuffering {
+            isBuffering = buffering
+            // Playing again after a stall: put the lock screen's clock right.
+            if !buffering, isPlaying { updateNowPlaying() }
+        }
         if p.timeControlStatus == .paused, p.rate == 0, isPlaying {
             isPlaying = false
             saveProgress(force: true)
@@ -387,7 +441,9 @@ final class JukeboxStore {
         guard seconds.isFinite, isPlaying, Date() > seekingUntil else { return }
         position = seconds
         saveProgress(markFinished: true)
-        updateNowPlaying(elapsedOnly: true)
+        // Not the Now Playing info: the system moves the elapsed time on by itself from the
+        // rate given at play / pause / seek / rate changes (setting it twice a second cost
+        // work in the app and in the system's media service).
     }
 
     private func didEnd() {
@@ -481,25 +537,24 @@ final class JukeboxStore {
     private var artwork: MPMediaItemArtwork?
     private var artworkFor: String?
 
-    private func updateNowPlaying(elapsedOnly: Bool = false) {
+    /// Play, pause, seek, rate, a new record: the lock screen / Control Center's info.
+    private func updateNowPlaying() {
         let center = MPNowPlayingInfoCenter.default()
         guard let c = current else {
             center.nowPlayingInfo = nil
             return
         }
-        var info = elapsedOnly ? (center.nowPlayingInfo ?? [:]) : [:]
-        if !elapsedOnly {
-            info[MPMediaItemPropertyTitle] = c.title
-            info[MPMediaItemPropertyArtist] = "backspace.fm"
-            info[MPMediaItemPropertyAlbumTitle] = "\(c.dateText) ・ \(c.series)"
-            if let d = c.durationSec { info[MPMediaItemPropertyPlaybackDuration] = d }
-            info[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
-            if artworkFor != c.id {
-                artworkFor = c.id
-                artwork = RecordArtwork.make(for: c)
-            }
-            if let artwork { info[MPMediaItemPropertyArtwork] = artwork }
+        var info: [String: Any] = [:]
+        info[MPMediaItemPropertyTitle] = c.title
+        info[MPMediaItemPropertyArtist] = "backspace.fm"
+        info[MPMediaItemPropertyAlbumTitle] = "\(c.dateText) ・ \(c.series)"
+        if let d = c.durationSec { info[MPMediaItemPropertyPlaybackDuration] = d }
+        info[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
+        if artworkFor != c.id {
+            artworkFor = c.id
+            artwork = RecordArtwork.make(for: c)
         }
+        if let artwork { info[MPMediaItemPropertyArtwork] = artwork }
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = position
         info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? Double(rate) : 0
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = Double(rate)
@@ -530,6 +585,11 @@ final class JukeboxStore {
             ep(7, "2014-01-03", "#001: backspace.fm始まりました！", n: 1),
         ]
         today = .init(id: "demo-5", yearsAgo: 7, postId: nil)
+        defer {
+            let p = Self.prepare(JukeboxResponse(episodes: episodes, today: today))
+            searchKeys = p.searchKeys
+            years = p.years
+        }
         // BGURU_DEMO_JUKEBOX_JSON=<a saved /api/agent/jukebox response>: the real-sized
         // archive (1,170 records) for performance checks; the audio stays the test tone.
         if let path = ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX_JSON"],

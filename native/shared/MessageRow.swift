@@ -270,6 +270,21 @@ struct MessageRow: View {
     }
 }
 
+/// Rows are compared before their body runs (`.equatable()` in the lists): typing, a
+/// presence change or another row's update no longer re-evaluates every row. The closures
+/// are left out — they act on the same store and composer for the life of the list, and
+/// whatever they take from the row is compared here.
+extension MessageRow: @MainActor Equatable {
+    static func == (a: Self, b: Self) -> Bool {
+        a.row == b.row && a.showHeader == b.showHeader && a.canReact == b.canReact && a.canEdit == b.canEdit
+            && a.highlighted == b.highlighted && a.editing == b.editing
+            && (a.onReplyMention == nil) == (b.onReplyMention == nil)
+            && (a.onOpenImage == nil) == (b.onOpenImage == nil)
+            && a.localImages.count == b.localImages.count
+            && zip(a.localImages, b.localImages).allSatisfy { $0 === $1 }
+    }
+}
+
 private struct ActionButton: View {
     let systemImage: String?
     let text: String?

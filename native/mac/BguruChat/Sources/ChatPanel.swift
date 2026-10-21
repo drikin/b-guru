@@ -51,7 +51,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         delegate = self
         animationBehavior = .utilityWindow
         let root = MainPanelView(store: store, timeline: timeline, pin: pin, onClose: { [weak self] in self?.dismiss() }, onSignOut: onSignOut)
-        let host = NSHostingView(rootView: root)
+        let host = PanelHostingView(rootView: root)
         // The content never sizes the panel; its size is the member's (and minSize above).
         // Growing to the content's ideal size made it wide (drikin 2026-10-19), and even
         // following only the content's minimum tied the window to whatever rows the
@@ -183,6 +183,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
             }
         }
         store.isVisible = true
+        pin.windowVisible = true
         HangWatch.note("panel open (\(pin.tab), \(pin.pinned ? "pinned" : "peek"), \(Int(frame.width))×\(Int(frame.height)))")
         focusComposer()
     }
@@ -242,6 +243,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
                 self.orderOut(nil)
                 self.alphaValue = 1
                 self.store.isVisible = false
+                self.pin.windowVisible = false
             }
         })
     }
@@ -429,12 +431,18 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         HangWatch.note("panel size \(Int(frame.width))×\(Int(frame.height))")
     }
 
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        let visible = occlusionState.contains(.visible)
+        if pin.windowVisible != visible { pin.windowVisible = visible }
+    }
+
     func windowDidBecomeKey(_ notification: Notification) {
         store.isVisible = true
     }
 
     func windowWillClose(_ notification: Notification) {
         store.isVisible = false
+        pin.windowVisible = false
     }
 }
 
@@ -451,6 +459,9 @@ final class PinState {
     var tab: MainTab = .chat {
         didSet { if tab != oldValue { HangWatch.note("tab \(tab)") } }
     }
+    /// The panel can be seen (open, on this desktop, not covered): animations and
+    /// polling run only then.
+    var windowVisible = false
     /// Opens the emoji & symbols palette for the message box (set by the panel).
     @ObservationIgnored var openEmoji: (() -> Void)?
     @ObservationIgnored var onChange: ((Bool) -> Void)?
@@ -480,4 +491,14 @@ struct SwipeTracker {
         fired = true
         return dx < 0 ? 1 : -1
     }
+}
+
+/// The panel's root view. AppKit asks it `acceptsFirstResponder` over and over while
+/// scrolling (the window's draggable-area bookkeeping, as the panel moves by its
+/// background), and NSHostingView answered by walking SwiftUI's focus tree each time:
+/// 20–40 % of the main thread while scrolling the chat or the timeline (measured
+/// 2026-10-20). The answer never changes here — the panel always has a message box to type
+/// into — so say it at once.
+final class PanelHostingView<Content: View>: NSHostingView<Content> {
+    override var acceptsFirstResponder: Bool { true }
 }
