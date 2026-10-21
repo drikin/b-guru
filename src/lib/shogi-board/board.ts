@@ -133,6 +133,7 @@ export const BOARD_CSS = `
 .sb-band .sb-label{flex:1;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sb-band button,.sb-confirm button,.sb-promo button{font:inherit;border:1px solid var(--sb-piece-edge);background:var(--sb-btn);color:var(--sb-btn-text);border-radius:6px;padding:2px 8px;cursor:pointer;line-height:1.4}
 .sb-hand{display:flex;align-items:center;gap:2px;flex-wrap:wrap;width:calc(var(--cw)*9 + 22px);box-sizing:border-box;min-height:calc(var(--ch)*.82 + 4px);padding:2px 4px}
+.sb-hand.sb-hand-empty{min-height:18px;padding-top:0;padding-bottom:0}
 .sb-hand .sb-who{font-size:12px;color:var(--sb-dim);margin-right:6px;white-space:nowrap;max-width:64%;min-width:0;display:inline-flex;align-items:baseline;font-variant-numeric:tabular-nums}
 .sb-who .sb-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .sb-who .sb-tail{flex:none;white-space:nowrap}
@@ -537,7 +538,9 @@ export class ShogiBoardView {
     }
 
     this.el.replaceChildren(root);
-    this.reportHeight();
+    // 持ち駒の行の高さが変わる（空 ⇄ 駒あり）ので、高さの上限があれば測り直す。
+    if (this.state.maxHeight) this.fit();
+    else this.reportHeight();
   }
 
   private renderHand(doc: Document, pos: Position, color: Color, where: "top" | "bottom", who?: string): HTMLElement {
@@ -552,6 +555,8 @@ export class ShogiBoardView {
     }
     const bottomColor = colorOf(this.orientation);
     const h = pos.hand(color);
+    // 持ち駒がないときは名前の行の高さだけ（駒 1 個分の高さを空けない。iPhone でチャットを見える量を増やす）。
+    if (HAND_ORDER.every((t) => h.count(t) === 0)) hand.classList.add("sb-hand-empty");
     for (const t of HAND_ORDER) {
       const n = h.count(t);
       if (n === 0) continue;
