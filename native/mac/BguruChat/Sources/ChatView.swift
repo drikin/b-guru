@@ -31,7 +31,7 @@ struct ChatView: View {
             Divider()
             if store.shogi.enabled && store.shogi.open {
                 // ☗ 将棋 (its choice sits in the header with テキスト｜ルーム): the board above the chat.
-                ShogiScreen(shogi: store.shogi, members: store.members)
+                ShogiScreen(shogi: store.shogi)
                 Divider()
                 if !store.room.enabled { VoiceBar(voice: store.voice) }
             } else if store.room.enabled {

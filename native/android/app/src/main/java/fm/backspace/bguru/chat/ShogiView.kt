@@ -143,7 +143,7 @@ fun ShogiPanel(store: ChatStore, visible: Boolean, maxHeight: androidx.compose.u
                 val g = shogi.selected
                 when {
                     shogi.selectedId == null -> {
-                        GameTabs(shogi)
+                        // The lobby has no title row: just its buttons (or the one game's line).
                         Column(Modifier.heightIn(max = (maxHeight - 40.dp).coerceAtLeast(80.dp)).verticalScroll(rememberScrollState())) { Lobby(store) }
                     }
                     g == null -> { GameTabs(shogi); Text("読み込み中…", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -182,7 +182,7 @@ private fun GameTabs(shogi: ShogiStore) {
         TabChip(if (sel == null) "ロビー" else "‹ ロビー", selected = sel == null) { shogi.select(null) }
         if (sel != null) {
             val my = shogi.myColorIn(sel)
-            val mark = when { sel.isEnded -> "🎞 "; my != null -> ShogiLogic.modeMark(sel.mode) + " "; else -> "👀 " }
+            val mark = when { sel.isEnded -> "🎞 "; my != null -> ""; else -> "👀 " }
             TabChip(mark + ShogiLogic.vsText(sel), selected = true, alert = sel.isActive && my != null && sel.turn == my) {}
         }
     }
@@ -207,108 +207,67 @@ private fun TabChip(text: String, selected: Boolean, alert: Boolean = false, onC
 
 // MARK: lobby
 
+/** Simple (drikin 2026-10-21「はやい、遅いも要らない」「シンプルなデザインに」): no game → two buttons;
+ *  a game on the site (one at a time) → that one line and its button. Time control is always blitz. */
 @Composable
 private fun Lobby(store: ChatStore) {
     val shogi = store.shogi
     val live = shogi.liveGame
     val ended = shogi.games.filter { it.status == "ended" }.take(10)
-    var inviting by remember { mutableStateOf(false) }
-    var beagleOpen by remember { mutableStateOf(false) }
     // A tapped button that goes away with the screen change hands focus on to the chat's
     // text field (and up comes the keyboard): drop the focus first.
     val focus = androidx.compose.ui.platform.LocalFocusManager.current
 
-    Column(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (live != null) {
-            // One game at a time, site-wide, first come first served: no new offers while one is up.
-            Text(
-                "対局は 1 局ずつです。募集中の対局を受けるか、対局中なら観戦してください",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            LiveGameCard(shogi, live)
-        } else if (shogi.canPlay) {
-            Section("対局を申し込む") {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(enabled = !shogi.busy, onClick = { shogi.create("blitz") }, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("⚡ 速い") }
-                    FilledTonalButton(enabled = !shogi.busy, onClick = { shogi.create("slow") }, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("🐢 ゆっくり") }
-                    if (SHOW_INVITE) OutlinedButton(enabled = !shogi.busy, onClick = { inviting = true }, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("指名…") }
-                }
-                if (shogi.beagle) {
-                    // ビーグル戦 (practice): starts at once, no offer to wait on.
-                    if (!beagleOpen) {
-                        OutlinedButton(enabled = !shogi.busy, onClick = { beagleOpen = true }, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("🐶 ビーグルと対局（練習）") }
-                    } else {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("🐶 ビーグルと:", style = MaterialTheme.typography.labelLarge)
-                            Button(enabled = !shogi.busy, onClick = { focus.clearFocus(true); beagleOpen = false; shogi.startBeagle("blitz") }, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("⚡ 速い") }
-                            FilledTonalButton(enabled = !shogi.busy, onClick = { focus.clearFocus(true); beagleOpen = false; shogi.startBeagle("slow") }, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("🐢 ゆっくり") }
-                            TextButton(onClick = { beagleOpen = false }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("やめる") }
-                        }
-                    }
-                }
-                Text(
-                    "⚡ 10 分、使い切ったら 1 手 30 秒　🐢 時間制限なし（72 時間指さないと負け）。先後は振り駒。募集は 15 分で期限切れ。対局はサイト全体で 1 局ずつ（早い者勝ち）。" +
-                        if (shogi.beagle) "ビーグルとの対局は申し込みなしですぐ始まります（初心者向けの練習相手）。" else "",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+    Column(Modifier.padding(horizontal = 12.dp, vertical = 2.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        when {
+            live != null -> LiveGameRow(shogi, live)
+            shogi.canPlay -> Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
+                Button(enabled = !shogi.busy, onClick = { focus.clearFocus(true); shogi.create("blitz") }) { Text("対局を募集") }
+                if (shogi.beagle) FilledTonalButton(enabled = !shogi.busy, onClick = { focus.clearFocus(true); shogi.startBeagle("blitz") }) { Text("🐶 ビーグルと対局") }
             }
-        } else {
-            Text("いまは対局がありません。このトークンでは観戦だけできます（指すにはログインし直してください）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            else -> Text("いまは対局がありません", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (SHOW_RECENT && ended.isNotEmpty()) Section("最近の結果") {
             for (g in ended) GameRow(ShogiLogic.vsText(g), ShogiLogic.resultText(g)) {
                 TextButton(onClick = { shogi.select(g.id) }) { Text("見る") }
             }
         }
-        Spacer(Modifier.height(4.dp))
     }
-    if (inviting) InviteDialog(store) { inviting = false }
 }
 
-/** The one game on the site, big: 受ける / 今はむり / 取り下げる / 指す / 観戦する. */
+/** The one game on the site, in one line: 「対局中 ☗A vs ☖B」 [指す／観戦], 「募集中 A さん」 [受ける] … */
 @Composable
-private fun LiveGameCard(shogi: ShogiStore, g: ShogiGame) {
+private fun LiveGameRow(shogi: ShogiStore, g: ShogiGame) {
     val me = shogi.me
     val mine = g.creator.userId == me
     val toMe = g.status == "offered" && g.invitee?.userId == me
     val my = shogi.myColorIn(g)
-    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (g.isActive) MiniBoard(g.sfen, 72.dp)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    when {
-                        g.isActive -> ShogiLogic.vsText(g)
-                        toMe -> "${g.creator.name} さんから対局の申し込み"
-                        g.status == "offered" && mine -> "${g.invitee?.name ?: "?"} さんに申し込み中"
-                        g.status == "offered" -> "${g.creator.name} さんが ${g.invitee?.name ?: "?"} さんに申し込み中"
-                        mine -> "募集中（あなた）"
-                        else -> "${g.creator.name} さんが募集中"
-                    },
-                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    ShogiLogic.modeLabel(g.mode) + (if (g.isActive) "・${g.ply} 手" + (if (g.spectators > 0) "・👀${g.spectators}" else "") +
-                        (if (my != null) (if (g.turn == my) "・あなたの番" else "・相手の番") else "") else "") + (if (g.rematchOf != null) "・再戦" else ""),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    when {
-                        g.isActive -> Button(onClick = { shogi.select(g.id) }) { Text(if (my != null) "指す" else "観戦する") }
-                        toMe -> {
-                            if (shogi.canPlay) Button(enabled = !shogi.busy, onClick = { shogi.accept(g.id) }) { Text("受ける") }
-                            if (shogi.canPlay) OutlinedButton(enabled = !shogi.busy, onClick = { shogi.decline(g.id) }) { Text("今はむり") }
-                        }
-                        mine -> {
-                            // Test: accept my own open game and play both sides.
-                            if (shogi.selfPlay && shogi.canPlay && g.status == "open") FilledTonalButton(enabled = !shogi.busy, onClick = { shogi.accept(g.id) }) { Text("自分と指す（テスト）") }
-                            OutlinedButton(enabled = !shogi.busy, onClick = { shogi.cancel(g.id) }) { Text("取り下げる") }
-                        }
-                        g.status == "open" -> if (shogi.canPlay) Button(enabled = !shogi.busy, onClick = { shogi.accept(g.id) }) { Text("受ける") }
-                        else -> Unit // someone else's offer to someone else: just wait
-                    }
-                }
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            when {
+                g.isActive -> "対局中 ${ShogiLogic.vsText(g)}"
+                toMe -> "${g.creator.name} さんから申し込み"
+                g.status == "offered" && mine -> "申し込み中 ${g.invitee?.name ?: "?"} さん"
+                g.status == "offered" -> "申し込み中 ${g.creator.name} → ${g.invitee?.name ?: "?"}"
+                mine -> "募集中（あなた）"
+                else -> "募集中 ${g.creator.name} さん"
+            },
+            style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+        )
+        when {
+            g.isActive -> Button(onClick = { focus.clearFocus(true); shogi.select(g.id) }, contentPadding = PaddingValues(horizontal = 14.dp)) { Text(if (my != null) "指す" else "観戦") }
+            toMe -> if (shogi.canPlay) {
+                Button(enabled = !shogi.busy, onClick = { focus.clearFocus(true); shogi.accept(g.id) }, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("受ける") }
+                OutlinedButton(enabled = !shogi.busy, onClick = { shogi.decline(g.id) }, contentPadding = PaddingValues(horizontal = 10.dp)) { Text("断る") }
             }
+            mine -> {
+                // Test: accept my own open game and play both sides.
+                if (shogi.selfPlay && shogi.canPlay && g.status == "open") FilledTonalButton(enabled = !shogi.busy, onClick = { focus.clearFocus(true); shogi.accept(g.id) }, contentPadding = PaddingValues(horizontal = 10.dp)) { Text("自分と指す") }
+                OutlinedButton(enabled = !shogi.busy, onClick = { shogi.cancel(g.id) }, contentPadding = PaddingValues(horizontal = 10.dp)) { Text("取り下げる") }
+            }
+            g.status == "open" -> if (shogi.canPlay) Button(enabled = !shogi.busy, onClick = { focus.clearFocus(true); shogi.accept(g.id) }, contentPadding = PaddingValues(horizontal = 14.dp)) { Text("受ける") }
+            else -> Unit // someone else's offer to someone else: just wait
         }
     }
 }
@@ -332,40 +291,6 @@ private fun GameRow(title: String, sub: String? = null, actions: @Composable () 
     }
 }
 
-/** 指名: the member list (the one place to pick an opponent). */
-@Composable
-private fun InviteDialog(store: ChatStore, onDismiss: () -> Unit) {
-    val shogi = store.shogi
-    var mode by remember { mutableStateOf("blitz") }
-    var q by remember { mutableStateOf("") }
-    val people = store.members.filter { it.userId != shogi.me && it.name != "ビーグル" && it.name.contains(q.trim(), ignoreCase = true) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("相手を指名") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    SegmentedButton(selected = mode == "blitz", onClick = { mode = "blitz" }, shape = SegmentedButtonDefaults.itemShape(0, 2), icon = {}) { Text("⚡ 速い") }
-                    SegmentedButton(selected = mode == "slow", onClick = { mode = "slow" }, shape = SegmentedButtonDefaults.itemShape(1, 2), icon = {}) { Text("🐢 ゆっくり") }
-                }
-                OutlinedTextField(q, { q = it }, singleLine = true, placeholder = { Text("名前で探す") }, modifier = Modifier.fillMaxWidth())
-                LazyColumn(Modifier.heightIn(max = 300.dp)) {
-                    if (people.isEmpty()) item { Text(if (store.members.isEmpty()) "読み込み中…" else "見つかりません", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    items(people, key = { it.userId }) { m ->
-                        Text(
-                            m.name,
-                            Modifier.fillMaxWidth().clickable { shogi.create(mode, m.userId, inviteeName = m.name); onDismiss() }.padding(vertical = 10.dp),
-                            style = MaterialTheme.typography.bodyLarge,
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("やめる") } },
-    )
-}
-
 // MARK: an offer / open game on its own (from a notification)
 
 @Composable
@@ -375,10 +300,10 @@ private fun PendingGame(shogi: ShogiStore, g: ShogiGame) {
         val mine = g.creator.userId == shogi.me
         Text(
             when {
-                toMe -> "${g.creator.name} さんから対局の申し込み（${ShogiLogic.modeLabel(g.mode)}）"
-                mine && g.status == "offered" -> "${g.invitee?.name ?: "?"} さんに申し込み中（${ShogiLogic.modeLabel(g.mode)}）"
-                mine -> "募集中（${ShogiLogic.modeLabel(g.mode)}）"
-                else -> "${g.creator.name} さんが募集中（${ShogiLogic.modeLabel(g.mode)}）"
+                toMe -> "${g.creator.name} さんから対局の申し込み"
+                mine && g.status == "offered" -> "${g.invitee?.name ?: "?"} さんに申し込み中"
+                mine -> "募集中（あなた）"
+                else -> "${g.creator.name} さんが募集中"
             },
             style = MaterialTheme.typography.bodyLarge,
         )
@@ -436,7 +361,7 @@ private fun GameView(store: ChatStore, g: ShogiGame, visible: Boolean, boardMax:
         }
         Text(
             if (g.isEnded) "終局 $turnText"
-            else ShogiLogic.modeMark(g.mode) + " ${g.ply}手" + (g.lastMove?.label?.takeIf { it.isNotBlank() }?.let { " $it" } ?: "") +
+            else "${g.ply}手" + (g.lastMove?.label?.takeIf { it.isNotBlank() }?.let { " $it" } ?: "") +
                 "・$turnText" + (if (g.spectators > 0) " 👀${g.spectators}" else ""),
             style = MaterialTheme.typography.labelMedium,
             fontWeight = if (g.isEnded || canMove) FontWeight.Bold else null,
@@ -448,11 +373,11 @@ private fun GameView(store: ChatStore, g: ShogiGame, visible: Boolean, boardMax:
         if (g.isEnded) {
             val again = my != null && shogi.canPlay && g.status == "ended" && g.black != null
             if (again && ShogiLogic.beagleSide(g) != null) {
-                Button(enabled = !shogi.busy, onClick = { focus.clearFocus(true); shogi.startBeagle(g.mode, rematchOf = g.id) }, contentPadding = PaddingValues(horizontal = 10.dp), modifier = Modifier.height(32.dp)) {
+                Button(enabled = !shogi.busy, onClick = { focus.clearFocus(true); shogi.startBeagle("blitz", rematchOf = g.id) }, contentPadding = PaddingValues(horizontal = 10.dp), modifier = Modifier.height(32.dp)) {
                     Text("🐶 もう一局", style = MaterialTheme.typography.labelMedium)
                 }
             } else if (again) {
-                Button(enabled = !shogi.busy, onClick = { focus.clearFocus(true); shogi.create(g.mode, rematchOf = g.id) }, contentPadding = PaddingValues(horizontal = 10.dp), modifier = Modifier.height(32.dp)) {
+                Button(enabled = !shogi.busy, onClick = { focus.clearFocus(true); shogi.create("blitz", rematchOf = g.id) }, contentPadding = PaddingValues(horizontal = 10.dp), modifier = Modifier.height(32.dp)) {
                     Text("再戦", style = MaterialTheme.typography.labelMedium)
                 }
             }
@@ -726,7 +651,7 @@ fun ShogiChatCard(store: ChatStore, m: ChatMessage, modifier: Modifier = Modifie
         Text(
             when {
                 g == null -> m.body
-                live -> "${ShogiLogic.vsText(g!!)} 対局中 ${ShogiLogic.modeMark(g.mode)} ${g.ply}手"
+                live -> "${ShogiLogic.vsText(g!!)} 対局中 ${g.ply}手"
                 g!!.isEnded -> "☗ ${ShogiLogic.vsText(g)}　${ShogiLogic.resultText(g)}"
                 else -> m.body
             },
@@ -762,6 +687,5 @@ fun MiniBoard(sfen: String, size: androidx.compose.ui.unit.Dp = 96.dp) {
 /** The board page's body padding (index.html: 6 px above and below). */
 private const val BOARD_BODY_PADDING = 12
 
-/** Hidden for now (drikin 2026-10-21「相手を指定と最近の結果は一旦非表示」); the server keeps both. */
-private const val SHOW_INVITE = false
+/** Hidden for now (drikin 2026-10-21「最近の結果は一旦非表示」); the server keeps them. */
 private const val SHOW_RECENT = false

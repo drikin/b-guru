@@ -195,8 +195,6 @@ class ShogiLogicTest {
         assertEquals("☗mazzo の勝ち（投了）・87 手", ShogiLogic.resultText(g.copy(status = "ended", result = "black", endReason = "resign", ply = 87)))
         assertEquals("引き分け（千日手）・120 手", ShogiLogic.resultText(g.copy(status = "ended", result = "draw", endReason = "sennichite", ply = 120)))
         assertEquals("中断・1 手", ShogiLogic.resultText(g.copy(status = "ended", endReason = "aborted")))
-        assertEquals("⚡速い", ShogiLogic.modeLabel("blitz"))
-        assertEquals("🐢ゆっくり", ShogiLogic.modeLabel("slow"))
     }
 
     @Test fun miniBoardCells() {

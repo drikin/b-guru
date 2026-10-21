@@ -339,7 +339,7 @@ private struct ShogiArea: View {
         if composer.focused {
             ShogiFoldedBar(shogi: store.shogi) { composer.focused = false }
         } else {
-            ShogiScreen(shogi: store.shogi, members: store.members)
+            ShogiScreen(shogi: store.shogi)
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
         }

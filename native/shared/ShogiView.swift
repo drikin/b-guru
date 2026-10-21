@@ -1,9 +1,5 @@
 import SwiftUI
 
-/// Hidden for now (drikin 2026-10-21「相手を指定と最近の結果は一旦非表示」); the server keeps both.
-private let showInvite = false
-private let showRecent = false
-
 // ☗ 将棋 above the chat: the lobby (募集・指名・届いた申し込み・対局中・最近の結果), a game
 // (the board with names / clocks in its two bands, and a bar with moves, watchers and ⋯),
 // the end (result, 再戦, 閉じる). Same flow as the web (src/components/shogi/ShogiPanel.tsx).
@@ -15,8 +11,6 @@ extension EnvironmentValues {
 
 struct ShogiScreen: View {
     let shogi: ShogiStore
-    /// For 指名 (the chat's member list, loaded once per launch).
-    let members: [MentionMember]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -42,8 +36,8 @@ struct ShogiScreen: View {
             } else {
                 // As tall as it needs; it scrolls only if it would pass half the chat.
                 ViewThatFits(in: .vertical) {
-                    ShogiLobby(shogi: shogi, members: members)
-                    ScrollView { ShogiLobby(shogi: shogi, members: members) }
+                    ShogiLobby(shogi: shogi)
+                    ScrollView { ShogiLobby(shogi: shogi) }
                 }
                 .frame(maxHeight: shogi.areaHeight > 0 ? shogi.areaHeight * 0.5 : 360, alignment: .top)
                 .fixedSize(horizontal: false, vertical: true)
@@ -57,174 +51,37 @@ struct ShogiScreen: View {
 
 // MARK: - Lobby
 
+/// Two buttons when nothing is on (drikin 2026-10-21「はやい、遅いも要らない」「シンプルなデザインに」:
+/// fast games only); while the site's one game is open / offered / on, that game on one line
+/// with its button. Same as the web's Lobby (src/components/shogi/ShogiPanel.tsx).
 private struct ShogiLobby: View {
     let shogi: ShogiStore
-    let members: [MentionMember]
-    @AppStorage("shogiLobbyMode") private var mode = "blitz"
-    /// 「🐶 ビーグルと対局（練習）」 was pressed: the two time controls show.
-    @State private var beagleOpen = false
-
-    private var others: [MentionMember] {
-        members.filter { $0.userId != shogi.me && $0.name != "ビーグル" }
-    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 6) {
             if let g = shogi.currentGame {
                 ShogiCurrentGame(shogi: shogi, game: g)
             } else if shogi.canPlay {
-                section("対局を申し込む") {
-                    Picker("持ち時間", selection: $mode) {
-                        Text("⚡ 速い（10 分＋30 秒）").tag("blitz")
-                        Text("🐢 ゆっくり").tag("slow")
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    HStack(spacing: 8) {
-                        Button("募集する") { Task { await shogi.create(mode: mode) } }
-                            .buttonStyle(.borderedProminent)
-                            .tint(Color.accentGreen)
-                        if showInvite { Menu {
-                            if others.isEmpty { Text("メンバーを読み込み中…") }
-                            ForEach(others) { m in
-                                Button(m.name) { Task { await shogi.create(mode: mode, invitee: m.userId) } }
-                            }
-                        } label: {
-                            Label("相手を指名", systemImage: "person.crop.circle.badge.plus")
-                        }
-                        .fixedSize() }
-                    }
-                    .disabled(shogi.busy)
-                    .controlSize(.small)
-                    Text("先後は振り駒。募集は 15 分で期限切れ。ゆっくりは 72 時間指さないと負けです。")
-                        .font(.caption2).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if shogi.beagle { beagleRow }
-            }
-
-            if shogi.currentGame == nil, !shogi.offersToMe.isEmpty {
-                section("届いた申し込み") {
-                    ForEach(shogi.offersToMe) { g in
-                        row {
-                            Text("\(g.creator?.name ?? "?") さんから（\(g.modeLabel)\(g.rematchOf != nil ? "・再戦" : "")）").font(.callout)
-                        } actions: {
-                            Button("受ける") { Task { await shogi.accept(g.id) } }.buttonStyle(.borderedProminent).tint(Color.accentGreen)
-                            Button("今はむり") { Task { await shogi.decline(g.id) } }.buttonStyle(.bordered)
-                        }
-                    }
-                }
-            }
-
-            if shogi.currentGame == nil, !shogi.myPending.isEmpty {
-                section("自分の申し込み") {
-                    ForEach(shogi.myPending) { g in
-                        row {
-                            Text(g.status == "offered" ? "\(g.invitee?.name ?? "?") さんへ（\(g.modeLabel)）" : "募集中（\(g.modeLabel)）").font(.callout)
-                        } actions: {
-                            if shogi.selfPlay, g.status == "open" {
-                                // Test only (server's self_play): take my own open game and play both sides.
-                                Button("自分と指す（テスト）") { Task { await shogi.accept(g.id) } }.buttonStyle(.bordered)
-                            }
-                            Button("取り下げる") { Task { await shogi.cancel(g.id) } }.buttonStyle(.bordered)
-                        }
-                    }
-                }
-            }
-
-            if shogi.currentGame == nil, !shogi.openByOthers.isEmpty {
-                section("募集中") {
-                    ForEach(shogi.openByOthers) { g in
-                        row {
-                            Text("\(g.creator?.name ?? "?") さん（\(g.modeLabel)）").font(.callout)
-                        } actions: {
-                            if shogi.canPlay {
-                                Button("受ける") { Task { await shogi.accept(g.id) } }.buttonStyle(.borderedProminent).tint(Color.accentGreen)
-                            }
-                        }
-                    }
-                }
-            }
-
-            if shogi.currentGame == nil, !shogi.activeGames.isEmpty {
-            section("対局中") {
-                if shogi.activeGames.isEmpty {
-                    Text("いまはありません").font(.caption).foregroundStyle(.secondary)
-                }
-                ForEach(shogi.activeGames) { g in
-                    row {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(g.playersText).font(.callout)
-                            Text("\(g.modeLabel)・\(g.ply) 手\((g.spectators ?? 0) > 0 ? "・👀\(g.spectators ?? 0)" : "")")
-                                .font(.caption2).foregroundStyle(.secondary)
-                        }
-                    } actions: {
-                        Button(shogi.myColor(in: g) != nil ? "指す" : "観戦") { shogi.select(g.id) }.buttonStyle(.bordered)
-                    }
-                }
-            }
-
-            }
-
-            if showRecent, !shogi.recentEnded.isEmpty {
-                section("最近の結果") {
-                    ForEach(shogi.recentEnded) { g in
-                        row {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(g.playersText).font(.callout)
-                                Text(g.resultText).font(.caption2).foregroundStyle(.secondary)
-                            }
-                        } actions: {
-                            Button("見る") { shogi.select(g.id) }.buttonStyle(.borderless)
-                        }
-                    }
-                }
-            }
-        }
-        .controlSize(.small)
-        .disabled(shogi.busy)
-    }
-
-    /// 🐶 ビーグルと対局（練習）→ ⚡速い／🐢ゆっくり: starts at once, no offer to accept.
-    private var beagleRow: some View {
-        section("練習") {
-            if beagleOpen {
                 HStack(spacing: 8) {
-                    Text("🐶 ビーグルと:").font(.callout)
-                    Button("⚡ 速い") { beagleOpen = false; Task { await shogi.startBeagle(mode: "blitz") } }
+                    Button("対局を募集") { Task { await shogi.create(mode: "blitz") } }
                         .buttonStyle(.borderedProminent).tint(Color.accentGreen)
-                    Button("🐢 ゆっくり") { beagleOpen = false; Task { await shogi.startBeagle(mode: "slow") } }
-                        .buttonStyle(.bordered)
-                    Button("やめる") { beagleOpen = false }.buttonStyle(.borderless)
+                    if shogi.beagle {
+                        Button("🐶 ビーグルと対局") { Task { await shogi.startBeagle(mode: "blitz") } }
+                            .buttonStyle(.bordered).tint(.orange)
+                    }
                 }
-                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
             } else {
-                Button("🐶 ビーグルと対局（練習）") { beagleOpen = true }.buttonStyle(.bordered)
+                Text("対局はありません").font(.caption).foregroundStyle(.secondary)
             }
-            Text("申し込みなしですぐ始まります（初心者向けの練習相手）。")
-                .font(.caption2).foregroundStyle(.secondary)
         }
-        .disabled(shogi.busy)
         .controlSize(.small)
-    }
-
-    private func section<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption.weight(.bold)).foregroundStyle(.secondary)
-            content()
-        }
-    }
-
-    private func row<L: View, A: View>(@ViewBuilder _ label: () -> L, @ViewBuilder actions: () -> A) -> some View {
-        HStack(spacing: 6) {
-            label().frame(maxWidth: .infinity, alignment: .leading).lineLimit(2)
-            actions().lineLimit(1).fixedSize()
-        }
+        .disabled(shogi.busy)
     }
 }
 
-/// One game at a time: while one is open / offered / on, the lobby shows it big instead of
-/// 「対局を申し込む」 (受ける / 観戦する / 指す).
+/// The site's one game on one line: 「対局中 ☗A vs ☖B 12手 [指す/観戦]」 or 「募集中 A さん [受ける]」.
 private struct ShogiCurrentGame: View {
     let shogi: ShogiStore
     let game: ShogiGame
@@ -232,76 +89,54 @@ private struct ShogiCurrentGame: View {
     var body: some View {
         let g = game
         let me = shogi.me
-        let mine = shogi.myColor(in: g) != nil
-        VStack(alignment: .leading, spacing: 8) {
-            Text("対局は 1 局ずつです。募集中の対局を受けるか、対局中なら観戦してください。")
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack(alignment: .center, spacing: 10) {
-                if g.isActive { ShogiMiniBoard(sfen: g.sfen, size: 72) }
-                VStack(alignment: .leading, spacing: 3) {
-                    if g.isActive {
-                        Text(g.playersText).font(.callout.weight(.semibold))
-                        Text("\(g.modeLabel)・\(g.ply) 手\((g.spectators ?? 0) > 0 ? "・👀\(g.spectators ?? 0)" : "")\(g.lastMove.map { "・\($0.label)" } ?? "")")
-                            .font(.caption).foregroundStyle(.secondary)
-                    } else if g.status == "offered" {
-                        Text("\(g.creator?.name ?? "?") さん → \(g.invitee?.name ?? "?") さん（\(g.modeLabel)）").font(.callout.weight(.semibold))
-                        Text("指名の返事を待っています").font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Text("\(g.creator?.name ?? "?") さんが募集中（\(g.modeLabel)）").font(.callout.weight(.semibold))
-                    }
-                    HStack(spacing: 8) {
-                        if g.isActive {
-                            Button(mine ? "指す" : "観戦する") { shogi.select(g.id) }
-                                .buttonStyle(.borderedProminent).tint(Color.accentGreen)
-                        } else if g.creator?.userId == me, me != nil {
-                            if shogi.selfPlay, g.status == "open" {
-                                Button("自分と指す（テスト）") { Task { await shogi.accept(g.id) } }.buttonStyle(.bordered)
-                            }
-                            Button("取り下げる") { Task { await shogi.cancel(g.id) } }.buttonStyle(.bordered)
-                        } else if g.status == "open" || g.invitee?.userId == me, shogi.canPlay {
-                            Button("受ける") { Task { await shogi.accept(g.id) } }
-                                .buttonStyle(.borderedProminent).tint(Color.accentGreen)
-                            if g.status == "offered" { Button("今はむり") { Task { await shogi.decline(g.id) } }.buttonStyle(.bordered) }
-                        }
-                    }
-                    .lineLimit(1)
-                    .controlSize(.small)
-                    .disabled(shogi.busy)
+        let mine = me != nil && g.creator?.userId == me
+        HStack(spacing: 8) {
+            Group {
+                if g.isActive {
+                    Text("対局中 ").foregroundStyle(.secondary) + Text("\(g.playersText) \(g.ply)手")
+                } else if g.status == "offered" {
+                    Text("申し込み中 ").foregroundStyle(.secondary) + Text("\(g.creator?.name ?? "?") → \(g.invitee?.name ?? "?")")
+                } else {
+                    Text("募集中 ").foregroundStyle(.secondary) + Text(mine ? "あなた" : "\(g.creator?.name ?? "?") さん")
                 }
             }
-            .padding(10)
+            .font(.callout)
+            .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.04)))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentGreen.opacity(0.45)))
+            if g.isActive {
+                Button(shogi.myColor(in: g) != nil ? "指す" : "観戦") { shogi.select(g.id) }
+                    .buttonStyle(.borderedProminent).tint(Color.accentGreen)
+            } else if mine {
+                if shogi.selfPlay, g.status == "open" {
+                    Button("自分と指す（テスト）") { Task { await shogi.accept(g.id) } }.buttonStyle(.bordered)
+                }
+                Button("取り下げる") { Task { await shogi.cancel(g.id) } }.buttonStyle(.bordered)
+            } else if shogi.canPlay, g.status == "open" || g.invitee?.userId == me {
+                Button("受ける") { Task { await shogi.accept(g.id) } }
+                    .buttonStyle(.borderedProminent).tint(Color.accentGreen)
+                if g.status == "offered" { Button("断る") { Task { await shogi.decline(g.id) } }.buttonStyle(.bordered) }
+            }
         }
+        .controlSize(.small)
+        .lineLimit(1)
+        .padding(.vertical, 4)
     }
 }
 
-/// An offer / open game that was opened from a notification or the tabs.
+/// An open / offered game opened from a notification: the same one line, and back to the lobby.
 private struct ShogiOfferView: View {
     let shogi: ShogiStore
     let game: ShogiGame
 
     var body: some View {
-        let toMe = game.invitee?.userId == shogi.me && shogi.me != nil
-        let mine = game.creator?.userId == shogi.me && shogi.me != nil
-        VStack(alignment: .leading, spacing: 8) {
-            Text(mine ? (game.status == "offered" ? "\(game.invitee?.name ?? "?") さんへの申し込み（\(game.modeLabel)）" : "募集中（\(game.modeLabel)）")
-                 : "\(game.creator?.name ?? "?") さんからの申し込み（\(game.modeLabel)）")
-                .font(.callout)
-            HStack(spacing: 8) {
-                if (toMe || (!mine && game.status == "open")) && shogi.canPlay {
-                    Button("受ける") { Task { await shogi.accept(game.id) } }.buttonStyle(.borderedProminent).tint(Color.accentGreen)
-                }
-                if toMe { Button("今はむり") { Task { await shogi.decline(game.id); shogi.select(nil) } }.buttonStyle(.bordered) }
-                if mine { Button("取り下げる") { Task { await shogi.cancel(game.id) } }.buttonStyle(.bordered) }
-                Button("ロビーへ") { shogi.select(nil) }.buttonStyle(.borderless)
+        HStack(spacing: 6) {
+            Button { shogi.select(nil) } label: {
+                Image(systemName: "chevron.backward").font(.system(size: 12, weight: .semibold))
             }
-            .controlSize(.small)
-            .disabled(shogi.busy)
+            .buttonStyle(.borderless)
+            .accessibilityLabel("ロビーへ")
+            ShogiCurrentGame(shogi: shogi, game: game)
         }
-        .padding(.vertical, 6)
     }
 }
 
@@ -346,7 +181,7 @@ struct ShogiGameView: View {
     // MARK: The bar: mode, moves, watchers, whose move, ⋯
 
     private var status: String {
-        var s = "\(g.modeLabel)・\(g.ply) 手"
+        var s = "\(g.ply) 手"
         // The board's own band (last move, ⇅) is hidden to give the squares its height: the
         // last move is said here, ⇅ is in ⋯.
         if let lm = g.lastMove { s += "・\(lm.label)" }
@@ -508,10 +343,10 @@ struct ShogiGameView: View {
             HStack(spacing: 8) {
                 if my != nil, shogi.canPlay {
                     if g.isBeagleGame {
-                        Button("🐶 もう一局（先後交代）") { Task { await shogi.startBeagle(mode: g.mode, rematchOf: g.id) } }
+                        Button("🐶 もう一局（先後交代）") { Task { await shogi.startBeagle(mode: "blitz", rematchOf: g.id) } }
                             .buttonStyle(.borderedProminent).tint(Color.accentGreen)
                     } else {
-                        Button("再戦を申し込む（先後交代）") { Task { await shogi.create(mode: g.mode, rematchOf: g.id) } }
+                        Button("再戦を申し込む（先後交代）") { Task { await shogi.create(mode: "blitz", rematchOf: g.id) } }
                             .buttonStyle(.borderedProminent).tint(Color.accentGreen)
                     }
                 }
@@ -539,7 +374,7 @@ struct ShogiChatCard: View {
         if let g, g.isActive {
             // 「☗A vs ☖B 対局中 ⚡ 12手 [観戦]」 — one line, redrawn by the game's events.
             HStack(spacing: 8) {
-                Text("\(g.playersText) 対局中 \(g.isBlitz ? "⚡" : "🐢") \(g.ply)手\(g.lastMove.map { " \($0.label)" } ?? "")")
+                Text("\(g.playersText) 対局中 \(g.ply)手\(g.lastMove.map { " \($0.label)" } ?? "")")
                     .font(.caption)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)

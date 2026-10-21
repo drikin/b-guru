@@ -99,12 +99,11 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
             // （「対局の申し込みが届きました」「あなたの番です」）stays when this cannot be read.
             guard let id = q.gameId,
                   let g = await get("/api/agent/shogi/games/\(id)", token: token)?["game"] as? [String: Any] else { return nil }
-            let mode = (g["mode"] as? String) == "blitz" ? "⚡速い" : "🐢ゆっくり"
             func name(_ key: String) -> String? { (g[key] as? [String: Any])?["name"] as? String }
             if q.kind == "shogi_offer" {
                 guard let who = name("creator") else { return nil }
                 let rematch = g["rematch_of"] is NSNumber ? "・再戦" : ""
-                return ("☗ 将棋", "\(who) さんから対局の申し込みが届きました（\(mode)\(rematch)）")
+                return ("☗ 将棋", "\(who) さんから対局の申し込みが届きました\(rematch.isEmpty ? "" : "（再戦）")")
             }
             let mine = (g["my_color"] as? String) ?? ""
             let opponent = mine == "black" ? name("white") : (mine == "white" ? name("black") : nil)

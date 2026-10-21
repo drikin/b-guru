@@ -131,7 +131,7 @@ class ShogiStore(private val api: ApiClient, context: Context) {
         games = ShogiLogic.upsert(games, g)
         skew = ShogiLogic.skewOf(g.serverNow, System.currentTimeMillis(), skew)
         if (action == "offer" && g.invitee?.userId == me) {
-            notice = "${g.creator.name} さんから対局の申し込みが届きました（${ShogiLogic.modeLabel(g.mode)}）"
+            notice = "${g.creator.name} さんから対局の申し込みが届きました"
         }
         // My offer was accepted: open that board (if the lobby is what is showing).
         if (g.isActive && before != null && !before.isActive && myColorIn(g) != null && selectedId == null) {

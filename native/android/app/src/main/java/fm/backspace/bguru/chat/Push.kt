@@ -69,7 +69,7 @@ object Push {
             NotificationChannel(CH_CHAT, "新着メッセージ", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "チャットの新着（まとめて 1 件）" },
             NotificationChannel(CH_REPLY, "投稿への返信", NotificationManager.IMPORTANCE_DEFAULT),
             NotificationChannel(CH_TIMELINE, "タイムラインの新着", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "タイムラインの新しい投稿（コメントは除く）" },
-            NotificationChannel(CH_SHOGI, "将棋", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "対局の申し込みと、ゆっくり対局であなたの番になったとき" },
+            NotificationChannel(CH_SHOGI, "将棋", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "対局の申し込みと、あなたの番になったとき" },
         ))
     }
 
@@ -309,9 +309,8 @@ object PushContent {
     /** With the game (read with this device's token) the names; without it the generic line. */
     fun shogiText(kind: String, game: ShogiGame?): String {
         if (game == null) return defaultText(kind)
-        val mode = ShogiLogic.modeLabel(game.mode)
         return when (kind) {
-            SHOGI_OFFER -> "${game.creator.name.ifBlank { "だれか" }} さんから対局の申し込み（$mode）"
+            SHOGI_OFFER -> "${game.creator.name.ifBlank { "だれか" }} さんから対局の申し込み"
             else -> "あなたの番です（${ShogiLogic.vsText(game)}・${game.ply} 手）"
         }
     }

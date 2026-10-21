@@ -366,7 +366,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let content = UNMutableNotificationContent()
         content.title = "☗ 将棋"
         if offer {
-            content.body = "\(g.creator?.name ?? "だれか") さんから対局の申し込みが届きました（\(g.modeLabel)\(g.rematchOf != nil ? "・再戦" : "")）"
+            content.body = "\(g.creator?.name ?? "だれか") さんから対局の申し込みが届きました\(g.rematchOf != nil ? "（再戦）" : "")"
         } else {
             let opponent = store?.shogi.myColor(in: g).flatMap { g.player($0.other)?.name } ?? "相手"
             content.body = "\(opponent) さんが\(g.lastMove.map { "\($0.label) と" } ?? "")指しました。あなたの番です"

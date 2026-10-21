@@ -71,7 +71,7 @@ class PushContentTest {
         assertEquals("あなたの番です", PushContent.shogiText("shogi_turn", null))
         assertEquals("将棋の通知があります", PushContent.publicText("shogi_turn"))
         val g = ShogiGame(7, "offered", "slow", creator = ShogiPlayer("a", "mazzo"))
-        assertEquals("mazzo さんから対局の申し込み（🐢ゆっくり）", PushContent.shogiText("shogi_offer", g))
+        assertEquals("mazzo さんから対局の申し込み", PushContent.shogiText("shogi_offer", g))
         // One notification per game: the offer and the turn replace each other.
         assertEquals(PushContent.notificationId("shogi_offer", null, 7, 1), PushContent.notificationId("shogi_turn", null, 7, 1))
         assertTrue(PushContent.notificationId("shogi_turn", null, 7, 1) != PushContent.notificationId("timeline_new", null, 7, 1))

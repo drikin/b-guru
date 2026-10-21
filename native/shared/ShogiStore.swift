@@ -59,7 +59,6 @@ struct ShogiGame: Decodable, Equatable, Sendable, Identifiable {
     var isEnded: Bool { status == "ended" || status == "closed" }
     var isBlitz: Bool { mode == "blitz" }
     var turnSide: ShogiSide { ShogiSide(rawValue: turn ?? "") ?? (ply % 2 == 0 ? .black : .white) }
-    var modeLabel: String { isBlitz ? "⚡速い" : "🐢ゆっくり" }
 
     func player(_ s: ShogiSide) -> ShogiPlayer? { s == .black ? black : white }
 
@@ -328,7 +327,7 @@ final class ShogiStore {
         upsert(g)
         if let n = g.serverNow { updateSkew(n) }
         if action == "offer", g.status == "offered" {
-            notice = "\(g.creator?.name ?? "だれか") さんから対局の申し込みが届きました（\(g.modeLabel)）"
+            notice = "\(g.creator?.name ?? "だれか") さんから対局の申し込みが届きました"
             onOffer?(g)
         }
         guard g.isActive, let my = myColor(in: g) else { return }
@@ -398,11 +397,10 @@ final class ShogiStore {
         return r
     }
 
-    /// 募集 (no invitee) / 指名 / 再戦 (rematch_of: the other side is asked, colours swap).
-    func create(mode: String, invitee: String? = nil, rematchOf: Int? = nil) async {
+    /// 募集 / 再戦 (rematch_of: the other side is asked, colours swap). Fast games only (drikin 2026-10-21).
+    func create(mode: String, rematchOf: Int? = nil) async {
         if offline { notice = "（デモ）申し込みは送りません"; return }
         var json: [String: any Sendable] = ["mode": mode]
-        if let invitee { json["invitee_user_id"] = invitee }
         if let rematchOf { json["rematch_of"] = rematchOf }
         guard let r = await act("games", json) else { return }
         // One game at a time on the whole site: "busy" brings the game that is on (if visible).

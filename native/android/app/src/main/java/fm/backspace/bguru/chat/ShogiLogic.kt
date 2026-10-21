@@ -131,8 +131,6 @@ object ShogiLogic {
         else -> null
     }
 
-    fun modeLabel(mode: String) = if (mode == "slow") "🐢ゆっくり" else "⚡速い"
-    fun modeMark(mode: String) = if (mode == "slow") "🐢" else "⚡"
 
     private val END_REASON = mapOf(
         "resign" to "投了", "checkmate" to "詰み", "timeout" to "時間切れ", "sennichite" to "千日手",
