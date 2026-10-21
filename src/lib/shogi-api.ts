@@ -22,6 +22,7 @@ import {
   ShogiError,
   watchGame,
   type Actor,
+  shogiSelfPlayFor,
 } from "./shogi";
 import type { ShogiStatus } from "./shogi-clock";
 import { AGENT_API_VERSION } from "./agent-chat";
@@ -54,7 +55,7 @@ export async function handleShogi(
           .map((s) => s.trim())
           .filter((s): s is ShogiStatus => (STATUSES as string[]).includes(s));
         const games = await listGames(actor, want);
-        return { status: 200, body: { apiVersion: AGENT_API_VERSION, me: { user_id: actor.userId }, games } };
+        return { status: 200, body: { apiVersion: AGENT_API_VERSION, me: { user_id: actor.userId, self_play: shogiSelfPlayFor(actor.email) }, games } };
       }
       if (method === "POST") {
         const b = (await readBody()) ?? {};

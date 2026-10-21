@@ -70,6 +70,39 @@ export function shogiEnabledFor(email: string | null | undefined): boolean {
     .includes(email.trim().toLowerCase());
 }
 
+/** 全員に公開しているか（SHOGI_ENABLED が 1）。公開前は、チャットのカード・ビーグルの投稿・通知を出さない
+ *  （出している人以外にも見えてしまうため）。 */
+export function shogiPublic(): boolean {
+  const raw = process.env.SHOGI_ENABLED?.trim().toLowerCase();
+  return raw === "1" || raw === "*" || raw === "true";
+}
+
+/** テスト用: SHOGI_SELF_PLAY（メールのカンマ区切り）の人は、自分の募集を自分で受けて両方の手を指せる。 */
+export function shogiSelfPlayFor(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return (process.env.SHOGI_SELF_PLAY ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(email.trim().toLowerCase());
+}
+
+/** 自分との対局（テスト用）。 */
+export function isSelfGame(r: Pick<GameRow, "black_uid" | "white_uid">): boolean {
+  return !!r.black_uid && r.black_uid === r.white_uid;
+}
+
+/** 指す側から見た自分の色。自分との対局では手番の側。 */
+export function playerSide(r: Pick<GameRow, "black_uid" | "white_uid" | "ply">, userId: string | null | undefined): Side | null {
+  if (isSelfGame(r) && r.black_uid === userId) return sideToMove(r.ply);
+  return colorOf(r, userId);
+}
+
+/** カード・ビーグルの投稿・通知を出してよい対局か。 */
+function announces(r: Pick<GameRow, "black_uid" | "white_uid">): boolean {
+  return shogiPublic() && !isSelfGame(r);
+}
+
 export class ShogiError extends Error {
   constructor(
     public status: number,
@@ -380,7 +413,7 @@ export async function getGameDetail(actor: Actor, id: number): Promise<ShogiGame
     at: new Date(m.created_at).toISOString(),
   }));
   const game = await dtoOf(r);
-  return { ...game, moves, kif_url: `/api/shogi/games/${id}/kif`, my_color: colorOf(r, actor.userId) };
+  return { ...game, moves, kif_url: `/api/shogi/games/${id}/kif`, my_color: playerSide(r, actor.userId) };
 }
 
 export async function gameKif(actor: Actor, id: number): Promise<{ filename: string; text: string }> {
@@ -454,7 +487,7 @@ export async function createGame(
   const game = await broadcast(row, "state");
   if (invitee) {
     const email = await emailOf(invitee);
-    if (email) {
+    if (email && shogiEnabledFor(email)) {
       emitPersonal(email, { type: "shogi", action: "offer", game });
       void pushShogi(email, "shogi_offer", row.id).catch(logErr("push offer"));
     }
@@ -470,7 +503,8 @@ export async function acceptGame(actor: Actor, id: number): Promise<ShogiGameDto
     if (r.status !== "open" && r.status !== "offered") throw new ShogiError(409, "not_open", "もう受けられません");
     const now = ms(r.db_now)!;
     if (dueEvent(clockOf(r), now)?.kind === "expire") throw new ShogiError(409, "expired", "申し込みの期限が切れました");
-    if (r.creator_uid === actor.userId) throw new ShogiError(400, "invalid_request", "自分の申し込みは受けられません");
+    const self = r.creator_uid === actor.userId;
+    if (self && !shogiSelfPlayFor(actor.email)) throw new ShogiError(400, "invalid_request", "自分の申し込みは受けられません");
     if (r.status === "offered" && r.invitee_uid !== actor.userId) throw new ShogiError(403, "forbidden", "指名された人だけが受けられます");
     const act = await c.query(
       `SELECT count(*)::int AS n FROM shogi_games WHERE status = 'active' AND (black_uid = $1 OR white_uid = $1)`,
@@ -484,6 +518,8 @@ export async function acceptGame(actor: Actor, id: number): Promise<ShogiGameDto
     if (prev && [prev.black_uid, prev.white_uid].includes(r.creator_uid) && [prev.black_uid, prev.white_uid].includes(actor.userId)) {
       black = prev.white_uid;
       white = prev.black_uid;
+    } else if (self) {
+      black = white = actor.userId; // 自分との対局（テスト用）
     } else if (crypto.randomInt(2) === 0) {
       black = r.creator_uid;
       white = actor.userId;
@@ -501,8 +537,8 @@ export async function acceptGame(actor: Actor, id: number): Promise<ShogiGameDto
     if (!up.rows[0]) throw new ShogiError(409, "not_open", "もう受けられません");
     return up.rows[0] as GameRow;
   });
-  // 節目: チャットに対局中カードを 1 件。
-  try {
+  // 節目: チャットに対局中カードを 1 件（公開後・自分との対局でないときだけ）。
+  if (announces(out)) try {
     const players = await playersOf([out.black_uid, out.white_uid]);
     const names = { black: players.get(out.black_uid!)?.name ?? "先手", white: players.get(out.white_uid!)?.name ?? "後手" };
     const card = await postShogiCard(cardStartText(names, out.mode), out.id);
@@ -515,7 +551,7 @@ export async function acceptGame(actor: Actor, id: number): Promise<ShogiGameDto
   }
   schedule(out);
   const game = await broadcast(out, "state");
-  if (out.mode === "slow" && out.black_uid !== actor.userId) {
+  if (announces(out) && out.mode === "slow" && out.black_uid !== actor.userId) {
     const email = await emailOf(out.black_uid);
     if (email) void pushShogi(email, "shogi_turn", out.id).catch(logErr("push turn"));
   }
@@ -591,7 +627,7 @@ export async function playMove(actor: Actor, id: number, input: MoveInput): Prom
       const dup = await c.query(`SELECT 1 FROM shogi_moves WHERE game_id = $1 AND client_move_id = $2`, [id, clientMoveId]);
       if (dup.rows.length > 0) return { kind: "dup", row: r };
     }
-    const mine = colorOf(r, actor.userId);
+    const mine = playerSide(r, actor.userId);
     if (!mine) throw new ShogiError(403, "forbidden", "対局者ではありません");
     if (r.status !== "active") throw new ShogiError(409, "not_active", "対局は終わっています", await dtoOf(r));
     if (expected !== r.ply) throw new ShogiError(409, "conflict", "局面が進んでいます（最新の状態を読み直してください）", await dtoOf(r));
@@ -638,7 +674,7 @@ export async function playMove(actor: Actor, id: number, input: MoveInput): Prom
   }
   schedule(out.row);
   const game = await broadcast(out.row, "state");
-  if (out.row.mode === "slow") {
+  if (out.row.mode === "slow" && !isSelfGame(out.row)) {
     const next = sideToMove(out.row.ply) === "black" ? out.row.black_uid : out.row.white_uid;
     const email = await emailOf(next);
     if (email) void pushShogi(email, "shogi_turn", out.row.id).catch(logErr("push turn"));
@@ -651,7 +687,7 @@ export async function resignGame(actor: Actor, id: number): Promise<ShogiGameDto
   const row = await tx(async (c) => {
     const r = await lockGame(c, id);
     if (!r || !visibleTo(r, actor)) throw new ShogiError(404, "not_found", "対局が見つかりません");
-    const mine = colorOf(r, actor.userId);
+    const mine = playerSide(r, actor.userId);
     if (!mine) throw new ShogiError(403, "forbidden", "対局者ではありません");
     if (r.status !== "active") throw new ShogiError(409, "not_active", "対局は終わっています", await dtoOf(r));
     // 先に時間切れになっていれば、そちらが正しい終わり方。
@@ -708,7 +744,7 @@ async function finalize(row: GameRow): Promise<ShogiGameDto> {
     if (row.card_msg_id) {
       await postShogiCard(cardEndText(names, row.mode, row.result, reason, row.ply), row.id, row.card_msg_id).catch(logErr("card end"));
     }
-    const text = beaglePostText({ gameId: row.id, names, mode: row.mode, result: row.result, reason, ply: row.ply, baseUrl: BASE_URL });
+    const text = !announces(row) ? null : beaglePostText({ gameId: row.id, names, mode: row.mode, result: row.result, reason, ply: row.ply, baseUrl: BASE_URL });
     if (text && !row.result_post_id) {
       try {
         const p = await createPost({ authorEmail: SYSTEM_EMAIL, authorName: BEAGLE_NAME, text, noPreview: true });
@@ -773,7 +809,7 @@ export async function resolveDue(id: number): Promise<GameRow | null> {
   }
   if (d.kind === "remind") {
     schedule(row);
-    if ((before as GameRow | null)?.reminded_at == null && row.reminded_at) {
+    if ((before as GameRow | null)?.reminded_at == null && row.reminded_at && !isSelfGame(row)) {
       const uid = d.side === "black" ? row.black_uid : row.white_uid;
       const email = await emailOf(uid);
       if (email) void pushShogi(email, "shogi_turn", row.id).catch(logErr("push remind"));

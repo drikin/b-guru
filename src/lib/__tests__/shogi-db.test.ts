@@ -15,6 +15,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 
 const URL_ = process.env.SHOGI_TEST_DATABASE_URL;
+// 全員に公開した状態で試す（公開前はカード・ビーグルの投稿・通知を出さない。下の「自分との対局」で確かめる）。
+process.env.SHOGI_ENABLED = "1";
 if (URL_) process.env.DATABASE_URL = URL_;
 const d = URL_ ? describe : describe.skip;
 
@@ -168,6 +170,34 @@ d("☗ 将棋（DB）", () => {
     ]);
     // タイムラインへの投稿の配信
     expect(live.some((e) => (e as { type: string; postId?: number }).type === "post" && (e as { postId: number }).postId === ended.result_post_id)).toBe(true);
+  });
+
+  it("自分との対局（テスト用、公開前）: 自分で受けて両方の手を指せる・カードも投稿も出さない", async () => {
+    process.env.SHOGI_ENABLED = A;
+    process.env.SHOGI_SELF_PLAY = A;
+    try {
+      const created = await call(a, "POST", "games", { mode: "blitz" });
+      const id = gameOf(created).id as number;
+      const acc = await call(a, "POST", `games/${id}/accept`);
+      expect(acc.status).toBe(200);
+      expect(gameOf(acc).black.user_id).toBe(a.userId);
+      expect(gameOf(acc).white.user_id).toBe(a.userId);
+      expect(gameOf(await call(a, "GET", `games/${id}`)).my_color).toBe("black");
+      expect((await call(a, "POST", `games/${id}/move`, { usi: "7g7f", expected_ply: 0 })).status).toBe(200);
+      expect(gameOf(await call(a, "GET", `games/${id}`)).my_color).toBe("white");
+      expect((await call(a, "POST", `games/${id}/move`, { usi: "3c3d", expected_ply: 1 })).status).toBe(200);
+      const ended = gameOf(await call(a, "POST", `games/${id}/resign`));
+      expect(ended.status).toBe("ended");
+      expect((await sql(`SELECT 1 FROM chat_messages WHERE shogi_game_id = $1`, [id])).rows).toHaveLength(0);
+      expect(ended.result_post_id ?? null).toBeNull();
+      // 名簿にない人は自分の募集を受けられない
+      process.env.SHOGI_SELF_PLAY = "";
+      const g2 = gameOf(await call(a, "POST", "games", { mode: "slow" })).id as number;
+      expect((await call(a, "POST", `games/${g2}/accept`)).status).toBe(400);
+    } finally {
+      process.env.SHOGI_ENABLED = "1";
+      delete process.env.SHOGI_SELF_PLAY;
+    }
   });
 
   it("手数が違えば 409 と最新の状態、同じ client_move_id は二重に適用しない", async () => {

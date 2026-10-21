@@ -254,6 +254,11 @@ function Lobby({ s }: { s: ShogiSnapshot }) {
                   〜{g.deadline_at ? new Date(g.deadline_at).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : ""}
                 </Text>
               </Text>
+              {s.selfPlay && g.status === "open" && (
+                <Button size="compact-xs" color="green" disabled={s.busy} onClick={() => void acceptShogiGame(g.id)}>
+                  自分と指す（テスト）
+                </Button>
+              )}
               <Button size="compact-xs" variant="default" disabled={s.busy} onClick={() => void cancelShogiGame(g.id)}>
                 取り下げる
               </Button>

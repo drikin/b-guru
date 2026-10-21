@@ -17,6 +17,8 @@ export type ShogiSettings = { confirmMove: boolean; moveHints: boolean };
 export interface ShogiSnapshot {
   status: ShogiAvailability;
   me: string | null;
+  /** テスト用: 自分の募集を自分で受けられる（SHOGI_SELF_PLAY）。 */
+  selfPlay: boolean;
   games: ShogiGameDto[];
   /** 「☗ 将棋」を開いている。 */
   open: boolean;
@@ -45,6 +47,7 @@ function loadSettings(): ShogiSettings {
 let snap: ShogiSnapshot = {
   status: "unknown",
   me: null,
+  selfPlay: false,
   games: [],
   open: false,
   selectedId: null,
@@ -92,7 +95,7 @@ function upsert(list: ShogiGameDto[], g: ShogiGameDto): ShogiGameDto[] {
 type ApiBody = {
   game?: ShogiGameDto;
   games?: ShogiGameDto[];
-  me?: { user_id?: string };
+  me?: { user_id?: string; self_play?: boolean };
   error?: string;
   code?: string;
 } | null;
@@ -121,7 +124,7 @@ export async function loadShogi(): Promise<void> {
     }
     if (r.status !== 200) return;
     const games = (r.body?.games ?? []) as ShogiGameDto[];
-    set({ status: "enabled", me: r.body?.me?.user_id ?? null, games, skew: skewOf(games[0]?.server_now) });
+    set({ status: "enabled", me: r.body?.me?.user_id ?? null, selfPlay: r.body?.me?.self_play === true, games, skew: skewOf(games[0]?.server_now) });
     if (snap.selectedId) void loadDetail(snap.selectedId);
   } catch {
     /* offline: keep what we have */
@@ -280,8 +283,10 @@ export function watchShogiGame(id: number): void {
 
 // ─────────────────────────── 表示の手伝い（純関数）
 
-export function myColorIn(g: Pick<ShogiGameDto, "black" | "white">, me: string | null): Side | null {
+export function myColorIn(g: Pick<ShogiGameDto, "black" | "white"> & { turn?: Side }, me: string | null): Side | null {
   if (!me) return null;
+  // 自分との対局（テスト用）: 手番の側を指す。
+  if (g.black?.user_id === me && g.white?.user_id === me) return g.turn ?? "black";
   if (g.black?.user_id === me) return "black";
   if (g.white?.user_id === me) return "white";
   return null;
