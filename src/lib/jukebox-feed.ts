@@ -7,6 +7,11 @@
 
 export const ART19_FEED_URL = "https://rss.art19.com/backspace";
 
+/** The members-only 「BSMポッドキャスト」 (限定配信・アフターショー・特典回…). Its URL is
+ *  members-only too (共有厳禁): it lives in the server's env (BSM_FEED_URL), never in
+ *  the repo, the logs or what the apps receive. Every item is series "BSM". */
+export const BSM_SERIES = "BSM";
+
 export type FeedEpisode = {
   guid: string;
   title: string;
@@ -121,6 +126,11 @@ export function parseArt19(xml: string): FeedEpisode[] {
     });
   }
   return out.sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
+}
+
+/** The BSM feed: same RSS shape; series "BSM", guids kept apart from Art19's. */
+export function parseBsmFeed(xml: string): FeedEpisode[] {
+  return parseArt19(xml).map((e) => ({ ...e, guid: `bsm:${e.guid}`, series: BSM_SERIES }));
 }
 
 // ── 毎朝の「N 年前の今日」 ─────────────────────────────────────────

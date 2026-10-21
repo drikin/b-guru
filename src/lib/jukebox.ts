@@ -1,6 +1,8 @@
 /* ジュークボックス（drikin 2026-10-19）: backspace.fm の過去回をアプリで聴く。
  *
  * - 取り込み: Art19 の公開 RSS（全回、2014 年の #001 から）を 6 時間ごとに podcast_episodes へ。
+ *   会員限定の「BSMポッドキャスト」（BSM_FEED_URL、2026-10-21 ドリキン）も 1 時間ごとに系列 "BSM" で。
+ *   毎朝の「N 年前の今日」は公開の回からだけ選ぶ。
  * - アプリ: GET /api/agent/jukebox で全回をまとめて返す（1 回数百バイト。検索・絞り込み・
  *   シャッフルは端末で）。機能フラグ JUKEBOX_ALLOW_EMAILS（"*" で全員）。
  * - 毎朝 7 時（日本時間）: 「N 年前の今日の backspace.fm」を 1 本タイムラインへ（全員に見える。
@@ -8,11 +10,13 @@
  *   止めるときは JUKEBOX_DAILY_POST=0。
  * 単一プロセス（pm2 1 本）前提のタイマー。日付ごとの投稿は jukebox_daily の主キーで 1 本に保つ。 */
 import { pool } from "./db";
-import { ART19_FEED_URL, clip, jstDay, parseArt19, pickForDay, dailyPostText, yearsAgo, type FeedEpisode } from "./jukebox-feed";
+import { ART19_FEED_URL, BSM_SERIES, clip, jstDay, parseArt19, parseBsmFeed, pickForDay, dailyPostText, yearsAgo, type FeedEpisode } from "./jukebox-feed";
 
 const SYSTEM_EMAIL = "system@backspace.fm";
 const SYSTEM_NAME = "ビーグル";
 const SYNC_EVERY_MS = 6 * 3600_000;
+/** The members' feed gets 即日配信 the same day: read it more often. */
+const BSM_SYNC_EVERY_MS = 3600_000;
 const TICK_MS = 10 * 60_000;
 /** The daily post goes out from this hour (JST). */
 const DAILY_HOUR_JST = 7;
@@ -34,7 +38,8 @@ export function jukeboxBrokenClient(userAgent: string | null | undefined): boole
 
 // ── 取り込み ─────────────────────────────────────────────────────
 
-type G = { __jukebox?: { etag?: string; lastModified?: string; syncedAt?: number; timer?: ReturnType<typeof setInterval>; busy?: boolean } };
+type FeedState = { etag?: string; lastModified?: string; syncedAt?: number };
+type G = { __jukebox?: FeedState & { bsm?: FeedState; timer?: ReturnType<typeof setInterval>; busy?: boolean } };
 const state = () => ((globalThis as G).__jukebox ??= {});
 
 /** Fetch the feed (skipped when unchanged) and upsert every episode. */
@@ -54,6 +59,36 @@ export async function syncArchive(fetchImpl: typeof fetch = fetch): Promise<{ ch
   st.lastModified = res.headers.get("last-modified") ?? undefined;
   return { changed: true, episodes: episodes.length };
 }
+
+/** The members-only BSM feed (BSM_FEED_URL). No-op until it is set. Errors never carry
+ *  the URL (it must not reach the logs). */
+export async function syncBsmFeed(fetchImpl: typeof fetch = fetch): Promise<{ changed: boolean; episodes: number }> {
+  const url = process.env.BSM_FEED_URL?.trim();
+  if (!url) return { changed: false, episodes: 0 };
+  const st = (state().bsm ??= {});
+  const headers: Record<string, string> = { "User-Agent": "B-guru jukebox (+https://bsm.backspace.fm)" };
+  if (st.etag) headers["If-None-Match"] = st.etag;
+  if (st.lastModified) headers["If-Modified-Since"] = st.lastModified;
+  let res: Response;
+  try {
+    res = await fetchImpl(url, { headers, cache: "no-store" });
+  } catch {
+    throw new Error("bsm feed unreachable");
+  }
+  st.syncedAt = Date.now();
+  if (res.status === 304) return { changed: false, episodes: 0 };
+  if (!res.ok) throw new Error(`bsm feed ${res.status}`);
+  const episodes = parseBsmFeed(await res.text());
+  if (episodes.length === 0) throw new Error("bsm feed has no episodes"); // never act on a bad page
+  await upsertEpisodes(episodes);
+  st.etag = res.headers.get("etag") ?? undefined;
+  st.lastModified = res.headers.get("last-modified") ?? undefined;
+  return { changed: true, episodes: episodes.length };
+}
+
+/** 「N 年前の今日」 picks only from the public episodes (the post is on the timeline
+ *  with the audio attached; BSM 回 stay in the jukebox). */
+const publicOnly = <R extends { series: string }>(rows: R[]) => rows.filter((r) => r.series !== BSM_SERIES);
 
 export async function upsertEpisodes(eps: FeedEpisode[]): Promise<void> {
   const col = <K extends keyof FeedEpisode>(k: K) => eps.map((e) => e[k]);
@@ -108,7 +143,7 @@ export async function jukeboxForApp() {
   const d = await pool.query(`SELECT episode_id, post_id FROM jukebox_daily WHERE day = $1`, [day]);
   const pickRow = d.rows[0]
     ? rows.find((r) => r.id === d.rows[0].episode_id)
-    : pickForDay(rows.map((r) => ({ ...r, publishedAt: new Date(r.published_at).toISOString() })), day);
+    : pickForDay(publicOnly(rows).map((r) => ({ ...r, publishedAt: new Date(r.published_at).toISOString() })), day);
   return {
     episodes: rows.map(toAgentEpisodeDto),
     today: pickRow
@@ -131,7 +166,7 @@ export async function postDailyIfDue(now = new Date()): Promise<number | null> {
   const day = jstDay(now);
   const done = await pool.query(`SELECT 1 FROM jukebox_daily WHERE day = $1`, [day]);
   if (done.rows.length) return null;
-  const rows = await allEpisodes();
+  const rows = publicOnly(await allEpisodes());
   const pick = pickForDay(rows.map((r) => ({ ...r, publishedAt: new Date(r.published_at).toISOString() })), day);
   if (!pick) return null;
   // Claim the day first: a second timer (or a restart mid-way) never posts twice.
@@ -164,6 +199,14 @@ export function ensureJukebox(): void {
       if (!st.syncedAt || Date.now() - st.syncedAt > SYNC_EVERY_MS) {
         const r = await syncArchive();
         if (r.changed) console.log(`[bsm] jukebox: synced ${r.episodes} episodes`);
+      }
+      const bsm = st.bsm?.syncedAt;
+      if (!bsm || Date.now() - bsm > BSM_SYNC_EVERY_MS) {
+        const r = await syncBsmFeed().catch((e) => {
+          console.error("[bsm] jukebox (BSM feed):", (e as Error)?.message);
+          return null;
+        });
+        if (r?.changed) console.log(`[bsm] jukebox: synced ${r.episodes} BSM episodes`);
       }
       const id = await postDailyIfDue();
       if (id) console.log(`[bsm] jukebox: daily post ${id}`);

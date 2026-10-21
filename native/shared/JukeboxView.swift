@@ -13,7 +13,7 @@ struct JukeboxScreen: View {
     @State private var series = "すべて"
     @State private var shown = 80
 
-    static let seriesChoices = ["すべて", "本編", "B-side", "DANBO-side", "TechnoEdge-side", "Z-side", "その他"]
+    static let seriesChoices = ["すべて", "本編", "BSM", "B-side", "DANBO-side", "TechnoEdge-side", "Z-side", "その他"]
 
     var body: some View {
         #if os(iOS)

@@ -62,7 +62,7 @@ class JbItem(val ep: JukeboxEpisode) {
 
     companion object {
         val JST: ZoneId = ZoneId.of("Asia/Tokyo")
-        val MAIN_SERIES = listOf("本編", "B-side", "DANBO-side", "TechnoEdge-side", "Z-side")
+        val MAIN_SERIES = listOf("本編", "BSM", "B-side", "DANBO-side", "TechnoEdge-side", "Z-side")
         /** Label colour per year (the prototype's HUE table), hsl(h 62% 42%). */
         private val HUE = mapOf(2014 to 4, 2015 to 28, 2016 to 46, 2017 to 88, 2018 to 150, 2019 to 178, 2020 to 200,
             2021 to 222, 2022 to 258, 2023 to 290, 2024 to 322, 2025 to 345, 2026 to 12)

@@ -1,7 +1,7 @@
 /** The jukebox's daily "N 年前の今日" post and rollout flag (lib/jukebox.ts), with the DB mocked. */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const db = vi.hoisted(() => ({ daily: new Map<string, { episode_id: number; post_id: number | null }>(), posts: [] as { text: string; audio: string }[] }));
+const db = vi.hoisted(() => ({ daily: new Map<string, { episode_id: number; post_id: number | null }>(), posts: [] as { text: string; audio: string }[], upserts: [] as unknown[][] }));
 
 vi.mock("@/lib/db", () => ({
   pool: {
@@ -10,10 +10,17 @@ vi.mock("@/lib/db", () => ({
       if (sql.includes("FROM podcast_episodes")) {
         return {
           rows: [
+            // A members-only BSM 回 on the same day: never the daily pick (it goes on the timeline).
+            { id: 8, guid: "bsm:a1", title: "【即日配信】アフターショー", published_at: new Date("2019-10-20T08:00:00Z"), audio_url: "https://members.example/a1.mp3",
+              audio_bytes: "1", duration_sec: 1800, summary: "", series: "BSM", number: null, web_url: null },
             { id: 7, guid: "g7", title: "#313: Galaxy", published_at: new Date("2019-10-20T09:00:00Z"), audio_url: "https://verifi.podscribe.com/x.mp3",
               audio_bytes: "1", duration_sec: 9021, summary: "Pixel 4", series: "本編", number: 313, web_url: null },
           ],
         };
+      }
+      if (sql.includes("INSERT INTO podcast_episodes")) {
+        db.upserts.push(params);
+        return { rows: [] };
       }
       if (sql.includes("INSERT INTO jukebox_daily")) {
         if (db.daily.has(params[0] as string)) return { rows: [] };
@@ -37,7 +44,7 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
-import { jukeboxBrokenClient, jukeboxEnabledFor, jukeboxForApp, postDailyIfDue } from "../jukebox";
+import { jukeboxBrokenClient, jukeboxEnabledFor, jukeboxForApp, postDailyIfDue, syncBsmFeed } from "../jukebox";
 
 describe("daily post", () => {
   beforeEach(() => {
@@ -67,7 +74,9 @@ describe("daily post", () => {
     vi.setSystemTime(new Date("2026-10-19T23:00:00Z"));
     await postDailyIfDue();
     const r = await jukeboxForApp();
-    expect(r.episodes[0]).toMatchObject({ id: "g7", title: "#313: Galaxy", duration_sec: 9021, series: "本編", number: 313, audio_url: "https://verifi.podscribe.com/x.mp3" });
+    // BSM 回も一覧には出る（会員のアプリだけ）。毎朝の 1 本には選ばれない
+    expect(r.episodes.map((e) => e.series)).toEqual(["BSM", "本編"]);
+    expect(r.episodes[1]).toMatchObject({ id: "g7", title: "#313: Galaxy", duration_sec: 9021, series: "本編", number: 313, audio_url: "https://verifi.podscribe.com/x.mp3" });
     expect(r.today).toEqual({ id: "g7", years_ago: 7, post_id: 101 });
     vi.useRealTimers();
   });
@@ -92,5 +101,41 @@ describe("iOS builds that crash with the jukebox on", () => {
     for (const v of ["0.2.15", "0.2.21", "0.2.22", "0.2.200", "0.3.18", "0.3.27"]) expect(jukeboxBrokenClient(`BguruChatMac/${v}`)).toBe(false);
     expect(jukeboxBrokenClient("BguruChatAndroid/0.3.17")).toBe(false);
     expect(jukeboxBrokenClient(null)).toBe(false);
+  });
+});
+
+describe("会員限定の BSM ポッドキャスト（BSM_FEED_URL）", () => {
+  const SECRET = "https://members.example/feed/very-secret-token";
+  const FEED = `<rss><channel><item><title>【即日配信】ep999 アフターショー</title><guid>x1</guid>
+    <pubDate>Mon, 20 Oct 2026 09:00:00 -0000</pubDate><itunes:duration>00:30:00</itunes:duration>
+    <enclosure url="https://members.example/x1.mp3" length="1" type="audio/mpeg"/></item></channel></rss>`;
+  afterEach(() => {
+    delete process.env.BSM_FEED_URL;
+    db.upserts.length = 0;
+  });
+
+  it("URL が無ければ何もしない", async () => {
+    const f = vi.fn();
+    expect(await syncBsmFeed(f as unknown as typeof fetch)).toEqual({ changed: false, episodes: 0 });
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it("系列 BSM・guid は bsm: 付きで取り込む", async () => {
+    process.env.BSM_FEED_URL = SECRET;
+    const f = vi.fn(async () => new Response(FEED, { status: 200 }));
+    expect(await syncBsmFeed(f as unknown as typeof fetch)).toEqual({ changed: true, episodes: 1 });
+    const [guids, , , , , , , series] = db.upserts[0] as string[][];
+    expect(guids).toEqual(["bsm:x1"]);
+    expect(series).toEqual(["BSM"]);
+  });
+
+  it("失敗しても URL をエラーに出さない（ログに残さない）", async () => {
+    process.env.BSM_FEED_URL = SECRET;
+    const bad = vi.fn(async () => new Response("no", { status: 403 }));
+    await expect(syncBsmFeed(bad as unknown as typeof fetch)).rejects.toThrow("bsm feed 403");
+    const down = vi.fn(async () => { throw new Error(`fetch failed: ${SECRET}`); });
+    const err = await syncBsmFeed(down as unknown as typeof fetch).catch((e: Error) => e.message);
+    expect(err).toBe("bsm feed unreachable");
+    expect(String(err)).not.toContain("secret");
   });
 });
