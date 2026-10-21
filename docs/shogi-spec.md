@@ -194,7 +194,7 @@ Web のロビーは「相手を指名」と「最近の結果」を一旦出さ�
 
 | type | 中身 |
 |---|---|
-| `state` | `sfen`, `my_color`("black"\|"white"\|null), `can_move`(bool: 自分の番で指せる), `last_move`({usi,label}\|null), `orientation?`(下に来る側), `legal_moves?`(USI の配列。なければ盤が計算), `settings?`({confirm_move, move_hints}), `compact?`, `theme?`("light"\|"dark"\|"auto"), `top_label?`, `bottom_label?`, `show_close?` |
+| `state` | `sfen`, `my_color`("black"\|"white"\|null), `can_move`(bool: 自分の番で指せる), `last_move`({usi,label}\|null), `orientation?`(下に来る側), `legal_moves?`(USI の配列。なければ盤が計算), `settings?`({confirm_move, move_hints}), `compact?`, `theme?`("light"\|"dark"\|"auto"), `top_label?`, `bottom_label?`, `show_close?`, `max_height?`（px: 盤全体をこの高さに収める）, `hide_band?`（上の帯＝直前の手・⇅ を出さない。アプリが自分の 1 行に出すとき） |
 | `labels` | `top_label`, `bottom_label`（名前・残り時間。毎秒送ってよい。state と違い、送信中の手の表示を消さない） |
 | `settings` | `confirm_move?`, `move_hints?` |
 | `theme` | `theme` |

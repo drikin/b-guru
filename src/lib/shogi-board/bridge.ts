@@ -81,6 +81,7 @@ export function toBoardState(m: Record<string, unknown>, prev: BoardState): Boar
     topLabel: "top_label" in m ? str(m.top_label) : prev.topLabel,
     bottomLabel: "bottom_label" in m ? str(m.bottom_label) : prev.bottomLabel,
     showClose: typeof m.show_close === "boolean" ? m.show_close : prev.showClose,
+    hideBand: typeof m.hide_band === "boolean" ? m.hide_band : prev.hideBand,
   };
 }
 

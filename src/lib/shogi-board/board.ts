@@ -37,6 +37,8 @@ export type BoardState = {
   bottomLabel?: string;
   /** 帯の右に「✕」（閉じる）を出す。 */
   showClose?: boolean;
+  /** 上の帯（直前の手・⇅・✕）を出さない。狭い画面でアプリが自分の 1 行に直前の手と反転をまとめるとき。 */
+  hideBand?: boolean;
 };
 
 export type BoardCallbacks = {
@@ -254,7 +256,7 @@ export class ShogiBoardView {
   setState(next: BoardState): void {
     const prev = this.state;
     this.state = next;
-    const refit = next.maxHeight !== prev.maxHeight || next.compact !== prev.compact;
+    const refit = next.maxHeight !== prev.maxHeight || next.compact !== prev.compact || next.hideBand !== prev.hideBand;
     // 向き: ホストが決めていればそれ。決めていなければ、自分の色が変わったときだけ合わせる（⇅ は残す）。
     if (next.orientation != null) this.orientation = next.orientation;
     else if (next.myColor !== prev.myColor && next.myColor) this.orientation = next.myColor;
@@ -441,7 +443,7 @@ export class ShogiBoardView {
       close.setAttribute("aria-label", "閉じる");
       band.appendChild(close);
     }
-    root.appendChild(band);
+    if (!st.hideBand) root.appendChild(band);
 
     root.appendChild(this.renderHand(doc, pos, top, "top", st.topLabel));
 
