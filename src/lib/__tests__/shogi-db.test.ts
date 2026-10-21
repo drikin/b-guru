@@ -242,23 +242,44 @@ d("☗ 将棋（DB）", () => {
 
   it("募集は 15 分・指名は 24 時間で期限切れ（読み取りのたびにその場で）", async () => {
     const open = gameOf(await call(a, "POST", "games", { mode: "blitz" }));
+    await sql(`UPDATE shogi_games SET created_at = now() - interval '16 minutes' WHERE id = $1`, [open.id]);
+    const list0 = (await call(b, "GET", "games")) as { body: { games: { id: number }[] } };
+    expect(list0.body.games.find((g) => g.id === open.id)).toBeUndefined(); // closed は一覧に出さない
+    const st = await sql(`SELECT status, end_reason FROM shogi_games WHERE id = $1`, [open.id]);
+    expect(st.rows[0]).toEqual({ status: "closed", end_reason: "expired" });
+    // 期限切れの募集は片付いているので、次の申し込みを出せる
     const offer = gameOf(await call(a, "POST", "games", { mode: "slow", invitee_user_id: b.userId }));
     // 指名は相手にだけ届く（offer）・ほかの人には見えない
     expect(personal.filter((p) => p.to === B && (p.ev as { action: string }).action === "offer")).toHaveLength(1);
     expect((await call(c, "GET", `games/${offer.id}`)).status).toBe(404);
     const listC = (await call(c, "GET", "games")) as { body: { games: { id: number }[] } };
     expect(listC.body.games.map((g) => g.id)).not.toContain(offer.id);
-    await sql(`UPDATE shogi_games SET created_at = now() - interval '16 minutes' WHERE id = $1`, [open.id]);
     await sql(`UPDATE shogi_games SET created_at = now() - interval '23 hours' WHERE id = $1`, [offer.id]);
     const list = (await call(b, "GET", "games")) as { body: { games: { id: number; status: string }[] } };
-    expect(list.body.games.find((g) => g.id === open.id)).toBeUndefined(); // closed は一覧に出さない
     expect(list.body.games.find((g) => g.id === offer.id)?.status).toBe("offered");
-    const st = await sql(`SELECT status, end_reason FROM shogi_games WHERE id = $1`, [open.id]);
-    expect(st.rows[0]).toEqual({ status: "closed", end_reason: "expired" });
     // 期限切れの申し込みは受けられない
     await sql(`UPDATE shogi_games SET created_at = now() - interval '25 hours' WHERE id = $1`, [offer.id]);
     const late = await call(b, "POST", `games/${offer.id}/accept`);
     expect(late.status).toBe(409);
+  });
+
+  it("対局はサイト全体で 1 つだけ・受けるのは早い者勝ち", async () => {
+    const open = gameOf(await call(a, "POST", "games", { mode: "blitz" }));
+    // 募集があるあいだは、ほかの人も同じ人も新しく出せない（今ある対局が返る）
+    const busy = await call(b, "POST", "games", { mode: "slow" });
+    expect(busy.status).toBe(409);
+    expect((busy as { body: { code: string; game: { id: number } } }).body.code).toBe("busy");
+    expect((busy as { body: { game: { id: number } } }).body.game.id).toBe(open.id);
+    // 2 人が同時に受けても対局者は 1 人
+    const [r1, r2] = await Promise.all([call(b, "POST", `games/${open.id}/accept`), call(c, "POST", `games/${open.id}/accept`)]);
+    expect([r1.status, r2.status].sort()).toEqual([200, 409]);
+    // 対局中も新しく出せない
+    expect((await call(c, "POST", "games", { mode: "blitz" })).status).toBe(409);
+    // 2 人が同時に募集しても 1 つだけ（終局後）
+    const winner = r1.status === 200 ? b : c;
+    await call(winner, "POST", `games/${open.id}/resign`);
+    const [n1, n2] = await Promise.all([call(b, "POST", "games", { mode: "blitz" }), call(c, "POST", "games", { mode: "blitz" })]);
+    expect([n1.status, n2.status].sort()).toEqual([201, 409]);
   });
 
   it("速い将棋で双方が 1 手目を指す前に 60 秒たったら中断（勝敗なし・投稿なし）", async () => {

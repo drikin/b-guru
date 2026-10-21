@@ -192,8 +192,16 @@ function Lobby({ s }: { s: ShogiSnapshot }) {
       .catch(() => setMembers([]));
   };
 
+  // 対局はサイト全体で 1 つだけ・早い者勝ち（ドリキン 2026-10-21）。見えている対局があれば新しく出せない。
+  const busy = s.games.some((g) => g.status === "open" || g.status === "offered" || g.status === "active");
+
   return (
     <div style={{ display: "grid", gap: 10 }}>
+      {busy ? (
+        <Text size="xs" c="dimmed">
+          対局は 1 局ずつです。募集中の対局を受けるか、対局中なら観戦してください。
+        </Text>
+      ) : (
       <Section title="対局を申し込む">
         <Group gap={6}>
           <Button size="compact-sm" color="green" disabled={s.busy} onClick={() => void createShogiGame("blitz")}>
@@ -246,6 +254,7 @@ function Lobby({ s }: { s: ShogiSnapshot }) {
           先後は振り駒で決まります。募集は 15 分、指名は 24 時間で期限切れ。ゆっくりは 72 時間指さないと負けです。
         </Text>
       </Section>
+      )}
 
       {offersToMe.length > 0 && (
         <Section title="届いた申し込み">

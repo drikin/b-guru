@@ -461,28 +461,36 @@ export async function createGame(
     const email = await emailOf(invitee);
     if (!email || email === SYSTEM_EMAIL) throw new ShogiError(400, "invalid_request", "指名できる会員が見つかりません");
   }
-  const counts = await pool.query(
-    `SELECT
-       count(*) FILTER (WHERE status IN ('open', 'offered') AND creator_uid = $1)::int AS pending,
-       count(*) FILTER (WHERE status = 'active' AND (black_uid = $1 OR white_uid = $1))::int AS active
-     FROM shogi_games WHERE status IN ('open', 'offered', 'active')`,
-    [actor.userId]
-  );
-  if (counts.rows[0].pending >= MAX_PENDING_PER_USER) {
-    throw new ShogiError(409, "too_many", `出せる申し込みは ${MAX_PENDING_PER_USER} 件までです（先に取り下げてください）`);
-  }
-  if (counts.rows[0].active >= MAX_ACTIVE_PER_USER) {
-    throw new ShogiError(409, "too_many", `同時に指せる対局は ${MAX_ACTIVE_PER_USER} 局までです`);
-  }
-  const initial = mode === "blitz" ? BLITZ_INITIAL_MS : 0;
-  const byo = mode === "blitz" ? BLITZ_BYOYOMI_MS : 0;
-  const ins = await pool.query(
-    `INSERT INTO shogi_games (status, mode, initial_ms, byoyomi_ms, creator_uid, invitee_uid, rematch_of, sfen, clock_b_ms, clock_w_ms)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $3, $3)
-     RETURNING *, now() AS db_now`,
-    [invitee ? "offered" : "open", mode, initial, byo, actor.userId, invitee, rematchOf, INITIAL_SFEN]
-  );
-  const row = ins.rows[0] as GameRow;
+  // 対局はサイト全体で 1 つだけ（ドリキン 2026-10-21「セッションは常に 1 個だけで早い者勝ち」）。
+  // 期限が過ぎた募集・終わっている対局は先に片付けてから数える。
+  const live = await pool.query(`SELECT id FROM shogi_games WHERE status IN ('open', 'offered', 'active')`);
+  for (const r of live.rows as { id: number }[]) await resolveDue(r.id).catch(logErr("resolve before create"));
+  const created = await tx(async (c) => {
+    // 同時に 2 人が募集しても 1 つだけ作る（この取引の間だけの鍵）。
+    await c.query(`SELECT pg_advisory_xact_lock(4747001)`);
+    const busy = await c.query(
+      `SELECT *, now() AS db_now FROM shogi_games WHERE status IN ('open', 'offered', 'active') ORDER BY id LIMIT 1`
+    );
+    if (busy.rows[0]) {
+      const b = busy.rows[0] as GameRow;
+      // 指名の申し込みは当事者にしか見せない（中身は返さない）。
+      if (b.status === "offered" && !visibleTo(b, actor)) {
+        throw new ShogiError(409, "busy", "いまは対局の申し込みが出ています（少し待ってください）");
+      }
+      const msg = b.status === "active" ? "いまは対局中です（観戦してください）" : "募集中の対局があります（受けてください）";
+      throw new ShogiError(409, "busy", msg, await dtoOf(b));
+    }
+    const initial = mode === "blitz" ? BLITZ_INITIAL_MS : 0;
+    const byo = mode === "blitz" ? BLITZ_BYOYOMI_MS : 0;
+    const ins = await c.query(
+      `INSERT INTO shogi_games (status, mode, initial_ms, byoyomi_ms, creator_uid, invitee_uid, rematch_of, sfen, clock_b_ms, clock_w_ms)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $3, $3)
+       RETURNING *, now() AS db_now`,
+      [invitee ? "offered" : "open", mode, initial, byo, actor.userId, invitee, rematchOf, INITIAL_SFEN]
+    );
+    return ins.rows[0] as GameRow;
+  });
+  const row = created;
   schedule(row);
   const game = await broadcast(row, "state");
   if (invitee) {
