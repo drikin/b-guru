@@ -260,9 +260,11 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
             // The club room, when on for this member: テキスト｜ルーム, and in the text view its
             // banner in place of the voice bar. Otherwise the voice bar exactly as before.
+            // ☗ 将棋 (when on): a third choice beside them, or テキスト｜☗ 将棋 above the voice bar.
             if (store.room.enabled) {
-                RoomModeSwitch(store.room, store.voice)
+                RoomModeSwitch(store.room, store.voice, store.shogi)
             } else {
+                if (store.shogi.enabled) ShogiModeSwitch(store.shogi)
                 VoiceBar(store.voice)
             }
             store.update?.let { u ->
@@ -312,7 +314,10 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                             }) { i, row ->
                                 val prev = reversed.getOrNull(i + 1)?.message
                                 val caps = store.capabilities
-                                val bubble = @Composable {
+                                val bubble: @Composable () -> Unit = if (row.message.isShogiCard && store.shogi.enabled) ({
+                                    // ☗ the game card: a little board and 観戦する (plain text when shogi is off for me).
+                                    Box(Modifier.widthIn(max = 760.dp).fillMaxWidth(), contentAlignment = Alignment.Center) { ShogiChatCard(store, row.message) }
+                                }) else ({
                                 MessageRow(
                                     row = row,
                                     showHeader = prev == null || prev.authorId != row.message.authorId || prev.isAuthor != row.message.isAuthor,
@@ -329,7 +334,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                                     onOpenImage = { urls, at -> viewing = urls to at },
                                     modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth(),
                                 )
-                                }
+                                })
                                 // One child per item: a reversed list would put a second one below.
                                 if (store.unreadMarkerId == row.message.id) {
                                     Column(Modifier.widthIn(max = 760.dp).fillMaxWidth()) { UnreadDivider(); bubble() }
@@ -372,7 +377,39 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                 }
             }
             val room = store.room
-            if (room.enabled && room.roomView) {
+            val shogi = store.shogi
+            if (shogi.enabled && shogi.open && !(room.enabled && room.roomView)) {
+                // ☗ 将棋: the panel above, the chat below. Playing: the board gets the room and the
+                // chat folds to one line (tap to open it again).
+                var chatOpen by remember(shogi.selectedId) { mutableStateOf(false) }
+                val playing = shogi.playingSelected
+                androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                    if (maxWidth >= 700.dp && maxWidth > maxHeight) {
+                        Row(Modifier.fillMaxSize()) {
+                            ShogiPanel(store, visible, Modifier.weight(1f).fillMaxSize())
+                            chatPane(Modifier.width(400.dp).fillMaxSize())
+                        }
+                    } else if (playing && !chatOpen) {
+                        Column(Modifier.fillMaxSize()) {
+                            ShogiPanel(store, visible, Modifier.weight(1f).fillMaxWidth())
+                            FoldedChatLine(store) { chatOpen = true }
+                        }
+                    } else {
+                        Column(Modifier.fillMaxSize()) {
+                            ShogiPanel(store, visible, Modifier.weight(if (playing) 1.3f else 1.1f).fillMaxWidth())
+                            if (playing) {
+                                Text(
+                                    "▾ チャットを畳む",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.fillMaxWidth().clickable { chatOpen = false }.padding(horizontal = 14.dp, vertical = 6.dp),
+                                )
+                            }
+                            chatPane(Modifier.weight(1f).fillMaxWidth())
+                        }
+                    }
+                }
+            } else if (room.enabled && room.roomView) {
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                     if (maxWidth >= 700.dp && maxWidth > maxHeight) {
                         Row(Modifier.fillMaxSize()) {

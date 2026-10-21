@@ -45,6 +45,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     val voice = VoiceStore(api, app)
     /** The club room (ルーム) — only when the server turns it on for this member. */
     val room = RoomStore(api, voice)
+    /** ☗ 将棋 — only when the server turns it on for this member (capabilities.shogi). */
+    val shogi = ShogiStore(api, app)
     private val voiceApp = app.applicationContext
 
     /** True while the chat is on screen: drives read marking. */
@@ -79,7 +81,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         val cursor = readCursor
         if (!hasLoaded || cursor == null) return
         val first = rows.firstOrNull { r ->
-            r.message.id > cursor && r.message.id > 0 && !r.message.isAuthor && !r.message.isNotice
+            r.message.id > cursor && r.message.id > 0 && !r.message.isAuthor && !r.message.isNotice && r.message.kind != "shogi"
         } ?: return
         unreadMarkerId = first.message.id
         openPendingSince = null
@@ -109,7 +111,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     /** Debug only: sample chat, sends "succeed" locally (no network). */
     var demo = false
 
-    fun loadDemo(scale: Boolean = false, images: String? = null) {
+    fun loadDemo(scale: Boolean = false, images: String? = null, withRoom: Boolean = true, withShogi: Boolean = true) {
         demo = true
         fun msg(id: Long, who: String, body: String, mine: Boolean = false, reactions: List<Reaction>? = null) =
             ChatRow(ChatMessage(id, authorId = if (mine) "me" else who, authorName = if (mine) "ドリキン" else who, body = body,
@@ -133,12 +135,17 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         capabilities = Capabilities(features = Capabilities.Features(
             Capabilities.ChatFeatures(send = true, editOwn = true, reactions = true, markRead = false, images = true, maxImages = 4),
             Capabilities.PostFeatures(read = true, publish = true, upload = true, reactions = true, maxImages = 5),
-            room = Capabilities.RoomFeatures(enabled = true),
+            room = Capabilities.RoomFeatures(enabled = withRoom),
             jukebox = Capabilities.JukeboxFeatures(enabled = true),
             neta = Capabilities.NetaFeatures(enabled = true, path = "/api/agent/neta", site = "https://neta.backspace.fm"),
+            shogi = if (!withShogi) null else Capabilities.ShogiFeatures(enabled = true, path = "/api/agent/shogi", boardUrl = "/shogi-board/index.html", bridgeVersion = 1, play = true),
         ))
+        // ☗ 将棋: sample games (one in progress against me, one to watch) and the chat's game card.
+        if (withShogi) shogi.loadDemo("me", "ドリキン")
+        if (withShogi) rows = rows + ChatRow(ChatMessage(6000, authorName = "B-guru", body = "☗takuto vs ☖coban 対局中 → 将棋で観戦",
+            createdAt = "2026-10-16T09:30:00Z", kind = "shogi", shogiGameId = 13))
         // A local fake room: its people talk in the chat too (bubbles come from these rows).
-        room.loadDemo { id, name, text ->
+        if (withRoom) room.loadDemo { id, name, text ->
             val next = (rows.maxOfOrNull { it.message.id } ?: 0L) + 1
             val m = ChatMessage(next, authorId = id, authorName = name, body = text, createdAt = Instant.now().toString())
             rows = rows + ChatRow(m)
@@ -163,6 +170,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     /** On screen (ON_START): connect. Off screen the stream is closed — pushes
      *  cover the background, and an idle socket would only drain the battery. */
     fun start() {
+        shogi.foreground = true
         if (demo || streamJob?.isActive == true) return
         streamJob = scope.launch {
             if (capabilities == null) loadCapabilities()
@@ -178,12 +186,14 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     }
 
     fun pause() {
+        shogi.foreground = false
         streamJob?.cancel()
         streamJob = null
         connection = Connection.CONNECTING
     }
 
     fun stop() {
+        shogi.close()
         room.close()
         voice.close()
         scope.cancel()
@@ -195,6 +205,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             capabilities = caps
             voice.configure(caps)
             room.configure(caps)
+            shogi.configure(caps)
             // Voice is on for me but this token predates the "voice" scope: send the member
             // back to sign in once (a new sign-in gets the scope). Only once per install,
             // so a server that still withholds it cannot loop us.
@@ -245,9 +256,11 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
                 connection = Connection.LIVE
                 if (voice.enabled) scope.launch { voice.loadState() } // resync after a reconnect
                 if (room.enabled) scope.launch { room.reload() }
+                if (shogi.enabled) shogi.load() // resync games missed while disconnected
                 reload()
             }
             "room" -> room.apply(ev.data)
+            "shogi" -> if (shogi.enabled) shogi.apply(ev.data)
             "voice" -> runCatching { ApiJson.decodeFromString<VoiceRoomInfo>(ev.data) }.getOrNull()?.let(voice::apply)
             "chat" -> {
                 val e = runCatching { ApiJson.decodeFromString<ChatEvent>(ev.data) }.getOrNull() ?: return
@@ -276,9 +289,10 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         if (m.isAuthor) myUserId = m.authorId
         val alreadyShown = rows.any { it.message.id == m.id }
         rows = reconcile(rows, m)
-        // A quiet note (room comings and goings): in the list, but no bubble, never unread.
-        if (!alreadyShown && !m.isNotice) room.onChat(m)
-        if (m.isAuthor || alreadyShown || m.isNotice) return
+        // A quiet note (room comings and goings) or a ☗ game card: in the list, but no bubble, never unread.
+        val quiet = m.isNotice || m.kind == "shogi"
+        if (!alreadyShown && !quiet) room.onChat(m)
+        if (m.isAuthor || alreadyShown || quiet) return
         if (isVisible) markReadSoon() else unreadCount += 1
     }
 
@@ -416,6 +430,12 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
                 rows = rows.map { if (it.message.id == id) it.copy(message = it.message.copy(reactions = old)) else it }
             }
         }
+    }
+
+    /** ☗ 将棋 at that game (chat card, notification): out of the room view first. */
+    fun openShogi(id: Long) {
+        room.toText()
+        shogi.openGame(id)
     }
 
     /** Jump to a message (from a notification tap) and highlight it briefly. */

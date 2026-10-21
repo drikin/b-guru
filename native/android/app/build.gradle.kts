@@ -79,6 +79,12 @@ android {
         }
     }
 
+    // ☗ 将棋 demo (`--ez demo true`): the board page straight from this repo (public/shogi-board),
+    // so the demo draws the board without the network. Demo-capable builds only, never a release.
+    for (bt in listOf("debug", "benchmark", "profile")) {
+        sourceSets.getByName(bt).assets.directories.add(rootProject.file("../../public/shogi-board").path)
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true

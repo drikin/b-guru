@@ -124,20 +124,30 @@ private fun rememberRoomActions(room: RoomStore, voice: VoiceStore): RoomActions
 /** テキスト｜ルーム, at the top of the chat. The ルーム tab shows how many are in the
  *  room's voice (and a green dot while someone talks) — the text view's way in. */
 @Composable
-fun RoomModeSwitch(room: RoomStore, voice: VoiceStore) {
+fun RoomModeSwitch(room: RoomStore, voice: VoiceStore, shogi: ShogiStore? = null) {
     val actions = rememberRoomActions(room, voice)
     BackHandler(enabled = room.roomView) { room.toText() }
+    // ☗ 将棋 (when on for this member): a third choice, テキスト｜ルーム｜☗ 将棋.
+    val withShogi = shogi?.enabled == true
+    val shogiOpen = withShogi && shogi!!.open
+    if (withShogi) ShogiBackHandler(shogi!!)
+    val n = if (withShogi) 3 else 2
     val inVoice = room.members.count { it.inRoom && it.listening }
     val talking = voice.phase == VoiceStore.Phase.CONNECTED && voice.members.any { it.speaking }
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        SingleChoiceSegmentedButtonRow(Modifier.width(196.dp).height(32.dp)) {
-            SegmentedButton(selected = !room.roomView, onClick = { room.toText() }, shape = SegmentedButtonDefaults.itemShape(0, 2), icon = {}) {
+        SingleChoiceSegmentedButtonRow(Modifier.width(if (withShogi) 300.dp else 196.dp).height(32.dp)) {
+            SegmentedButton(selected = !room.roomView && !shogiOpen, onClick = { room.toText(); shogi?.open = false }, shape = SegmentedButtonDefaults.itemShape(0, n), icon = {}) {
                 Text("テキスト", style = MaterialTheme.typography.labelSmall)
             }
-            SegmentedButton(selected = room.roomView, onClick = { actions.enter() }, shape = SegmentedButtonDefaults.itemShape(1, 2), icon = {}) {
+            SegmentedButton(selected = room.roomView, onClick = { shogi?.open = false; actions.enter() }, shape = SegmentedButtonDefaults.itemShape(1, n), icon = {}) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(if (inVoice > 0) "ルーム 🎧$inVoice" else "ルーム", style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     if (talking) Box(Modifier.size(7.dp).background(AccentGreen, CircleShape))
+                }
+            }
+            if (withShogi) {
+                SegmentedButton(selected = shogiOpen, onClick = { room.toText(); shogi!!.open = true }, shape = SegmentedButtonDefaults.itemShape(2, n), icon = {}) {
+                    ShogiSegmentLabel(shogi!!)
                 }
             }
         }

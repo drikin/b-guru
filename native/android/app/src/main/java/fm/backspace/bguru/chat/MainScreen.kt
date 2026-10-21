@@ -73,6 +73,8 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
                 LaunchedEffect(jb?.showTab) { if (jb?.showTab == true) { right = 1; jb.showTab = false; jb.revealTick++ } }
                 // 「チャットに引用」: show the chat (it takes the quote into its draft).
                 LaunchedEffect(ChatQuote.pending) { if (ChatQuote.pending != null) right = 0 }
+                // ☗ 将棋 from a notification / the chat card: show the chat (the shogi panel is above it).
+                LaunchedEffect(store.shogi.revealTick) { if (store.shogi.revealTick > 0) right = 0 }
                 Row(Modifier.fillMaxSize()) {
                     Row(Modifier.width(420.dp).fillMaxHeight()) {
                         TimelineScreen(timeline, store.capabilities, tabSwitch = null, onReconnect = onSignOut)
@@ -113,6 +115,8 @@ private fun Pages(
     LaunchedEffect(timeline.openThread) { if (timeline.openThread != null) scope.launch { pager.animateScrollToPage(0) } }
     // 「チャットに引用」 from a post's menu: show the chat (it takes the quote, then clears it).
     LaunchedEffect(ChatQuote.pending) { if (ChatQuote.pending != null) scope.launch { pager.animateScrollToPage(1) } }
+    // ☗ 将棋 from a notification: show the chat (the shogi panel opens above it).
+    LaunchedEffect(store.shogi.revealTick) { if (store.shogi.revealTick > 0) scope.launch { pager.animateScrollToPage(1) } }
     // The playback notification / the mini player: show the jukebox.
     LaunchedEffect(jb?.showTab, count) { if (jb?.showTab == true && count == 3) { pager.animateScrollToPage(2); jb.showTab = false; jb.revealTick++ } }
 

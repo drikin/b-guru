@@ -57,6 +57,23 @@ class PushContentTest {
         assertTrue(base != PushContent.registrationSignature("fcm", "all", false, false, "tok"))
         assertTrue(base != PushContent.registrationSignature("fcm", "all", true, true, "tok"))
         assertTrue(base != PushContent.registrationSignature("fcm", "all", true, false, "tok2"))
+        // notify_shogi is part of it (devices register again once to say they take ☗ 将棋 pushes).
+        assertTrue(base != PushContent.registrationSignature("fcm", "all", true, false, "tok", shogi = false))
         assertFalse(base.contains("fcm") || base.contains("tok"))
+    }
+
+    @Test fun shogiPushes() {
+        assertTrue(PushContent.isShogi("shogi_offer"))
+        assertTrue(PushContent.isShogi("shogi_turn"))
+        assertFalse(PushContent.isShogi("chat_new"))
+        assertEquals("☗ 将棋", PushContent.defaultTitle("shogi_offer"))
+        assertEquals("対局の申し込みが届きました", PushContent.shogiText("shogi_offer", null))
+        assertEquals("あなたの番です", PushContent.shogiText("shogi_turn", null))
+        assertEquals("将棋の通知があります", PushContent.publicText("shogi_turn"))
+        val g = ShogiGame(7, "offered", "slow", creator = ShogiPlayer("a", "mazzo"))
+        assertEquals("mazzo さんから対局の申し込み（🐢ゆっくり）", PushContent.shogiText("shogi_offer", g))
+        // One notification per game: the offer and the turn replace each other.
+        assertEquals(PushContent.notificationId("shogi_offer", null, 7, 1), PushContent.notificationId("shogi_turn", null, 7, 1))
+        assertTrue(PushContent.notificationId("shogi_turn", null, 7, 1) != PushContent.notificationId("timeline_new", null, 7, 1))
     }
 }

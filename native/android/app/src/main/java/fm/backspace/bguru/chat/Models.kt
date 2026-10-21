@@ -33,10 +33,14 @@ data class ChatMessage(
     val reactions: List<Reaction>? = null,
     /** /api/media/… URLs of attached photos (always sent by new servers; empty when none). */
     val images: List<String> = emptyList(),
-    /** "notice": a quiet one-line note from B-guru (who came into / left the room). */
+    /** "notice": a quiet one-line note from B-guru (who came into / left the room).
+     *  "shogi": the ☗ 将棋 game card (`shogiGameId` is the game; the body reads fine as text). */
     val kind: String? = null,
+    val shogiGameId: Long? = null,
 ) {
     val isNotice: Boolean get() = kind == "notice"
+    /** The ☗ 将棋 game card (drawn as a small board when the server turns shogi on for me). */
+    val isShogiCard: Boolean get() = kind == "shogi" && (shogiGameId ?: 0L) > 0L
 
     /** The text to show: a photo-only message carries "📷 写真" for apps that predate
      *  photos, which this app replaces with the photos themselves. */
@@ -86,7 +90,18 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val room: RoomFeatures? = null,
         val jukebox: JukeboxFeatures? = null,
         val neta: NetaFeatures? = null,
+        val shogi: ShogiFeatures? = null,
     )
+    /** ☗ 将棋 (docs/shogi-spec.md), behind SHOGI_ENABLED. `play` = this token may act (chat scope). */
+    @Serializable data class ShogiFeatures(
+        val enabled: Boolean? = null,
+        val path: String? = null,
+        val boardUrl: String? = null,
+        val bridgeVersion: Int? = null,
+        val play: Boolean? = null,
+        val timeControls: List<ShogiTimeControl> = emptyList(),
+    )
+    @Serializable data class ShogiTimeControl(val mode: String, val label: String = "", val initialMs: Long = 0, val byoyomiMs: Long = 0)
     /** 「ネタ帳に送る」: the article a post links to → BS ネタ帳 (public site). Needs the post scope. */
     @Serializable data class NetaFeatures(val enabled: Boolean? = null, val path: String? = null, val site: String? = null)
     /** The jukebox (backspace.fm back catalogue), behind a rollout list. */
@@ -150,6 +165,14 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val jukeboxEnabled get() = features?.jukebox?.enabled ?: false
     /** Only paths on our own server (the request carries the token). */
     val jukeboxPath get() = features?.jukebox?.path?.takeIf { it.startsWith("/api/") } ?: "/api/agent/jukebox"
+    /** ☗ 将棋 is on for this member (and the board speaks a bridge this app knows). */
+    val shogiEnabled get() = features?.shogi?.enabled == true && (features?.shogi?.bridgeVersion ?: 1) == 1
+    /** May start, accept and play (the chat scope); otherwise watch only. */
+    val canPlayShogi get() = shogiEnabled && (features?.shogi?.play ?: false)
+    /** Only paths on our own server (the request carries the token). */
+    val shogiPath get() = features?.shogi?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/shogi"
+    /** The board page (no token, no cookies): only under /shogi-board/ on our own server. */
+    val shogiBoardUrl get() = features?.shogi?.boardUrl?.takeIf { it.startsWith("/shogi-board/") && !it.contains("..") } ?: "/shogi-board/index.html"
     /** 「ネタ帳に送る」 is on for this token. */
     val netaEnabled get() = features?.neta?.enabled ?: false
     /** Only paths on our own server (the request carries the token). */
@@ -326,3 +349,62 @@ data class JukeboxEpisode(
 /** "N 年前の今日" (posted to the timeline at 7:00 JST; post_id is null before that). */
 @Serializable data class JukeboxToday(val id: String, val yearsAgo: Int = 0, val postId: Long? = null)
 @Serializable data class JukeboxResponse(val apiVersion: Int = 1, val episodes: List<JukeboxEpisode> = emptyList(), val today: JukeboxToday? = null)
+
+// MARK: ☗ 将棋 — docs/shogi-spec.md (ShogiGameDto in src/lib/shogi-types.ts)
+
+@Serializable data class ShogiPlayer(val userId: String = "", val name: String = "", val avatar: String? = null)
+@Serializable data class ShogiLastMove(val usi: String = "", val label: String = "")
+/** The clock when the turn started (blitz only; slow games have none). */
+@Serializable data class ShogiClocks(val blackMs: Long = 0, val whiteMs: Long = 0, val byoyomiMs: Long = 0, val initialMs: Long = 0)
+@Serializable data class ShogiMove(val ply: Int = 0, val usi: String = "", val label: String = "", val sfen: String = "", val spentMs: Long = 0, val at: String = "")
+
+/** One game. `moves`, `kifUrl`, `myColor` come only with GET games/{id}. */
+@androidx.compose.runtime.Immutable
+@Serializable
+data class ShogiGame(
+    val id: Long,
+    val status: String = "open",
+    val mode: String = "blitz",
+    val creator: ShogiPlayer = ShogiPlayer(),
+    val invitee: ShogiPlayer? = null,
+    val black: ShogiPlayer? = null,
+    val white: ShogiPlayer? = null,
+    val sfen: String = ShogiLogic.INITIAL_SFEN,
+    val ply: Int = 0,
+    val turn: String = "black",
+    val lastMove: ShogiLastMove? = null,
+    val clocks: ShogiClocks? = null,
+    val turnStartedAt: String? = null,
+    val deadlineAt: String? = null,
+    val serverNow: String = "",
+    val spectators: Int = 0,
+    val result: String? = null,
+    val endReason: String? = null,
+    val createdAt: String = "",
+    val startedAt: String? = null,
+    val endedAt: String? = null,
+    val rematchOf: Long? = null,
+    val cardMessageId: Long? = null,
+    val resultPostId: Long? = null,
+    val moves: List<ShogiMove>? = null,
+    val kifUrl: String? = null,
+    val myColor: String? = null,
+) {
+    val isActive get() = status == "active"
+    val isEnded get() = status == "ended" || status == "closed"
+}
+
+/** `self_play`: this member may accept their own open game (a test game against oneself). */
+@Serializable data class ShogiMe(val userId: String? = null, val selfPlay: Boolean? = null)
+/** Every shogi reply: `{ game }`, the list `{ me, games }`, watch `{ spectators }`, or an error `{ error, code, game? }`. */
+@Serializable data class ShogiReply(
+    val game: ShogiGame? = null,
+    val games: List<ShogiGame>? = null,
+    val me: ShogiMe? = null,
+    val duplicate: Boolean? = null,
+    val spectators: Int? = null,
+    val error: String? = null,
+    val code: String? = null,
+)
+/** The stream's `event: shogi` (apps get `{ action, game }`). */
+@Serializable data class ShogiEvent(val action: String = "state", val game: ShogiGame? = null)

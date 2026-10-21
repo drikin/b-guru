@@ -35,10 +35,12 @@ import java.util.UUID
 object Push {
     const val EXTRA_MESSAGE_ID = "message_id"
     const val EXTRA_POST_ID = "post_id"
+    const val EXTRA_SHOGI_GAME_ID = "shogi_game_id"
     private const val CH_MENTION = "mention"
     private const val CH_CHAT = "chat"
     private const val CH_REPLY = "reply"
     private const val CH_TIMELINE = "timeline"
+    private const val CH_SHOGI = "shogi"
     /** All "new messages" pushes share one rolling notification. */
     private const val NEW_MESSAGES_ID = 1
     private const val PREFS = "push"
@@ -67,6 +69,7 @@ object Push {
             NotificationChannel(CH_CHAT, "新着メッセージ", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "チャットの新着（まとめて 1 件）" },
             NotificationChannel(CH_REPLY, "投稿への返信", NotificationManager.IMPORTANCE_DEFAULT),
             NotificationChannel(CH_TIMELINE, "タイムラインの新着", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "タイムラインの新しい投稿（コメントは除く）" },
+            NotificationChannel(CH_SHOGI, "将棋", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "対局の申し込みと、ゆっくり対局であなたの番になったとき" },
         ))
     }
 
@@ -91,17 +94,19 @@ object Push {
             scope.launch {
                 val p = prefs(app)
                 val mode = notifyMode(app); val quiet = quietHours(app); val timeline = notifyTimeline(app)
-                val sig = PushContent.registrationSignature(t, mode, quiet, timeline, api.token)
+                val sig = PushContent.registrationSignature(t, mode, quiet, timeline, api.token, shogi = NOTIFY_SHOGI)
                 val now = System.currentTimeMillis()
                 if (p.getString("registered", null) == sig && now - p.getLong("registeredAt", 0L) in 0 until REREGISTER_MS) return@launch
                 p.edit().putString("fcmToken", t).apply()
-                runCatching { api.registerPush(t, mode, quiet, timeline) }
+                runCatching { api.registerPush(t, mode, quiet, timeline, notifyShogi = NOTIFY_SHOGI) }
                     .onSuccess { p.edit().putString("registered", sig).putLong("registeredAt", now).apply() }
             }
         }
     }
 
     private const val REREGISTER_MS = 7L * 24 * 60 * 60 * 1000
+    /** This app shows ☗ 将棋 pushes (the server sends them only to devices that say so). */
+    private const val NOTIFY_SHOGI = true
 
 
     /** Sign-out: stop pushes to this device (the token is revoked right after,
@@ -132,6 +137,7 @@ object Push {
 
     fun show(context: Context, data: Map<String, String>) {
         val kind = data["kind"] ?: return
+        if (PushContent.isShogi(kind)) { showShogi(context, kind, data["game_id"]?.toLongOrNull() ?: return); return }
         val messageId = data["message_id"]?.toLongOrNull()
         val postId = data["post_id"]?.toLongOrNull()
         val session = App.session(context)
@@ -212,6 +218,47 @@ object Push {
         }
     }
 
+    /** ☗ 将棋: only the game id comes through FCM; the names are read with this device's token. */
+    private fun showShogi(context: Context, kind: String, gameId: Long) {
+        if (gameId <= 0) return
+        val session = App.session(context)
+        // Already looking at that game in the chat.
+        val store = session.store
+        if (store != null && store.isVisible && store.shogi.open && store.shogi.selectedId == gameId) return
+        val api = session.api ?: session.savedToken()?.let(::ApiClient) ?: return
+        val base = store?.capabilities?.shogiPath ?: "/api/agent/shogi"
+        val game = runBlocking { withTimeoutOrNull(8000) { runCatching { api.shogiGame(gameId, base) }.getOrNull() } }
+            ?.takeIf { it.first == 200 }?.second?.game
+        val text = PushContent.shogiText(kind, game)
+        val open = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_SHOGI_GAME_ID, gameId)
+        }
+        val notifId = PushContent.notificationId(kind, null, gameId, NEW_MESSAGES_ID)
+        val tap = PendingIntent.getActivity(context, notifId, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val b = NotificationCompat.Builder(context, CH_SHOGI)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(0xFF16A34A.toInt())
+            .setContentTitle(PushContent.defaultTitle(kind))
+            .setContentText(text)
+            .setContentIntent(tap)
+            .setAutoCancel(true)
+            .setGroup("shogi")
+            .setCategory(NotificationCompat.CATEGORY_SOCIAL)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(context, CH_SHOGI)
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setColor(0xFF16A34A.toInt())
+                    .setContentTitle(PushContent.defaultTitle(kind))
+                    .setContentText(PushContent.publicText(kind))
+                    .build()
+            )
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < 33) {
+            NotificationManagerCompat.from(context).notify(notifId, b.build())
+        }
+    }
+
     // Someone holding a locked phone must not be able to post or react as its
     // owner: both actions require unlocking first.
     private fun replyAction(context: Context, messageId: Long, notifId: Int): NotificationCompat.Action {
@@ -238,8 +285,14 @@ object PushContent {
     const val TIMELINE_NEW = "timeline_new"
     const val TIMELINE_TEXT_MAX = 240
 
+    const val SHOGI_OFFER = "shogi_offer"
+    const val SHOGI_TURN = "shogi_turn"
+
+    fun isShogi(kind: String) = kind == SHOGI_OFFER || kind == SHOGI_TURN
+
     fun defaultTitle(kind: String) = when (kind) {
         "reply" -> "B-guru"
+        SHOGI_OFFER, SHOGI_TURN -> "☗ 将棋"
         TIMELINE_NEW -> "B-guru タイムライン"
         else -> "B-guru チャット"
     }
@@ -248,13 +301,26 @@ object PushContent {
         "chat_mention" -> "あなたへのメンションがあります"
         "chat_new" -> "新着メッセージがあります"
         TIMELINE_NEW -> "新しい投稿があります"
+        SHOGI_OFFER -> "対局の申し込みが届きました"
+        SHOGI_TURN -> "あなたの番です"
         else -> "あなたの投稿に返信がありました"
+    }
+
+    /** With the game (read with this device's token) the names; without it the generic line. */
+    fun shogiText(kind: String, game: ShogiGame?): String {
+        if (game == null) return defaultText(kind)
+        val mode = ShogiLogic.modeLabel(game.mode)
+        return when (kind) {
+            SHOGI_OFFER -> "${game.creator.name.ifBlank { "だれか" }} さんから対局の申し込み（$mode）"
+            else -> "あなたの番です（${ShogiLogic.vsText(game)}・${game.ply} 手）"
+        }
     }
 
     /** Lock screen: never the content itself. */
     fun publicText(kind: String) = when (kind) {
         "chat_mention" -> "あなたへのメンションがあります"
         TIMELINE_NEW -> "新しい投稿があります"
+        SHOGI_OFFER, SHOGI_TURN -> "将棋の通知があります"
         else -> "新着があります"
     }
 
@@ -270,9 +336,10 @@ object PushContent {
 
     /** What a push registration was made with (a hash: the tokens are not stored again in
      *  clear). Push.register sends again only when this changes (or after a week). */
-    fun registrationSignature(fcmToken: String, mode: String, quiet: Boolean, timeline: Boolean, agentToken: String): String {
+    fun registrationSignature(fcmToken: String, mode: String, quiet: Boolean, timeline: Boolean, agentToken: String, shogi: Boolean = true): String {
         val md = java.security.MessageDigest.getInstance("SHA-256")
-        md.update("$fcmToken\n$mode\n$quiet\n$timeline\n$agentToken".toByteArray())
+        // notify_shogi joined later: its line changes the hash, so devices register once more.
+        md.update("$fcmToken\n$mode\n$quiet\n$timeline\n$agentToken\nshogi=$shogi".toByteArray())
         return md.digest().joinToString("") { "%02x".format(it) }
     }
 
@@ -284,6 +351,8 @@ object PushContent {
         "chat_new" -> newMessagesId
         "chat_mention" -> (messageId ?: 0L).toInt() + 100
         TIMELINE_NEW -> (postId ?: 0L).toInt() + 3_000_000
+        // One per game (offer and turn replace each other, like the server's collapse key shogi-{id}).
+        SHOGI_OFFER, SHOGI_TURN -> (postId ?: 0L).toInt() + 4_000_000
         else -> (postId ?: 0L).toInt() + 1_000_000
     }
 }

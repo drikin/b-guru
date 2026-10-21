@@ -14,7 +14,9 @@ class MainActivity : ComponentActivity() {
         val session = App.session(this)
         session.restore()
         if (BuildConfig.DEMO && intent?.getBooleanExtra("demo", false) == true) {
-            session.startDemo(intent.getStringExtra("demo_images"), intent.getStringExtra("demo_jukebox"))
+            // `--ez demo_room false` / `--ez demo_shogi false`: the demo without the room / ☗ 将棋.
+            session.startDemo(intent.getStringExtra("demo_images"), intent.getStringExtra("demo_jukebox"),
+                withRoom = intent.getBooleanExtra("demo_room", true), withShogi = intent.getBooleanExtra("demo_shogi", true))
             // Debug: `--es voice_url ws://10.0.2.2:7880 --es voice_token <jwt>` joins a local LiveKit dev server.
             val url = intent.getStringExtra("voice_url")
             val token = intent.getStringExtra("voice_token")
@@ -46,6 +48,9 @@ class MainActivity : ComponentActivity() {
         if (id > 0) App.session(this).store?.reveal(id)
         val post = intent?.getLongExtra(Push.EXTRA_POST_ID, 0L) ?: 0L
         if (post > 0) App.session(this).timeline?.openThread = post
+        // ☗ 将棋 (shogi_offer / shogi_turn): the shogi screen at that game.
+        val game = intent?.getLongExtra(Push.EXTRA_SHOGI_GAME_ID, 0L) ?: 0L
+        if (game > 0) App.session(this).store?.openShogi(game)
         // The jukebox's playback notification.
         if (intent?.getBooleanExtra(JukeboxService.EXTRA_OPEN_JUKEBOX, false) == true) App.session(this).jukebox?.showTab = true
     }

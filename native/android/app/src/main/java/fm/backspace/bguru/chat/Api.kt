@@ -123,11 +123,13 @@ class ApiClient(val token: String) {
     }
 
     /** FCM registration token for this device. */
-    suspend fun registerPush(fcmToken: String, notifyMode: String, quietHours: Boolean, notifyTimeline: Boolean) {
+    suspend fun registerPush(fcmToken: String, notifyMode: String, quietHours: Boolean, notifyTimeline: Boolean, notifyShogi: Boolean = true) {
         send(request("POST", "/api/agent/devices/push", buildJsonObject {
             put("token", fcmToken); put("environment", "fcm"); put("platform", "android")
             put("notify_mode", notifyMode); put("quiet_hours", quietHours)
             put("notify_timeline", notifyTimeline)
+            // ☗ 将棋 pushes (shogi_offer / shogi_turn) go only to apps that say they know them.
+            put("notify_shogi", notifyShogi)
         }))
     }
 
@@ -161,6 +163,35 @@ class ApiClient(val token: String) {
     /** POST { action: "enter" | "text" | "move" | "voice" | "react", … }. */
     suspend fun roomAction(body: JsonObject, path: String = "/api/agent/room"): RoomActionResponse =
         decode(send(request("POST", path, body)))
+
+    // MARK: ☗ 将棋 (docs/shogi-spec.md) — GET needs read, POST needs chat
+
+    /** One call under `base` (capabilities' shogi path). Every status comes back with the parsed
+     *  body: a 409 carries the newest `game`. Throws on 401 (Unauthorized) and transport errors. */
+    suspend fun shogi(method: String, path: String, body: JsonObject? = null, base: String = "/api/agent/shogi", query: Map<String, String> = emptyMap()): Pair<Int, ShogiReply?> {
+        val req = request(method, "$base/$path", if (method == "GET") null else (body ?: buildJsonObject {}), query)
+        Net.http.newCall(req).await().use { resp ->
+            val text = resp.body.string()
+            val parsed = runCatching { ApiJson.decodeFromString<ShogiReply>(text) }.getOrNull()
+            if (resp.code == 401) throw ApiError.Unauthorized(parsed?.code)
+            return resp.code to parsed
+        }
+    }
+
+    suspend fun shogiGames(base: String = "/api/agent/shogi") = shogi("GET", "games", base = base, query = mapOf("status" to "open,offered,active,ended"))
+    suspend fun shogiGame(id: Long, base: String = "/api/agent/shogi") = shogi("GET", "games/$id", base = base)
+    suspend fun shogiCreate(mode: String, inviteeUserId: String?, rematchOf: Long?, base: String = "/api/agent/shogi") =
+        shogi("POST", "games", buildJsonObject {
+            put("mode", mode)
+            if (inviteeUserId != null) put("invitee_user_id", inviteeUserId)
+            if (rematchOf != null) put("rematch_of", rematchOf)
+        }, base)
+    /** accept / decline / cancel / resign / watch. */
+    suspend fun shogiAction(id: Long, action: String, base: String = "/api/agent/shogi") = shogi("POST", "games/$id/$action", base = base)
+    suspend fun shogiMove(id: Long, usi: String, expectedPly: Int, clientMoveId: String, base: String = "/api/agent/shogi") =
+        shogi("POST", "games/$id/move", buildJsonObject {
+            put("usi", usi); put("expected_ply", expectedPly); put("client_move_id", clientMoveId)
+        }, base)
 
     // MARK: jukebox
 
