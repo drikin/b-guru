@@ -103,10 +103,12 @@ const presenceGets = [];
 let pageLoads = 0;
 const runStart = Date.now();
 const presenceLog = [];
+// Sections 6g/6g' read /api/presence themselves (visibility, email leaks): not the app.
+let probingPresence = false;
 page.on("load", () => { pageLoads++; presenceLog.push(`load@${Math.round((Date.now() - runStart) / 1000)}s ${page.url().slice(0, 60)}`); });
 page.on("request", (r) => {
   const u = new URL(r.url());
-  if (r.method() === "GET" && u.pathname === "/api/presence") {
+  if (r.method() === "GET" && u.pathname === "/api/presence" && !probingPresence) {
     presenceGets.push(Date.now());
     presenceLog.push(`GET@${Math.round((Date.now() - runStart) / 1000)}s`);
   }
@@ -872,6 +874,7 @@ console.log("\n6f-3. iOS Chrome uses the native pull-to-refresh");
 // heartbeat body, so assert the whole round trip: report hidden, read it back
 // from /api/presence, then report visible and read it back again.
 console.log("\n6g. Presence reports tab visibility");
+probingPresence = true;
 // Resolve the signed-in user's opaque id from the app's own auth endpoint so
 // the check works with any session token. /api/presence identifies members by
 // userId only — it must never carry an email (privacy fix 2026-09-28), so the
@@ -989,6 +992,7 @@ check(
 // check resolved, hit `if (!authRef.current) return`, and never retried — so
 // /api/posts/stream was never requested and every realtime feature (presence,
 // chat, post/pin/poll/club) was silently dead. Assert the request happens.
+probingPresence = false;
 console.log("\n6h. The realtime SSE stream is open");
 const sseSeen = await page.evaluate(`(() => {
   // performance entries do not record EventSource, so probe the app's own
