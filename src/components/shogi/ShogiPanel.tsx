@@ -91,7 +91,7 @@ function usePanelMax(ref: React.RefObject<HTMLDivElement | null>, on: boolean): 
   useEffect(() => {
     const col = ref.current?.parentElement;
     if (!on || !col || typeof ResizeObserver === "undefined") return;
-    const update = () => setMax(Math.round(Math.max(260, Math.min(640, col.clientHeight * 0.52))));
+    const update = () => setMax(Math.round(Math.max(420, Math.min(660, col.clientHeight * 0.52))));
     update();
     const ro = new ResizeObserver(update);
     ro.observe(col);
@@ -100,8 +100,6 @@ function usePanelMax(ref: React.RefObject<HTMLDivElement | null>, on: boolean): 
   return max;
 }
 
-/** 盤の周り（上の行・再生ボタン・余白）の分。盤はパネルの高さからこれを引いた高さに収める。 */
-const BOARD_CHROME_PX = 96;
 
 export function ShogiPanel() {
   const s = useShogi();
@@ -117,9 +115,11 @@ export function ShogiPanel() {
         borderBottom: "1px solid var(--border-green-soft, var(--mantine-color-default-border))",
         padding: "6px 8px 8px",
         flex: "0 0 auto",
-        maxHeight: max,
-        overflowY: "auto",
-        overscrollBehavior: "contain",
+        // 対局中は高さを決めて、盤が残りにぴったり収まる（スクロールしない。ドリキン 2026-10-21）。
+        ...(s.selectedId
+          ? { height: max, display: "flex", flexDirection: "column" as const, overflow: "hidden" }
+          : { maxHeight: max, overflowY: "auto" as const, overscrollBehavior: "contain" as const }),
+        boxSizing: "border-box",
       }}
     >
       <Group gap={6} justify="space-between" wrap="nowrap" mb={4}>
@@ -135,7 +135,7 @@ export function ShogiPanel() {
         </Group>
       )}
       {/* key: 別の対局に移ったら再生位置・反転・投了の確認を戻す */}
-      {s.selectedId ? <GameView key={s.selectedId} s={s} boardMax={max - BOARD_CHROME_PX} /> : <Lobby s={s} />}
+      {s.selectedId ? <GameView key={s.selectedId} s={s} /> : <Lobby s={s} />}
     </div>
   );
 }
@@ -422,7 +422,19 @@ function resultText(g: ShogiGameDto): string {
 
 // ─────────────────────────── 盤（対局・観戦・再生）
 
-function GameView({ s, boardMax }: { s: ShogiSnapshot; boardMax?: number }) {
+function GameView({ s }: { s: ShogiSnapshot }) {
+  // 盤に渡す高さ: 上の行・ボタンを除いた残り（実際に測る）。
+  const boardBox = useRef<HTMLDivElement>(null);
+  const [boardMax, setBoardMax] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    const el = boardBox.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const update = () => setBoardMax(Math.max(200, Math.floor(el.clientHeight)));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const listed = s.games.find((g) => g.id === s.selectedId) ?? null;
   const d = s.detail && s.detail.id === s.selectedId ? s.detail : null;
   const g: ShogiGameDto | null = d ?? listed;
@@ -479,7 +491,7 @@ function GameView({ s, boardMax }: { s: ShogiSnapshot; boardMax?: number }) {
   const vsBeagle = opponent?.name === BEAGLE_NAME;
 
   return (
-    <div style={{ display: "grid", gap: 6 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minHeight: 0 }}>
       <Group gap={6} justify="space-between" wrap="nowrap">
         <Text size="xs" c="dimmed" style={{ flex: 1 }}>
           {MODE[g.mode]}・{g.ply} 手{g.spectators ? `・👀 ${g.spectators} 人が観戦中` : ""}
@@ -487,6 +499,7 @@ function GameView({ s, boardMax }: { s: ShogiSnapshot; boardMax?: number }) {
           {active && my ? (g.turn === my ? "・あなたの番" : vsBeagle ? "・ビーグルが考え中…🐶" : "・相手の番") : ""}
         </Text>
       </Group>
+      <div ref={boardBox} style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
       <ShogiBoard
         sfen={shownSfen}
         myColor={my}
@@ -501,6 +514,7 @@ function GameView({ s, boardMax }: { s: ShogiSnapshot; boardMax?: number }) {
         onFlip={(o) => setFlip(o)}
         onMove={(usi) => void playShogiMove(g.id, usi, g.ply)}
       />
+      </div>
       {(ended || (d && moves.length > 0 && !my)) && (
         <Group gap={4} justify="center">
           <ActionIcon variant="default" aria-label="最初へ" onClick={() => setReplay(0)}>
