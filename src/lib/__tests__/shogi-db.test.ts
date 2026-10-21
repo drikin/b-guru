@@ -11,6 +11,7 @@
  *  - 状態遷移: 期限切れ（募集・指名）・中断（60 秒）・時間切れ・放置・24 時間の通知・2 手目までの取り消し
  *  - 再起動をまたぐ: 起動時刻＋10 秒より前の期限を延ばす
  *  - 見える範囲: 指名は二人にだけ。配信にメールが載らない
+ *  - ビーグル戦: すぐ始まる・ビーグルが先手なら 1 手目・人が指すと応じる・投了と投稿・1 局ずつ・再起動後・二重に指さない
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 
@@ -27,6 +28,8 @@ type Mods = {
   live: typeof import("../live");
   personal: typeof import("../personal-live");
   user: typeof import("../user");
+  beagle: typeof import("../shogi-beagle");
+  rules: typeof import("../shogi-rules");
 };
 let m: Mods;
 const A = `shogi-a-${Date.now()}@test.local`;
@@ -51,7 +54,10 @@ d("☗ 将棋（DB）", () => {
       live: await import("../live"),
       personal: await import("../personal-live"),
       user: await import("../user"),
+      beagle: await import("../shogi-beagle"),
+      rules: await import("../shogi-rules"),
     };
+    m.beagle._setBeagleDelayForTest(0);
     // 空の DB では initSchema が drinews_articles を作る前に参照して失敗する（既存の並び順）。先に作っておく。
     await sql(`CREATE TABLE IF NOT EXISTS drinews_articles (id SERIAL PRIMARY KEY, author_email TEXT NOT NULL DEFAULT '',
       title TEXT NOT NULL DEFAULT '', body_md TEXT NOT NULL DEFAULT '', body_html TEXT NOT NULL DEFAULT '',
@@ -379,5 +385,130 @@ d("☗ 将棋（DB）", () => {
     expect((await call(a, "POST", "games/999999/accept")).status).toBe(404);
     expect((await call(a, "POST", "games", { mode: "rapid" })).status).toBe(400);
     expect((await call(a, "POST", "games", { mode: "blitz", invitee_user_id: a.userId })).status).toBe(400);
+  });
+  // ───────────────────────── ビーグル戦
+
+  const beagleUidOf = async () => (await sql(`SELECT user_id FROM users WHERE email = 'system@backspace.fm'`)).rows[0]?.user_id as string;
+  const settle = async () => {
+    await new Promise((r) => setTimeout(r, 30));
+    await m.shogi._beagleSettledForTest();
+  };
+
+  it("ビーグル戦: すぐ始まる → ビーグルが先手なら 1 手目 → 人が指すと応じる → 投了・投稿", async () => {
+    const created = await call(a, "POST", "games", { mode: "blitz", opponent: "beagle" });
+    expect(created.status).toBe(201);
+    const g0 = gameOf(created);
+    const bot = await beagleUidOf();
+    expect(bot).toBeTruthy();
+    expect(g0.status).toBe("active");
+    expect([g0.black.user_id, g0.white.user_id].sort()).toEqual([a.userId, bot].sort());
+    const botName = g0.black.user_id === bot ? g0.black.name : g0.white.name;
+    expect(botName).toBe("ビーグル");
+    const humanBlack = g0.black.user_id === a.userId;
+    const id = g0.id as number;
+    await settle();
+    let g = gameOf(await call(a, "GET", `games/${id}`));
+    expect(g.ply).toBe(humanBlack ? 0 : 1);
+    if (!humanBlack) expect(g.moves[0].label).toMatch(/^▲/);
+    // 人が 3 手指す（合法手から適当に）。そのたびにビーグルが応じる。
+    for (let i = 0; i < 3; i++) {
+      const usi = m.rules.legalUsi(g.sfen).find((u) => !u.includes("*")) ?? m.rules.legalUsi(g.sfen)[0];
+      const r = await call(a, "POST", `games/${id}/move`, { usi, expected_ply: g.ply, client_move_id: `h-${i}` });
+      expect(r.status).toBe(200);
+      await settle();
+      const after = gameOf(await call(a, "GET", `games/${id}`));
+      expect(after.ply).toBe(g.ply + 2);
+      expect(after.moves.at(-1).usi).not.toBe(usi);
+      g = after;
+    }
+    // ビーグルの指し手には beagle- の client_move_id が付き、手番ごとに 1 つだけ
+    const bm = await sql(`SELECT ply, client_move_id FROM shogi_moves WHERE game_id = $1 AND client_move_id LIKE 'beagle-%' ORDER BY ply`, [id]);
+    expect(bm.rows.map((x) => x.client_move_id)).toEqual(bm.rows.map((x) => `beagle-${id}-${x.ply - 1}`));
+    // 観戦できる・ほかの人は対局を出せない（ビーグル戦も 1 局ずつ）
+    expect((await call(c, "GET", `games/${id}`)).status).toBe(200);
+    const busy = await call(b, "POST", "games", { mode: "blitz" });
+    expect(busy.status).toBe(409);
+    expect((busy as { body: { code: string; game: { id: number } } }).body.game.id).toBe(id);
+    expect((await call(b, "POST", "games", { mode: "slow", opponent: "beagle" })).status).toBe(409);
+    expect((await call(a, "POST", "games", { mode: "slow", opponent: "beagle" })).status).toBe(409);
+    // 投了 → ビーグルの勝ち、「対局ありがとうだわん」の投稿
+    const res = gameOf(await call(a, "POST", `games/${id}/resign`));
+    expect(res).toMatchObject({ status: "ended", result: humanBlack ? "white" : "black", end_reason: "resign" });
+    const post = await sql(`SELECT author_email, author_name, text FROM posts WHERE id = $1`, [res.result_post_id]);
+    expect(post.rows[0]).toMatchObject({ author_email: "system@backspace.fm", author_name: "ビーグル" });
+    expect(post.rows[0].text).toContain("ビーグルと対局ありがとうだわん");
+    console.log("\n--- ビーグル戦の投稿 ---\n" + post.rows[0].text + "\n---");
+    const card = await sql(`SELECT body FROM chat_messages WHERE shogi_game_id = $1`, [id]);
+    expect(card.rows[0].body).toContain("ビーグル");
+    // 終局後は新しく始められる。再戦（rematch_of だけでも）は先後を入れ替える
+    const re = gameOf(await call(a, "POST", "games", { mode: "slow", rematch_of: id }));
+    expect(re.status).toBe("active");
+    expect(re.black.user_id === a.userId).toBe(!humanBlack);
+    expect(re.rematch_of).toBe(id);
+    await settle();
+  });
+
+  it("ビーグル戦の入力: opponent が不正なら 400、ビーグルは指名できない", async () => {
+    expect((await call(a, "POST", "games", { mode: "blitz", opponent: "cat" })).status).toBe(400);
+    expect((await call(a, "POST", "games", { mode: "rapid", opponent: "beagle" })).status).toBe(400);
+    await m.shogi.shogiReady();
+    expect((await call(a, "POST", "games", { mode: "blitz", invitee_user_id: await beagleUidOf() })).status).toBe(400);
+  });
+
+  async function insertBeagleFirst(): Promise<number> {
+    await m.shogi.shogiReady();
+    const bot = await beagleUidOf();
+    const ins = await sql(
+      `INSERT INTO shogi_games (status, mode, initial_ms, byoyomi_ms, creator_uid, invitee_uid, black_uid, white_uid, sfen, clock_b_ms, clock_w_ms, started_at, turn_started_at)
+       VALUES ('active', 'blitz', 600000, 30000, $1, $2, $2, $1, $3, 600000, 600000, now(), now()) RETURNING id`,
+      [a.userId, bot, m.rules.INITIAL_SFEN]
+    );
+    return ins.rows[0].id as number;
+  }
+
+  it("ビーグル戦: 再起動の前にビーグルの番だった対局は、起動時に拾って指す", async () => {
+    const id = await insertBeagleFirst();
+    m.shogi._resetShogiForTest();
+    await m.shogi.shogiReady();
+    await settle();
+    const g = gameOf(await call(c, "GET", `games/${id}`));
+    expect(g.ply).toBe(1);
+  });
+
+  it("ビーグル戦: 同時に 2 回呼ばれても 1 手だけ指す", async () => {
+    const id = await insertBeagleFirst();
+    await Promise.all([m.beagle.beagleTurn(id), m.beagle.beagleTurn(id), m.beagle.beagleTurn(id)]);
+    await settle();
+    const rows = await sql(`SELECT count(*)::int AS n FROM shogi_moves WHERE game_id = $1`, [id]);
+    expect(rows.rows[0].n).toBe(1);
+    // 手番でなければ何もしない
+    await m.beagle.beagleTurn(id);
+    expect((await sql(`SELECT ply FROM shogi_games WHERE id = $1`, [id])).rows[0].ply).toBe(1);
+  });
+
+  it("ビーグル戦: ビーグルの時計も減る（考えた時間ぶん・遅延の補正 1 秒は人と同じ）", { timeout: 15000 }, async () => {
+    const id = await insertBeagleFirst();
+    // 2 手進めて時計が動く状態に: ビーグル 1 手目 → 人 → ビーグル
+    await m.beagle.beagleTurn(id);
+    let g = gameOf(await call(a, "GET", `games/${id}`));
+    const usi = m.rules.legalUsi(g.sfen)[0];
+    await call(a, "POST", `games/${id}/move`, { usi, expected_ply: 1 });
+    await settle();
+    g = gameOf(await call(a, "GET", `games/${id}`));
+    expect(g.ply).toBe(3);
+    expect(g.clocks.black_ms).toBe(600000); // 2 手目までは時計が動かない
+    // 3 手目からは時計が動く: ビーグルが 1.5 秒考える → 遅延の補正 1 秒を引いた約 0.5 秒が減る
+    m.beagle._setBeagleDelayForTest(1500);
+    try {
+      const usi2 = m.rules.legalUsi(g.sfen)[0];
+      await call(a, "POST", `games/${id}/move`, { usi: usi2, expected_ply: 3 });
+      await settle();
+    } finally {
+      m.beagle._setBeagleDelayForTest(0);
+    }
+    g = gameOf(await call(a, "GET", `games/${id}`));
+    expect(g.ply).toBe(5);
+    expect(g.clocks.black_ms).toBeLessThan(600000 - 300);
+    expect(g.clocks.black_ms).toBeGreaterThan(600000 - 2000);
   });
 });

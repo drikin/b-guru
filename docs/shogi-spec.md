@@ -19,6 +19,48 @@
 - レーティング・ランキング・駒落ちは v1 に入れない（初心者が気軽に指せることを優先。ソフト指しの動機も作らない）。
 - 成功の基準: 公開から 4 週間で週 10 局以上。届かなければ作りを見直すか下げる。
 
+## ビーグル戦（練習、ドリキン 2026-10-21「ビーグルと対戦したい」）
+
+- 始め方: ロビーの「🐶 ビーグルと対局（練習）」→ ⚡速い／🐢ゆっくりを選ぶとすぐ始まる（申し込み・受諾なし）。先後は振り駒、
+  ビーグル戦の「もう一局」（再戦）は先後を入れ替える。将棋が有効な人なら誰でも。自分との対局（SHOGI_SELF_PLAY）とは別。
+- 「対局はサイト全体で 1 つだけ・早い者勝ち」はビーグル戦にも効く（ほかの対局があれば 409 `busy`、ビーグル戦の間はほかの人が出せない）。
+  ほかの人は観戦できる。
+- ビーグルは既存の system アカウント（`SYSTEM_EMAIL`、表示名「ビーグル」、user_id は `ensureUserId`）。`black`/`white` の片方がビーグル。
+  カード・終局投稿は今までの決まり（公開前は出さない）。終局投稿は「対局ありがとうだわん」（勝っても負けても相手を褒める）。
+- 強さ: 初心者の練習相手。駒の価値（歩1・香3・桂4・銀5・金6・角8・飛10、成駒は加点、持ち駒は少し高め）＋玉の周りの金銀・
+  玉の位置・相手玉の近くの駒（少し）。反復深化のアルファベータで 3 手まで、取り合いは静止探索で延長（王手されていれば全部の逃げ方）、
+  並べ替えは取る手・成る手・王手を先に。1 手詰めは必ず指し、3 手読みで自分が 1 手で詰まされる手も避ける。根の手に小さな乱数（歩の 0.18 枚まで）
+  を足すので毎回同じにはならない。千日手・入玉は考えない。探索そのものは 1 手 数 ms〜数十 ms（持ち駒が多い局面で数百 ms。上限は下）。
+- 時計: 人と同じく減る（遅延の補正 1 秒も同じ）。考える時間の上限: 速い将棋は 1・2 手目 1.5 秒、持ち時間 2 分以上 2.5 秒、
+  それより少なければ 残り/30（0.3 秒以上）、秒読みは 残りの 1/4（5 秒以内）。ゆっくりは 3 秒。そのうえで「考えている」間（0.8〜2 秒、上限以内）
+  をおいてから指す。
+- 投了: 30 手目より後で、詰みを読まれて駒も 8 点以上損している、または駒の損が 30 点以上で評価も大差のとき。
+- 指すタイミング: 人が指した直後、ビーグルが先手で始まったとき、起動時（`shogiReady`）と 1 分ごとの見回りで手番がビーグルのまま
+  止まっている対局。同じ対局は同時に 1 つしか考えず、`expected_ply` と `client_move_id`（`beagle-{id}-{ply}`）で二重に指さない。
+
+### 実装（ビーグル戦）
+
+- `src/lib/shogi-engine.ts`: 探索（純関数・import なし）。探索の間だけ使う独自の合法手生成（盤の配列。成れる歩・角・飛の不成は省く）。
+  合法手は tsshogi と突き合わせるテストあり（ランダムな局面 1000 以上）。
+- `src/lib/shogi-beagle-worker.ts` → `node scripts/build-shogi-beagle-worker.mjs` で `shogi-beagle-worker.generated.ts`（束ねた JS の文字列）。
+  サーバは `new Worker(src, { eval: true })` で別スレッドに 1 つだけ作る（Next の束ね方に左右されない）。探索のソースを変えたら作り直す
+  （テストがずれを検出する）。
+- `src/lib/shogi-beagle-think.ts`: 考える時間の上限・worker への依頼。worker が落ちた・返事が上限＋1.5 秒来ないときは worker を捨て、
+  その場で「1 手読み＋取り合い」（100ms まで、取る手優先）を選ぶ。選んだ手は必ず tsshogi の合法手か確かめ、だめなら tsshogi の合法手から
+  取る手 → どれか。テスト（vitest）と `SHOGI_BEAGLE_INLINE=1` は worker を使わずその場で探索する。
+- `src/lib/shogi-beagle.ts`: ビーグルの手番（読み直し → 考える → 投了か `playMove`）。`shogi.ts` の `kickBeagle` から呼ぶ。
+
+### API（ビーグル戦。Web `/api/shogi/*`・アプリ `/api/agent/shogi/*` 共通）
+
+- `POST games` `{ mode: "blitz"|"slow", opponent: "beagle" }` → 201 `{ apiVersion, game }`。`game.status` は最初から `"active"`
+  （`creator` = 自分、`invitee` = ビーグル、`black`/`white` の片方がビーグル `{ user_id, name: "ビーグル", avatar: "/icon-192.png" }`）。
+  ビーグルが先手なら 1〜3 秒後に 1 手目が `shogi` の配信（`state`）で届く。
+- `{ mode, opponent: "beagle", rematch_of }`（または `rematch_of` だけ）: 終局した自分のビーグル戦の先後を入れ替えてもう一局。
+- エラー: `opponent` が `"beagle"` 以外 400 `invalid_request`、ほかの対局がある 409 `busy`（見えていれば `game`）、
+  ビーグルのアカウントが用意できない 409 `unavailable`。`invitee_user_id` にビーグルは指定できない（400）。
+- 指す・投了・取り消し（2 手目まで）・観戦・KIF は人どうしと同じ。ビーグルが考えている間は `turn` がビーグルの色のまま。
+- capabilities: `features.shogi.beagle = true`（アプリが「🐶 ビーグルと対局」を出す目印）。
+
 ## 守ること（反対意見役の指摘から）
 
 - 正本はサーバの DB。局面（SFEN）・指し手（USI）・持ち時間はすべて DB にあり、pm2 の再起動・デプロイで対局が止まらない。
@@ -70,13 +112,17 @@ offered（指名・24 時間で期限切れ）─┴─ accept → active ─→
 | `GET games?status=open,offered,active,ended` | 一覧（終局は最近 20 局） |
 | `GET games/{id}` | 全体（指し手の一覧・KIF の URL を含む） |
 | `POST games` `{ mode, invitee_user_id? }` | 募集（invitee なし）／指名 |
+| `POST games` `{ mode, opponent: "beagle" }` | ビーグルと対局（すぐ active。下の「ビーグル戦」） |
 | `POST games/{id}/accept` ・ `decline` ・ `cancel` | 受ける・断る・取り下げる |
 | `POST games/{id}/move` `{ usi, expected_ply, client_move_id }` | 指す。手数が合わなければ 409 と最新の状態 |
 | `POST games/{id}/resign` | 投了 |
 | `POST games/{id}/watch` | 観戦中の合図（30 秒ごと。観戦人数に使う） |
 | `GET games/{id}/kif` | 棋譜（KIF） |
 
-capabilities の `features.shogi = { enabled, path, board_url, bridge_version, time_controls: [...] }`。
+capabilities の `features.shogi = { enabled, path, board_url, bridge_version, play, beagle, time_controls: [...] }`。
+
+Web のロビーは「相手を指名」と「最近の結果」を一旦出さない（ドリキン 2026-10-21。`ShogiPanel.tsx` の `SHOW_INVITE` /
+`SHOW_RECENT_RESULTS` を true にすれば戻る。サーバの指名 API はそのまま）。
 
 ## 盤面（Web 部品を各アプリで共用）
 
@@ -101,7 +147,7 @@ capabilities の `features.shogi = { enabled, path, board_url, bridge_version, t
 
 ## v1 に入れないもの
 
-待った申請、駒落ち、持ち時間の細かい設定、入玉宣言、ビーグルの対局中の実況、評価値・AI 検討、
+待った申請、駒落ち、持ち時間の細かい設定、入玉宣言、ビーグルの対局中の実況、評価値・AI 検討、ビーグルの強さの段階、
 レーティング・ランキング・大会、KIF の読み込み、チャットから局面へのリンク、ルームのボイスとの連動。
 
 ## 実装メモ（2026-10-21、v1 のサーバ・盤面・Web）

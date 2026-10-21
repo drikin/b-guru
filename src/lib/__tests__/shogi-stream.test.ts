@@ -90,6 +90,7 @@ describe("capabilities", () => {
       board_url: "/shogi-board/index.html",
       bridge_version: 1,
       play: true,
+      beagle: true,
     });
     expect(c.features.shogi.time_controls.map((t) => t.mode)).toEqual(["blitz", "slow"]);
     expect(c.features.stream.events).toContain("shogi");

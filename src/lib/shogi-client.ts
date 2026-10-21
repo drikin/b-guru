@@ -226,13 +226,32 @@ async function act(path: string, body?: unknown): Promise<{ status: number; body
   }
 }
 
-export async function createShogiGame(mode: "blitz" | "slow", inviteeUserId?: string | null, rematchOf?: number): Promise<void> {
-  const r = await act("games", { mode, ...(inviteeUserId ? { invitee_user_id: inviteeUserId } : {}), ...(rematchOf ? { rematch_of: rematchOf } : {}) });
+export async function createShogiGame(
+  mode: "blitz" | "slow",
+  inviteeUserId?: string | null,
+  rematchOf?: number,
+  opponent?: "beagle"
+): Promise<void> {
+  const r = await act("games", {
+    mode,
+    ...(inviteeUserId ? { invitee_user_id: inviteeUserId } : {}),
+    ...(rematchOf ? { rematch_of: rematchOf } : {}),
+    ...(opponent ? { opponent } : {}),
+  });
   const g = r?.body?.game as ShogiGameDto | undefined;
   if (r && r.status === 201 && g) {
+    if (g.status === "active") {
+      // ビーグル戦: すぐ始まるので盤を開く
+      set({ notice: "ビーグルとの対局が始まりました（先後は振り駒）" });
+      selectGame(g.id);
+      return;
+    }
     set({ notice: g.status === "offered" ? `${g.invitee?.name ?? "相手"} さんに申し込みました` : "募集しました（15 分）" });
   }
 }
+
+/** ビーグルと対局（練習）。申し込み・受諾なしですぐ始まる。 */
+export const startBeagleGame = (mode: "blitz" | "slow", rematchOf?: number) => createShogiGame(mode, null, rematchOf, "beagle");
 
 export async function acceptShogiGame(id: number): Promise<void> {
   const r = await act(`games/${id}/accept`);

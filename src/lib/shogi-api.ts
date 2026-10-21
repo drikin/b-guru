@@ -3,6 +3,7 @@
  *
  *   GET  games?status=open,offered,active,ended  一覧（終局は最近 20 局）
  *   POST games { mode, invitee_user_id?, rematch_of? }  募集（invitee なし）／指名／再戦（先後を入れ替える）
+ *   POST games { mode, opponent: "beagle", rematch_of? }  ビーグルと対局（練習）。すぐ active（振り駒、再戦は入れ替え）
  *   GET  games/{id}                     全体（指し手・KIF の URL・my_color）
  *   POST games/{id}/accept | decline | cancel | resign
  *   POST games/{id}/move { usi, expected_ply, client_move_id }  手数が合わなければ 409 と最新の game
@@ -59,7 +60,7 @@ export async function handleShogi(
       }
       if (method === "POST") {
         const b = (await readBody()) ?? {};
-        const game = await createGame(actor, { mode: b.mode, invitee_user_id: b.invitee_user_id, rematch_of: b.rematch_of });
+        const game = await createGame(actor, { mode: b.mode, invitee_user_id: b.invitee_user_id, rematch_of: b.rematch_of, opponent: b.opponent });
         return { status: 201, body: { apiVersion: AGENT_API_VERSION, game } };
       }
       return notFound();

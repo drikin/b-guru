@@ -262,6 +262,8 @@ export function shogiCapability(enabled: boolean, scopes: AgentScope[]) {
     board_url: "/shogi-board/index.html",
     bridge_version: SHOGI_BRIDGE_VERSION,
     play: enabled && scopes.includes("chat"),
+    /** ビーグルと対局（練習）できる: POST games { mode, opponent: "beagle" }（アプリがボタンを出す目印）。 */
+    beagle: true,
     time_controls: TIME_CONTROLS,
   };
 }

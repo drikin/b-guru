@@ -26,6 +26,7 @@ import {
   selectGame,
   setShogiOpen,
   setShogiSettings,
+  startBeagleGame,
   subscribe,
   watchShogiGame,
   type ShogiSnapshot,
@@ -38,6 +39,13 @@ function useShogi(): ShogiSnapshot {
 }
 
 const MODE = { blitz: "⚡速い", slow: "🐢ゆっくり" } as const;
+
+/** ロビーの「相手を指名」（オーナー 2026-10-21: 一旦出さない。サーバの指名 API は残っている）。true で戻る。 */
+const SHOW_INVITE = false;
+/** ロビーの「最近の結果」（同上、一旦出さない）。true で戻る。 */
+const SHOW_RECENT_RESULTS = false;
+/** ビーグル（AI）の表示名（サーバの system アカウント）。 */
+const BEAGLE_NAME = "ビーグル";
 
 /** 「☗ 将棋」ボタン。row = 行に置く（ルームが無いとき、ボイスのバーの上）。 */
 export function ShogiToggle({ row = false }: { row?: boolean }) {
@@ -183,6 +191,7 @@ function Lobby({ s }: { s: ShogiSnapshot }) {
   const [members, setMembers] = useState<Member[] | null>(null);
   const [invitee, setInvitee] = useState<string | null>(null);
   const [inviteMode, setInviteMode] = useState<"blitz" | "slow">("blitz");
+  const [beagleOpen, setBeagleOpen] = useState(false);
 
   const loadMembers = () => {
     if (members) return;
@@ -211,6 +220,29 @@ function Lobby({ s }: { s: ShogiSnapshot }) {
             🐢 ゆっくりで募集
           </Button>
         </Group>
+        <Group gap={6} mt={6} wrap="wrap">
+          {!beagleOpen ? (
+            <Button size="compact-sm" variant="light" color="orange" disabled={s.busy} onClick={() => setBeagleOpen(true)}>
+              🐶 ビーグルと対局（練習）
+            </Button>
+          ) : (
+            <>
+              <Text size="xs" style={{ alignSelf: "center" }}>
+                🐶 ビーグルと:
+              </Text>
+              <Button size="compact-sm" color="orange" disabled={s.busy} onClick={() => void startBeagleGame("blitz")}>
+                ⚡ 速い
+              </Button>
+              <Button size="compact-sm" color="orange" variant="light" disabled={s.busy} onClick={() => void startBeagleGame("slow")}>
+                🐢 ゆっくり
+              </Button>
+              <Button size="compact-sm" variant="subtle" color="gray" onClick={() => setBeagleOpen(false)}>
+                やめる
+              </Button>
+            </>
+          )}
+        </Group>
+        {SHOW_INVITE && (
         <Group gap={6} mt={6} wrap="wrap" align="flex-end">
           <Select
             size="xs"
@@ -250,8 +282,10 @@ function Lobby({ s }: { s: ShogiSnapshot }) {
             指名する
           </Button>
         </Group>
+        )}
         <Text size="xs" c="dimmed" mt={4}>
-          先後は振り駒で決まります。募集は 15 分、指名は 24 時間で期限切れ。ゆっくりは 72 時間指さないと負けです。
+          先後は振り駒で決まります。募集は 15 分{SHOW_INVITE ? "、指名は 24 時間" : ""}で期限切れ。ゆっくりは 72 時間指さないと負けです。
+          ビーグルとの対局は申し込みなしですぐ始まります（初心者向けの練習相手）。
         </Text>
       </Section>
       )}
@@ -337,7 +371,7 @@ function Lobby({ s }: { s: ShogiSnapshot }) {
         )}
       </Section>
 
-      {ended.length > 0 && (
+      {SHOW_RECENT_RESULTS && ended.length > 0 && (
         <Section title="最近の結果">
           {ended.map((g) => (
             <Row key={g.id}>
@@ -441,6 +475,8 @@ function GameView({ s, boardMax }: { s: ShogiSnapshot; boardMax?: number }) {
     return `${name} ${t}${byo}${g.status === "active" && g.turn === side ? " ●" : ""}`;
   };
   const canMove = active && !!my && g.turn === my && replay == null && !s.busy;
+  const opponent = my === "black" ? g.white : my === "white" ? g.black : null;
+  const vsBeagle = opponent?.name === BEAGLE_NAME;
 
   return (
     <div style={{ display: "grid", gap: 6 }}>
@@ -448,7 +484,7 @@ function GameView({ s, boardMax }: { s: ShogiSnapshot; boardMax?: number }) {
         <Text size="xs" c="dimmed" style={{ flex: 1 }}>
           {MODE[g.mode]}・{g.ply} 手{g.spectators ? `・👀 ${g.spectators} 人が観戦中` : ""}
           {ended ? `・${resultText(g)}` : ""}
-          {active && my ? (g.turn === my ? "・あなたの番" : "・相手の番") : ""}
+          {active && my ? (g.turn === my ? "・あなたの番" : vsBeagle ? "・ビーグルが考え中…🐶" : "・相手の番") : ""}
         </Text>
       </Group>
       <ShogiBoard
@@ -521,9 +557,14 @@ function GameView({ s, boardMax }: { s: ShogiSnapshot; boardMax?: number }) {
             </Button>
           </>
         )}
-        {ended && my && (
+        {ended && my && !vsBeagle && (
           <Button size="compact-xs" variant="light" color="green" disabled={s.busy} onClick={() => void createShogiGame(g.mode, null, g.id)}>
             再戦を申し込む（先後交代）
+          </Button>
+        )}
+        {ended && my && vsBeagle && (
+          <Button size="compact-xs" variant="light" color="orange" disabled={s.busy} onClick={() => void startBeagleGame(g.mode, g.id)}>
+            🐶 もう一局（先後交代）
           </Button>
         )}
         {(ended || moves.length > 0) && g.black && (

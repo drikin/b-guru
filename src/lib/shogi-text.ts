@@ -81,3 +81,45 @@ export function beaglePostText(input: {
   lines.push(`📄 棋譜（KIF）: ${base}/api/shogi/games/${gameId}/kif`);
   return lines.join("\n");
 }
+
+const BEAGLE_THANKS_WIN = [
+  "負けちゃったわん…でも、すっごく楽しかったわん！強かったわん🐾",
+  "まいったわん！ビーグルの読みを上回る見事な指し回しだったわん🐶",
+  "やられたわん！最後まで攻めが鋭くて、しっぽを巻いちゃったわん",
+];
+const BEAGLE_THANKS_LOSE = [
+  "今回はビーグルの勝ちだったけど、いい手がたくさんあったわん！",
+  "最後まであきらめずに指してくれて、うれしかったわん🐾",
+  "どんどん上手になってるわん！また練習しようわん",
+];
+
+/** ビーグル戦の終局投稿（勝っても負けても相手を褒める「対局ありがとうだわん」）。中断は投稿しない（null）。 */
+export function beagleGamePostText(input: {
+  gameId: number;
+  names: Names;
+  mode: ShogiMode;
+  result: ShogiResult | null;
+  reason: EndReason | null;
+  ply: number;
+  baseUrl: string;
+  /** ビーグルの色。 */
+  beagle: "black" | "white";
+}): string | null {
+  const { names, result, reason, ply, gameId, beagle } = input;
+  if (result == null || reason === "aborted") return null;
+  const base = input.baseUrl.replace(/\/+$/, "");
+  const human = beagle === "black" ? names.white : names.black;
+  const lines: string[] = [];
+  lines.push(`☗ 将棋 — ${human} さん、ビーグルと対局ありがとうだわん！🐶`);
+  lines.push("");
+  lines.push(`☗先手 ${names.black} さん vs ☖後手 ${names.white} さん（${MODE_LABEL[input.mode]}・練習）`);
+  lines.push(`結果: ${resultPhrase(names, result, reason, ply)}`);
+  lines.push("");
+  if (result === "draw") lines.push(`千日手で引き分けだわん。${human} さん、ねばり強かったわん！`);
+  else if (result === beagle) lines.push(`${human} さん、${BEAGLE_THANKS_LOSE[gameId % BEAGLE_THANKS_LOSE.length]}`);
+  else lines.push(`${human} さん、${BEAGLE_THANKS_WIN[gameId % BEAGLE_THANKS_WIN.length]}`);
+  lines.push("いつでもまた相手になるわん。このスレッドで感想戦もできるわん！");
+  lines.push(`🎞 盤で再生: ${base}/#/shogi/${gameId}`);
+  lines.push(`📄 棋譜（KIF）: ${base}/api/shogi/games/${gameId}/kif`);
+  return lines.join("\n");
+}

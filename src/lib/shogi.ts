@@ -11,13 +11,16 @@
  *   時間切れ: ①読み取り・指し手のたびにその場で、②プロセス内のタイマー（起動時に張り直す）。
  *   配信: liveBus の { type: "shogi" }（公開の対局）と personalBus（自分への指名）。
  *   節目だけチャットへ（開始のカード 1 件、終局でその本文を書き換え）。終局はビーグルが投稿する。
- *   対局者は users.user_id で持つ（メールは持たない。配信にも載せない）。 */
+ *   対局者は users.user_id で持つ（メールは持たない。配信にも載せない）。
+ *   ビーグル戦: 相手は system アカウント（SYSTEM_EMAIL、表示名「ビーグル」）。申し込み・受諾なしで
+ *     すぐ active。ビーグルの手は lib/shogi-beagle.ts（探索は別スレッド）が playMove で指す。 */
 import crypto from "crypto";
 import type { PoolClient } from "pg";
 import { pool } from "./db";
 import { emitLive } from "./live";
 import { emitPersonal } from "./personal-live";
 import { createPost, gravatarUrl, SYSTEM_EMAIL } from "./posts";
+import { ensureUserId } from "./user";
 import { resolveDisplayNames } from "./display-name";
 import { postShogiCard } from "./chat";
 import { pushShogi } from "./push-notify";
@@ -44,7 +47,7 @@ import {
   type ShogiMode,
   type ShogiStatus,
 } from "./shogi-clock";
-import { beaglePostText, cardEndText, cardStartText } from "./shogi-text";
+import { beagleGamePostText, beaglePostText, cardEndText, cardStartText } from "./shogi-text";
 import type { ShogiGameDetailDto, ShogiGameDto, ShogiLiveAction, ShogiMoveDto, ShogiPlayerDto } from "./shogi-types";
 
 const BEAGLE_NAME = "ビーグル";
@@ -194,7 +197,7 @@ export async function playersOf(uids: (string | null | undefined)[]): Promise<Ma
   for (const row of rows) {
     const p: PlayerInfo = {
       user_id: row.user_id,
-      name: names.get(row.email) || row.email.split("@")[0],
+      name: row.email === SYSTEM_EMAIL ? BEAGLE_NAME : names.get(row.email) || row.email.split("@")[0],
       avatar: gravatarUrl(row.email),
       email: row.email,
     };
@@ -258,6 +261,8 @@ type ShogiMemory = {
   finalizing: Set<number>;
   ready: Promise<void> | null;
   sweep: ReturnType<typeof setInterval> | null;
+  /** ビーグル（system アカウント）の user_id。shogiReady で決まる。 */
+  beagleUid: string | null;
 };
 const g0 = globalThis as unknown as { __bguruShogi?: ShogiMemory };
 const mem: ShogiMemory = (g0.__bguruShogi ??= {
@@ -267,6 +272,7 @@ const mem: ShogiMemory = (g0.__bguruShogi ??= {
   finalizing: new Set(),
   ready: null,
   sweep: null,
+  beagleUid: null,
 });
 const watchers = mem.watchers;
 const lastSpectatorBroadcast = mem.lastSpectatorBroadcast;
@@ -383,7 +389,7 @@ export async function listGames(actor: Actor, statuses: ShogiStatus[]): Promise<
   return rows.map((r) => toGameDto(r, players, ms(r.db_now) ?? now));
 }
 
-async function loadGame(id: number): Promise<GameRow | null> {
+export async function loadGame(id: number): Promise<GameRow | null> {
   const r = await pool.query(`${SELECT_GAME} WHERE g.id = $1`, [id]);
   return (r.rows[0] as GameRow) ?? null;
 }
@@ -440,11 +446,18 @@ export async function gameKif(actor: Actor, id: number): Promise<{ filename: str
 
 export async function createGame(
   actor: Actor,
-  input: { mode: unknown; invitee_user_id?: unknown; rematch_of?: unknown }
+  input: { mode: unknown; invitee_user_id?: unknown; rematch_of?: unknown; opponent?: unknown }
 ): Promise<ShogiGameDto> {
   await shogiReady();
   const mode = input.mode === "blitz" || input.mode === "slow" ? input.mode : null;
   if (!mode) throw new ShogiError(400, "invalid_request", "mode は blitz か slow です");
+  if (input.opponent != null && input.opponent !== "beagle") throw new ShogiError(400, "invalid_request", "opponent は beagle だけです");
+  if (input.opponent === "beagle") return createBeagleGame(actor, mode, input.rematch_of);
+  // ビーグル戦の再戦（opponent を付けずに rematch_of だけ来た）もビーグル戦にする。
+  if (input.rematch_of != null && mem.beagleUid) {
+    const prev = await loadGame(Number(input.rematch_of)).catch(() => null);
+    if (prev && isBeagleGame(prev) && colorOf(prev, actor.userId)) return createBeagleGame(actor, mode, input.rematch_of);
+  }
   let invitee = typeof input.invitee_user_id === "string" && input.invitee_user_id ? input.invitee_user_id : null;
   let rematchOf: number | null = null;
   if (input.rematch_of != null) {
@@ -468,18 +481,7 @@ export async function createGame(
   const created = await tx(async (c) => {
     // 同時に 2 人が募集しても 1 つだけ作る（この取引の間だけの鍵）。
     await c.query(`SELECT pg_advisory_xact_lock(4747001)`);
-    const busy = await c.query(
-      `SELECT *, now() AS db_now FROM shogi_games WHERE status IN ('open', 'offered', 'active') ORDER BY id LIMIT 1`
-    );
-    if (busy.rows[0]) {
-      const b = busy.rows[0] as GameRow;
-      // 指名の申し込みは当事者にしか見せない（中身は返さない）。
-      if (b.status === "offered" && !visibleTo(b, actor)) {
-        throw new ShogiError(409, "busy", "いまは対局の申し込みが出ています（少し待ってください）");
-      }
-      const msg = b.status === "active" ? "いまは対局中です（観戦してください）" : "募集中の対局があります（受けてください）";
-      throw new ShogiError(409, "busy", msg, await dtoOf(b));
-    }
+    await assertNotBusy(c, actor);
     const initial = mode === "blitz" ? BLITZ_INITIAL_MS : 0;
     const byo = mode === "blitz" ? BLITZ_BYOYOMI_MS : 0;
     const ins = await c.query(
@@ -501,6 +503,124 @@ export async function createGame(
     }
   }
   return game;
+}
+
+// ───────────────────────────────── ビーグル戦
+
+/** ビーグル（system アカウント）の user_id。決まっていなければ null。 */
+export function beagleUid(): string | null {
+  return mem.beagleUid;
+}
+
+export function isBeagleGame(r: Pick<GameRow, "black_uid" | "white_uid">): boolean {
+  return !!mem.beagleUid && (r.black_uid === mem.beagleUid || r.white_uid === mem.beagleUid);
+}
+
+/** ビーグルの色（ビーグル戦でなければ null）。 */
+export function beagleSide(r: Pick<GameRow, "black_uid" | "white_uid">): Side | null {
+  if (!mem.beagleUid) return null;
+  if (r.black_uid === mem.beagleUid) return "black";
+  if (r.white_uid === mem.beagleUid) return "white";
+  return null;
+}
+
+export function beagleActor(): Actor | null {
+  return mem.beagleUid ? { email: SYSTEM_EMAIL, userId: mem.beagleUid } : null;
+}
+
+/** 進行中の対局があれば 409 busy（対局はサイト全体で 1 つだけ）。取引の中で、鍵を取ってから呼ぶ。 */
+async function assertNotBusy(c: PoolClient, actor: Actor): Promise<void> {
+  const busy = await c.query(
+    `SELECT *, now() AS db_now FROM shogi_games WHERE status IN ('open', 'offered', 'active') ORDER BY id LIMIT 1`
+  );
+  if (!busy.rows[0]) return;
+  const b = busy.rows[0] as GameRow;
+  // 指名の申し込みは当事者にしか見せない（中身は返さない）。
+  if (b.status === "offered" && !visibleTo(b, actor)) {
+    throw new ShogiError(409, "busy", "いまは対局の申し込みが出ています（少し待ってください）");
+  }
+  const msg = b.status === "active" ? "いまは対局中です（観戦してください）" : "募集中の対局があります（受けてください）";
+  throw new ShogiError(409, "busy", msg, await dtoOf(b));
+}
+
+/** ビーグルと対局（練習）: 申し込み・受諾なしですぐ始まる。先後は振り駒（ビーグル戦の再戦は入れ替え）。 */
+async function createBeagleGame(actor: Actor, mode: ShogiMode, rematchRaw: unknown): Promise<ShogiGameDto> {
+  const bot = mem.beagleUid;
+  if (!bot) throw new ShogiError(409, "unavailable", "いまはビーグルと対局できません");
+  if (actor.userId === bot) throw new ShogiError(400, "invalid_request", "ビーグルは自分とは指せません");
+  let rematchOf: number | null = null;
+  let swapFrom: GameRow | null = null;
+  if (rematchRaw != null) {
+    const id = Number(rematchRaw);
+    if (!Number.isInteger(id) || id <= 0) throw new ShogiError(400, "invalid_request", "rematch_of が不正です");
+    const prev = await loadGame(id);
+    if (!prev || prev.status !== "ended" || !colorOf(prev, actor.userId) || !isBeagleGame(prev)) {
+      throw new ShogiError(400, "invalid_request", "再戦できる対局ではありません");
+    }
+    rematchOf = id;
+    swapFrom = prev;
+  }
+  const live = await pool.query(`SELECT id FROM shogi_games WHERE status IN ('open', 'offered', 'active')`);
+  for (const r of live.rows as { id: number }[]) await resolveDue(r.id).catch(logErr("resolve before create"));
+  const row = await tx(async (c) => {
+    await c.query(`SELECT pg_advisory_xact_lock(4747001)`);
+    await assertNotBusy(c, actor);
+    let humanBlack: boolean;
+    if (swapFrom) humanBlack = swapFrom.black_uid !== actor.userId;
+    else humanBlack = crypto.randomInt(2) === 0;
+    const black = humanBlack ? actor.userId : bot;
+    const white = humanBlack ? bot : actor.userId;
+    const initial = mode === "blitz" ? BLITZ_INITIAL_MS : 0;
+    const byo = mode === "blitz" ? BLITZ_BYOYOMI_MS : 0;
+    const ins = await c.query(
+      `INSERT INTO shogi_games (status, mode, initial_ms, byoyomi_ms, creator_uid, invitee_uid, black_uid, white_uid, rematch_of, sfen,
+                                clock_b_ms, clock_w_ms, started_at, turn_started_at, last_activity_at)
+       VALUES ('active', $1, $2, $3, $4, $5, $6, $7, $8, $9, $2, $2, now(), now(), now())
+       RETURNING *, now() AS db_now`,
+      [mode, initial, byo, actor.userId, bot, black, white, rematchOf, INITIAL_SFEN]
+    );
+    return ins.rows[0] as GameRow;
+  });
+  await postStartCard(row);
+  schedule(row);
+  const game = await broadcast(row, "state");
+  kickBeagle(row);
+  return game;
+}
+
+/** 手番がビーグルなら、ビーグルに考えさせる（別の流れで。呼び出し側は待たない）。 */
+export function kickBeagle(r: Pick<GameRow, "id" | "status" | "ply" | "black_uid" | "white_uid">): void {
+  if (r.status !== "active") return;
+  const side = beagleSide(r);
+  if (!side || sideToMove(r.ply) !== side) return;
+  const p: Promise<void> = import("./shogi-beagle")
+    .then((m) => m.beagleTurn(r.id))
+    .catch(logErr("beagle"))
+    .finally(() => beagleKicks.delete(p));
+  beagleKicks.add(p);
+}
+
+const beagleKicks = new Set<Promise<void>>();
+
+/** テスト用: ビーグルが考え中・指し途中の手がすべて終わるまで待つ。 */
+export async function _beagleSettledForTest(): Promise<void> {
+  while (beagleKicks.size > 0) await Promise.allSettled([...beagleKicks]);
+}
+
+/** 節目: チャットに対局中カードを 1 件（公開後・自分との対局でないときだけ）。 */
+async function postStartCard(out: GameRow): Promise<void> {
+  if (!announces(out)) return;
+  try {
+    const players = await playersOf([out.black_uid, out.white_uid]);
+    const names = { black: players.get(out.black_uid!)?.name ?? "先手", white: players.get(out.white_uid!)?.name ?? "後手" };
+    const card = await postShogiCard(cardStartText(names, out.mode), out.id);
+    if (card) {
+      await pool.query(`UPDATE shogi_games SET card_msg_id = $2 WHERE id = $1`, [out.id, card.id]);
+      out.card_msg_id = card.id;
+    }
+  } catch (e) {
+    logErr("card")(e);
+  }
 }
 
 export async function acceptGame(actor: Actor, id: number): Promise<ShogiGameDto> {
@@ -545,18 +665,7 @@ export async function acceptGame(actor: Actor, id: number): Promise<ShogiGameDto
     if (!up.rows[0]) throw new ShogiError(409, "not_open", "もう受けられません");
     return up.rows[0] as GameRow;
   });
-  // 節目: チャットに対局中カードを 1 件（公開後・自分との対局でないときだけ）。
-  if (announces(out)) try {
-    const players = await playersOf([out.black_uid, out.white_uid]);
-    const names = { black: players.get(out.black_uid!)?.name ?? "先手", white: players.get(out.white_uid!)?.name ?? "後手" };
-    const card = await postShogiCard(cardStartText(names, out.mode), out.id);
-    if (card) {
-      await pool.query(`UPDATE shogi_games SET card_msg_id = $2 WHERE id = $1`, [out.id, card.id]);
-      out.card_msg_id = card.id;
-    }
-  } catch (e) {
-    logErr("card")(e);
-  }
+  await postStartCard(out);
   schedule(out);
   const game = await broadcast(out, "state");
   if (announces(out) && out.mode === "slow" && out.black_uid !== actor.userId) {
@@ -682,11 +791,12 @@ export async function playMove(actor: Actor, id: number, input: MoveInput): Prom
   }
   schedule(out.row);
   const game = await broadcast(out.row, "state");
-  if (out.row.mode === "slow" && !isSelfGame(out.row)) {
-    const next = sideToMove(out.row.ply) === "black" ? out.row.black_uid : out.row.white_uid;
+  const next = sideToMove(out.row.ply) === "black" ? out.row.black_uid : out.row.white_uid;
+  if (out.row.mode === "slow" && !isSelfGame(out.row) && next !== mem.beagleUid) {
     const email = await emailOf(next);
     if (email) void pushShogi(email, "shogi_turn", out.row.id).catch(logErr("push turn"));
   }
+  kickBeagle(out.row);
   return { game, duplicate: false };
 }
 
@@ -752,7 +862,9 @@ async function finalize(row: GameRow): Promise<ShogiGameDto> {
     if (row.card_msg_id) {
       await postShogiCard(cardEndText(names, row.mode, row.result, reason, row.ply), row.id, row.card_msg_id).catch(logErr("card end"));
     }
-    const text = !announces(row) ? null : beaglePostText({ gameId: row.id, names, mode: row.mode, result: row.result, reason, ply: row.ply, baseUrl: BASE_URL });
+    const bSide = beagleSide(row);
+    const postInput = { gameId: row.id, names, mode: row.mode, result: row.result, reason, ply: row.ply, baseUrl: BASE_URL };
+    const text = !announces(row) ? null : bSide ? beagleGamePostText({ ...postInput, beagle: bSide }) : beaglePostText(postInput);
     if (text && !row.result_post_id) {
       try {
         const p = await createPost({ authorEmail: SYSTEM_EMAIL, authorName: BEAGLE_NAME, text, noPreview: true });
@@ -819,7 +931,7 @@ export async function resolveDue(id: number): Promise<GameRow | null> {
     schedule(row);
     if ((before as GameRow | null)?.reminded_at == null && row.reminded_at && !isSelfGame(row)) {
       const uid = d.side === "black" ? row.black_uid : row.white_uid;
-      const email = await emailOf(uid);
+      const email = uid === mem.beagleUid ? null : await emailOf(uid);
       if (email) void pushShogi(email, "shogi_turn", row.id).catch(logErr("push remind"));
     }
     return row;
@@ -861,7 +973,10 @@ const BOOT_AT = Date.now() - Math.round(process.uptime() * 1000);
 export function shogiReady(): Promise<void> {
   if (!mem.ready) {
     mem.ready = (async () => {
+      // ビーグル（system アカウント）の user_id。失敗してもほかの将棋は動かす（ビーグル戦だけ出せない）。
+      if (!mem.beagleUid) mem.beagleUid = await ensureUserId(SYSTEM_EMAIL).catch((e) => (logErr("beagle uid")(e), null));
       const r = await pool.query(`${SELECT_GAME} WHERE g.status IN ('open', 'offered', 'active')`);
+      const kick: GameRow[] = [];
       for (const row of r.rows as GameRow[]) {
         const shifted = restartShift(clockOf(row), BOOT_AT);
         if (shifted != null && row.turn_started_at) {
@@ -873,11 +988,15 @@ export function shogiReady(): Promise<void> {
           );
           if (up.rows[0]) {
             schedule(up.rows[0] as GameRow);
+            kick.push(up.rows[0] as GameRow);
             continue;
           }
         }
         schedule(row);
+        kick.push(row);
       }
+      // 再起動の前にビーグルの番だった対局: 考え直して指す（準備が終わってから）。
+      setTimeout(() => kick.forEach(kickBeagle), 0).unref?.();
     })().catch((e) => {
       mem.ready = null; // DB が起動前などで失敗したら次の呼び出しでやり直す
       throw e;
@@ -896,7 +1015,10 @@ export function ensureShogiSweeper(): void {
       const r = await pool.query(`${SELECT_GAME} WHERE g.status IN ('open', 'offered', 'active')`);
       for (const row of r.rows as GameRow[]) {
         if (dueEvent(clockOf(row), ms(row.db_now)!)) await resolveDue(row.id);
-        else if (!timers.has(row.id)) schedule(row);
+        else {
+          if (!timers.has(row.id)) schedule(row);
+          kickBeagle(row); // ビーグルの番のまま止まっていないか（考え中なら何もしない）
+        }
       }
     } catch (e) {
       logErr("sweeper")(e);
@@ -913,6 +1035,7 @@ export function _resetShogiForTest(): void {
   playerCache.clear();
   finalizing.clear();
   mem.ready = null;
+  mem.beagleUid = null;
   if (mem.sweep) clearInterval(mem.sweep);
   mem.sweep = null;
 }
