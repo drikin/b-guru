@@ -164,12 +164,12 @@ export const BOARD_CSS = `
 .sb-piece{position:relative;width:calc(var(--cw)*.86);height:calc(var(--ch)*.9);display:flex;align-items:center;justify-content:center;pointer-events:none;filter:drop-shadow(0 1.5px 0 rgba(0,0,0,.18))}
 .sb-piece::before{content:"";position:absolute;inset:0;background:var(--sb-piece-edge);clip-path:polygon(50% 0,85% 15%,100% 100%,0 100%,15% 15%)}
 .sb-piece::after{content:"";position:absolute;inset:1.4px 1.6px 1.4px 1.6px;background:linear-gradient(170deg,var(--sb-piece1) 40%,var(--sb-piece2));clip-path:polygon(50% 0,85% 15%,100% 100%,0 100%,15% 15%)}
-.sb-piece span{position:relative;z-index:1;font-family:"BguruShogiPiece","Hiragino Mincho ProN","Yu Mincho","YuMincho","Noto Serif CJK JP","Noto Serif JP",serif;font-weight:700;font-size:calc(var(--cw)*.62);line-height:1;color:var(--sb-ink);margin-top:calc(var(--ch)*.1)}
+.sb-piece span{position:relative;z-index:1;font-family:"BguruShogiPiece","Hiragino Mincho ProN","Yu Mincho","YuMincho","Noto Serif CJK JP","Noto Serif JP",serif;font-weight:700;font-size:min(calc(var(--cw)*.62),calc(var(--ch)*.66));line-height:1;color:var(--sb-ink);margin-top:calc(var(--ch)*.1)}
 .sb-piece.sb-prom span{color:var(--sb-prom)}
 .sb-piece.sb-rot{transform:rotate(180deg)}
 .sb-piece.sb-rot{filter:drop-shadow(0 -1.5px 0 rgba(0,0,0,.18))}
 .sb-hand .sb-piece{width:calc(var(--cw)*.68);height:calc(var(--ch)*.74)}
-.sb-hand .sb-piece span{font-size:calc(var(--cw)*.5)}
+.sb-hand .sb-piece span{font-size:min(calc(var(--cw)*.5),calc(var(--ch)*.56))}
 .sb-dragging{opacity:.3}
 .sb-ghost{position:fixed;z-index:1000;pointer-events:none;transform:translate(-50%,-60%) scale(1.2);width:var(--cw);height:var(--ch)}
 .sb-ghost .sb-piece{width:100%;height:100%;filter:drop-shadow(0 4px 6px rgba(0,0,0,.3))}
@@ -324,10 +324,15 @@ export class ShogiBoardView {
   private static readonly FIXED_W = 2 + 11 + 5 + 6;
   private static readonly HAND_RATIO = 0.84;
 
-  private applyCell(cw: number): void {
+  /** 升の縦横の比（縦 / 横）。ふだんは将棋盤らしい縦長、高さが足りなければ 0.78 まで縦に潰す
+   *  （横幅いっぱいを保ったまま縦を詰める。ドリキン 2026-10-21「少し縦に圧縮してもいい」）。 */
+  private static readonly RATIO = 1.1;
+  private static readonly MIN_RATIO = 0.78;
+
+  private applyCell(cw: number, ratio: number = ShogiBoardView.RATIO): void {
     const hw = Math.round(cw * ShogiBoardView.HAND_RATIO);
     this.el.style.setProperty("--cw", `${cw}px`);
-    this.el.style.setProperty("--ch", `${Math.round(cw * 1.1)}px`);
+    this.el.style.setProperty("--ch", `${Math.round(cw * ratio)}px`);
     this.el.style.setProperty("--hw", `${hw}px`);
     this.el.style.setProperty("--sb-w", `${cw * 9 + 2 * hw + ShogiBoardView.FIXED_W}px`);
   }
@@ -345,13 +350,20 @@ export class ShogiBoardView {
       let cur = cw;
       let h = this.el.scrollHeight;
       if (h > max) {
-        const fixed = Math.max(0, h - 9 * Math.round(cur * 1.1));
-        cur = Math.max(22, Math.min(cur, Math.floor(Math.floor((max - fixed) / 9) / 1.1)));
-        for (let i = 0; i < 30; i++) {
-          this.applyCell(cur);
+        // 1) まず升を縦に潰す（横幅はそのまま）。
+        const fixed = Math.max(0, h - 9 * Math.round(cur * ShogiBoardView.RATIO));
+        let ratio = Math.max(ShogiBoardView.MIN_RATIO, Math.min(ShogiBoardView.RATIO, (max - fixed) / 9 / cur));
+        for (let i = 0; i < 20; i++) {
+          this.applyCell(cur, ratio);
           h = this.el.scrollHeight;
-          if (h <= max || cur <= 22) break;
+          if (h <= max || ratio <= ShogiBoardView.MIN_RATIO) break;
+          ratio = Math.max(ShogiBoardView.MIN_RATIO, ratio - 0.02);
+        }
+        // 2) それでも高ければ、潰した比のまま盤を小さくする。
+        for (let i = 0; i < 30 && h > max && cur > 22; i++) {
           cur -= 1;
+          this.applyCell(cur, ShogiBoardView.MIN_RATIO);
+          h = this.el.scrollHeight;
         }
       }
     }
