@@ -131,7 +131,9 @@ export const BOARD_CSS = `
 .sb-band .sb-label{flex:1;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sb-band button,.sb-confirm button,.sb-promo button{font:inherit;border:1px solid var(--sb-piece-edge);background:var(--sb-btn);color:var(--sb-btn-text);border-radius:6px;padding:2px 8px;cursor:pointer;line-height:1.4}
 .sb-hand{display:flex;align-items:center;gap:2px;flex-wrap:wrap;width:calc(var(--cw)*9 + 22px);box-sizing:border-box;min-height:calc(var(--ch)*.82 + 4px);padding:2px 4px}
-.sb-hand .sb-who{font-size:12px;color:var(--sb-dim);margin-right:6px;white-space:nowrap;max-width:45%;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.sb-hand .sb-who{font-size:12px;color:var(--sb-dim);margin-right:6px;white-space:nowrap;max-width:64%;min-width:0;display:inline-flex;align-items:baseline;font-variant-numeric:tabular-nums}
+.sb-who .sb-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.sb-who .sb-tail{flex:none;white-space:nowrap}
 .sb-hand-top{flex-direction:row-reverse}
 .sb-hand-top .sb-who{margin-right:0;margin-left:6px}
 .sb-hp{position:relative;display:inline-flex;align-items:flex-end;border-radius:4px;padding:1px}
@@ -281,8 +283,27 @@ export class ShogiBoardView {
       const s = where === "bottom" ? bottomSide : bottomSide === "black" ? "white" : "black";
       return s === "black" ? "☗" : "☖";
     };
-    if (top && topLabel) top.textContent = `${mark("top")}${topLabel}`;
-    if (bottom && bottomLabel) bottom.textContent = `${mark("bottom")}${bottomLabel}`;
+    if (top && topLabel) this.fillWho(top, mark("top"), topLabel);
+    if (bottom && bottomLabel) this.fillWho(bottom, mark("bottom"), bottomLabel);
+  }
+
+  /** 名前と、後ろの時計・手番の印を分けて入れる（狭いときに切るのは名前だけ。時計と ● は残す）。 */
+  private fillWho(el: Element, mark: string, label: string): void {
+    const m = label.match(/^(.*?)(\s+\d+:\d{2}.*|\s*[（(]手番[)）].*|\s*●.*)$/);
+    const name = m ? m[1] : label;
+    const tail = m ? m[2] : "";
+    const doc = el.ownerDocument;
+    const n = doc.createElement("span");
+    n.className = "sb-name";
+    n.textContent = `${mark}${name}`;
+    el.replaceChildren(n);
+    if (tail) {
+      const t = doc.createElement("span");
+      t.className = "sb-tail";
+      t.textContent = tail;
+      el.appendChild(t);
+    }
+    el.setAttribute("title", `${mark}${label}`);
   }
 
   /** ⇅（下に来る側を入れ替える）。 */
@@ -310,13 +331,19 @@ export class ShogiBoardView {
     // 高さの上限: 升の高さに比例する部分（盤 9 升＋持ち駒 2 行 ≒ 10.64 升分）と、帯などの決まった部分に分けて縮める。
     const max = this.state.maxHeight;
     if (max && max > 0) {
-      const h = this.el.scrollHeight;
+      // 見積もりで縮めたあと、実際に測って収まるまで 1px ずつ詰める（帯の折り返しなどで見積もりがずれるため）。
+      let cur = cw;
+      let h = this.el.scrollHeight;
       if (h > max) {
-        const fixed = Math.max(0, h - 10.64 * ch);
-        const ch2 = Math.floor((max - fixed) / 10.64);
-        const cw2 = Math.max(22, Math.min(cw, Math.floor(ch2 / 1.1)));
-        this.el.style.setProperty("--cw", `${cw2}px`);
-        this.el.style.setProperty("--ch", `${Math.round(cw2 * 1.1)}px`);
+        const fixed = Math.max(0, h - 10.64 * Math.round(cur * 1.1));
+        cur = Math.max(22, Math.min(cur, Math.floor(Math.floor((max - fixed) / 10.64) / 1.1)));
+        for (let i = 0; i < 12; i++) {
+          this.el.style.setProperty("--cw", `${cur}px`);
+          this.el.style.setProperty("--ch", `${Math.round(cur * 1.1)}px`);
+          h = this.el.scrollHeight;
+          if (h <= max || cur <= 22) break;
+          cur -= 1;
+        }
       }
     }
     this.reportHeight();
@@ -518,7 +545,7 @@ export class ShogiBoardView {
     if (who) {
       const w = doc.createElement("span");
       w.className = "sb-who";
-      w.textContent = `${color === Color.BLACK ? "☗" : "☖"}${who}`;
+      this.fillWho(w, color === Color.BLACK ? "☗" : "☖", who);
       hand.appendChild(w);
     }
     const bottomColor = colorOf(this.orientation);
