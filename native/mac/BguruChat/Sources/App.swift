@@ -68,10 +68,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         ])
 
         hotKey = HotKey(keyCode: 11 /* B */, modifiers: [.control, .option]) { [weak self] in
-            self?.togglePanel()
+            self?.togglePanel(toChat: true) // ⌃⌥B: the chat with the caret in the message box
         }
 
         #if DEBUG
+        // Dev only: -timelineFixtures DIR — the display rules against the shared examples.
+        // (scripts/timeline-fixtures.sh copies the repository's examples to the default place first.)
+        if let i = CommandLine.arguments.firstIndex(of: "-timelineFixtures") {
+            let a = CommandLine.arguments
+            let dir = i + 1 < a.count && !a[i + 1].hasPrefix("-") ? a[i + 1]
+                : (NSTemporaryDirectory() as NSString).appendingPathComponent("timeline-fixtures")
+            SelfTest.runTimelineFixtures(dir: dir)
+            return
+        }
         // Dev only: offline demo data → screenshot (no token, no network).
         if let i = CommandLine.arguments.firstIndex(of: "-selftest"), i + 1 < CommandLine.arguments.count,
            CommandLine.arguments.contains("-demo") {
@@ -80,6 +89,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // -orientation: every screen drawn and read for upside-down text; exit 1 if any is.
             if CommandLine.arguments.contains("-orientation") {
                 SelfTest.runOrientation(store: store, outDir: CommandLine.arguments[i + 1])
+                return
+            }
+            // -timelineShots / -timelineCheck: the web-like timeline's samples, and a long list's scrolling.
+            if CommandLine.arguments.contains("-timelineShots") {
+                SelfTest.runTimelineShots(store: store, outDir: CommandLine.arguments[i + 1])
+                return
+            }
+            if CommandLine.arguments.contains("-timelineCheck") {
+                SelfTest.runTimelineCheck(store: store, outDir: CommandLine.arguments[i + 1])
                 return
             }
             // -threadCheck: open a thread with many replies, scroll it, close it; exit 1 if the app stops responding.
@@ -169,6 +187,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 // -orientationTour: walk through every screen for the upside-down check
                 // (native/mac/scripts/orientation-tour.sh takes a picture at each step).
                 if CommandLine.arguments.contains("-orientationTour") { self.runOrientationTour(store: store) }
+                // -panelMemoryCheck PHASE: size / place / tab remembered across opens and launches.
+                if let i = CommandLine.arguments.firstIndex(of: "-panelMemoryCheck"), i + 1 < CommandLine.arguments.count {
+                    self.runPanelMemoryCheck(phase: CommandLine.arguments[i + 1], store: store)
+                }
                 if CommandLine.arguments.contains("-demoTimelineTab") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.panel?.pin.tab = .timeline }
                 }
@@ -425,7 +447,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         statusItem.menu = nil
     }
 
-    @objc private func openPanelAction() { showPanel() }
+    @objc private func openPanelAction() { showPanel(toChat: true) }
     @objc private func toggleCollapseSetting() { settings.collapseStatusItems.toggle() }
     @objc private func toggleCollapseHover() { settings.collapseRevealOnHover.toggle() }
     @objc private func toggleTicker() { settings.menuBarTicker.toggle() }
@@ -441,19 +463,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// Menu bar click and ⌃⌥B both toggle: if the chat is in front, put it
     /// away; otherwise bring it to the front with the caret in the message box.
     /// (A pinned panel sitting behind your work is brought forward, not closed.)
-    private func togglePanel() {
+    /// `toChat`: ⌃⌥B (and 「チャットを開く」) open the chat with the caret in the message box;
+    /// a click on the icon opens the tab the panel was left on (PanelMemory).
+    private func togglePanel(toChat: Bool = false) {
         guard let panel else { showLogin(); return }
         if panel.isFrontForToggle {
             if !panel.isDismissing { panel.dismiss() }
         } else {
-            showPanel()
+            showPanel(toChat: toChat)
         }
     }
 
-    private func showPanel() {
+    private func showPanel(toChat: Bool = false) {
         guard let panel, let button = statusItem.button, let win = button.window else { return }
         let r = win.convertToScreen(button.convert(button.bounds, to: nil))
-        panel.present(below: r)
+        panel.present(below: r, toChat: toChat)
     }
 
     private func updateStatusIcon(unread: Int, mentions: Int, connection: ChatStore.Connection) {
@@ -1063,3 +1087,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         [.banner, .sound]
     }
 }
+
+
+#if DEBUG
+extension AppDelegate {
+    /// Dev only, with `-demoPanel -panelMemory -panelMemoryCheck PHASE` (scripts run the phases
+    /// one launch after another): 1 = resize as the member would, close, open (same size?), move,
+    /// switch to the timeline, open ☗ in the chat; 2 = after a relaunch (same size, place, tab, ☗?);
+    /// 3 = a place saved off this display and a size bigger than it (opened inside the display?).
+    /// Prints `[panel-memory] …` lines with the frames, holds the panel open 4 s for a screenshot
+    /// at each `[panel-memory] shot NAME x y w h` (top-left screen coordinates), then quits.
+    func runPanelMemoryCheck(phase: String, store: ChatStore) {
+        guard let panel else { return }
+        @MainActor func say(_ s: String) { print("[panel-memory] \(s)"); fflush(stdout) }
+        @MainActor func shot(_ name: String) async {
+            let f = panel.frame
+            let h = NSScreen.screens.first?.frame.height ?? 0
+            say("shot \(name) \(Int(f.minX)) \(Int(h - f.maxY)) \(Int(f.width)) \(Int(f.height))")
+            try? await Task.sleep(for: .seconds(4))
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.5))
+            let vis = (panel.screen ?? NSScreen.main)!.visibleFrame
+            var ok = true
+            switch phase {
+            case "1":
+                say("opened \(panel.frame) tab \(panel.pin.tab)")
+                let resized = NSRect(x: panel.frame.minX, y: panel.frame.maxY - 700, width: 460, height: 700)
+                panel.debugAsMember(resized)
+                panel.dismiss()
+                try? await Task.sleep(for: .seconds(1))
+                showPanel()
+                try? await Task.sleep(for: .seconds(1))
+                let sameSize = abs(panel.frame.width - 460) < 1 && abs(panel.frame.height - 700) < 1
+                ok = ok && sameSize
+                say("resized, closed, opened: \(panel.frame) same size \(sameSize)")
+                await shot("1-resized-reopened")
+                store.shogi.show() // ☗ makes the panel taller (at least 820)
+                try? await Task.sleep(for: .seconds(1))
+                panel.debugAsMember(NSRect(x: vis.minX + 120, y: vis.minY + 60, width: panel.frame.width, height: panel.frame.height))
+                panel.pin.tab = .timeline
+                try? await Task.sleep(for: .seconds(1))
+                say("moved to \(panel.frame), tab timeline, ☗ open")
+                await shot("1-moved-timeline")
+            case "2":
+                let f = panel.frame
+                let place = abs(f.minX - (vis.minX + 120)) < 2 && abs(f.minY - (vis.minY + 60)) < 2
+                let size = abs(f.width - 460) < 1 && abs(f.height - 820) < 1 // as left (☗ had made it 820 tall)
+                let tab = panel.pin.tab == .timeline
+                let shogi = store.shogi.open
+                ok = place && size && tab && shogi
+                say("display \(PanelMemory.displayKey(panel.screen ?? NSScreen.main!))")
+                say("relaunched: \(f) place \(place) size \(size) tab \(panel.pin.tab) ☗ open \(shogi)")
+                await shot("2-relaunched")
+                panel.pin.tab = .chat
+                try? await Task.sleep(for: .seconds(1))
+                await shot("2-chat-shogi")
+            case "3":
+                let f = panel.frame
+                let inside = vis.contains(f)
+                ok = inside
+                say("saved place off screen and size 5000×5000 → opened at \(f) inside visible \(vis): \(inside)")
+                await shot("3-fitted")
+            default: break
+            }
+            say(ok ? "ok   phase \(phase)" : "FAIL phase \(phase)")
+            NSApp.terminate(nil)
+        }
+    }
+}
+#endif

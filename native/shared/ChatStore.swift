@@ -163,7 +163,7 @@ final class ChatStore {
     }
 
     private func loadMembers() async {
-        if let m = try? await api.members() { members = m }
+        if let m = try? await api.members() { members = m; MemberDirectory.shared.set(m) }
     }
 
     private func loadCapabilities() async {
@@ -528,6 +528,7 @@ final class ChatStore {
         }
         members = ["ビーグル", "mazzo", "NORIO TAKAHASHI", "takuto", "coban", "ポンコツ散財王ドリキン", "りとる"]
             .map { MentionMember(userId: $0, name: $0, avatar: nil) }
+        MemberDirectory.shared.set(members)
         latestId = rows.map(\.message.id).max() ?? 0
         hasLoaded = true
         connection = .live

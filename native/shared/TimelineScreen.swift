@@ -159,7 +159,7 @@ private struct TimelinePostList: View {
                 let lastId = posts.last?.id
                 ForEach(posts) { post in
                     Button { open(post.id) } label: {
-                        PostRow(post: post, clubName: timeline.clubName(post.club),
+                        PostRow(post: post, clubName: post.display?.clubLabel ?? timeline.clubName(post.club),
                                 canReact: canReact,
                                 onReact: { timeline.toggleReaction(post.id, emoji: $0) },
                                 onOpenImage: { HangWatch.note("open image (post \(post.id))"); viewing = ImageViewerItem(images: post.images ?? [], index: $0) })
@@ -175,6 +175,8 @@ private struct TimelinePostList: View {
             }
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
+            // GIFs and videos stand still under an open thread (the Mac keeps the list built).
+            .environment(\.mediaActive, !threadOpen)
         }
         .modifier(TopTracker(atTop: $atTop))
         .pullToRefresh { await timeline.refresh() }
@@ -321,22 +323,23 @@ struct PostRow: View {
                 HStack(spacing: 6) {
                     Text(post.authorName ?? "").font(.subheadline.bold()).lineLimit(1)
                     if let clubName {
+                        // 「未設定」 (the AI could not tell the club) is grey, as on the web.
+                        let tint = post.display?.clubUnset == true ? Color.secondary : Color.accentGreen
                         Text(clubName).font(.caption2.bold())
                             .padding(.horizontal, 6).padding(.vertical, 1)
-                            .background(Capsule().fill(Color.accentGreen.opacity(0.14)))
-                            .foregroundStyle(Color.accentGreen)
+                            .background(Capsule().fill(tint.opacity(0.14)))
+                            .foregroundStyle(tint)
                     }
                     Spacer(minLength: 4)
                     Text(PostRow.relative(post.createdAt)).font(.caption).foregroundStyle(.tertiary).monospacedDigit()
                 }
                 if !post.text.isEmpty && !post.isBareLink {
-                    PostText(text: post.text)
+                    PostBody(post: post)
                 }
-                if let pv = post.urlPreview, (post.images ?? []).isEmpty {
-                    LinkCard(preview: pv)
-                }
+                // The web's order: pictures, sound, video, then the link's card — all of them
+                // always shown, folded text or not.
                 if let images = post.images, !images.isEmpty {
-                    PostImages(images: images, onOpen: onOpenImage)
+                    PostImages(images: images, columns: TimelineRules.imageColumns(post), onOpen: onOpenImage)
                 }
                 if let audio = post.audioUrl, post.videoUrl == nil, let jb = jukebox, let ep = jb.episode(forAudioURL: audio) {
                     // The daily "N 年前の今日" post: play it in the jukebox.
@@ -349,13 +352,18 @@ struct PostRow: View {
                             .background(Capsule().fill(Color.accentGreen))
                     }
                     .buttonStyle(.plain)
-                } else if post.videoUrl != nil || post.audioUrl != nil {
-                    Label(post.videoUrl != nil ? "動画（Web で再生）" : "音声（Web で再生）", systemImage: post.videoUrl != nil ? "play.rectangle" : "waveform")
-                        .font(.caption).foregroundStyle(.secondary)
+                } else if let audio = post.audioUrl {
+                    PostAudio(url: audio)
+                }
+                if let video = post.videoUrl {
+                    PostVideo(url: video)
+                }
+                if let pv = TimelineRules.linkCard(post) {
+                    LinkCard(preview: pv, youtube: TimelineRules.isYouTubeCard(post))
                 }
                 HStack(spacing: 12) {
                     if let rs = post.reactions, !rs.isEmpty {
-                        ReactionChips(reactions: rs, enabled: canReact, onTap: onReact)
+                        ReactionChips(reactions: TimelineRules.sortedReactions(post), enabled: canReact, onTap: onReact)
                     }
                     if showReplyCount, let n = post.replyCount, n > 0 {
                         Label("\(n)", systemImage: "bubble.left").font(.caption).foregroundStyle(.secondary)
@@ -442,41 +450,6 @@ struct PostRow: View {
         let p = Parsed(date: d, day: md.string(from: d))
         parsedCache.setObject(p, forKey: s as NSString)
         return p
-    }
-}
-
-/// 1 image: wide; 2–5: a grid of squares. Tap → full screen.
-struct PostImages: View {
-    let images: [String]
-    let onOpen: (Int) -> Void
-
-    var body: some View {
-        if images.count == 1 {
-            Button { onOpen(0) } label: {
-                MediaImage(path: images[0])
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 220)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("画像")
-        } else {
-            let cols = Array(repeating: GridItem(.flexible(), spacing: 4), count: images.count == 2 || images.count == 4 ? 2 : 3)
-            LazyVGrid(columns: cols, spacing: 4) {
-                ForEach(Array(images.enumerated()), id: \.offset) { i, path in
-                    Button { onOpen(i) } label: {
-                        Color.clear
-                            .aspectRatio(1, contentMode: .fit)
-                            .overlay(MediaImage(path: path, maxPixel: 600))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("画像 \(i + 1)")
-                }
-            }
-        }
     }
 }
 
@@ -743,6 +716,12 @@ private struct ReadWhenSeen: ViewModifier {
 /// page in the browser. (The web shows the same card under a post.)
 struct LinkCard: View {
     let preview: UrlPreview
+    /// The display's card kind is "youtube" (16:9, at most 480 wide).
+    var youtube = false
+    /// The picture's shape once it is here (not changed under an open thread: see PostImages).
+    @State private var aspect: CGFloat?
+    @State private var pending: CGFloat?
+    @Environment(\.mediaActive) private var mediaActive
 
     var body: some View {
         Button {
@@ -750,19 +729,33 @@ struct LinkCard: View {
         } label: {
             VStack(alignment: .leading, spacing: 0) {
                 if let img = preview.proxiedImage {
-                    // The picture fills a fixed box and never sizes the card: a wide image
-                    // used to push the card past the column (seen in the Mac thread view).
-                    Color.clear
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 170)
-                        .overlay { MediaImage(path: img, maxPixel: 900) }
-                        .clipped()
-                        .overlay {
-                            if preview.videoId != nil {
-                                Image(systemName: "play.fill").font(.system(size: 20)).foregroundStyle(.white)
-                                    .frame(width: 48, height: 48).background(Circle().fill(.black.opacity(0.7)))
-                            }
+                    if youtube {
+                        // YouTube: the thumbnail at 16:9, up to 480 wide (the web's).
+                        FitBox(aspect: 16.0 / 9.0, maxWidth: 480, maxHeight: .infinity) {
+                            Color.clear
+                                .overlay { MediaImage(path: img, maxPixel: 900) }
+                                .clipped()
+                                .overlay {
+                                    Image(systemName: "play.fill").font(.system(size: 20)).foregroundStyle(.white)
+                                        .frame(width: 52, height: 52).background(Circle().fill(.black.opacity(0.75)))
+                                }
                         }
+                    } else {
+                        // Not cropped: the card's width, the picture's own shape, at most 240 tall
+                        // (a taller one is fitted inside). The box never sizes the card wider than
+                        // the column (a wide image once pushed the card past it, Mac thread view).
+                        FitBox(aspect: aspect ?? ImageAspects.aspect(img) ?? 1.91, maxWidth: .infinity, maxHeight: 240) {
+                            MediaImage(path: img, contentMode: .fit, maxPixel: 900, onSize: { size in
+                                let a = size.width / max(size.height, 1)
+                                guard mediaActive else { pending = a; return }
+                                ImageAspects.record(img, size)
+                                if aspect != a { aspect = a }
+                            })
+                        }
+                        .onChange(of: mediaActive) { _, on in
+                            if on, let p = pending { pending = nil; aspect = p; ImageAspects.record(img, CGSize(width: p, height: 1)) }
+                        }
+                    }
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     if let t = preview.title, !t.isEmpty {
@@ -786,4 +779,57 @@ struct LinkCard: View {
         .accessibilityLabel("リンク：\(preview.title ?? preview.url)")
         .accessibilityHint("ブラウザで開きます")
     }
+}
+
+
+/// A post's text, folded like the web's when it is long: the first 500 characters (JS
+/// `length`, TimelineRules) fading out, 「続きを読む」 to open it and 「閉じる」 to fold it
+/// again. Opened posts stay open while the app runs (rows are rebuilt as they scroll).
+struct PostBody: View {
+    let post: Post
+    @State private var expanded: Bool
+
+    init(post: Post) {
+        self.post = post
+        _expanded = State(initialValue: PostExpansion.isOpen(post.id))
+    }
+
+    var body: some View {
+        if let folded = TimelineRules.foldedText(post) {
+            VStack(alignment: .leading, spacing: 4) {
+                if expanded {
+                    PostText(text: post.text, mentions: TimelineRules.mentionNames(post))
+                } else {
+                    PostText(text: folded, mentions: TimelineRules.mentionNames(post))
+                        // Fades into whatever is behind (the unread tint, dark mode), not white.
+                        .mask(LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.55),
+                                                     .init(color: .black.opacity(0.15), location: 1)],
+                                             startPoint: .top, endPoint: .bottom))
+                }
+                Button {
+                    expanded.toggle()
+                    PostExpansion.set(post.id, open: expanded)
+                } label: {
+                    Text(expanded ? "閉じる" : "続きを読む")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Color.accentGreen)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
+                .accessibilityHint(expanded ? "長い本文を畳みます" : "本文を全部表示します")
+            }
+        } else {
+            PostText(text: post.text, mentions: TimelineRules.mentionNames(post))
+        }
+    }
+}
+
+/// Which long posts were opened (by id), for the life of the app.
+@MainActor
+enum PostExpansion {
+    private static var open = Set<Int>()
+    static func isOpen(_ id: Int) -> Bool { open.contains(id) }
+    static func set(_ id: Int, open o: Bool) { if o { open.insert(id) } else { open.remove(id) } }
 }

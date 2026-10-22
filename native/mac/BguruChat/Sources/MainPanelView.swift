@@ -127,6 +127,27 @@ private struct PanelTabWatcher: View {
         if visibility.timeline { timeline.startPolling() } else { timeline.stopPolling() }
     }
 
+    @State private var restoredChatScreen = false
+
+    private var chatScreen: String {
+        if store.minigame.enabled && store.minigame.open { return "minigame" }
+        if store.shogi.enabled && store.shogi.open { return "shogi" }
+        return store.room.enabled && store.room.mode == .room ? "room" : "text"
+    }
+
+    private func restoreChatScreen() {
+        guard !restoredChatScreen else { return }
+        switch PanelMemory.savedChatScreen {
+        case "shogi":
+            // Wait for the server's answer on whether ☗ is on for this member.
+            if store.shogi.enabled { if !store.shogi.open { store.shogi.show() } } else if store.capabilities == nil { return }
+        case "minigame":
+            if store.minigame.enabled { if !store.minigame.open { store.minigame.show() } } else if store.capabilities == nil { return }
+        default: break
+        }
+        restoredChatScreen = true
+    }
+
     var body: some View {
         Color.clear
             .onAppear { updateVisibility() }
@@ -136,8 +157,18 @@ private struct PanelTabWatcher: View {
                 updateVisibility()
                 if t == .jukebox { pin.wantsHeight?(780) }
             }
-            // ⌃⌥B / the menu-bar icon always comes back to the chat input.
-            .onChange(of: pin.focusRequest) { _, _ in pin.tab = .chat }
+            // The panel opens on the tab it was left on (PanelMemory); the chat's input gets
+            // the caret only when the chat is the tab shown (ChatPanel.focusComposer).
+            .onChange(of: store.capabilities) { _, caps in
+                restoreChatScreen()
+                // Remembered on the jukebox, but the jukebox is not on for this member (any more).
+                if pin.tab == .jukebox, caps != nil, !(caps?.jukeboxEnabled ?? false) { pin.tab = .chat }
+            }
+            // Inside the chat: ☗ / 🎮 open again where they were left (the room follows the
+            // server: entering it shows you to everyone, so it is never entered by itself).
+            .onChange(of: chatScreen, initial: true) { _, s in if restoredChatScreen { PanelMemory.saveChatScreen(s) } }
+            .onChange(of: store.shogi.enabled, initial: true) { _, _ in restoreChatScreen() }
+            .onChange(of: store.minigame.enabled, initial: true) { _, _ in restoreChatScreen() }
             .onChange(of: timeline.openThread) { _, id in if id != nil { pin.tab = .timeline } }
     }
 }

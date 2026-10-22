@@ -114,7 +114,7 @@ struct ThreadScreen: View {
     }
 
     private func row(_ p: Post, isRoot: Bool) -> some View {
-        PostRow(post: p, clubName: isRoot ? timeline.clubName(p.club) : nil, canReact: canReact,
+        PostRow(post: p, clubName: isRoot ? (p.display?.clubLabel ?? timeline.clubName(p.club)) : nil, canReact: canReact,
                 onReact: { react(p.id, $0) },
                 onOpenImage: { viewing = ImageViewerItem(images: p.images ?? [], index: $0) },
                 showReplyCount: false)

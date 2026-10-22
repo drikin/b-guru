@@ -271,7 +271,7 @@ final class APIClient: Sendable {
 
     func posts(cursor: String? = nil, limit: Int = 30) async throws -> PostListResponse {
         var comps = URLComponents(url: APIClient.baseURL.appendingPathComponent("/api/agent/posts"), resolvingAgainstBaseURL: false)!
-        comps.queryItems = [.init(name: "limit", value: String(limit)), .init(name: "include", value: "reactions,read")]
+        comps.queryItems = [.init(name: "limit", value: String(limit)), .init(name: "include", value: "reactions,read,display")]
         if let cursor { comps.queryItems?.append(.init(name: "cursor", value: cursor)) }
         var req = request("GET", "/api/agent/posts")
         req.url = comps.url
@@ -280,7 +280,7 @@ final class APIClient: Sendable {
 
     func thread(id: Int) async throws -> ThreadResponse {
         var comps = URLComponents(url: APIClient.baseURL.appendingPathComponent("/api/agent/posts/\(id)"), resolvingAgainstBaseURL: false)!
-        comps.queryItems = [.init(name: "include", value: "reactions,read")]
+        comps.queryItems = [.init(name: "include", value: "reactions,read,display")]
         var req = request("GET", "/api/agent/posts/\(id)")
         req.url = comps.url
         return try await send(req)

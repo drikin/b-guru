@@ -12,6 +12,7 @@ import UIKit
 enum ThreadCheck {
     static func runIfAsked(timeline: TimelineStore) {
         let env = ProcessInfo.processInfo.environment
+        if env["BGURU_DEMO_TIMELINE_CHECK"] == "1" { runTimelineCheck(timeline: timeline); return }
         guard env["BGURU_DEMO_THREAD_CHECK"] == "1" else { return }
         let limit = env["BGURU_THREAD_LIMIT"].flatMap(Double.init) ?? 5
         let watch = MainThreadWatch(limit: limit) { stalled, step in
@@ -104,6 +105,48 @@ enum ThreadCheck {
             try? await Task.sleep(for: .milliseconds(1000))
             watch.stop()
             print("[thread-check] ok   \(rounds) refreshes with a thread open; \(TimelineStore.demoLongThreadReplies) replies: opened in \(openMs) ms, \(steps) scroll steps in \(scrollMs) ms, longest main-thread stall \(Int(watch.longest * 1000)) ms")
+            fflush(stdout)
+            exit(0)
+        }
+    }
+
+    /// BGURU_DEMO=1 BGURU_DEMO_TAB=timeline BGURU_DEMO_TIMELINE_CHECK=1 [BGURU_DEMO_POSTS=N]: a long
+    /// timeline (300 posts by default; a GIF in every tenth, a video in every fifteenth) scrolled to
+    /// the end a screen at a time and flung back. Prints "[timeline-check] ok … longest stall" (or FAIL
+    /// when the main thread does not answer for 5 s) and exits.
+    static func runTimelineCheck(timeline: TimelineStore) {
+        let watch = MainThreadWatch(limit: 5) { stalled, step in
+            print("[timeline-check] FAIL main thread did not respond for \(String(format: "%.1f", stalled)) s (during: \(step))")
+            fflush(stdout)
+            exit(1)
+        }
+        Task { @MainActor in
+            if timeline.posts.count < 100 { timeline.debugFill(to: 300) }
+            try? await Task.sleep(for: .seconds(2))
+            guard let scroll = scrolls().max(by: { $0.contentSize.height < $1.contentSize.height }) else {
+                print("[timeline-check] FAIL no list"); fflush(stdout); exit(1)
+            }
+            watch.start()
+            let t0 = Date()
+            var steps = 0
+            var last = -10_000.0
+            watch.step = "scroll down"
+            while scroll.contentOffset.y > last + 1, steps < 4000 {
+                last = scroll.contentOffset.y
+                let maxY = scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom
+                scroll.setContentOffset(CGPoint(x: 0, y: min(maxY, last + scroll.bounds.height * 0.8)), animated: false)
+                steps += 1
+                try? await Task.sleep(for: .milliseconds(40))
+            }
+            let downMs = Int(Date().timeIntervalSince(t0) * 1000)
+            watch.step = "fling to the top"
+            while scroll.contentOffset.y > -scroll.adjustedContentInset.top + 1 {
+                scroll.setContentOffset(CGPoint(x: 0, y: max(-scroll.adjustedContentInset.top, scroll.contentOffset.y - scroll.bounds.height * 3)), animated: false)
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+            try? await Task.sleep(for: .milliseconds(800))
+            watch.stop()
+            print("[timeline-check] ok   \(timeline.posts.count) posts, \(steps) steps down in \(downMs) ms (content \(Int(scroll.contentSize.height)) pt), longest main-thread stall \(Int(watch.longest * 1000)) ms")
             fflush(stdout)
             exit(0)
         }

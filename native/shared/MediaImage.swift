@@ -17,7 +17,7 @@ final class MediaCache {
 
     init() { cache.totalCostLimit = 64 * 1024 * 1024 }
 
-    static func url(_ raw: String) -> URL? {
+    nonisolated static func url(_ raw: String) -> URL? {
         raw.hasPrefix("http") ? URL(string: raw) : URL(string: raw, relativeTo: APIClient.baseURL)?.absoluteURL
     }
 
@@ -29,6 +29,48 @@ final class MediaCache {
         for px in [MediaImage.defaultPixels, 600, 900, 2560, AvatarCache.pixels] { cache.setObject(image, forKey: Self.key(raw, px)) }
     }
     #endif
+
+    /// The file's bytes as served (animated GIFs: the original, never a resized copy).
+    /// Kept by size in their own small cache.
+    private let dataCache: NSCache<NSString, NSData> = {
+        let c = NSCache<NSString, NSData>()
+        c.totalCostLimit = 24 * 1024 * 1024
+        return c
+    }()
+    private var dataInFlight: [String: Task<Data?, Never>] = [:]
+
+    #if DEBUG
+    func debugInsertData(_ data: Data, for raw: String) { dataCache.setObject(data as NSData, forKey: raw as NSString, cost: data.count) }
+    #endif
+
+    func data(for raw: String) async -> Data? {
+        if let hit = dataCache.object(forKey: raw as NSString) { return hit as Data }
+        if let t = dataInFlight[raw] { return await t.value }
+        let req = Self.request(raw, token: token)
+        let t = Task<Data?, Never> {
+            guard let req, let (data, resp) = try? await URLSession.shared.data(for: req),
+                  (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            return data
+        }
+        dataInFlight[raw] = t
+        let d = await t.value
+        dataInFlight[raw] = nil
+        if let d { dataCache.setObject(d as NSData, forKey: raw as NSString, cost: d.count) }
+        return d
+    }
+
+    /// A request for a media path; only our own server (same scheme, host and port) ever gets the token.
+    nonisolated static func request(_ raw: String, token: String?) -> URLRequest? {
+        guard let url = url(raw) else { return nil }
+        var req = URLRequest(url: url)
+        if let token, isOwnServer(url) { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        return req
+    }
+
+    nonisolated static func isOwnServer(_ url: URL) -> Bool {
+        let base = APIClient.baseURL
+        return url.scheme == base.scheme && url.host == base.host && url.port == base.port
+    }
 
     func cached(_ raw: String, maxPixel: Int = MediaImage.defaultPixels) -> PlatformImage? {
         cache.object(forKey: Self.key(raw, maxPixel))
@@ -101,6 +143,9 @@ struct MediaImage: View {
     var contentMode: ContentMode = .fill
     /// Longest side it is decoded at.
     var maxPixel: Int = MediaImage.defaultPixels
+    /// Told the picture's size (in pixels) once it is here — the post's pictures keep
+    /// their shape (`PostImages`).
+    var onSize: ((CGSize) -> Void)? = nil
     @State private var image: PlatformImage?
     @State private var failed = false
 
@@ -114,9 +159,10 @@ struct MediaImage: View {
             }
         }
         .task(id: path) {
-            if let hit = MediaCache.shared.cached(path, maxPixel: maxPixel) { image = hit; return }
+            if let hit = MediaCache.shared.cached(path, maxPixel: maxPixel) { image = hit; onSize?(hit.size); return }
             image = await MediaCache.shared.image(for: path, maxPixel: maxPixel)
             failed = image == nil
+            if let image { onSize?(image.size) }
         }
     }
 }

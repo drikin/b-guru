@@ -257,6 +257,7 @@ final class JukeboxStore {
         }
         activateSession()
         pausedForVoice = false
+        InlinePlayback.stopAll() // a video or sound playing in the timeline stops
         player?.playImmediately(atRate: rate)
         isPlaying = true
         updateNowPlaying()

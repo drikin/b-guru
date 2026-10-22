@@ -437,4 +437,233 @@ extension SelfTest {
     }
 }
 
+// MARK: - Timeline like the web (docs: timeline parity, 2026-10-22)
+
+extension SelfTest {
+    /// `-selftest DIR -demo -timelineShots`: the sample posts for each display rule (long text
+    /// folded and opened, pictures 1/2/3/5 tall and wide, video, sound, GIFs, many reactions,
+    /// mentions) drawn as one long column at the panel's width, light and dark, and the panel
+    /// itself on the timeline → DIR/parity-*.png. Offline.
+    static func runTimelineShots(store: ChatStore, outDir: String) {
+        Task { @MainActor in
+            let dir = URL(fileURLWithPath: outDir)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let timeline = TimelineStore(api: APIClient(token: "demo"))
+            timeline.debugLoadDemo()
+            let posts = timeline.posts.filter { (101...111).contains($0.id) }
+            @MainActor func render(_ name: String, dark: Bool, width: CGFloat, @ViewBuilder _ view: () -> some View) async {
+                let host = NSHostingView(rootView: view().frame(width: width).background(Color(nsColor: .windowBackgroundColor)))
+                let size = host.fittingSize
+                let win = NSWindow(contentRect: NSRect(x: -6000, y: -6000, width: width, height: max(size.height, 100)),
+                                   styleMask: [.borderless], backing: .buffered, defer: false)
+                win.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                win.contentView = host
+                win.orderFrontRegardless()
+                try? await Task.sleep(for: .milliseconds(2500)) // pictures, the video's first frame, a GIF frame or two
+                host.layoutSubtreeIfNeeded()
+                if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("parity-\(name).png"))
+                    print("[parity] wrote parity-\(name).png \(Int(host.bounds.width))x\(Int(host.bounds.height))")
+                }
+                win.orderOut(nil)
+            }
+            @MainActor func column(_ ps: [Post]) -> some View {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(ps) { p in
+                        PostRow(post: p, clubName: timeline.clubName(p.club), canReact: true, onReact: { _ in }, onOpenImage: { _ in })
+                        Divider()
+                    }
+                }
+            }
+            for dark in [false, true] {
+                let look = dark ? "dark" : "light"
+                PostExpansion.set(101, open: false)
+                await render("\(look)-posts", dark: dark, width: 380) { column(posts) }
+                PostExpansion.set(101, open: true)
+                await render("\(look)-expanded", dark: dark, width: 380) { column(posts.filter { $0.id == 101 }) }
+                PostExpansion.set(101, open: false)
+                // A wide panel: one picture stops at 360, the video at 560.
+                await render("\(look)-wide", dark: dark, width: 720) { column(posts.filter { [102, 103, 106, 107].contains($0.id) }) }
+                if let r = posts.first(where: { $0.id == 101 })?.reactions?.first(where: { $0.emoji == "❤️" }) {
+                    await render("\(look)-reactors", dark: dark, width: 260) { ReactorsList(reaction: r) }
+                    print("[parity] hover text: \(TimelineRules.reactorsText(r).replacingOccurrences(of: "\n", with: " / "))")
+                }
+                // The panel itself (lazy list) on the timeline.
+                let pin = PinState()
+                pin.windowVisible = true
+                await render("\(look)-panel", dark: dark, width: 380) {
+                    MainPanelView(store: store, timeline: timeline, pin: pin, onClose: {}, onSignOut: {}, initialTab: .timeline).frame(height: 720)
+                }
+            }
+            print("[parity] order of reactions: \(TimelineRules.sortedReactions(posts[0]).map { "\($0.emoji)\($0.count)" }.joined(separator: " "))")
+            print("[parity] folded length: \(TimelineRules.foldedText(posts[0])?.utf16.count ?? -1) of \(posts[0].text.utf16.count)")
+            fflush(stdout)
+            exit(0)
+        }
+    }
+
+    /// `-selftest DIR -demo -timelineCheck [-demoPosts N]`: a long timeline (300 posts by
+    /// default, a GIF in every tenth and a video in every fifteenth) in the real panel view,
+    /// scrolled to the end a screen at a time, flung back to the top, and left still with GIFs
+    /// on screen — the main thread must keep answering (5 s, as the thread check). Prints the
+    /// longest stall and the app's CPU while GIFs move; writes DIR/timeline.json.
+    static func runTimelineCheck(store: ChatStore, outDir: String) {
+        let dir = URL(fileURLWithPath: outDir)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let watch = MainThreadWatch(limit: 5) { stalled, step in
+            print("[timeline-check] FAIL main thread did not respond for \(String(format: "%.1f", stalled)) s (during: \(step))")
+            fflush(stdout)
+            exit(1)
+        }
+        Task { @MainActor in
+            let timeline = TimelineStore(api: APIClient(token: "demo"))
+            timeline.debugLoadDemo()
+            if timeline.posts.count < 100 { timeline.debugFill(to: 300) }
+            let pin = PinState()
+            pin.windowVisible = true
+            let host = NSHostingView(rootView: MainPanelView(store: store, timeline: timeline, pin: pin, onClose: {}, onSignOut: {}, initialTab: .timeline))
+            host.sizingOptions = []
+            let win = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: 380, height: 640), styleMask: [.borderless], backing: .buffered, defer: false)
+            win.contentView = host
+            win.orderFrontRegardless()
+            store.isVisible = true
+            watch.start()
+            try? await Task.sleep(for: .milliseconds(1000))
+            var all: [NSScrollView] = []
+            func walk(_ v: NSView) { if let s = v as? NSScrollView { all.append(s) }; v.subviews.forEach(walk) }
+            walk(host)
+            guard let scroll = all.max(by: { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }),
+                  let doc = scroll.documentView else { print("[timeline-check] FAIL no list"); exit(1) }
+            let clip = scroll.contentView
+            func to(_ y: CGFloat) {
+                let maxY = max(0, doc.frame.height - clip.bounds.height)
+                let c = min(max(0, y), maxY)
+                clip.scroll(to: NSPoint(x: 0, y: doc.isFlipped ? c : maxY - c))
+                scroll.reflectScrolledClipView(clip)
+            }
+            func at() -> CGFloat { doc.isFlipped ? clip.bounds.minY : max(0, doc.frame.height - clip.bounds.height) - clip.bounds.minY }
+            let t0 = Date()
+            var steps = 0
+            watch.step = "scroll down a screen at a time"
+            var last: CGFloat = -1
+            while steps == 0 || (at() > last + 1 && steps < 3000) {
+                last = at()
+                to(last + clip.bounds.height * 0.8)
+                steps += 1
+                try? await Task.sleep(for: .milliseconds(40))
+            }
+            let downMs = Int(Date().timeIntervalSince(t0) * 1000)
+            watch.step = "fling to the top"
+            var y = at()
+            while y > 0 {
+                y -= clip.bounds.height * 3
+                to(y)
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+            // Still, with the sample GIFs on screen: what moving GIFs cost.
+            watch.step = "still with GIFs on screen"
+            y = 0
+            while GIFPlayer.moving == 0, y < doc.frame.height {
+                y += clip.bounds.height * 0.5
+                to(y)
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            try? await Task.sleep(for: .milliseconds(1200))
+            let movingOnScreen = GIFPlayer.moving
+            func cpu() -> Double { var u = rusage(); getrusage(RUSAGE_SELF, &u); return Double(u.ru_utime.tv_sec + u.ru_stime.tv_sec) + Double(u.ru_utime.tv_usec + u.ru_stime.tv_usec) / 1e6 }
+            let c0 = cpu(), w0 = Date()
+            try? await Task.sleep(for: .seconds(6))
+            let gifCPU = (cpu() - c0) / Date().timeIntervalSince(w0) * 100
+            // And the same, scrolled where no GIF is in view (GIFs off screen must stop).
+            y = 0
+            to(0)
+            try? await Task.sleep(for: .milliseconds(600))
+            while GIFPlayer.moving > 0, y < doc.frame.height {
+                y += clip.bounds.height * 0.5
+                to(y)
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            try? await Task.sleep(for: .milliseconds(1200))
+            let movingOff = GIFPlayer.moving
+            let c1 = cpu(), w1 = Date()
+            try? await Task.sleep(for: .seconds(6))
+            let idleCPU = (cpu() - c1) / Date().timeIntervalSince(w1) * 100
+            watch.stop()
+            let report: [String: Any] = ["posts": timeline.posts.count, "steps": steps, "scroll_down_ms": downMs,
+                                         "longest_stall_ms": Int(watch.longest * 1000), "content_height": Int(doc.frame.height),
+                                         "cpu_gifs_on_screen_pct": Int(gifCPU * 10) / 10, "cpu_no_gif_on_screen_pct": Int(idleCPU * 10) / 10,
+                                         "gifs_moving_on_screen": movingOnScreen, "gifs_moving_when_none_shown": movingOff]
+            try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: dir.appendingPathComponent("timeline.json"))
+            print("[timeline-check] ok   \(timeline.posts.count) posts, \(steps) steps down in \(downMs) ms, longest main-thread stall \(Int(watch.longest * 1000)) ms, CPU with \(movingOnScreen) GIF(s) moving \(String(format: "%.1f", gifCPU)) %, with none on screen (\(movingOff) moving) \(String(format: "%.1f", idleCPU)) %")
+            fflush(stdout)
+            exit(0)
+        }
+    }
+}
+
+extension SelfTest {
+    /// `-timelineFixtures DIR`: DIR holds copies of src/lib/__tests__/fixtures/timeline/posts.json and
+    /// expected.json (docs/timeline-spec.md §9). For each example: the app's own display rules
+    /// (TimelineRules.computed, used when a server sends no `display`) must give exactly the
+    /// expected `display`; and with the expected `display` added, the folded body must end at
+    /// `fold_at` and each mention range must cover its "@name". Exit 0 = all match.
+    static func runTimelineFixtures(dir: String) {
+        Task { @MainActor in
+            let d = URL(fileURLWithPath: dir)
+            let dec = JSONDecoder()
+            dec.keyDecodingStrategy = .convertFromSnakeCase
+            struct Ctx: Decodable { var memberNames: [String]; var clubs: [String: String] }
+            struct Posts: Decodable { var context: Ctx; var posts: [Post] }
+            struct Expected: Decodable { var displays: [String: PostDisplayHints] }
+            guard let pd = try? Data(contentsOf: d.appendingPathComponent("posts.json")),
+                  let ed = try? Data(contentsOf: d.appendingPathComponent("expected.json")) else { print("[fixtures] FAIL cannot read"); exit(1) }
+            let posts: Posts, expected: Expected
+            do { posts = try dec.decode(Posts.self, from: pd); expected = try dec.decode(Expected.self, from: ed) }
+            catch { print("[fixtures] FAIL decode: \(error)"); exit(1) }
+            var fails = 0
+            for p in posts.posts {
+                guard let want = expected.displays[String(p.id)] else { continue }
+                let got = TimelineRules.computed(p, memberNames: posts.context.memberNames, clubName: { posts.context.clubs[$0] })
+                if got != want {
+                    fails += 1
+                    print("[fixtures] FAIL \(p.id) computed ≠ expected\n  got  \(got)\n  want \(want)")
+                }
+                var q = p
+                q.display = want
+                let folded = TimelineRules.foldedText(q)
+                if folded?.utf16.count != want.foldAt {
+                    fails += 1; print("[fixtures] FAIL \(p.id) folded \(folded?.utf16.count ?? -1) ≠ fold_at \(want.foldAt ?? -1)")
+                }
+                if TimelineRules.sortedReactions(q).map(\.emoji) != (want.reactionsOrder ?? []) {
+                    fails += 1; print("[fixtures] FAIL \(p.id) reaction order")
+                }
+                let u = Array(p.text.utf16)
+                for m in want.mentionRanges ?? [] {
+                    let s = String(decoding: u[m.start..<m.end], as: UTF16.self)
+                    if s != "@\(m.name)" && s != "@[\(m.name)]" { fails += 1; print("[fixtures] FAIL \(p.id) mention \(m.start)-\(m.end) = \(s)") }
+                }
+                print("[fixtures] \(fails == 0 ? "ok  " : "…   ") \(p.id)")
+            }
+            // A display the app cannot read drops only the display; fold points out of range are brought inside.
+            let broken = #"{"posts":[{"id":1,"text":"a","created_at":"x","display":{"fold":"yes","mention_ranges":[1,2]}},{"id":2,"text":"b","created_at":"x"}]}"#
+            if let l = try? dec.decode(PostListResponse.self, from: Data(broken.utf8)), l.posts.count == 2, l.posts[0].display == nil {
+                print("[fixtures] ok   an unreadable display is dropped, the list stays")
+            } else { fails += 1; print("[fixtures] FAIL an unreadable display broke the list") }
+            if var p = posts.posts.first(where: { $0.text.utf16.count > 500 }) {
+                let n = p.text.utf16.count
+                p.display = PostDisplayHints(fold: true, foldAt: -5)
+                let a = TimelineRules.foldedText(p)  // nothing before the fold: not folded
+                p.display = PostDisplayHints(fold: true, foldAt: n + 100)
+                let b = TimelineRules.foldedText(p)
+                if a == nil && b == nil { print("[fixtures] ok   fold_at out of range is clamped") }
+                else { fails += 1; print("[fixtures] FAIL fold_at clamp \(a?.utf16.count ?? -1) \(b?.utf16.count ?? -1)") }
+            }
+            print(fails == 0 ? "[fixtures] ok   \(posts.posts.count) examples match" : "[fixtures] FAIL \(fails) differences")
+            fflush(stdout)
+            exit(fails == 0 ? 0 : 1)
+        }
+    }
+}
+
 #endif

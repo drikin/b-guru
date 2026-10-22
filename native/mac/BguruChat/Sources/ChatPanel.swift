@@ -50,7 +50,8 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         standardWindowButton(.zoomButton)?.isHidden = true
         delegate = self
         animationBehavior = .utilityWindow
-        let root = MainPanelView(store: store, timeline: timeline, pin: pin, onClose: { [weak self] in self?.dismiss() }, onSignOut: onSignOut)
+        let root = MainPanelView(store: store, timeline: timeline, pin: pin, onClose: { [weak self] in self?.dismiss() }, onSignOut: onSignOut,
+                                 initialTab: PanelMemory.savedTab() ?? .chat)
         let host = PanelHostingView(rootView: root)
         // The content never sizes the panel; its size is the member's (and minSize above).
         // Growing to the content's ideal size made it wide (drikin 2026-10-19), and even
@@ -65,7 +66,29 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         pin.openEmoji = { [weak self] in self?.openEmojiPalette() }
         if UserDefaults.standard.bool(forKey: "pinned") { pin.pinned = true }
         narrowOnce()
+        // The size the member left it at (any mode), within the limits.
+        if let size = PanelMemory.savedSize(), !pin.pinned {
+            placing += 1
+            setContentSize(PanelMemory.clampSize(size, to: (screen ?? NSScreen.main)?.visibleFrame, min: minSize))
+            placing -= 1
+        }
+        pin.onTabChange = { tab in PanelMemory.saveTab(tab) }
     }
+
+    #if DEBUG
+    /// Dev only (-panelMemoryCheck): as if the member dragged / resized the panel to `f`.
+    func debugAsMember(_ f: NSRect) {
+        placing += 1
+        setFrame(f, display: true)
+        placing -= 1
+        PanelMemory.saveSize(contentRect(forFrameRect: frame).size)
+        if !pin.pinned, let screen { PanelMemory.saveFrame(frame, on: screen) }
+    }
+    #endif
+
+    /// Above zero while the app itself moves or resizes the panel (opening below the
+    /// menu bar icon, growing for the jukebox): only the member's own moves are remembered.
+    private var placing = 0
 
     /// 0.3.13–0.3.18 widened the panel to fit the jukebox, and the pinned frame kept that
     /// width. Once, bring it back to the usual width (drikin 2026-10-19「もうちょっと縦長に」);
@@ -78,7 +101,9 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         guard f.width > 400 else { return }
         f.origin.x += (f.width - 380) / 2
         f.size.width = 380
+        placing += 1
         setFrame(f, display: false)
+        placing -= 1
     }
 
     override var canBecomeKey: Bool { true }
@@ -95,7 +120,9 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         f.size.height = target
         f.origin.y = max(visible.minY, top - target)
         if f.maxY > visible.maxY { f.origin.y = visible.maxY - target }
+        placing += 1
         setFrame(f, display: true, animate: false) // an animated resize relaid the whole view every frame
+        placing -= 1
     }
 
     private var swipe = SwipeTracker()
@@ -153,14 +180,30 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         return nil
     }
 
-    func present(below anchor: NSRect) {
+    func present(below anchor: NSRect, toChat: Bool = false) {
+        if toChat { pin.tab = .chat }
+        placing += 1
+        defer { placing -= 1 }
+        let anchorScreen = NSScreen.screens.first { $0.frame.contains(anchor.origin) } ?? NSScreen.main
         if !pin.pinned || !UserDefaults.standard.bool(forKey: "hasPinnedFrame") {
-            let screen = NSScreen.screens.first { $0.frame.contains(anchor.origin) } ?? NSScreen.main
-            var origin = NSPoint(x: anchor.midX - frame.width / 2, y: anchor.minY - frame.height - 6)
-            if let vis = screen?.visibleFrame {
-                origin.x = min(max(origin.x, vis.minX + 8), vis.maxX - frame.width - 8)
+            // Where the member last put it on this display; until they move it, under the icon.
+            if let screen = anchorScreen, let placed = PanelMemory.savedFrame(size: frame.size, on: screen, min: minSize) {
+                setFrame(placed, display: false)
+            } else {
+                var origin = NSPoint(x: anchor.midX - frame.width / 2, y: anchor.minY - frame.height - 6)
+                if let vis = anchorScreen?.visibleFrame {
+                    origin.x = min(max(origin.x, vis.minX + 8), vis.maxX - frame.width - 8)
+                }
+                setFrameOrigin(origin)
             }
-            setFrameOrigin(origin)
+        } else {
+            // Pinned (its own saved frame): back on a screen that is still there, within it
+            // (a display taken away, a lower resolution).
+            let onScreen = NSScreen.screens.first { $0.visibleFrame.intersects(frame) } ?? anchorScreen
+            if let vis = onScreen?.visibleFrame {
+                let fitted = PanelMemory.fit(frame, in: vis, min: minSize)
+                if fitted != frame { setFrame(fitted, display: false) }
+            }
         }
         generation += 1
         isDismissing = false
@@ -193,6 +236,9 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     /// AppKit makes sure on the next runloop turn in case SwiftUI kept a stale
     /// "already focused" state from the previous open.
     private func focusComposer() {
+        // Only on the chat: the panel now opens on the tab it was left on, and the tabs stay
+        // built, so the hidden chat's message box would take the typing.
+        guard pin.tab == .chat else { return }
         pin.focusRequest += 1
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isKeyWindow else { return }
@@ -429,6 +475,17 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     /// A resize storm here is what a layout loop looks like (see HangWatch).
     func windowDidResize(_ notification: Notification) {
         HangWatch.note("panel size \(Int(frame.width))×\(Int(frame.height))")
+        if placing == 0, isVisible, NSEvent.pressedMouseButtons != 0 {
+            PanelMemory.saveSize(contentRect(forFrameRect: frame).size)
+            if !pin.pinned, let screen { PanelMemory.saveFrame(frame, on: screen) }
+        }
+    }
+
+    /// The member dragged the panel (not the app placing it, not the system pushing it
+    /// back onto a display): open it there on this display from now on.
+    func windowDidMove(_ notification: Notification) {
+        guard placing == 0, isVisible, !pin.pinned, NSEvent.pressedMouseButtons != 0, let screen else { return }
+        PanelMemory.saveFrame(frame, on: screen)
     }
 
     func windowDidChangeOcclusionState(_ notification: Notification) {
@@ -457,8 +514,10 @@ final class PinState {
     var focusRequest = 0
     /// Chat or timeline (the switch at the top, ⌘1 / ⌘2, or a two-finger swipe).
     var tab: MainTab = .chat {
-        didSet { if tab != oldValue { HangWatch.note("tab \(tab)") } }
+        didSet { if tab != oldValue { HangWatch.note("tab \(tab)"); onTabChange?(tab) } }
     }
+    /// Told every tab change (the panel remembers it for the next launch).
+    @ObservationIgnored var onTabChange: ((MainTab) -> Void)?
     /// The panel can be seen (open, on this desktop, not covered): animations and
     /// polling run only then.
     var windowVisible = false
@@ -501,4 +560,100 @@ struct SwipeTracker {
 /// into — so say it at once.
 final class PanelHostingView<Content: View>: NSHostingView<Content> {
     override var acceptsFirstResponder: Bool { true }
+}
+
+
+/// What the panel remembers between opens and launches (UserDefaults, this Mac only):
+/// - `panelSize` [w, h]: its size (the content), in either mode, kept within 300×320 and the screen.
+/// - `panelPlaces` {display: [x, top]}: where the member last dragged it, per display (by the
+///   display's UUID), as the distance from that display's left and top edges. Not set until the
+///   panel is dragged on that display: until then it opens under the menu bar icon, as before.
+///   Brought back inside the display's visible area when opened (a lower resolution, the Dock).
+///   A pinned panel keeps its own frame (`NSWindow Frame BguruChatPinned`), also fitted back on screen.
+/// - `panelTab` timeline | chat | jukebox, and `panelChatScreen` text | room | shogi | minigame.
+/// Clean up: `defaults delete fm.backspace.bguru.chat panelSize` (and panelPlaces, panelTab, panelChatScreen).
+@MainActor
+enum PanelMemory {
+    static let sizeKey = "panelSize"
+    static let placesKey = "panelPlaces"
+    static let tabKey = "panelTab"
+    static let chatScreenKey = "panelChatScreen"
+
+    /// Dev only: the offline demos (`-demoPanel`, `-selftest`) neither read nor write it — they
+    /// share this Mac's settings with the real app — unless `-panelMemory` asks for it.
+    static let active: Bool = {
+        #if DEBUG
+        let a = CommandLine.arguments
+        if (a.contains("-demoPanel") || a.contains("-selftest")) && !a.contains("-panelMemory") { return false }
+        #endif
+        return true
+    }()
+    private static var store: UserDefaults? { active ? UserDefaults.standard : nil }
+
+    static func displayKey(_ screen: NSScreen) -> String {
+        if let n = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
+           let uuid = CGDisplayCreateUUIDFromDisplayID(CGDirectDisplayID(n.uint32Value))?.takeRetainedValue() {
+            return CFUUIDCreateString(nil, uuid) as String
+        }
+        return screen.localizedName
+    }
+
+    static func savedSize() -> NSSize? {
+        guard let a = store?.array(forKey: sizeKey) as? [Double], a.count == 2 else { return nil }
+        return NSSize(width: a[0], height: a[1])
+    }
+
+    static func saveSize(_ s: NSSize) {
+        store?.set([Double(s.width.rounded()), Double(s.height.rounded())], forKey: sizeKey)
+    }
+
+    static func clampSize(_ s: NSSize, to visible: NSRect?, min: NSSize) -> NSSize {
+        let maxW = visible.map { $0.width - 16 } ?? 2000, maxH = visible.map { $0.height - 8 } ?? 2000
+        return NSSize(width: Swift.min(Swift.max(s.width, min.width), Swift.max(min.width, maxW)),
+                      height: Swift.min(Swift.max(s.height, min.height), Swift.max(min.height, maxH)))
+    }
+
+    static func saveFrame(_ f: NSRect, on screen: NSScreen) {
+        var all = store?.dictionary(forKey: placesKey) as? [String: [Double]] ?? [:]
+        let sf = screen.frame
+        all[displayKey(screen)] = [Double((f.minX - sf.minX).rounded()), Double((sf.maxY - f.maxY).rounded())]
+        store?.set(all, forKey: placesKey)
+    }
+
+    /// The remembered place on `screen` for a panel of `size`, fitted inside its visible area.
+    static func savedFrame(size: NSSize, on screen: NSScreen, min: NSSize) -> NSRect? {
+        guard let all = store?.dictionary(forKey: placesKey) as? [String: [Double]],
+              let p = all[displayKey(screen)], p.count == 2 else { return nil }
+        let sf = screen.frame
+        let f = NSRect(x: sf.minX + p[0], y: sf.maxY - p[1] - size.height, width: size.width, height: size.height)
+        return fit(f, in: screen.visibleFrame, min: min)
+    }
+
+    /// `f` moved (and, if it must, shrunk) to lie inside `vis`.
+    static func fit(_ f: NSRect, in vis: NSRect, min: NSSize) -> NSRect {
+        var r = f
+        r.size.width = Swift.min(Swift.max(r.width, min.width), vis.width)
+        r.size.height = Swift.min(Swift.max(r.height, min.height), vis.height)
+        r.origin.x = Swift.min(Swift.max(r.minX, vis.minX), vis.maxX - r.width)
+        r.origin.y = Swift.min(Swift.max(r.minY, vis.minY), vis.maxY - r.height)
+        return r.integral
+    }
+
+    static func savedTab() -> MainTab? {
+        switch store?.string(forKey: tabKey) {
+        case "timeline": .timeline
+        case "chat": .chat
+        case "jukebox": .jukebox
+        default: nil
+        }
+    }
+
+    static func saveTab(_ t: MainTab) {
+        store?.set(t == .timeline ? "timeline" : t == .jukebox ? "jukebox" : "chat", forKey: tabKey)
+    }
+
+    static var savedChatScreen: String? { store?.string(forKey: chatScreenKey) }
+    static func saveChatScreen(_ s: String) {
+        if store?.string(forKey: chatScreenKey) != s { store?.set(s, forKey: chatScreenKey) }
+    }
 }

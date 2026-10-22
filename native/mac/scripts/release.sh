@@ -44,6 +44,12 @@ if [ "${SKIP_ORIENTATION:-0}" != "1" ]; then
     echo "LONG-THREAD CHECK FAILED: the app stopped responding with a long thread open (see $THREAD_OUT and hangs.log). Not releasing." >&2
     exit 1
   fi
+  # The timeline's display rules against the shared examples (src/lib/__tests__/fixtures/timeline, docs/timeline-spec.md §9).
+  echo "=== 0/6 timeline display examples (Debug, offline) ==="
+  if ! "$ROOT/scripts/timeline-fixtures.sh" "$ROOT/build/orient/Build/Products/Debug/B-guru Chat.app/Contents/MacOS/B-guru Chat"; then
+    echo "TIMELINE EXAMPLES FAILED: the app draws a post differently from docs/timeline-spec.md. Not releasing." >&2
+    exit 1
+  fi
   defaults delete fm.backspace.bguru.chat panelNarrowed20261019 2>/dev/null || true
   for k in jukebox.last jukebox.progress jukebox.finished; do defaults delete fm.backspace.bguru.chat "$k" 2>/dev/null || true; done
 fi

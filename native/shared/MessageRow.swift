@@ -412,10 +412,62 @@ struct ReactionChips: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!enabled)
-                .help(r.reactors.joined(separator: "、"))
+                // Who reacted, as the web's tooltip: 「❤️ 14人」, the names (up to 12) and 「他N人」.
+                // Mac: hover. iPhone / iPad: press and hold the chip.
+                .help(r.reactors.isEmpty ? "" : TimelineRules.reactorsText(r))
+                #if os(iOS)
+                .modifier(ReactorsMenu(reaction: r, enabled: enabled, onTap: onTap))
+                #endif
                 .accessibilityLabel("\(r.emoji) \(r.count)\(r.mine ? "、自分も付けた" : "")")
+                .accessibilityHint(TimelineRules.reactorsNames(r) ?? "")
             }
         }
+    }
+}
+
+#if os(iOS)
+/// iPhone / iPad: holding a reaction shows who reacted (the web's hover list) over the
+/// chip, with the reaction's own toggle under it.
+private struct ReactorsMenu: ViewModifier {
+    let reaction: Reaction
+    let enabled: Bool
+    let onTap: (String) -> Void
+
+    func body(content: Content) -> some View {
+        if reaction.reactors.isEmpty && reaction.count == 0 {
+            content
+        } else {
+            content.contextMenu {
+                if enabled {
+                    Button(reaction.mine ? "\(reaction.emoji) を外す" : "\(reaction.emoji) を付ける") { onTap(reaction.emoji) }
+                }
+            } preview: {
+                ReactorsList(reaction: reaction)
+            }
+        }
+    }
+}
+#endif
+
+/// 「❤️ 14人」 and who (the web's ReactionWhoList).
+struct ReactorsList: View {
+    let reaction: Reaction
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                ReactionGlyph(emoji: reaction.emoji)
+                Text("\(reaction.count)人").font(.subheadline.bold())
+            }
+            if !reaction.reactors.isEmpty {
+                let shown = reaction.reactors
+                let hidden = TimelineRules.reactorsMore(reaction)
+                (Text(shown.joined(separator: "、")) + Text(hidden > 0 ? " 他\(hidden)人" : "").foregroundStyle(.secondary))
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .frame(width: 260, alignment: .leading)
     }
 }
 

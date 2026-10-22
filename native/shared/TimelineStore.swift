@@ -48,6 +48,8 @@ final class TimelineStore {
         #endif
         HangWatch.note("timeline refresh (\(posts.count) posts)")
         lastRefresh = Date()
+        // Members' names decide which @ are drawn as mentions (the chat may have loaded them).
+        if MemberDirectory.shared.isEmpty, let m = try? await api.members() { MemberDirectory.shared.set(m) }
         if clubs.isEmpty, let c = try? await api.clubs() {
             clubs = Dictionary(c.map { ($0.key, $0.name) }, uniquingKeysWith: { a, _ in a })
         }
@@ -235,7 +237,11 @@ final class TimelineStore {
                  createdAt: old, club: "chat", reactions: [Reaction(emoji: "❤️", count: 42, mine: true, reactors: []), Reaction(emoji: "👍", count: 9, mine: false, reactors: [])],
                  unread: false, unreadReplies: 30),
         ]
-        clubs = ["chat": "雑談", "pet": "ペット部", "apple": "リンゴ部", "improve": "機能改善"]
+        clubs = ["chat": "雑談", "pet": "ペット部", "apple": "リンゴ部", "improve": "機能改善", "car": "クルマ部"]
+        // The display rules (long text, pictures, video, sound, GIF, reactions, mentions),
+        // after today's jukebox post.
+        posts.insert(contentsOf: TimelineDemoMedia.posts(now: now), at: 1)
+        MemberDirectory.shared.set(TimelineDemoMedia.members.map { MentionMember(userId: $0, name: $0, avatar: nil) })
         // -demoPosts N / BGURU_DEMO_POSTS=N: a full first page (the server sends 30).
         let want = CommandLine.arguments.firstIndex(of: "-demoPosts").flatMap { i in i + 1 < CommandLine.arguments.count ? Int(CommandLine.arguments[i + 1]) : nil }
             ?? ProcessInfo.processInfo.environment["BGURU_DEMO_POSTS"].flatMap(Int.init) ?? 0
@@ -254,6 +260,9 @@ final class TimelineStore {
             p.club = ["chat", "pet", "apple", "improve"][i % 4]
             p.unread = i % 5 == 0
             p.unreadReplies = i % 7 == 0 ? 1 : nil
+            // GIFs and videos all down a long list (the scroll check: they must not stall it).
+            if i % 10 == 4 { p.images = [TimelineDemoMedia.gif(100 + i)] + (i % 20 == 4 ? [] : (p.images ?? [])) }
+            if i % 15 == 7 { p.videoUrl = TimelineDemoMedia.video }
             return p
         }
     }

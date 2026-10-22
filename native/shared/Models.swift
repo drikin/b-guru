@@ -289,6 +289,9 @@ struct Post: Codable, Identifiable, Equatable, Sendable {
     var unreadReplies: Int?
     /// The page a link in the post points to (title / image), filled in by the server.
     var urlPreview: UrlPreview?
+    /// The server's display decisions (`include=display`); nil from servers without them.
+    /// Read through `TimelineRules`, which falls back to the same rules worked out here.
+    @LenientDisplay var display: PostDisplayHints? = nil
 
     /// The post is just one link that has a preview: show the card, not the bare URL.
     var isBareLink: Bool {
@@ -392,6 +395,9 @@ struct UrlPreview: Codable, Equatable, Sendable {
     var siteName: String?
     /// YouTube video id (a play mark goes over the image).
     var videoId: String?
+    /// Spotify: the web embeds its player (`embedUrl`, `height`); the app shows the card.
+    struct Spotify: Codable, Equatable, Sendable { var embedUrl: String?; var height: Int?; var kind: String? }
+    var spotify: Spotify? = nil
 
     /// The preview image through our server (/api/img) — the third-party site never
     /// sees the member, and the server caches it.
