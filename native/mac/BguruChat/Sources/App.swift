@@ -25,6 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// first message to jump to when it is clicked.
     private var bundledCount = 0
     private var bundledFirstId: Int?
+    /// 試験的：ほかのステータスバーアイコンを畳む（設定でオンにした人だけ）。
+    private var collapser: StatusBarCollapser?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         HangWatch.shared.start()
@@ -40,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         updateStatusIcon(unread: 0, mentions: 0, connection: .connecting)
+        if !CommandLine.arguments.contains("-selftest") { setupCollapser() }
         settings.onDockChange = { [weak self] _ in self?.applyDockSetting() }
         applyDockSetting()
 
@@ -304,6 +307,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     // MARK: - Menu bar
 
     @objc private func statusItemClicked() {
+        // 畳む機能がオンのとき：⌥＋クリックで出し入れ。
+        // （⌘＋クリックは macOS 27 ではアプリに届かない：⌘ を押してステータスアイコンを押すと、システムが並べ替えに使う。
+        //  また macOS 27 のステータスアイテムのクリックは修飾キーの消えたイベントで届くので、今押しているキーは NSEvent.modifierFlags で見る。2026-10-21 実機）
+        if let collapser, collapser.isEnabled, let ev = NSApp.currentEvent, ev.type == .leftMouseUp,
+           ev.modifierFlags.contains(.option) || NSEvent.modifierFlags.contains(.option) {
+            collapser.toggle()
+            return
+        }
         if NSApp.currentEvent?.type == .rightMouseUp {
             showMenu()
         } else {
@@ -319,6 +330,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         update.target = self
         update.isEnabled = Updater.shared.canCheck
         menu.addItem(update)
+        let collapse = NSMenuItem(title: "試験的：ほかのステータスバーアイコンを畳む", action: #selector(toggleCollapseSetting), keyEquivalent: "")
+        collapse.target = self
+        collapse.state = settings.collapseStatusItems ? .on : .off
+        menu.addItem(collapse)
         let ver = NSMenuItem(title: "バージョン \(Updater.shared.currentVersion)（ベータ）", action: nil, keyEquivalent: "")
         ver.isEnabled = false
         menu.addItem(ver)
@@ -333,6 +348,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     @objc private func openPanelAction() { showPanel() }
+    @objc private func toggleCollapseSetting() { settings.collapseStatusItems.toggle() }
     @objc private func signOutAction() { signOut() }
     @objc private func checkUpdates() { Updater.shared.checkNow() }
     @objc private func openWeb() { NSWorkspace.shared.open(APIClient.baseURL) }
@@ -370,6 +386,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let state = connection == .offline ? "、オフライン" : ""
         let detail = mentions > 0 ? "、うちメンション \(mentions) 件" : ""
         button.setAccessibilityLabel(unread > 0 ? "B-guru チャット、未読 \(unread) 件\(detail)\(state)" : "B-guru チャット\(state)")
+        collapser?.beagleChanged()
         if settings.showInDock {
             NSApp.dockTile.badgeLabel = unread > 0 ? (mentions > 0 ? "@\(n)" : "\(n)") : nil
         }
@@ -391,6 +408,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             NSApp.setActivationPolicy(.accessory)
         }
     }
+
+    // MARK: - ほかのステータスバーアイコンを畳む（試験的）
+
+    private func setupCollapser() {
+        let c = StatusBarCollapser(beagle: statusItem)
+        collapser = c
+        settings.onCollapseChange = { [weak self] on in self?.applyCollapseSetting(on, userAction: true) }
+        if settings.collapseStatusItems { applyCollapseSetting(true, userAction: false) }
+        #if DEBUG
+        if CommandLine.arguments.contains("-collapseTest") { startCollapseTest() }
+        #endif
+    }
+
+    private func applyCollapseSetting(_ on: Bool, userAction: Bool) {
+        guard let collapser else { return }
+        if !on { collapser.disable(); return }
+        let firstTime = !UserDefaults.standard.bool(forKey: "collapseHintShown")
+        // 初めてオンにしたときは出した状態で説明を出す（区切りが見えるように）。
+        collapser.enable(collapse: !(userAction && firstTime))
+        if userAction && firstTime {
+            UserDefaults.standard.set(true, forKey: "collapseHintShown")
+            DispatchQueue.main.async { self.showCollapseHint() }
+        }
+    }
+
+    private func showCollapseHint() {
+        let alert = NSAlert()
+        alert.messageText = "ほかのステータスバーアイコンを畳む（試験的）"
+        alert.informativeText = "ビーグルの左に区切り（‹）を置きました。隠したいアイコンを ⌘ を押しながら区切りの左へドラッグしてください。\n\n"
+            + "ビーグルを ⌥（option）＋クリック（またはトラックパッドの 3 本指タップ、区切りのクリック）で出し入れします。出したあと 10 秒たつか、"
+            + "メニューバーからマウスを離すとまた畳みます。畳んだアイコンは macOS の « からも開けます。\n\n"
+            + "macOS の仕様にない動きに頼る試験的な機能です。将来の macOS で効かなくなることがあります（そのときは何も隠れないだけです）。"
+            + "オフにすると区切りを消して元に戻します。"
+        alert.addButton(withTitle: "OK")
+        NSApp.activate()
+        alert.runModal()
+        if collapser?.isEnabled == true { collapser?.expand() } // 読み終えてから 10 秒を数え直す
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        collapser?.disable() // 区切りを残さない
+    }
+
+    #if DEBUG
+    /// 開発のみ：-collapseTest で自分のダミーのアイコン（★ ♥）を区切りの左に置き、
+    /// 分散通知 fm.backspace.bguru.chat.debugCollapse（object = コマンド）で操作する。
+    private var debugItems: [NSStatusItem] = []
+    private func startCollapseTest() {
+        if collapser?.isEnabled != true { collapser?.enable(collapse: false) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            for sym in ["star.fill", "heart.fill"] {
+                let s = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+                let img = NSImage(systemSymbolName: sym, accessibilityDescription: nil)
+                img?.isTemplate = true
+                s.button?.image = img
+                self.debugItems.append(s)
+            }
+        }
+        DistributedNotificationCenter.default().addObserver(forName: Notification.Name("fm.backspace.bguru.chat.debugCollapse"), object: nil, queue: .main) { [weak self] n in
+            let cmd = n.object as? String ?? ""
+            MainActor.assumeIsolated {
+                guard let self, let c = self.collapser else { return }
+                NSLog("[collapse] debug command: %@", cmd)
+                switch cmd {
+                case "toggle": c.toggle()
+                case "collapse": c.collapse()
+                case "expand": c.expand()
+                case "settingOn": self.settings.collapseStatusItems = true
+                case "settingOff": self.settings.collapseStatusItems = false
+                case "quicklook":
+                    // 3 本指タップの代わり：ビーグルのボタンに quickLook(with:) を送る（応答者の連鎖をたどるか）。
+                    if let b = self.statusItem.button, let ev = NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: b.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                        b.quickLook(with: ev)
+                    }
+                case "unread": self.updateStatusIcon(unread: 12, mentions: 0, connection: .live)
+                case "frames":
+                    NSLog("[collapse] frames beagle=%@ dummies=%@", NSStringFromRect(self.statusItem.button?.window?.frame ?? .zero),
+                          self.debugItems.map { NSStringFromRect($0.button?.window?.frame ?? .zero) }.joined(separator: " "))
+                case "closeAlert": NSApp.abortModal()
+                case "quit": NSApp.terminate(nil)
+                default: break
+                }
+            }
+        }
+    }
+    #endif
 
     // MARK: - Notifications
 

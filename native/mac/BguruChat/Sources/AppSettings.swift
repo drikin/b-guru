@@ -37,6 +37,15 @@ final class AppSettings {
         }
     }
     @ObservationIgnored var onDockChange: ((Bool) -> Void)?
+    /// 試験的：ほかのステータスバーアイコンを畳む（ビーグルを ⌥＋クリック／3 本指タップで出し入れ）。既定は切。
+    var collapseStatusItems: Bool {
+        didSet {
+            guard collapseStatusItems != oldValue else { return }
+            UserDefaults.standard.set(collapseStatusItems, forKey: "collapseOtherStatusItems")
+            onCollapseChange?(collapseStatusItems)
+        }
+    }
+    @ObservationIgnored var onCollapseChange: ((Bool) -> Void)?
 
     static let quietStartHour = 0
     static let quietEndHour = 7
@@ -47,6 +56,7 @@ final class AppSettings {
         quietHours = d.object(forKey: "quietHours") as? Bool ?? true
         showInDock = d.bool(forKey: "showInDock")
         notifyTimeline = d.bool(forKey: "notifyTimeline")
+        collapseStatusItems = d.bool(forKey: "collapseOtherStatusItems")
     }
 
     func isQuietNow(_ date: Date = Date()) -> Bool {
