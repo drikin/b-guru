@@ -4,7 +4,7 @@ import { getPostThread } from "@/lib/posts";
 import { withAgent } from "@/lib/agent-auth";
 import { agentUpdatePost, agentDeletePost } from "@/lib/agent-write";
 import { NO_CACHE } from "../../_lib";
-import { agentPostDto } from "../route";
+import { agentPostDto } from "@/lib/agent-post-dto";
 import { parseInclude, timelineExtras } from "@/lib/agent-timeline";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

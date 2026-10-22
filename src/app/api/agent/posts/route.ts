@@ -13,37 +13,11 @@ import { userIdToEmail } from "@/lib/user";
 import { withAgent, sanitizeLikePattern } from "@/lib/agent-auth";
 import { agentCreatePost, asAgentPostDto } from "@/lib/agent-write";
 import { NO_CACHE } from "../_lib";
-import { toProxiedAvatar } from "@/lib/members";
+import { agentPostDto } from "@/lib/agent-post-dto";
 import { parseInclude, timelineExtras } from "@/lib/agent-timeline";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-/** FeedPost から email 系フィールドを除去した機械可読 DTO（生 JSON・apiVersion 付き）。 */
-export function agentPostDto(p: any) {
-  return {
-    id: p.id,
-    author_id: p.authorId,
-    author_name: p.authorName ?? null,
-    // Same-origin avatar proxy (never the gravatar URL: it carries the email hash).
-    author_avatar: toProxiedAvatar(p.authorAvatar),
-    is_author: !!p.isAuthor,
-    parent_id: p.parentId ?? null,
-    reply_count: p.replyCount ?? 0,
-    text: p.text,
-    images: p.images ?? [],
-    video_url: p.videoUrl ?? null,
-    audio_url: p.audioUrl ?? null,
-    url_preview: p.urlPreview ?? null,
-    like_count: p.likeCount ?? 0,
-    created_at: p.createdAt,
-    last_activity_at: p.lastActivityAt ?? p.createdAt,
-    pinned_at: p.pinnedAt ?? null,
-    club: p.club ?? null,
-    club_manual: !!p.clubManual,
-    poll: p.poll ?? null,
-  };
-}
 
 export async function GET(req: NextRequest) {
   const out = await withAgent(req, "GET /api/agent/posts", "read", async (ctx) => {

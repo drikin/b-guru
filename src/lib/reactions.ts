@@ -1,5 +1,6 @@
 import { pool } from "./db";
 import { emitLive } from "./live";
+import { REACTOR_LIMIT, sortReactions } from "./timeline-display";
 
 /**
  * Reactions on posts and chat messages.
@@ -36,9 +37,9 @@ export type CustomEmoji = {
   createdAt: string;
 };
 
-/** How many reactor names to return per emoji. The tooltip only needs a few;
- *  returning every name for a popular reaction would bloat every feed payload. */
-const REACTOR_LIMIT = 12;
+/* How many reactor names to return per emoji (REACTOR_LIMIT = 12, lib/timeline-display.ts).
+ * The tooltip only needs a few; returning every name for a popular reaction would bloat
+ * every feed payload. The rest is shown as 「他N人」 (N = count - reactors.length). */
 
 /** Custom emoji names are referenced as ":name:" in `emoji`. Restricting the
  *  charset keeps the reference unambiguous (no colons, no whitespace) and stops
@@ -184,6 +185,10 @@ export async function getReactions(
       reactors: row.reactors ?? [],
     });
   }
+  // The SQL already orders by count desc, emoji — but the emoji tie-break there follows
+  // the database collation. Re-sort with the one rule the web and the apps share
+  // (lib/timeline-display.ts: UTF-16 code-unit order) so every client agrees.
+  for (const [id, list] of out) out.set(id, sortReactions(list));
   return out;
 }
 

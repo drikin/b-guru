@@ -1,0 +1,709 @@
+{
+  "version": 1,
+  "notes": {
+    "9002": "ちょうど 500 は畳まない",
+    "9003": "501 で畳む",
+    "9004": "500 番目の手前で絵文字が割れるので 499 で切る",
+    "9005": "Markdown の長文",
+    "9013": "URL が 2 つ: カードは最初の 1 件（url_preview の url）",
+    "9014": "カードの取得前: カードは出さない",
+    "9015": "件数の多い順・同数は UTF-16 順（❤️ U+2764 < 👍 U+1F44D、:drikin: < 🎉）",
+    "9016": "12 人＋他2人",
+    "9017": "@名前・@[空白入り]・大文字小文字無視・会員でない @unknown は対象外",
+    "9018": "@drikinさん は区切りが無いので対象外（Web と同じ）",
+    "9019": "プロフィールへのリンク",
+    "9022": "削除済みの部活も名前で出す",
+    "9023": "返信も同じ判断",
+    "9026": "古い形のメールのユーザーリンクは user_links に出さない（メールを返さない）",
+    "9027": "空の本文",
+    "9028": "画像だけ（本文なし）",
+    "9029": "名前が 0 件でも count 3 → 他3人",
+    "9030": "13 人＝12 人＋他1人、12 人ちょうど＝他0人",
+    "9031": "ZWJ の家族絵文字が 500 をまたぐ: 499 は低サロゲートなので 500 で切る（字の途中で切れるのは Web と同じ）",
+    "9032": "国旗が 500 をまたぐ: 499 が高サロゲートなので 499 で切る",
+    "9033": "結合文字（か＋濁点 U+3099）が 500 をまたぐ: 500 で切る",
+    "9034": "同数で UTF-16 順とコードポイント順が逆になる組: 👍(D83D…) < ｗ(FF57) なので 👍 が先（コードポイント順なら ｗ が先）",
+    "9035": "絵文字（2 単位）の直後のメンション",
+    "9036": "U+FEFF は JS の \\s に入るので区切りになる、U+0085 は入らないので区切りにならない",
+    "9037": "videoId が空文字なら普通のカード",
+    "9038": "Spotify の高さ 0 は 152 として扱う"
+  },
+  "displays": {
+    "9001": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9002": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9003": {
+      "version": 1,
+      "fold": true,
+      "fold_at": 500,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9004": {
+      "version": 1,
+      "fold": true,
+      "fold_at": 499,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9005": {
+      "version": 1,
+      "fold": true,
+      "fold_at": 500,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9006": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 1,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9007": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 2,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9008": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 3,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9009": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 3,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9010": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "link_card": {
+        "kind": "youtube",
+        "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "video_id": "dQw4w9WgXcQ",
+        "image_aspect": "16:9",
+        "image_max_width": 480
+      },
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9011": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC",
+      "link_card": {
+        "kind": "spotify",
+        "url": "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC",
+        "embed_url": "https://open.spotify.com/embed/track/4uLU6hMCjMI75M1A2tKUQC",
+        "embed_height": 152
+      },
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9012": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": "https://example.com/news/1",
+      "link_card": {
+        "kind": "link",
+        "url": "https://example.com/news/1"
+      },
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9013": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": "https://example.com/a",
+      "link_card": {
+        "kind": "link",
+        "url": "https://example.com/a"
+      },
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9014": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9015": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [
+        "😂",
+        "❤️",
+        "👍",
+        ":drikin:",
+        "🎉"
+      ],
+      "reactors_more": {
+        "😂": 0,
+        "❤️": 0,
+        "👍": 0,
+        ":drikin:": 0,
+        "🎉": 0
+      },
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9016": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [
+        "❤️"
+      ],
+      "reactors_more": {
+        "❤️": 2
+      },
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9017": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [
+        {
+          "start": 0,
+          "end": 7,
+          "name": "drikin"
+        },
+        {
+          "start": 11,
+          "end": 25,
+          "name": "Taro Yamada"
+        },
+        {
+          "start": 41,
+          "end": 48,
+          "name": "Drikin"
+        }
+      ],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9018": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9019": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [
+        {
+          "start": 6,
+          "end": 46,
+          "user_id": "u_abc123"
+        }
+      ],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9020": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": "雑談",
+      "club_unset": false
+    },
+    "9021": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": "未設定",
+      "club_unset": true
+    },
+    "9022": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": "旧部活",
+      "club_unset": false
+    },
+    "9023": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [
+        "👍"
+      ],
+      "reactors_more": {
+        "👍": 0
+      },
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [
+        {
+          "start": 5,
+          "end": 11,
+          "name": "mazzo"
+        }
+      ],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9024": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9025": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9026": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [
+        {
+          "start": 30,
+          "end": 36,
+          "name": "mazzo"
+        }
+      ],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9027": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9028": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 2,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9029": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [
+        "👏"
+      ],
+      "reactors_more": {
+        "👏": 3
+      },
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9030": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [
+        "🔥",
+        "💯"
+      ],
+      "reactors_more": {
+        "🔥": 1,
+        "💯": 0
+      },
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9031": {
+      "version": 1,
+      "fold": true,
+      "fold_at": 500,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9032": {
+      "version": 1,
+      "fold": true,
+      "fold_at": 499,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9033": {
+      "version": 1,
+      "fold": true,
+      "fold_at": 500,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9034": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [
+        "👍",
+        "ｗ"
+      ],
+      "reactors_more": {
+        "👍": 0,
+        "ｗ": 0
+      },
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9035": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [
+        {
+          "start": 2,
+          "end": 8,
+          "name": "mazzo"
+        }
+      ],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9036": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": null,
+      "link_card": null,
+      "mention_ranges": [
+        {
+          "start": 0,
+          "end": 6,
+          "name": "mazzo"
+        }
+      ],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9037": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": "https://www.youtube.com/watch?v=",
+      "link_card": {
+        "kind": "link",
+        "url": "https://www.youtube.com/watch?v="
+      },
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    },
+    "9038": {
+      "version": 1,
+      "fold": false,
+      "fold_at": null,
+      "reactions_order": [],
+      "reactors_more": {},
+      "image_columns": 0,
+      "link_card_url": "https://open.spotify.com/album/x",
+      "link_card": {
+        "kind": "spotify",
+        "url": "https://open.spotify.com/album/x",
+        "embed_url": "https://open.spotify.com/embed/album/x",
+        "embed_height": 152
+      },
+      "mention_ranges": [],
+      "user_links": [],
+      "club_label": null,
+      "club_unset": false
+    }
+  },
+  "reply_fold": [
+    {
+      "replies": 0,
+      "hidden": 0,
+      "visible": 0
+    },
+    {
+      "replies": 1,
+      "hidden": 0,
+      "visible": 1
+    },
+    {
+      "replies": 2,
+      "hidden": 0,
+      "visible": 2
+    },
+    {
+      "replies": 3,
+      "hidden": 0,
+      "visible": 3
+    },
+    {
+      "replies": 4,
+      "hidden": 1,
+      "visible": 3
+    },
+    {
+      "replies": 5,
+      "hidden": 2,
+      "visible": 3
+    },
+    {
+      "replies": 10,
+      "hidden": 7,
+      "visible": 3
+    }
+  ]
+}

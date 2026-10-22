@@ -7,7 +7,7 @@ import { NextRequest } from "next/server";
 import { withAgent } from "@/lib/agent-auth";
 import { publishPost } from "@/lib/publish";
 import { NO_CACHE } from "../_lib";
-import { agentPostDto } from "../posts/route";
+import { agentPostDto } from "@/lib/agent-post-dto";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

@@ -222,7 +222,10 @@ export function agentCapabilities(
       // posting from the app); tokens issued before it existed must reconnect once.
       posts: {
         read: can("read"),
-        include: ["reactions", "read"],
+        include: ["reactions", "read", "display"],
+        // include=display: each post carries `display` — the web's display decisions
+        // (fold at 500, reaction order, link card, mentions…), docs/timeline-spec.md.
+        display: true,
         publish: can("post"),
         upload: can("post"),
         reactions: can("post") || can("write"),

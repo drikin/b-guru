@@ -91,6 +91,19 @@ import { applyShogiCommentaryEvent, applyShogiEvent, openShogiGame, reloadShogi 
 import { bubbleText } from "@/lib/room-logic";
 import { EDIT_HINT, SAVE_HINT, SEND_HINT, handleComposerKeyDown, useEnterSends } from "@/lib/composer-keys";
 import { mediaSized, mediaSrcSet } from "@/lib/media-url";
+import { toggleReactionOptimistic } from "@/lib/reaction-optimistic";
+import {
+  foldPoint,
+  foldedText,
+  highlightMentions,
+  imageColumns,
+  IMAGE_SINGLE_MAX_HEIGHT,
+  IMAGE_SINGLE_MAX_WIDTH,
+  LINK_CARD_IMAGE_MAX_HEIGHT,
+  linkCardOf,
+  linkifyUserLinks,
+  replyFold,
+} from "@/lib/timeline-display";
 import { createDeferredRefresh } from "@/lib/deferred-refresh";
 import { useStableHandler } from "@/lib/use-stable-handler";
 
@@ -271,38 +284,8 @@ function SafeAvatar({
 // ---- @mention support ----
 interface MentionMember { userId: string; name: string; avatar: string | null }
 
-/** Highlight @mentions in post text by wrapping them in a markdown link
- *  that mdToHtml turns into <a href="#mention-name">@name</a>, styled via CSS. */
-function highlightMentions(text: string, members: MentionMember[]): string {
-  if (!members.length) return text;
-  const nameSet = new Set(members.map(m => m.name.toLowerCase()));
-  // Match @[Full Name] (bracket syntax for names with spaces) or @name (single word)
-  return text
-    .replace(/@\[([^\]]+)\]/g, (match, name) => {
-      if (nameSet.has(name.toLowerCase())) {
-        return `[@${name}](#mention-${name.toLowerCase().replace(/\s+/g, "-")})`;
-      }
-      return match;
-    })
-    .replace(/@([^\s@<\[]+)/g, (match, name) => {
-      if (nameSet.has(name.toLowerCase())) {
-        return `[@${name}](#mention-${name.toLowerCase()})`;
-      }
-      return match;
-    });
-}
-
-/** Convert `#/user/<userId>` (or legacy `#/user/<email>`) — bare or prefixed
- *  with the site origin — into a clickable markdown link that opens the
- *  profile timeline. Without this, marked GFM turns only an `@gmail.com`
- *  part into a `mailto:` link and leaves the `#/user/` prefix as plain text
- *  (the intro link "not working"). */
-function linkifyUserLinks(text: string): string {
-  return String(text || "").replace(
-    /(?:https?:\/\/bsm\.backspace\.fm)?\/?#\/user\/([^\s<)\]，。、]+)/g,
-    (_m, token) => "[#/user/" + token + "](#/user/" + token + ")"
-  );
-}
+// highlightMentions / linkifyUserLinks live in lib/timeline-display.ts: the native apps get
+// the same decisions from the API (include=display → mentions / user_links), docs/timeline-spec.md.
 
 /** Render a chat message body with @mention tokens highlighted. Tokens that
  *  match a member get a subtle blue tint; the current user's own name (if
@@ -1553,7 +1536,6 @@ function PostCard({
   searchQuery,
   onOpenThread,
   onOpenThreadReply,
-  onLike,
   onReply,
   onWhisper,
   onEdit,
@@ -1580,7 +1562,6 @@ function PostCard({
   searchQuery?: string;
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
-  onLike: (id: number) => void;
   onReply: (id: number, name: string) => void;
   onWhisper?: (id: number, name: string) => void;
   onPin: (id: number) => void;
@@ -1604,9 +1585,14 @@ function PostCard({
    *  the reaction state lives in one place (the feed), not per card. */
   reactionBar?: React.ReactNode;
 }) {
-  const CLAMP_THRESHOLD = 500;
+  // 500 文字（JS の length）を超えたら畳む。位置の決まりは lib/timeline-display.ts が正本で、
+  // アプリには API の display.fold_at として同じ数字が渡る（docs/timeline-spec.md）。
+  const foldAt = foldPoint(post.text);
   const [expanded, setExpanded] = useState(false);
-  const needsClamp = post.text && post.text.length > CLAMP_THRESHOLD;
+  const needsClamp = foldAt != null;
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // リンクのカードの種類（Spotify=埋め込みだけ・YouTube=16:9 のサムネ・その他=カード）。lib/timeline-display.ts。
+  const linkCard = linkCardOf(post.urlPreview);
   // Timeline video: click anywhere on the video area to start playback (not just
   // the native play button). Once started, native controls appear.
   const [videoPlayed, setVideoPlayed] = useState(false);
@@ -1965,17 +1951,25 @@ function PostCard({
       )}
 
       {post.text && (
-        <div style={{ position: "relative" }}>
+        <div style={{ position: "relative" }} ref={bodyRef}>
           <div
             className="post-body"
+            // 畳んでいる間は本文の下を透明にフェードさせる（マスク）。以前は白のグラデーションを
+            // 重ねていたため、ダークモードと未読の背景色の上で白い帯が浮いていた。
+            style={
+              needsClamp && !expanded
+                ? {
+                    maskImage: "linear-gradient(to bottom, #000 calc(100% - 4em), transparent)",
+                    WebkitMaskImage: "linear-gradient(to bottom, #000 calc(100% - 4em), transparent)",
+                  }
+                : undefined
+            }
             dangerouslySetInnerHTML={{
               __html: highlightSearchTerm(
                 mdToHtml(
                   highlightMentions(
                     linkifyUserLinks(
-                      needsClamp && !expanded
-                        ? post.text.slice(0, CLAMP_THRESHOLD)
-                        : post.text
+                      expanded ? post.text : foldedText(post.text, foldAt)
                     ),
                     mentionMembers ?? []
                   )
@@ -1992,7 +1986,6 @@ function PostCard({
                 left: 0,
                 right: 0,
                 height: "4em",
-                background: "linear-gradient(transparent, white)",
                 display: "flex",
                 alignItems: "flex-end",
                 justifyContent: "center",
@@ -2011,6 +2004,26 @@ function PostCard({
               </Button>
             </div>
           )}
+          {/* 一度開いた長文を畳み直す（以前は開いたら閉じられなかった）。畳んだあと、
+              カードの頭が画面の上に消えていたら本文の頭まで戻す。 */}
+          {needsClamp && expanded && (
+            <Group justify="center" mt={4}>
+              <Button
+                variant="subtle"
+                size="xs"
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  setExpanded(false);
+                  requestAnimationFrame(() => {
+                    const el = bodyRef.current;
+                    if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ block: "start" });
+                  });
+                }}
+              >
+                閉じる
+              </Button>
+            </Group>
+          )}
         </div>
       )}
 
@@ -2020,7 +2033,8 @@ function PostCard({
           gap="xs"
           mt="sm"
           className="w-full"
-          style={{ display: "grid", gridTemplateColumns: post.images.length === 1 ? "100%" : `repeat(${Math.min(post.images.length, 3)}, 1fr)` }}
+          // 列数は lib/timeline-display.ts の imageColumns（1 枚=1 列・2 枚=2 列・3 枚以上=3 列）。切り抜かない。
+          style={{ display: "grid", gridTemplateColumns: imageColumns(post.images.length) === 1 ? "100%" : `repeat(${imageColumns(post.images.length)}, 1fr)` }}
         >
           {post.images.map((src, i) => (
             <Image
@@ -2042,8 +2056,12 @@ function PostCard({
               style={{
                 cursor: "pointer",
                 width: "100%",
-                maxWidth: post.images.length === 1 ? 360 : "none",
+                maxWidth: post.images.length === 1 ? IMAGE_SINGLE_MAX_WIDTH : "none",
                 height: "auto",
+                // 1 枚の縦長は高さ 480 で止め、枠の中に収める（切り抜かない・左寄せ）。アプリと同じ決まり。
+                ...(post.images.length === 1
+                  ? { maxHeight: IMAGE_SINGLE_MAX_HEIGHT, objectFit: "contain" as const, objectPosition: "left top" }
+                  : {}),
                 display: "block",
               }}
               onClick={() => onPreview(src, post.images)}
@@ -2136,7 +2154,7 @@ function PostCard({
           ジャケット・曲名・アーティストを表示するため、カードの
           「Spotify – Web Player」タイトルと「Spotify」サイト名は重複する
           （drikin 指摘）。埋め込みが本体なので、そちらだけ見せる。 */}
-      {post.urlPreview && !post.urlPreview.spotify && (
+      {post.urlPreview && linkCard && linkCard.kind !== "spotify" && (
         <Paper
           mt="sm"
           p="sm"
@@ -2165,7 +2183,10 @@ function PostCard({
                   width: "100%",
                   maxWidth: post.urlPreview.videoId ? 480 : "none",
                   aspectRatio: post.urlPreview.videoId ? "16/9" : undefined,
-                  objectFit: "cover",
+                  // YouTube は 16:9 に合わせる（cover）。それ以外は画像の形のまま、高さ 240 まで。
+                  // 超える縦長は枠の中に収める（切り抜かない）。アプリと同じ決まり。
+                  maxHeight: post.urlPreview.videoId ? undefined : LINK_CARD_IMAGE_MAX_HEIGHT,
+                  objectFit: post.urlPreview.videoId ? "cover" : "contain",
                   display: "block",
                 }}
               />
@@ -2220,12 +2241,12 @@ function PostCard({
           loading="lazy" で画面外の埋め込みは読み込まない（フィードが重く
           なるのを防ぐ）。高さは Spotify oEmbed が返した値を使う
           （track=152 / album・playlist 等=352）。 */}
-      {post.urlPreview?.spotify && (
+      {linkCard?.kind === "spotify" && (
         <Box mt="sm">
           <iframe
-            src={post.urlPreview.spotify.embedUrl}
+            src={linkCard.embed_url}
             width="100%"
-            height={post.urlPreview.spotify.height}
+            height={linkCard.embed_height}
             title="Spotify"
             /* ⚠️ Spotify では title を保存しない方針（urlpreview.ts 参照）なので、
                post.urlPreview.title を参照しても常に undefined になる。
@@ -2540,13 +2561,12 @@ function HotTopicCard({
   );
 }
 
-/** Collapsible replies: when a post has 5+ comments, show the parent + latest 3
- *  comments with the middle ones collapsed behind a "show N hidden" toggle.
+/** Collapsible replies: when a post has 4+ comments (REPLY_FOLD_THRESHOLD), show the
+ *  parent + latest 3 (REPLY_VISIBLE_TAIL) with the older ones collapsed behind a
+ *  "N件のコメントを表示" toggle. The numbers live in lib/timeline-display.ts (replyFold).
  *  Comments are in chronological ascending order (oldest first, newest at bottom).
  *  So we collapse the OLDER middle section (after parent, before the latest 3).
  *  Smooth expand/collapse animation using Mantine's Collapse + CSS transitions. */
-const COLLAPSE_THRESHOLD = 4;
-const VISIBLE_TAIL = 3; // latest 3 comments always visible
 
 function CollapsibleReplies({
   parentId,
@@ -2557,7 +2577,6 @@ function CollapsibleReplies({
   searchQuery,
   onOpenThread,
   onOpenThreadReply,
-  onLike,
   onReply,
   onWhisper,
   onEdit,
@@ -2575,7 +2594,6 @@ function CollapsibleReplies({
   searchQuery?: string;
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
-  onLike: (id: number) => void;
   onReply: (id: number, name: string) => void;
   onWhisper?: (id: number, name: string) => void;
   onEdit: (post: FeedPost) => void;
@@ -2587,7 +2605,8 @@ function CollapsibleReplies({
 }) {
   const [expanded, setExpanded] = useState(false);
 
-  if (replies.length < COLLAPSE_THRESHOLD) {
+  const fold = replyFold(replies.length);
+  if (fold.hidden === 0) {
     // No collapsing needed — render all replies directly
     return (
       <>
@@ -2601,7 +2620,6 @@ function CollapsibleReplies({
             avatarSrc={avatarSrc}
             onOpenThread={onOpenThread}
             onOpenThreadReply={onOpenThreadReply}
-            onLike={onLike}
             onEdit={onEdit}
             onDelete={onDelete}
             onPreview={onPreview}
@@ -2613,9 +2631,9 @@ function CollapsibleReplies({
     );
   }
 
-  const hiddenCount = replies.length - VISIBLE_TAIL;
+  const hiddenCount = fold.hidden;
   const hiddenReplies = replies.slice(0, hiddenCount); // older middle section
-  const visibleReplies = replies.slice(hiddenCount);   // latest 4
+  const visibleReplies = replies.slice(hiddenCount);   // latest 3
 
   return (
     <>
@@ -2668,7 +2686,7 @@ function CollapsibleReplies({
           </>
         )}
       </UnstyledButton>
-      {/* Collapsed older replies — expands between toggle and latest 4 */}
+      {/* Collapsed older replies — expands between toggle and latest 3 */}
       <Collapse
         data-fold={parentId}
         data-open={expanded}
@@ -2687,7 +2705,6 @@ function CollapsibleReplies({
               avatarSrc={avatarSrc}
               onOpenThread={onOpenThread}
               onOpenThreadReply={onOpenThreadReply}
-              onLike={onLike}
               onEdit={onEdit}
               onDelete={onDelete}
               onPreview={onPreview}
@@ -2708,7 +2725,6 @@ function CollapsibleReplies({
           avatarSrc={avatarSrc}
           onOpenThread={onOpenThread}
           onOpenThreadReply={onOpenThreadReply}
-          onLike={onLike}
           onEdit={onEdit}
           onDelete={onDelete}
           onPreview={onPreview}
@@ -2729,7 +2745,6 @@ function ReplyBubble({
   searchQuery,
   onOpenThread,
   onOpenThreadReply,
-  onLike,
   onEdit,
   onDelete,
   onPreview,
@@ -2743,7 +2758,6 @@ function ReplyBubble({
   searchQuery?: string;
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
-  onLike: (id: number) => void;
   onEdit: (post: FeedPost) => void;
   onDelete: (post: FeedPost) => void;
   onPreview: (src: string, group?: string[]) => void;
@@ -2770,7 +2784,6 @@ function ReplyBubble({
         reactionBar={renderReactionBar?.(rep.id, true)}
         onOpenThread={onOpenThread}
         onOpenThreadReply={() => {}}
-        onLike={onLike}
         onReply={() => {}}
         onEdit={onEdit}
         onDelete={onDelete}
@@ -2966,7 +2979,6 @@ function ProfileView({
   onEdit,
   onOpenThread,
   onOpenThreadReply,
-  onLike,
   onReply,
   onWhisper,
   onEditPost,
@@ -2997,7 +3009,6 @@ function ProfileView({
   onEdit: () => void;
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
-  onLike: (id: number) => void;
   onReply: (id: number, name: string) => void;
   onWhisper?: (id: number, name: string) => void;
   onEditPost: (post: FeedPost) => void;
@@ -3159,7 +3170,6 @@ function ProfileView({
                   showReplyButton={false}
                   onOpenThread={onOpenThread}
                   onOpenThreadReply={onOpenThreadReply}
-                  onLike={onLike}
                   onReply={onReply}
                   onWhisper={onWhisper}
                   onEdit={onEditPost}
@@ -3185,7 +3195,6 @@ function ProfileView({
                   searchQuery={searchQuery}
                   onOpenThread={onOpenThread}
                   onOpenThreadReply={onOpenThreadReply}
-                  onLike={onLike}
                   onReply={onReply}
                   onWhisper={onWhisper}
                   onEdit={onEditPost}
@@ -3611,7 +3620,6 @@ const TimelineFeed = memo(function TimelineFeed({
   onInlineReplySubmit,
   onOpenThread,
   onOpenThreadReply,
-  onLike,
   onReply,
   onWhisper,
   onEdit,
@@ -3667,7 +3675,6 @@ const TimelineFeed = memo(function TimelineFeed({
   ) => Promise<void>;
   onOpenThread: (id: number) => void;
   onOpenThreadReply: (id: number) => void;
-  onLike: (id: number) => void;
   onReply: (id: number) => void;
   onWhisper?: (id: number, name: string) => void;
   onEdit: (p: FeedPost) => void;
@@ -3762,7 +3769,6 @@ const TimelineFeed = memo(function TimelineFeed({
               reactionBarSource={renderReactionBar}
               onOpenThread={onOpenThread}
               onOpenThreadReply={onOpenThreadReply}
-              onLike={onLike}
               onReply={onReply}
               onWhisper={onWhisper}
               onEdit={onEdit}
@@ -3792,7 +3798,6 @@ const TimelineFeed = memo(function TimelineFeed({
               searchQuery={searchQuery}
               onOpenThread={onOpenThread}
               onOpenThreadReply={onOpenThreadReply}
-              onLike={onLike}
               onReply={onReply}
               onWhisper={onWhisper}
               onEdit={onEdit}
@@ -5058,7 +5063,6 @@ export default function Home() {
     openThread: (id: number) => void;
     openThreadReply: (id: number) => void;
     closeThread: () => void;
-    like: (id: number) => void;
     openComposer: () => void;
     hasThread: boolean;
   } | null>(null);
@@ -8625,46 +8629,7 @@ export default function Home() {
     openThread(postId);
   };
 
-  // Toggle like optimistically on the feed list AND the current thread view
-  // (threadPost + threadReplies use separate state, so update both). Also
-  // recurse into nested replies (inline group comments) so their likes update.
-  const toggleLikeLocal = (postId: number) => {
-    const flip = (p: any) => {
-      const hit = p.id === postId;
-      const next = hit
-        ? { ...p, likedByMe: !p.likedByMe, likeCount: p.likeCount + (p.likedByMe ? -1 : 1) }
-        : p;
-      if (p.replies?.length) next.replies = p.replies.map(flip);
-      return next;
-    };
-    setFeedPosts((prev) => prev.map(flip));
-    setThreadPost((prev) => (prev && (prev.id === postId || prev.replies?.some((r: any) => r.id === postId)) ? flip(prev) : prev));
-    setThreadReplies((prev) => prev.map(flip));
-  };
-
-  const toggleLikeRequest = (postId: number) => {
-    fetch(`/api/posts/${postId}/like`, { method: "POST" })
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.error) return;
-        // Sync from server response (feed + thread view)
-        const sync = (p: any) => {
-          const next = p.id === postId ? { ...p, likedByMe: d.liked, likeCount: d.likeCount } : p;
-          if (p.replies?.length) next.replies = p.replies.map(sync);
-          return next;
-        };
-        setFeedPosts((prev) => prev.map(sync));
-        setThreadPost((prev) => (prev && (prev.id === postId || prev.replies?.some((r: any) => r.id === postId)) ? sync(prev) : prev));
-        setThreadReplies((prev) => prev.map(sync));
-      })
-      .catch(() => {});
-  };
-
-  // Optimistic + server sync
-  const handleLike = (postId: number) => {
-    toggleLikeLocal(postId);
-    toggleLikeRequest(postId);
-  };
+  // 「いいね」は廃止（2026-10-22 オーナー決定）。リアクションの ❤️ を使う（docs/timeline-spec.md）。
 
   // ---- お気に入りトグル（投稿者単位・楽観更新 + Undo トースト） ----
   //   連打/Undo/サーバー応答の競合を防ぐ: in-flight 中は新規トグルを無視
@@ -8680,7 +8645,7 @@ export default function Home() {
     const wasFav = favoriteIdsRef.current.has(authorId);
     favInFlightRef.current.add(authorId);
     // 楽観更新: feed + thread の全カードの favoriteByMe を一括反転
-    //   （いいね toggleLikeLocal と同型。同じ投稿者の全カードが一斉に変わる）。
+    //   （同じ投稿者の全カードが一斉に変わる）。
     //   お気に入りタブ表示中に解除した場合は、その投稿者のカードをフィードから
     //   即座に除く（Instagram と同じ挙動 — 解除したら即フィードから消える）。
     const flip = (p: any) => {
@@ -8986,25 +8951,18 @@ export default function Home() {
   );
   const { emojis: customEmojis, reload: reloadCustomEmojis } = useCustomEmojis();
 
+  // The name shown for ME in a reaction's 「付けた人」 list until the server answers. Never the
+  // email (the tooltip is on screen; the server also returns display names, cut at '@').
+  const myReactorName = displayName.includes("@") ? displayName.split("@")[0] : displayName;
+
   // Toggle a reaction optimistically, then reconcile with the server's summary.
   // The server returns the authoritative list for the target, so a failed
   // request is corrected by the next fetch rather than left wrong.
   const handleToggleReaction = useCallback(
     (postId: number, emoji: string) => {
       const current = postReactions[postId] ?? [];
-      const existing = current.find((r) => r.emoji === emoji);
-      const optimistic: ReactionSummary[] = existing
-        ? existing.count <= 1
-          ? current.filter((r) => r.emoji !== emoji)
-          : current.map((r) =>
-              r.emoji === emoji
-                ? { ...r, count: r.count - 1, mine: false, reactors: r.reactors.slice(1) }
-                : r
-            )
-        : [
-            ...current,
-            { emoji, count: 1, mine: true, reactors: [auth?.email ?? ""] },
-          ];
+      // 自分が付けていれば外す・まだなら足す（lib/reaction-optimistic.ts）。
+      const optimistic: ReactionSummary[] = toggleReactionOptimistic(current, emoji, myReactorName);
       setPostReactions(postId, optimistic);
 
       fetch("/api/reactions", {
@@ -9023,7 +8981,7 @@ export default function Home() {
           setPostReactions(postId, current);
         });
     },
-    [postReactions, setPostReactions, auth?.email]
+    [postReactions, setPostReactions, myReactorName]
   );
 
   const handleRegisterEmoji = useCallback(
@@ -9071,16 +9029,8 @@ export default function Home() {
   const handleToggleChatReaction = useCallback(
     (messageId: number, emoji: string) => {
       const current = chatReactions[messageId] ?? [];
-      const existing = current.find((r) => r.emoji === emoji);
-      const optimistic: ReactionSummary[] = existing
-        ? existing.count <= 1
-          ? current.filter((r) => r.emoji !== emoji)
-          : current.map((r) =>
-              r.emoji === emoji
-                ? { ...r, count: r.count - 1, mine: false, reactors: r.reactors.slice(1) }
-                : r
-            )
-        : [...current, { emoji, count: 1, mine: true, reactors: [auth?.email ?? ""] }];
+      // 自分が付けていれば外す・まだなら足す（lib/reaction-optimistic.ts）。
+      const optimistic: ReactionSummary[] = toggleReactionOptimistic(current, emoji, myReactorName);
       setChatReactions(messageId, optimistic);
 
       fetch("/api/reactions", {
@@ -9098,7 +9048,7 @@ export default function Home() {
           setChatReactions(messageId, current);
         });
     },
-    [chatReactions, setChatReactions, auth?.email]
+    [chatReactions, setChatReactions, myReactorName]
   );
 
   const renderChatReactionBar = useCallback(
@@ -9533,7 +9483,6 @@ export default function Home() {
     openThread,
     openThreadReply,
     closeThread,
-    like: handleLike,
     openComposer: () => setComposerOpen(true),
     hasThread: !!threadPost,
   };
@@ -9541,7 +9490,7 @@ export default function Home() {
   // X-style keyboard navigation (like X / Twitter):
   //   j / ↓ ... next card,  k / ↑ ... previous card (wraps)
   //   Enter ... open the focused thread,  Esc ... close thread / clear focus
-  //   Space ... scroll the focused card into view,  r ... reply,  l ... like
+  //   Space ... scroll the focused card into view,  r ... reply
   //   c ... open the new-post composer,  G ... scroll to bottom
   // Skipped on touch devices and while typing in an input.
   useEffect(() => {
@@ -9846,7 +9795,6 @@ export default function Home() {
           break;
         case "r": if (kbdCursorId != null && kbdRef.current) kbdRef.current.openThreadReply(kbdCursorId); break;
         case "R": window.location.reload(); break; // Shift+r = hard reload
-        case "l": case "L": if (kbdCursorId != null && kbdRef.current) kbdRef.current.like(kbdCursorId); break;
         case "c": case "C": if (kbdRef.current) kbdRef.current.openComposer(); break;
         case "G": window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }); break;
         // T = return to the very top of the timeline (and clear keyboard focus)
@@ -10315,7 +10263,6 @@ export default function Home() {
   const feedSubmitInlineReply = useStableHandler(submitInlineReply);
   const feedOpenThread = useStableHandler(openThread);
   const feedOpenThreadReply = useStableHandler(openThreadReply);
-  const feedLike = useStableHandler(handleLike);
   const feedWhisper = useStableHandler(toggleWhisper);
   const feedEdit = useStableHandler(openEdit);
   const feedPin = useStableHandler(handlePin);
@@ -11331,12 +11278,12 @@ export default function Home() {
                   >
                     <Group gap="xs" align="flex-start" wrap="nowrap">
                       <Text size="lg" style={{ lineHeight: 1 }}>
-                        {n.type === "voice_report" ? "🚩" : n.type === "reply" ? "💬" : n.type === "mention" ? "📢" : n.type === "favorite" ? "⭐" : "❤️"}
+                        {n.type === "voice_report" ? "🚩" : n.type === "reply" ? "💬" : n.type === "mention" ? "📢" : "🔔"}
                       </Text>
                       <div style={{ minWidth: 0 }}>
                         <Text size="sm" c="inherit" style={{ wordBreak: "break-word" }}>
                           <b>{n.actorName}</b>
-                          {n.type === "voice_report" ? " が通報しました（ボイスルーム）" : n.type === "reply" ? " があなたの投稿に返信しました" : n.type === "mention" ? " があなたをメンションしました" : n.type === "favorite" ? " があなたをお気に入りに追加しました" : " があなたの投稿にいいねしました"}
+                          {n.type === "voice_report" ? " が通報しました（ボイスルーム）" : n.type === "reply" ? " があなたの投稿に返信しました" : n.type === "mention" ? " があなたをメンションしました" : " からのお知らせ"}
                         </Text>
                         {n.text ? (
                           <Text size="xs" c="dimmed" lineClamp={2}>
@@ -12471,7 +12418,6 @@ export default function Home() {
                   onEdit={openEditProfile}
                   onOpenThread={openThread}
                   onOpenThreadReply={openThreadReply}
-                  onLike={handleLike}
                   onReply={openThreadReply}
                   onWhisper={toggleWhisper}
                   onEditPost={openEdit}
@@ -12580,7 +12526,6 @@ export default function Home() {
                           reactionBar={renderReactionBar(threadPost.id)}
                           onOpenThread={openThread}
                           onOpenThreadReply={openThreadReply}
-                          onLike={handleLike}
                                   onReply={openThreadReply}
                           onWhisper={submitWhisperThread}
                           onEdit={openEdit}
@@ -12612,7 +12557,6 @@ export default function Home() {
                           reactionBar={renderReactionBar(rep.id, true)}
                           onOpenThread={openThread}
                           onOpenThreadReply={openThread}
-                          onLike={handleLike}
                                   onReply={openThread}
                           onEdit={openEdit}
                           onDelete={setDeleteTarget}
@@ -12864,7 +12808,6 @@ export default function Home() {
                   onInlineReplySubmit={feedSubmitInlineReply}
                   onOpenThread={feedOpenThread}
                   onOpenThreadReply={feedOpenThreadReply}
-                  onLike={feedLike}
                   onReply={feedOpenThreadReply}
                   onWhisper={feedWhisper}
                   onEdit={feedEdit}

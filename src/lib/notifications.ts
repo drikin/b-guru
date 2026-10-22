@@ -1,4 +1,6 @@
-/* Notifications library: reply/like notifications with read/unread state. */
+/* Notifications library: reply/mention (and voice_report) notifications with read/unread state.
+ * 'like' / 'favorite' are no longer created (いいね廃止 2026-10-22); old rows stay in the DB but are
+ * left out of the list and the unread count (RETIRED_NOTIFICATION_TYPES). */
 import { pool } from "./db";
 import { resolveDisplayNames, cleanDisplayName } from "./display-name";
 import { emailToUserId, emailToUserIds } from "./user";
@@ -16,7 +18,7 @@ import { pushPersonalNotification } from "./push-notify";
  */
 export interface Notification {
   id: number;
-  type: string; // 'reply' | 'like'
+  type: string; // 'reply' | 'mention' | 'voice_report'（旧 'like' / 'favorite' はもう作られない）
   actorId: string | null;
   actorName: string | null;
   isActor: boolean;
@@ -106,11 +108,15 @@ export async function createNotification(input: {
   return created;
 }
 
+/** Types that are no longer created (いいね・お気に入りの通知は 2026-10-22 に廃止). Old rows
+ *  stay in the database but are never listed or counted. */
+export const RETIRED_NOTIFICATION_TYPES = ["like", "favorite"];
+
 /** List notifications for a user, newest first. */
 export async function listNotifications(userEmail: string): Promise<Notification[]> {
   const res = await pool.query(
-    `SELECT * FROM notifications WHERE user_email = $1 ORDER BY id DESC LIMIT 50`,
-    [userEmail]
+    `SELECT * FROM notifications WHERE user_email = $1 AND type <> ALL($2::text[]) ORDER BY id DESC LIMIT 50`,
+    [userEmail, RETIRED_NOTIFICATION_TYPES]
   );
   const rows = res.rows;
   const names = await resolveDisplayNames(rows.map((r) => r.actor_email));
@@ -137,8 +143,8 @@ export async function listNotifications(userEmail: string): Promise<Notification
 /** Count unread notifications for a user. */
 export async function countUnreadNotifications(userEmail: string): Promise<number> {
   const res = await pool.query(
-    `SELECT COUNT(*) AS c FROM notifications WHERE user_email = $1 AND read_at IS NULL`,
-    [userEmail]
+    `SELECT COUNT(*) AS c FROM notifications WHERE user_email = $1 AND read_at IS NULL AND type <> ALL($2::text[])`,
+    [userEmail, RETIRED_NOTIFICATION_TYPES]
   );
   return Number(res.rows[0].c);
 }

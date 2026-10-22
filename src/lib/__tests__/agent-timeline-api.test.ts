@@ -27,7 +27,7 @@ vi.mock("@/lib/posts", async (orig) => {
   const actual = await (orig as () => Promise<Record<string, unknown>>)();
   return {
     ...actual,
-    listPosts: async () => [post(10), post(11, true), post(12)],
+    listPosts: async () => [post(10), post(11, true), post(12), { ...post(14), text: "あ".repeat(501), club: "__unset__" }],
     getPostThread: async () => ({ post: post(10), replies: [{ ...post(13), parentId: 10 }] }),
   };
 });
@@ -56,6 +56,9 @@ import { POST as publishPOST } from "@/app/api/agent/publish/route";
 import { POST as uploadPOST } from "@/app/api/agent/upload/route";
 import { POST as readPOST } from "@/app/api/agent/read/route";
 import { LOCAL_IMAGE_RE } from "@/lib/publish";
+import { asAgentPostDto } from "@/lib/agent-write";
+import { agentPostDto } from "@/lib/agent-post-dto";
+import { agentCapabilities } from "@/lib/agent-chat";
 
 let scopes: string[] = ["read"];
 let tokenId = 100;
@@ -117,6 +120,75 @@ describe("GET /api/agent/posts（アプリのタイムライン）", () => {
     expect(b.post.unread).toBe(true);
     expect(b.replies[0]).toMatchObject({ id: 13, unread: true });
     expect(b.replies[0].unread_replies).toBeUndefined(); // 返信には付けない
+  });
+});
+
+describe("include=display（表示の判断・docs/timeline-spec.md）", () => {
+  it("display だけ頼むと display が付き、reactions は付かない（並びの計算には使う）", async () => {
+    authed();
+    const b = await (await postsGET(req("http://x/api/agent/posts?include=display", { headers: H }))).json();
+    const by = (id: number) => b.posts.find((p: { id: number }) => p.id === id);
+    expect(by(10).reactions).toBeUndefined();
+    expect(by(10).display).toMatchObject({ version: 1, fold: false, fold_at: null, reactions_order: ["❤️"], reactors_more: { "❤️": 2 }, image_columns: 1, link_card_url: null });
+    expect(by(14).display).toMatchObject({ fold: true, fold_at: 500, club_label: "未設定", club_unset: true, reactions_order: [] });
+  });
+
+  it("reactions と一緒に頼めば両方。include なしは display を付けない（古いアプリ・MCP はそのまま）", async () => {
+    authed();
+    const both = await (await postsGET(req("http://x/api/agent/posts?include=reactions,display", { headers: H }))).json();
+    expect(both.posts[0].reactions).toHaveLength(1);
+    expect(both.posts[0].display.reactions_order).toEqual(["❤️"]);
+    authed();
+    const none = await (await postsGET(req("http://x/api/agent/posts", { headers: H }))).json();
+    expect(none.posts[0].display).toBeUndefined();
+  });
+
+  it("スレッドも返信も display を返す", async () => {
+    authed();
+    const res = await threadGET(req("http://x/api/agent/posts/10?include=display", { headers: H }), { params: Promise.resolve({ id: "10" }) });
+    const b = await res.json();
+    expect(b.post.display.reactions_order).toEqual(["❤️"]);
+    expect(b.replies[0].display).toMatchObject({ fold: false, image_columns: 1 });
+  });
+
+  it("capabilities で display を知らせる", () => {
+    const caps = agentCapabilities(["read", "post"]);
+    expect(caps.features.posts.display).toBe(true);
+    expect(caps.features.posts.include).toContain("display");
+  });
+});
+
+describe("投稿の形（DTO）は 1 つ", () => {
+  const full = {
+    ...post(30, true), parentId: 10, replyCount: 2, videoUrl: "/api/media/v.mp4", audioUrl: "/api/media/a.m4a",
+    urlPreview: { url: "https://example.com" }, lastActivityAt: "2026-10-16T01:00:00Z", pinnedAt: "2026-10-16T02:00:00Z",
+    club: "chat", clubManual: true, poll: null, via: "agent", isAuthor: true, likedByMe: false, favoriteByMe: false, bookmarkedByMe: false,
+  };
+
+  it("投稿直後（agent-write）と一覧で同じ形・同じ値（アバター・動画・音声・ピン・投票も）", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(asAgentPostDto(full as any)).toEqual(agentPostDto(full as any));
+  });
+
+  it("以前からある項目は消えていない（古いアプリが読む項目）", () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dto = agentPostDto(full as any);
+    for (const k of [
+      "id", "author_id", "author_name", "author_avatar", "is_author", "parent_id", "reply_count", "text", "images",
+      "video_url", "audio_url", "url_preview", "like_count", "created_at", "last_activity_at", "pinned_at", "club",
+      "club_manual", "poll",
+    ]) expect(dto, k).toHaveProperty(k);
+    expect(dto).toMatchObject({ author_avatar: "/api/avatar/0123456789abcdef0123456789abcdef", video_url: "/api/media/v.mp4", audio_url: "/api/media/a.m4a", pinned_at: "2026-10-16T02:00:00Z", via: "agent" });
+    expect(JSON.stringify(dto)).not.toContain("gravatar.com");
+  });
+
+  it("publish の返事も同じ形", async () => {
+    scopes = ["read", "post"];
+    authed();
+    publishPost.mockResolvedValue({ status: 201, body: { post: full } });
+    const res = await publishPOST(req("http://x/api/agent/publish", { method: "POST", headers: H, body: JSON.stringify({ text: "hi" }) }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((await res.json()).post).toEqual(agentPostDto(full as any));
   });
 });
 

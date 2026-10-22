@@ -2890,6 +2890,71 @@ if (notFound.length) {
   console.log(`  [info] ${notFound.length} avatar 404(s) — members without a Gravatar, expected`);
 }
 
+// ------------------------------------------- タイムライン同等化 段階0（2026-10-22）
+// アプリ用 API の投稿の形（DTO）と include=display（docs/timeline-spec.md）。読むだけ
+// （GET だけ・投稿しない）。アプリのトークン（read スコープ）を BGURU_AGENT_TOKEN に
+// 入れたときだけ動く。Web の「続きを読む」が白いグラデーションを重ねていないことも見る。
+console.log("\nTL. タイムラインの表示の判断（include=display）と投稿の形・いいね廃止");
+{
+  const fadeWhite = await page
+    .evaluate(`[...document.querySelectorAll('.post-body')].some((el) => {
+      const sib = el.nextElementSibling;
+      return !!sib && /linear-gradient\(transparent, (white|rgb\(255, 255, 255\))\)/.test(sib.getAttribute('style') || '');
+    })`)
+    .catch(() => null);
+  check("Web: 「続きを読む」に白いグラデーションを重ねない（ダークで浮かない）", fadeWhite === false, `found=${fadeWhite}`);
+}
+{
+  // 「いいね」は廃止（2026-10-22 オーナー決定）: ルートが無いこと。存在しない id を使い、何も書き込まない。
+  const likeStatus = await page
+    .evaluate(`fetch('/api/posts/0/like', { method: 'POST' }).then((r) => r.status).catch((e) => String(e))`)
+    .catch(() => null);
+  check("いいねの API（POST /api/posts/:id/like）は無い", likeStatus === 404 || likeStatus === 405, `status=${likeStatus}`);
+}
+if (!process.env.BGURU_AGENT_TOKEN) {
+  console.log("  [skip] BGURU_AGENT_TOKEN が無いので API の確認は飛ばす");
+} else {
+  const AH = { Authorization: `Bearer ${process.env.BGURU_AGENT_TOKEN}` };
+  const getJson = async (path) => {
+    const r = await fetch(new URL(path, BASE_URL), { headers: AH }).catch((e) => ({ ok: false, status: String(e) }));
+    return { status: r.status, body: r.ok ? await r.json().catch(() => null) : null };
+  };
+  const caps = await getJson("/api/agent/capabilities");
+  check("capabilities: features.posts.display", caps.body?.features?.posts?.display === true, `status=${caps.status}`);
+  check("capabilities: include に display", (caps.body?.features?.posts?.include ?? []).includes("display"));
+
+  const list = await getJson("/api/agent/posts?limit=30&include=reactions,display");
+  const posts = list.body?.posts ?? [];
+  check("GET /api/agent/posts?include=reactions,display が 200", list.status === 200 && posts.length > 0, `status=${list.status} n=${posts.length}`);
+  const KEYS = ["id", "author_id", "author_name", "author_avatar", "is_author", "parent_id", "reply_count", "text", "images", "video_url", "audio_url", "url_preview", "like_count", "created_at", "last_activity_at", "pinned_at", "club", "club_manual", "poll", "via"];
+  const missing = posts.flatMap((p) => KEYS.filter((k) => !(k in p)).map((k) => `${p.id}:${k}`));
+  check("投稿の形: 全項目がそろう（アバター・動画・音声・投票・ピン・via）", missing.length === 0, missing.slice(0, 5).join(","));
+  const badFold = posts.filter((p) => p.display?.fold !== ((p.text ?? "").length > 500));
+  check("display.fold == 本文が 500 を超える", badFold.length === 0, badFold.map((p) => p.id).join(","));
+  const badOrder = posts.filter((p) => {
+    const rs = p.reactions ?? [];
+    const want = [...rs].sort((a, b) => b.count - a.count || (a.emoji < b.emoji ? -1 : a.emoji > b.emoji ? 1 : 0)).map((r) => r.emoji);
+    return JSON.stringify(want) !== JSON.stringify(p.display?.reactions_order) || JSON.stringify(rs.map((r) => r.emoji)) !== JSON.stringify(want);
+  });
+  check("リアクションは件数の多い順・同数は絵文字順（reactions と display が同じ）", badOrder.length === 0, badOrder.map((p) => p.id).join(","));
+  const badMore = posts.filter((p) => (p.reactions ?? []).some((r) => p.display?.reactors_more?.[r.emoji] !== Math.max(0, r.count - r.reactors.length)));
+  check("他N人 = count − 名前の数（名前は 12 人まで）", badMore.length === 0 && posts.every((p) => (p.reactions ?? []).every((r) => r.reactors.length <= 12)), badMore.map((p) => p.id).join(","));
+  const badCard = posts.filter((p) => (p.display?.link_card_url ?? null) !== (p.url_preview?.url ?? null));
+  check("link_card_url == url_preview.url", badCard.length === 0, badCard.map((p) => p.id).join(","));
+  // url_preview は本文のリンク先（人が書いたもの）なので見ない。text・poll は findEmailLeaks が飛ばす。
+  const serverPart = posts.map(({ url_preview, ...rest }) => (void url_preview, rest));
+  const leaks = findEmailLeaks(serverPart);
+  check("API にメール・gravatar の URL が出ない（display を含む）", !JSON.stringify(serverPart).includes("gravatar.com") && leaks.length === 0, leaks.slice(0, 3).join(","));
+
+  const root = posts.find((p) => !p.parent_id);
+  if (root) {
+    const th = await getJson(`/api/agent/posts/${root.id}?include=display`);
+    check("スレッドも display を返す（返信も）", th.status === 200 && !!th.body?.post?.display && (th.body?.replies ?? []).every((r) => !!r.display), `status=${th.status}`);
+  }
+  const plain = await getJson("/api/agent/posts?limit=3");
+  check("include なしは display を付けない（古いアプリ・MCP はそのまま）", (plain.body?.posts ?? []).every((p) => p.display === undefined));
+}
+
 // ------------------------------------------------------------ final
 check("no uncaught page errors at the end", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 

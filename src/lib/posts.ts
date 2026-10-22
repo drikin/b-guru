@@ -232,6 +232,8 @@ export async function createPost(input: NewPostInput): Promise<FeedPost> {
     poll: pollOut,
     club: null, // 自動分類は publish 直後の fire-and-forget で後追い付与
     clubManual: false,
+    // 保存した via をそのまま返す（以前は抜けていて、POST /api/agent/posts の返事が via: null だった）。
+    via: input.via ?? null,
   };
 }
 
@@ -644,44 +646,8 @@ export function gravatarUrl(email: string): string {
   return `/api/avatar/${md5}`;
 }
 
-/** Toggle a like for a post. Returns the new like state. */
-export async function toggleLike(postId: number, userEmail: string): Promise<{
-  liked: boolean;
-  likeCount: number;
-}> {
-  // Check the post exists
-  const exists = await pool.query(`SELECT 1 FROM posts WHERE id = $1`, [postId]);
-  if (exists.rows.length === 0) {
-    throw new Error("not_found");
-  }
-
-  const already = await pool.query(
-    `SELECT 1 FROM post_likes WHERE post_id = $1 AND user_email = $2`,
-    [postId, userEmail]
-  );
-
-  if (already.rows.length > 0) {
-    await pool.query(
-      `DELETE FROM post_likes WHERE post_id = $1 AND user_email = $2`,
-      [postId, userEmail]
-    );
-  } else {
-    await pool.query(
-      `INSERT INTO post_likes (post_id, user_email) VALUES ($1, $2)`,
-      [postId, userEmail]
-    );
-  }
-
-  const cnt = await pool.query(
-    `SELECT COUNT(*) AS c FROM post_likes WHERE post_id = $1`,
-    [postId]
-  );
-
-  return {
-    liked: already.rows.length === 0,
-    likeCount: Number(cnt.rows[0].c),
-  };
-}
+/* 「いいね」（POST /api/posts/[id]/like・toggleLike）は廃止（2026-10-22 オーナー決定）。
+ * post_likes 表と既存の行は残す（like_count はアプリ用 API の既存項目なので返し続ける）。 */
 
 /** Get a single post's author email. Returns null if not found. */
 async function getPostAuthor(postId: number): Promise<string | null> {

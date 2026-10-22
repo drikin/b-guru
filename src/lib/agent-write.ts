@@ -15,25 +15,14 @@ import { emitLive } from "./live";
 import { isActiveClubKey } from "./club-store";
 import { findMemberByEmail } from "./ghost";
 import type { AgentContext } from "./agent-auth";
-import type { FeedPost } from "./feed";
+import type { FeedPost } from "./posts";
+import { agentPostDto } from "./agent-post-dto";
 
 /** 投稿本文の上限（UI 投稿と同水準の暴走ガード）。 */
 export const AGENT_POST_MAX_TEXT = 5000;
 
-export function asAgentPostDto(p: FeedPost) {
-  return {
-    id: p.id,
-    author_id: p.authorId,
-    author_name: p.authorName ?? null,
-    parent_id: p.parentId ?? null,
-    text: p.text,
-    images: p.images ?? [],
-    like_count: p.likeCount ?? 0,
-    created_at: p.createdAt,
-    last_activity_at: p.lastActivityAt ?? p.createdAt,
-    club: p.club ?? null,
-  };
-}
+/** 投稿の形はアプリ用 API と同じ 1 つ（agent-post-dto.ts が正本）。名前は既存の呼び出しのために残す。 */
+export const asAgentPostDto = (p: FeedPost) => agentPostDto(p);
 
 /** 投稿者表示名: user_profiles → Ghost の順（/api/publish と同一規則）。 */
 async function resolveAuthorName(email: string): Promise<string | null> {

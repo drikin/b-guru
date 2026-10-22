@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Group, Popover, Text, Tooltip, UnstyledButton } from "@mantine/core";
+import { reactorsMore, sortReactions } from "@/lib/timeline-display";
 
 /**
  * Reactions on posts and chat messages.
@@ -10,7 +11,8 @@ import { Box, Group, Popover, Text, Tooltip, UnstyledButton } from "@mantine/cor
  * ような設計にしてたんですけど、やっぱりちょっと寂しい感じがするので、設計を
  * 見直してほしい」— the card previously rendered 返信 only (see the comment that
  * used to sit above the action row), so `onLike` was plumbed through every
- * component but never drawn.
+ * component but never drawn. (The old like itself was removed on 2026-10-22 —
+ * owner decision: ❤️ reactions replace it.)
  *
  * Shape of the interaction, as chosen by drikin:
  *   - one tap on ❤️ reacts immediately (the old like button's feel, preserved)
@@ -154,7 +156,7 @@ export function ReactionWhoList({
 }) {
   // ★ 名前リストは上限で切られているので、切られている時は「他N人」を出す。
   //   黙って少ない人数を出すと、アイコンの数字と食い違って嘘になる。
-  const hidden = Math.max(0, count - reactors.length);
+  const hidden = reactorsMore({ count, reactors });
   return (
     <Box data-cx="reaction-who" style={{ maxWidth: 260 }}>
       <Group gap={6} align="center" wrap="nowrap" mb={reactors.length ? 4 : 0}>
@@ -234,7 +236,9 @@ export function ReactionBar({
     // group (drikin 2026-09-25) where wrapping would push the icons onto a
     // second line and collide with the author header.
     <Group gap={compact ? 4 : 6} wrap="nowrap" align="center" data-cx="reaction-bar">
-      {reactions.map((r) => (
+      {/* 件数の多い順・同数は絵文字順（lib/timeline-display.ts。サーバもアプリも同じ順）。
+          楽観更新で末尾に足したリアクションもここで正しい位置に並ぶ。 */}
+      {sortReactions(reactions).map((r) => (
         // Hover shows WHO reacted (drikin 2026-09-25: 「リアクションのアイコンに
         // マウスオーバーしたら、誰がリアクションしたかもわかるようにした方が良く
         // ないですか？」). A Mantine Tooltip rather than the native `title` attribute:

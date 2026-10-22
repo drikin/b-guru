@@ -182,6 +182,21 @@ describe("getReactions", () => {
     expect(m.get(1)![0].reactors).toEqual(["どりきん", "eiko"]);
   });
 
+  // The emoji tie-break used to follow the database collation. The web and the apps now
+  // share one rule (lib/timeline-display.ts): count desc, then UTF-16 code-unit order.
+  it("orders by count desc, then emoji by UTF-16 code units, whatever the DB returned", async () => {
+    query.mockResolvedValueOnce({
+      rows: [
+        { target_id: 1, emoji: "🎉", count: 2, mine: false, reactors: [] },
+        { target_id: 1, emoji: ":drikin:", count: 2, mine: false, reactors: [] },
+        { target_id: 1, emoji: "👍", count: 5, mine: false, reactors: [] },
+        { target_id: 1, emoji: "❤️", count: 5, mine: false, reactors: [] },
+      ],
+    });
+    const m = await getReactions("post", [1], null);
+    expect(m.get(1)!.map((r) => r.emoji)).toEqual(["❤️", "👍", ":drikin:", "🎉"]);
+  });
+
   it("batches every target into one query", async () => {
     query.mockResolvedValueOnce({ rows: [] });
     await getReactions("post", [1, 2, 3, 4, 5], "a@b.c");

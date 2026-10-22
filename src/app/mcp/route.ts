@@ -43,7 +43,7 @@ import {
   agentToggleBookmark,
   asAgentPostDto,
 } from "@/lib/agent-write";
-import { agentPostDto } from "@/app/api/agent/posts/route";
+import { agentPostDto } from "@/lib/agent-post-dto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

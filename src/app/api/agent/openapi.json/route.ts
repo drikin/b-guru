@@ -49,10 +49,14 @@ const spec = {
       },
       AgentPost: {
         type: "object",
+        description:
+          "投稿の形（src/lib/agent-post-dto.ts が唯一の正本。一覧・スレッド・投稿直後・検索・MCP で同じ）。項目は消さない・意味を変えない。",
         properties: {
           id: { type: "integer" },
           author_id: { type: "string", description: "不透明 user_id" },
           author_name: { type: ["string", "null"] },
+          author_avatar: { type: ["string", "null"], description: "同じオリジンの /api/avatar/<hash> など（gravatar の URL は出さない）" },
+          is_author: { type: "boolean", description: "呼び出した本人の投稿か" },
           parent_id: { type: ["integer", "null"] },
           reply_count: { type: "integer" },
           text: { type: "string" },
@@ -67,6 +71,52 @@ const spec = {
           club: { type: ["string", "null"] },
           club_manual: { type: "boolean" },
           poll: { type: ["object", "null"] },
+          via: { type: ["string", "null"], description: "\"agent\" = AI エージェント経由の投稿" },
+          reactions: {
+            type: "array",
+            description:
+              "include=reactions のときだけ。件数の多い順・同数は絵文字の UTF-16 順。count は付けた人の総数、reactors は最大 12 人の表示名（残りは「他 count-12 人」）",
+            items: {
+              type: "object",
+              properties: {
+                emoji: { type: "string" },
+                count: { type: "integer" },
+                mine: { type: "boolean" },
+                reactors: { type: "array", items: { type: "string" } },
+              },
+            },
+          },
+          unread: { type: "boolean", description: "include=read のときだけ" },
+          unread_replies: { type: "integer", description: "include=read のときだけ（ルート投稿）" },
+          display: { $ref: "#/components/schemas/PostDisplay" },
+        },
+      },
+      PostDisplay: {
+        type: "object",
+        description:
+          "include=display のときだけ。Web と同じ関数（src/lib/timeline-display.ts）で計算した表示の判断。位置はすべて JS の length（UTF-16 のコード単位）。決まりは docs/timeline-spec.md。",
+        properties: {
+          version: { type: "integer" },
+          fold: { type: "boolean", description: "本文が 500 を超えるので畳んで「続きを読む」を出す" },
+          fold_at: { type: ["integer", "null"], description: "畳んだときに見せる本文の長さ（text の先頭からこの位置まで）" },
+          reactions_order: { type: "array", items: { type: "string" } },
+          reactors_more: { type: "object", additionalProperties: { type: "integer" }, description: "絵文字ごとの「他N人」の N" },
+          image_columns: { type: "integer", description: "0〜3。1 のときは最大幅 360px。切り抜かない" },
+          link_card_url: { type: ["string", "null"] },
+          link_card: {
+            type: ["object", "null"],
+            description: "kind: spotify（埋め込みだけ・embed_url/embed_height）/ youtube（16:9・最大幅 480・video_id）/ link",
+          },
+          mention_ranges: {
+            type: "array",
+            items: { type: "object", properties: { start: { type: "integer" }, end: { type: "integer" }, name: { type: "string" } } },
+          },
+          user_links: {
+            type: "array",
+            items: { type: "object", properties: { start: { type: "integer" }, end: { type: "integer" }, user_id: { type: "string" } } },
+          },
+          club_label: { type: ["string", "null"] },
+          club_unset: { type: "boolean" },
         },
       },
     },
@@ -161,6 +211,12 @@ const spec = {
           { name: "author_user_id", in: "query", schema: { type: "string" } },
           { name: "fav", in: "query", schema: { type: "string", enum: ["1"] }, description: "お気に入りの投稿者のみ" },
           { name: "bm", in: "query", schema: { type: "string", enum: ["1"] }, description: "ブックマーク済み投稿のみ" },
+          {
+            name: "include",
+            in: "query",
+            schema: { type: "string" },
+            description: "カンマ区切り: reactions / read / display（capabilities の features.posts.include にあるもの）",
+          },
         ],
         responses: {
           "200": {
@@ -186,7 +242,10 @@ const spec = {
     "/api/agent/posts/{id}": {
       get: {
         summary: "スレッド1本（ルート + 返信）",
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+        parameters: [
+          { name: "id", in: "path", required: true, schema: { type: "integer" } },
+          { name: "include", in: "query", schema: { type: "string" }, description: "カンマ区切り: reactions / read / display" },
+        ],
         responses: {
           "200": {
             description: "OK",

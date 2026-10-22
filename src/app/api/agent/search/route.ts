@@ -4,7 +4,7 @@ import { listPosts } from "@/lib/posts";
 import { getHiddenClubs } from "@/lib/club-visibility";
 import { withAgent, sanitizeLikePattern } from "@/lib/agent-auth";
 import { NO_CACHE } from "../_lib";
-import { agentPostDto } from "../posts/route";
+import { agentPostDto } from "@/lib/agent-post-dto";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";

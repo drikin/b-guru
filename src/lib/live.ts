@@ -23,7 +23,7 @@ type ChatLiveMessage = { id: number } & Partial<ChatMessage>;
  *   { type: "post"   , postId, action: "update" }  — edited text/images
  *   { type: "post"   , postId, action: "delete" }  — deleted post
  *   { type: "pin"    , postId, action: "toggle" }  — pinned/unpinned
- *   { type: "like"   , postId, action: "toggle" }  — optional like toggle
+ *   （"like" イベントは廃止: いいねは 2026-10-22 に廃止）
  *   { type: "club"   , postId, club }              — 部活動ラベル付与/変更
  *
  * Clients only receive a lightweight "something changed" signal and re-fetch
