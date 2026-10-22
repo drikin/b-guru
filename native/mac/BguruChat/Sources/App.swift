@@ -32,8 +32,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         HangWatch.shared.start()
         TextComposition.watchReturnKey()
         #if DEBUG
-        // Dev only: -tapDetectorTest runs the three-finger-tap logic tests and exits (1 on failure).
-        if CommandLine.arguments.contains("-tapDetectorTest") { exit(ThreeFingerTapDetector.selfTest() ? 0 : 1) }
         // Dev only: show in the Dock so UI automation can find the app.
         if CommandLine.arguments.contains("-regular") { NSApp.setActivationPolicy(.regular) }
         #endif
@@ -336,6 +334,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         collapse.target = self
         collapse.state = settings.collapseStatusItems ? .on : .off
         menu.addItem(collapse)
+        if settings.collapseStatusItems {
+            let hover = NSMenuItem(title: "カーソルを乗せたら出す", action: #selector(toggleCollapseHover), keyEquivalent: "")
+            hover.target = self
+            hover.indentationLevel = 1
+            hover.state = settings.collapseRevealOnHover ? .on : .off
+            menu.addItem(hover)
+        }
         let ver = NSMenuItem(title: "バージョン \(Updater.shared.currentVersion)（ベータ）", action: nil, keyEquivalent: "")
         ver.isEnabled = false
         menu.addItem(ver)
@@ -351,6 +356,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @objc private func openPanelAction() { showPanel() }
     @objc private func toggleCollapseSetting() { settings.collapseStatusItems.toggle() }
+    @objc private func toggleCollapseHover() { settings.collapseRevealOnHover.toggle() }
     @objc private func signOutAction() { signOut() }
     @objc private func checkUpdates() { Updater.shared.checkNow() }
     @objc private func openWeb() { NSWorkspace.shared.open(APIClient.baseURL) }
@@ -417,6 +423,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let c = StatusBarCollapser(beagle: statusItem)
         collapser = c
         settings.onCollapseChange = { [weak self] on in self?.applyCollapseSetting(on, userAction: true) }
+        c.revealOnHover = settings.collapseRevealOnHover
+        settings.onCollapseHoverChange = { [weak self] on in
+            self?.collapser?.revealOnHover = on
+            StatusBarDiag.note("カーソルを乗せたら出す: \(on ? "オン" : "オフ")")
+        }
         if settings.collapseStatusItems { applyCollapseSetting(true, userAction: false) }
         #if DEBUG
         if CommandLine.arguments.contains("-collapseTest") { StatusBarDiag.enabled = true; startCollapseTest() }
@@ -446,7 +457,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let alert = NSAlert()
         alert.messageText = "ほかのステータスバーアイコンを畳む（試験的）"
         alert.informativeText = "ビーグルの左に区切り（‹）を置きました。隠したいアイコンを ⌘ を押しながら区切りの左へドラッグしてください。\n\n"
-            + "ビーグルを ⌥（option）＋クリック（またはトラックパッドの 3 本指タップ、区切りのクリック）で出し入れします。出したあと 10 秒たつか、"
+            + "ビーグルにカーソルを乗せて少し止める（⋯ メニューで切れます）か、ビーグルを ⌥（option）＋クリック、または区切り（‹）のクリックで出し入れします。出したあと 10 秒たつか、"
             + "メニューバーからマウスを離すとまた畳みます。畳んだアイコンは macOS の « からも開けます。\n\n"
             + "macOS の仕様にない動きに頼る試験的な機能です。将来の macOS で効かなくなることがあります（そのときは何も隠れないだけです）。"
             + "オフにすると区切りを消して元に戻します。"
@@ -486,6 +497,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 case "expand": c.expand()
                 case "settingOn": self.settings.collapseStatusItems = true
                 case "settingOff": self.settings.collapseStatusItems = false
+                case "hoverOn": self.settings.collapseRevealOnHover = true
+                case "hoverOff": self.settings.collapseRevealOnHover = false
                 case "unread": self.updateStatusIcon(unread: 12, mentions: 0, connection: .live)
                 case "frames":
                     NSLog("[collapse] frames beagle=%@ dummies=%@", NSStringFromRect(self.statusItem.button?.window?.frame ?? .zero),

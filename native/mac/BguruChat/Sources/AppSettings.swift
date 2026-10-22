@@ -37,7 +37,7 @@ final class AppSettings {
         }
     }
     @ObservationIgnored var onDockChange: ((Bool) -> Void)?
-    /// 試験的：ほかのステータスバーアイコンを畳む（ビーグルを ⌥＋クリック／3 本指タップで出し入れ）。既定は切。
+    /// 試験的：ほかのステータスバーアイコンを畳む（ビーグルを ⌥＋クリック、または区切りのクリックで出し入れ）。既定は切。
     var collapseStatusItems: Bool {
         didSet {
             guard collapseStatusItems != oldValue else { return }
@@ -46,6 +46,15 @@ final class AppSettings {
         }
     }
     @ObservationIgnored var onCollapseChange: ((Bool) -> Void)?
+    /// 試験機能の中の設定：ビーグルにカーソルを乗せて少し止めたら出す。既定はオン。
+    var collapseRevealOnHover: Bool {
+        didSet {
+            guard collapseRevealOnHover != oldValue else { return }
+            UserDefaults.standard.set(collapseRevealOnHover, forKey: "collapseRevealOnHover")
+            onCollapseHoverChange?(collapseRevealOnHover)
+        }
+    }
+    @ObservationIgnored var onCollapseHoverChange: ((Bool) -> Void)?
 
     static let quietStartHour = 0
     static let quietEndHour = 7
@@ -57,6 +66,7 @@ final class AppSettings {
         showInDock = d.bool(forKey: "showInDock")
         notifyTimeline = d.bool(forKey: "notifyTimeline")
         collapseStatusItems = d.bool(forKey: "collapseOtherStatusItems")
+        collapseRevealOnHover = d.object(forKey: "collapseRevealOnHover") as? Bool ?? true
     }
 
     func isQuietNow(_ date: Date = Date()) -> Bool {

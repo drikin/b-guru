@@ -44,12 +44,15 @@ final class StatusBarCollapser {
     private var mouseWasInBar = false
     private var leftBarAt: Date?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
-    private var gestureMonitor: Any?
-    private var tapDetector = ThreeFingerTapDetector()
-    /// ビーグルのボタンがもともとタッチを受けていたか（オフで戻す）。
-    private var savedTouchTypes: NSTouch.TouchTypeMask?
     /// 状態が変わるたびに（ログ・デバッグ用）。
     var onLog: ((String) -> Void)?
+    /// カーソルをビーグルに乗せて少し止めたら出す（設定。既定はオン）。
+    var revealOnHover = true
+    static let hoverDwell: TimeInterval = 0.4
+    private var hoverTracker: HoverTracker?
+    private var hoverTask: Task<Void, Never>?
+    /// 畳んだあと、カーソルが一度ビーグルから外れるまではホバーで出さない（出す→外れる→畳む→また乗る、の繰り返しを防ぐ）。
+    private var hoverArmed = true
 
     init(beagle: NSStatusItem) {
         self.beagle = beagle
@@ -74,7 +77,7 @@ final class StatusBarCollapser {
         }
         separator = sep
         showSeparatorMark(true)
-        installGestureWatch()
+        installHover()
         let ws = NSWorkspace.shared.notificationCenter
         observers.append((ws, ws.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.scheduleRemeasure("前面のアプリが変わった", delay: 0.4) }
@@ -108,7 +111,7 @@ final class StatusBarCollapser {
         checkTimer?.invalidate(); checkTimer = nil
         for (center, o) in observers { center.removeObserver(o) }
         observers.removeAll()
-        removeGestureWatch()
+        removeHover()
         if let sep = separator {
             sep.length = Self.minLength
             NSStatusBar.system.removeStatusItem(sep)
@@ -131,6 +134,8 @@ final class StatusBarCollapser {
     func collapse() {
         guard isEnabled else { return }
         autoTimer?.invalidate(); autoTimer = nil
+        hoverTask?.cancel(); hoverTask = nil
+        if mouseOverBeagle() { hoverArmed = false }
         wantCollapsed = true
         scheduleRemeasure("畳む", delay: 0)
     }
@@ -171,10 +176,66 @@ final class StatusBarCollapser {
         scheduleRemeasure("ビーグルの幅が変わった", delay: 0.8)
     }
 
+    // MARK: - カーソルを乗せたら出す
+
+    /// ビーグルのボタンに NSTrackingArea（入った・出た、いつでも）。入ったら 0.4 秒待ち、まだ上でほぼ止まっていれば出す。
+    private func installHover() {
+        guard hoverTracker == nil, let button = beagle.button else { return }
+        let t = HoverTracker()
+        t.onEnter = { [weak self] in self?.hoverEntered() }
+        t.onExit = { [weak self] in self?.hoverExited() }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: t, userInfo: nil)
+        t.area = area
+        button.addTrackingArea(area)
+        hoverTracker = t
+        hoverArmed = !mouseOverBeagle()
+    }
+
+    private func removeHover() {
+        hoverTask?.cancel(); hoverTask = nil
+        if let t = hoverTracker, let area = t.area { beagle.button?.removeTrackingArea(area) }
+        hoverTracker?.onEnter = nil
+        hoverTracker?.onExit = nil
+        hoverTracker = nil
+    }
+
+    func mouseOverBeagle() -> Bool {
+        guard let frame = beagle.button?.window?.frame else { return false }
+        return NSMouseInRect(NSEvent.mouseLocation, frame, false)
+    }
+
+    /// 入った・出たのどちらでも、0.4 秒後にカーソルの本当の位置で決める（入った／出たの対が崩れても困らないように）。
+    private func hoverEntered() { hoverChanged("入った") }
+    private func hoverExited() { hoverChanged("出た") }
+
+    private func hoverChanged(_ what: String) {
+        dlog("ホバー: \(what)")
+        hoverTask?.cancel()
+        hoverTask = Task { [weak self] in
+            let half = UInt64(Self.hoverDwell / 2 * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: half)
+            let p1 = NSEvent.mouseLocation
+            try? await Task.sleep(nanoseconds: half)
+            guard !Task.isCancelled, let self else { return }
+            guard self.mouseOverBeagle() else { self.hoverArmed = true; return }
+            guard self.revealOnHover, self.wantCollapsed, self.isEnabled else { return }
+            guard self.hoverArmed else { self.dlog("ホバー: 出さない（畳んだあとまだビーグルから外れていない）"); return }
+            let p2 = NSEvent.mouseLocation
+            // 通り過ぎただけ（まだ動いている）・ボタンを押している（⌘ ドラッグなど）・⌘ を押している・メニューが開いているときは出さない。
+            guard hypot(p2.x - p1.x, p2.y - p1.y) < 6, NSEvent.pressedMouseButtons == 0,
+                  !NSEvent.modifierFlags.contains(.command), !Self.menuIsOpen() else {
+                self.dlog("ホバー: 出さない（動いている・押している・メニューが開いている）")
+                return
+            }
+            self.toggle(via: "ホバー")
+        }
+    }
+
     // MARK: - 自動で畳む
 
     private func autoTick() {
         guard !wantCollapsed, isEnabled else { autoTimer?.invalidate(); autoTimer = nil; return }
+        if !mouseOverBeagle() { hoverArmed = true }
         // ボタンを押しているあいだ（⌘ ドラッグで並べ替え中など）・メニューが開いているあいだは待つ。
         if NSEvent.pressedMouseButtons != 0 || Self.menuIsOpen() { leftBarAt = nil; return }
         let now = Date()
@@ -346,74 +407,11 @@ final class StatusBarCollapser {
 
     @objc private func separatorClicked() { toggle(via: "区切りのクリック") }
 
-    // MARK: - 3 本指タップ
-
-    /// 3 本指タップは 2 つの経路で受ける（どちらもカーソルがビーグルの上にあるときだけ）。
-    /// 1) 「調べる＆データ検出」を 3 本指のタップにしていると届く quickLook イベント（アプリ全体のローカルモニタ）。
-    ///    応答者の連鎖に差し込む方式（〜0.3.47）ではステータスアイテムに届かなかった（オーナーの実機、2026-10-22）。
-    /// 2) 設定に依らない自前の判定：ビーグルのボタンで間接タッチ（トラックパッド）を受け、
-    ///    3 本の指が短時間に触れて離れ、ほとんど動かなければタップとみなす（ThreeFingerTapDetector）。
-    /// 受けた合図は診断の記録（statusbar.log）に残す。macOS 27 のステータスバーにタッチや quickLook が届くかは実機で確かめる。
-    private func installGestureWatch() {
-        guard gestureMonitor == nil else { return }
-        if let button = beagle.button {
-            savedTouchTypes = button.allowedTouchTypes
-            button.allowedTouchTypes.insert(.indirect)
-        }
-        tapDetector = ThreeFingerTapDetector()
-        let mask: NSEvent.EventTypeMask = [NSEvent.EventTypeMask(type: .quickLook), .gesture, .beginGesture, .endGesture, .directTouch, .smartMagnify]
-        gestureMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] ev in
-            let consume = MainActor.assumeIsolated { self?.handleGesture(ev) ?? false }
-            return consume ? nil : ev
-        }
-    }
-
-    private func removeGestureWatch() {
-        if let m = gestureMonitor { NSEvent.removeMonitor(m) }
-        gestureMonitor = nil
-        if let button = beagle.button, let saved = savedTouchTypes { button.allowedTouchTypes = saved }
-        savedTouchTypes = nil
-    }
-
-    /// カーソルがビーグルのボタンの上にあるか（画面の座標で）。
-    private func mouseOverBeagle() -> Bool {
-        guard let frame = beagle.button?.window?.frame else { return false }
-        return NSMouseInRect(NSEvent.mouseLocation, frame, false)
-    }
-
-    /// 真を返すとそのイベントを飲み込む（ビーグルの上の quickLook だけ）。
-    private func handleGesture(_ ev: NSEvent) -> Bool {
-        guard isEnabled else { return false }
-        switch ev.type {
-        case .quickLook:
-            let over = mouseOverBeagle()
-            StatusBarDiag.note("quickLook を受けた（ビーグルの上=\(over ? "はい" : "いいえ")）")
-            guard over else { return false }
-            toggle(via: "3 本指タップ（quickLook）")
-            return true
-        case .gesture, .directTouch:
-            let over = mouseOverBeagle()
-            let touches = ev.touches(matching: .any, in: nil)
-            let input = touches.map { t in
-                ThreeFingerTapDetector.Touch(id: (t.identity as AnyObject).hash, phase: t.phase,
-                                             x: t.normalizedPosition.x, y: t.normalizedPosition.y)
-            }
-            if let r = tapDetector.feed(input, time: ev.timestamp) {
-                // 指が全部離れたときに 1 行（ビーグルの上のときだけ記録する）
-                if over || r.isTap {
-                    StatusBarDiag.note(String(format: "タッチ: %d 本・%.2f 秒・動き %.3f%@（ビーグルの上=%@）",
-                                              r.fingers, r.duration, Double(r.movement), r.cancelled ? "・中断" : "",
-                                              over ? "はい" : "いいえ"))
-                }
-                if r.isTap && over { toggle(via: "3 本指タップ（タッチ）") }
-            }
-            return false
-        case .beginGesture, .endGesture, .smartMagnify:
-            if mouseOverBeagle() { StatusBarDiag.note("ジェスチャ \(ev.type.rawValue) を受けた") }
-            return false
-        default:
-            return false
-        }
+    /// 開発用の記録だけ（statusbar.log には書かない）。
+    private func dlog(_ s: String) {
+        #if DEBUG
+        NSLog("[collapse] %@", s)
+        #endif
     }
 
     private func log(_ s: String) {
@@ -425,104 +423,20 @@ final class StatusBarCollapser {
     }
 }
 
-/// 3 本指タップの判定（ロジックだけ。単体で試せるように AppKit のイベントに依らない）。
-/// 指が 1 本でも触れたら始まり、全部離れたら 1 回分の結果を返す。
-/// タップ＝同時に触れていた指が最大 3 本・最初に触れてから全部離れるまで 0.35 秒以内・どの指もほとんど動かない（正規化座標で 0.04 未満）・中断なし。
-struct ThreeFingerTapDetector {
-    struct Touch {
-        var id: Int
-        var phase: NSTouch.Phase
-        var x: CGFloat
-        var y: CGFloat
-    }
-    struct Result: Equatable {
-        var fingers: Int
-        var duration: Double
-        var movement: CGFloat
-        var cancelled: Bool
-        var isTap: Bool { fingers == 3 && duration <= ThreeFingerTapDetector.maxDuration && movement < ThreeFingerTapDetector.maxMovement && !cancelled }
-    }
-    static let maxDuration = 0.35
-    static let maxMovement: CGFloat = 0.04
-
-    private var start: Double?
-    private var origins: [Int: CGPoint] = [:]
-    private var active: Set<Int> = []
-    private var maxFingers = 0
-    private var movement: CGFloat = 0
-    private var cancelled = false
-
-    /// その時点で触れている（いま離れたものも含む）指のようすを渡す。全部離れたら結果を返す。
-    mutating func feed(_ touches: [Touch], time: Double) -> Result? {
-        guard !touches.isEmpty else { return nil }
-        if start == nil { start = time }
-        for t in touches {
-            let p = CGPoint(x: t.x, y: t.y)
-            if origins[t.id] == nil { origins[t.id] = p }
-            if let o = origins[t.id] { movement = max(movement, hypot(p.x - o.x, p.y - o.y)) }
-            if t.phase.contains(.ended) || t.phase.contains(.cancelled) {
-                active.remove(t.id)
-                if t.phase.contains(.cancelled) { cancelled = true }
-            } else {
-                active.insert(t.id)
-            }
-        }
-        maxFingers = max(maxFingers, touches.count)
-        guard active.isEmpty, let s = start else { return nil }
-        let r = Result(fingers: maxFingers, duration: time - s, movement: movement, cancelled: cancelled)
-        self = ThreeFingerTapDetector()
-        return r
-    }
-
-    #if DEBUG
-    /// 開発のみ：-tapDetectorTest で判定の単体テスト。失敗があれば false。
-    static func selfTest() -> Bool {
-        func run(_ frames: [(Double, [Touch])]) -> Result? {
-            var d = ThreeFingerTapDetector()
-            var last: Result?
-            for (t, ts) in frames { if let r = d.feed(ts, time: t) { last = r } }
-            return last
-        }
-        func T(_ id: Int, _ ph: NSTouch.Phase, _ x: CGFloat = 0.5, _ y: CGFloat = 0.5) -> Touch { Touch(id: id, phase: ph, x: x, y: y) }
-        let cases: [(String, [(Double, [Touch])], Bool)] = [
-            ("3 本で素早くタップ", [(0, [T(1, .began, 0.4), T(2, .began), T(3, .began, 0.6)]),
-                                  (0.12, [T(1, .ended, 0.4), T(2, .ended), T(3, .ended, 0.6)])], true),
-            ("3 本が少しずれて触れて離れる", [(0, [T(1, .began)]), (0.03, [T(1, .stationary), T(2, .began, 0.6)]),
-                                         (0.05, [T(1, .stationary), T(2, .stationary, 0.6), T(3, .began, 0.7)]),
-                                         (0.18, [T(1, .ended), T(2, .stationary, 0.6), T(3, .ended, 0.7)]),
-                                         (0.20, [T(2, .ended, 0.6)])], true),
-            ("2 本は違う", [(0, [T(1, .began), T(2, .began)]), (0.1, [T(1, .ended), T(2, .ended)])], false),
-            ("4 本は違う", [(0, [T(1, .began), T(2, .began), T(3, .began), T(4, .began)]),
-                          (0.1, [T(1, .ended), T(2, .ended), T(3, .ended), T(4, .ended)])], false),
-            ("長押しは違う", [(0, [T(1, .began), T(2, .began), T(3, .began)]), (0.6, [T(1, .ended), T(2, .ended), T(3, .ended)])], false),
-            ("3 本でスワイプは違う", [(0, [T(1, .began, 0.2), T(2, .began, 0.3), T(3, .began, 0.4)]),
-                                    (0.1, [T(1, .moved, 0.4), T(2, .moved, 0.5), T(3, .moved, 0.6)]),
-                                    (0.2, [T(1, .ended, 0.4), T(2, .ended, 0.5), T(3, .ended, 0.6)])], false),
-            ("中断は違う", [(0, [T(1, .began), T(2, .began), T(3, .began)]), (0.1, [T(1, .cancelled), T(2, .cancelled), T(3, .cancelled)])], false),
-            ("1 本のクリックは違う", [(0, [T(1, .began)]), (0.08, [T(1, .ended)])], false),
-        ]
-        var ok = true
-        for (name, frames, want) in cases {
-            let r = run(frames)
-            let got = r?.isTap ?? false
-            print("[tap-test] \(got == want ? "ok  " : "FAIL") \(name): \(r.map { "\($0.fingers) 本 \(String(format: "%.2f", $0.duration)) 秒 動き \(String(format: "%.3f", Double($0.movement)))" } ?? "結果なし")")
-            if got != want { ok = false }
-        }
-        // 続けて 2 回：1 回目の後に状態が残らない
-        var d = ThreeFingerTapDetector()
-        _ = d.feed([T(1, .began), T(2, .began)], time: 0)
-        let first = d.feed([T(1, .ended), T(2, .ended)], time: 0.1)
-        _ = d.feed([T(5, .began), T(6, .began), T(7, .began)], time: 1)
-        let second = d.feed([T(5, .ended), T(6, .ended), T(7, .ended)], time: 1.1)
-        let seq = first?.isTap == false && second?.isTap == true
-        print("[tap-test] \(seq ? "ok  " : "FAIL") 2 本のあとの 3 本タップ")
-        return ok && seq
-    }
-    #endif
+/// ビーグルのボタンの NSTrackingArea の持ち主（入った・出たを受ける）。
+final class HoverTracker: NSResponder {
+    var onEnter: (() -> Void)?
+    var onExit: (() -> Void)?
+    var area: NSTrackingArea?
+    override func mouseEntered(with event: NSEvent) { onEnter?() }
+    override func mouseExited(with event: NSEvent) { onExit?() }
 }
 
 /// 「ほかのアイコンを畳む」の診断の記録（設定がオンのときだけ）。HangWatch と同じ Diagnostics フォルダの statusbar.log に
-/// 1 行ずつ、最大 200 行。受けた合図（quickLook・タッチの本数と時間・どの経路で切り替えたか）と測り直しの結果だけで、個人情報は書かない。
+/// 1 行ずつ、最大 200 行。設定のオン・オフ、どの合図で切り替えたか（⌥クリック・区切りのクリック）、畳む／出す／測り直しの結果だけで、
+/// 個人情報は書かない。
+/// 3 本指タップは macOS がステータスアイテムに届けない（quickLook もタッチもジェスチャも来ない。オーナーの macOS 26.7.1 の記録で確認、
+/// 2026-10-22）ので非対応。
 @MainActor
 enum StatusBarDiag {
     static var enabled = false

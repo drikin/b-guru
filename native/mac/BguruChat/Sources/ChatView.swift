@@ -140,6 +140,9 @@ private struct ChatHeader: View {
                 Toggle("静かな時間（0:00〜7:00）は新着を通知しない", isOn: $settings.quietHours)
                 Toggle("Dock にも表示（未読バッジ）", isOn: $settings.showInDock)
                 Toggle("試験的：ほかのステータスバーアイコンを畳む", isOn: $settings.collapseStatusItems)
+                if settings.collapseStatusItems {
+                    Toggle("　カーソルを乗せたら出す", isOn: $settings.collapseRevealOnHover)
+                }
                 Divider()
                 Button("B-guru をブラウザで開く") { NSWorkspace.shared.open(APIClient.baseURL) }
                 Button("アップデートを確認…") { Updater.shared.checkNow() }
