@@ -2,59 +2,84 @@ import AppKit
 
 /// メニューバーのビーグルの絵（Mac のメニューバーだけ。アプリのアイコン・iOS・Android・Web は別）。
 ///
-/// SF Symbols の dog / dog.fill を左右反転して左向きにする（ティッカーの文字が左へ流れるので、左を向いて吠えて送り出す）。
-/// キャンバスは記号と同じ 22×17pt・alignmentRect も同じなので、ボタンの中の位置・幅・未読の数の位置は変わらない。
-/// 幅 22 は整数なので、反転しても @1x・@2x のピクセルの格子がそのまま重なる（足元・体は反転前と同じ格子に乗る）。
+/// SF Symbols の dog / dog.fill（22×17pt）を左右反転して左向きにし（ティッカーの文字が左へ流れるので、左を向いて吠えて送り出す）、
+/// 顔の前（左）に 8pt の余白を足した 30×17pt のキャンバスに描く。余白は通常のときもあるので、吠えても幅は変わらない。
+/// 幅は整数なので、反転しても @1x・@2x のピクセルの格子がそのまま重なる。
 ///
-/// 吠えるコマ（1〜3）は通常の絵と同じ描き方の上に、鼻先の下を細く切って口を開け、短い下あごと「ワン」の短い線（顔の前＝左）を足すだけ。
-/// 体・足元には触らないので、コマを差し替えても体は 1px も動かない。座標は整数か 0.5（@2x の 1px）。
+/// 吠えるコマ（1〜4）: 首から前・上を上へ 1pt 引き伸ばして頭を上げ（境目でつながる。足・後ろ足・しっぽには触らない）、
+/// 口を大きく開け、余白に太い「ワン」の線を放射状に 3 本（1 コマ目は 1 本、3 コマ目は長く）、4 コマ目は「!」。
+/// 座標は右向きの絵の上から測った pt（犬は x 0〜22、余白は x 22〜30）。
 @MainActor
 enum BeagleIcon {
-    /// 吠えるコマの数（0 = 通常の絵）。
-    static let barkFrames = 3
+    static let canvas = NSSize(width: 30, height: 17)
+    static let dogWidth: CGFloat = 22
     private static var cache: [String: NSImage] = [:]
 
-    /// `filled`: 未読あり（dog.fill）。`bark`: 0 = 通常、1〜3 = 吠えるコマ。
+    /// `filled`: 未読あり（dog.fill）。`bark`: 0 = 通常、1〜4 = 吠えるコマ。
     static func image(filled: Bool, bark: Int = 0) -> NSImage {
         let key = "\(filled)-\(bark)"
         if let img = cache[key] { return img }
         let symbol = NSImage(systemSymbolName: filled ? "dog.fill" : "dog", accessibilityDescription: nil) ?? NSImage()
-        let size = symbol.size
+        let W = canvas.width
         let k = bark
-        let img = NSImage(size: size, flipped: true) { rect in
+        let img = NSImage(size: canvas, flipped: true) { _ in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
             ctx.saveGState()
-            // 左向き：キャンバスの幅（整数）で左右反転。以下の座標は右向きの絵の上から測った pt。
-            ctx.translateBy(x: size.width, y: 0)
+            defer { ctx.restoreGState() }
+            ctx.translateBy(x: W, y: 0) // 左向き：キャンバスの幅で左右反転
             ctx.scaleBy(x: -1, y: 1)
-            symbol.draw(in: rect)
-            if k > 0 {
-                func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x, y: y) }
-                // 口：鼻先の下半分を細い三角に切る（上あごは残す）
-                ctx.setBlendMode(.clear)
-                ctx.beginPath()
-                ctx.move(to: P(22, 5)); ctx.addLine(to: P(18, 5.5)); ctx.addLine(to: P(22, 9))
-                ctx.closePath(); ctx.fillPath()
-                ctx.setBlendMode(.normal)
-                NSColor.black.set()
-                ctx.setLineCap(.round)
-                // 下あご（3 コマ目は半分閉じる）
-                let o: CGFloat = k == 3 ? 0.5 : 1
-                ctx.setLineWidth(1.5)
-                ctx.beginPath(); ctx.move(to: P(18, 6)); ctx.addLine(to: P(20, 6 + 1.5 * o)); ctx.strokePath()
-                // 「ワン」の短い線（顔の前。キャンバスの中なので隣のアイコンにかからない）
-                ctx.setLineWidth(1)
-                let lines: [(CGPoint, CGPoint)] = [(P(21, 2), P(22, 1)), (P(20, 1), P(20.5, 0)), (P(21.5, 7), P(21.5, 8))]
-                let n = k == 1 ? 1 : (k == 2 ? 3 : 2)
-                for l in lines.prefix(n) {
-                    ctx.beginPath(); ctx.move(to: l.0); ctx.addLine(to: l.1); ctx.strokePath()
-                }
-            }
+            let dog = NSRect(x: 0, y: 0, width: dogWidth, height: 17)
+            guard k > 0 else { symbol.draw(in: dog); return true }
+            func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x, y: y) }
+            // 頭を上げる：首から前・上（x ≥ hx, y ≤ hy）だけを上へ 1pt 引き伸ばす。y = hy の境目で体とつながる。
+            let hx: CGFloat = 13, hy: CGFloat = 8, top: CGFloat = 1.1, lift: CGFloat = 1
+            ctx.saveGState()
+            ctx.addRect(CGRect(x: 0, y: 0, width: W, height: 17))
+            ctx.addRect(CGRect(x: hx, y: -2, width: dogWidth - hx, height: hy + 2))
+            ctx.clip(using: .evenOdd)
+            symbol.draw(in: dog)
             ctx.restoreGState()
+            ctx.saveGState()
+            ctx.clip(to: CGRect(x: hx, y: -2, width: dogWidth - hx + 1, height: hy + 2))
+            ctx.translateBy(x: 0, y: hy)
+            ctx.scaleBy(x: 1, y: (hy - top + lift) / (hy - top))
+            ctx.translateBy(x: 0, y: -hy)
+            symbol.draw(in: dog)
+            ctx.restoreGState()
+            // 口を大きく開ける：鼻先の下半分を三角に切り、太い下あごを描く
+            ctx.setBlendMode(.clear)
+            ctx.beginPath()
+            ctx.move(to: P(23, 4.6)); ctx.addLine(to: P(17.5, 5.2)); ctx.addLine(to: P(23, 11))
+            ctx.closePath(); ctx.fillPath()
+            ctx.setBlendMode(.normal)
+            NSColor.black.set()
+            ctx.setLineCap(.round)
+            ctx.setLineWidth(1.8)
+            ctx.beginPath(); ctx.move(to: P(17.6, 6.2)); ctx.addLine(to: P(20, 7.8)); ctx.strokePath()
+            // 「ワン」：余白に放射状の太い線（1 コマ目は 1 本、2 コマ目は 3 本、3 コマ目は長く）、4 コマ目は「!」
+            ctx.setLineWidth(1.5)
+            if k <= 3 {
+                let near: CGFloat = k == 3 ? 23.5 : 23
+                let far: CGFloat = k == 1 ? 26 : (k == 2 ? 27.5 : 29.5)
+                let rays: [(CGPoint, CGPoint)] = [(P(near, 6), P(far, 6)), (P(near, 3.2), P(far - 0.5, 1)), (P(near, 8.8), P(far - 0.5, 11))]
+                for r in rays.prefix(k == 1 ? 1 : 3) {
+                    ctx.beginPath(); ctx.move(to: r.0); ctx.addLine(to: r.1); ctx.strokePath()
+                }
+            } else {
+                ctx.setLineWidth(2)
+                ctx.beginPath(); ctx.move(to: P(27, 1.5)); ctx.addLine(to: P(27, 6.5)); ctx.strokePath()
+                ctx.fillEllipse(in: CGRect(x: 26, y: 8.2, width: 2, height: 2))
+                ctx.setLineWidth(1.5)
+                ctx.beginPath(); ctx.move(to: P(23, 3)); ctx.addLine(to: P(24.5, 1.5)); ctx.strokePath()
+                ctx.beginPath(); ctx.move(to: P(23, 8.5)); ctx.addLine(to: P(24.5, 10)); ctx.strokePath()
+            }
             return true
         }
         img.isTemplate = true
-        img.alignmentRect = symbol.alignmentRect // ボタンの中の置き方を記号と同じに
+        // ボタンの中の縦の置き方は記号と同じ（横はキャンバス全体）
+        var align = symbol.alignmentRect
+        align.size.width = W
+        img.alignmentRect = align
         img.accessibilityDescription = "B-guru"
         cache[key] = img
         return img
@@ -76,9 +101,9 @@ final class BeagleBarker {
     enum Kind: String {
         case message = "新着", mention = "メンション", notice = "お知らせ"
     }
-    static let frameInterval: TimeInterval = 0.16
-    /// 1 回の吠え：口を開け閉め（0.8 秒）。メンションは 2 回。
-    static let once = [1, 2, 3, 2, 1]
+    static let frameInterval: TimeInterval = 0.15
+    /// 1 回の吠え（約 1.2 秒）：頭を上げて口を開け、線が伸びて「!」、最後に通常の絵で一息。新着・お知らせは 2 回、メンションは 3 回。
+    static let once = [1, 2, 3, 2, 3, 4, 4, 0]
     static let minGap: TimeInterval = 10
 
     private let item: NSStatusItem
@@ -108,7 +133,7 @@ final class BeagleBarker {
             return
         }
         lastBark = Date()
-        sequence = kind == .mention ? Self.once + [0] + Self.once : Self.once
+        sequence = Array(repeating: Self.once, count: kind == .mention ? 3 : 2).flatMap { $0 }
         startFrame = nil
         StatusBarDiag.note("吠えた（\(kind.rawValue)）")
         // 未読の数（ボタンの幅）が先に変わるのを待ってから始める（吠えているあいだは幅も位置も変えない）。
