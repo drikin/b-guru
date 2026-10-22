@@ -540,7 +540,14 @@ final class ChatStore {
         let minigameOn = !ProcessInfo.processInfo.arguments.contains("-demoMinigameOff") && env["BGURU_DEMO_MINIGAME"] != "0"
         if minigameOn { minigame.debugLoadDemo() }
         let minigameCaps = minigameOn ? #","minigame":{"enabled":true,"path":"/api/agent/minigame","game_url":"/minigame/index.html","bridge_version":1,"engine_version":1,"play":true}"# : ""
-        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5},"jukebox":{"enabled":\#(ProcessInfo.processInfo.arguments.contains("-demoJukebox") || ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil),"path":"/api/agent/jukebox"}\#(shogiCaps)\#(minigameCaps)}}"#
+        // 段階 3 (the operations): on unless -demoOldServer / BGURU_DEMO_OLD_SERVER=1 (a server from
+        // before them says nothing); -demoTextOnly: an external agent's write key (text-only edits).
+        let oldServer = ProcessInfo.processInfo.arguments.contains("-demoOldServer") || env["BGURU_DEMO_OLD_SERVER"] == "1"
+        let textOnly = ProcessInfo.processInfo.arguments.contains("-demoTextOnly") || env["BGURU_DEMO_TEXT_ONLY"] == "1"
+        // -demoNoEdit: a key from before the operations' mark (post, but edit false): 「編集するには一度ログインし直してください」.
+        let noEdit = ProcessInfo.processInfo.arguments.contains("-demoNoEdit") || env["BGURU_DEMO_NO_EDIT"] == "1"
+        let postOps = oldServer ? "" : #","edit":\#(!textOnly && !noEdit),"delete":\#(!noEdit),"edit_text_only":\#(textOnly && !noEdit),"whisper":true,"video":true,"audio":true,"max_media_mb":100,"poll":true,"poll_vote":true,"poll_edit":true,"pin":true,"pinned_list":true,"bookmarks":true,"bookmarks_set":true,"favorites":true,"custom_emoji_list":"/api/agent/emojis","club_select":true,"club_change":true,"mentions":"/api/agent/members","display":true,"include":["reactions","read","display"]"#
+        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5\#(postOps)},"jukebox":{"enabled":\#(ProcessInfo.processInfo.arguments.contains("-demoJukebox") || ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil),"path":"/api/agent/jukebox"}\#(shogiCaps)\#(minigameCaps)}}"#
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
         capabilities = try? dec.decode(Capabilities.self, from: Data(caps.utf8))

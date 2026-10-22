@@ -113,6 +113,27 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var reactions: Bool?
         var markRead: Bool?
         var maxImages: Int?
+        // 段階 3「操作」(docs/timeline-spec.md §10–§11). Absent (older servers) = not offered.
+        var edit: Bool?
+        var delete: Bool?
+        var editTextOnly: Bool?
+        var whisper: Bool?
+        var video: Bool?
+        var audio: Bool?
+        var maxMediaMb: Int?
+        var poll: Bool?
+        var pollVote: Bool?
+        var pollEdit: Bool?
+        var pin: Bool?
+        var pinnedList: Bool?
+        var bookmarks: Bool?
+        /// `bookmarks_set`: POST /api/agent/bookmarks takes `{ post_id, bookmarked }` (sets it, idempotent).
+        var bookmarksSet: Bool?
+        var favorites: Bool?
+        var customEmojiList: String?
+        var clubSelect: Bool?
+        var clubChange: Bool?
+        var mentions: String?
     }
     struct RoomFeatures: Decodable, Sendable, Equatable {
         var enabled: Bool?
@@ -292,6 +313,14 @@ struct Post: Codable, Identifiable, Equatable, Sendable {
     /// The server's display decisions (`include=display`); nil from servers without them.
     /// Read through `TimelineRules`, which falls back to the same rules worked out here.
     @LenientDisplay var display: PostDisplayHints? = nil
+    /// While pinned (24 h, the author's own root post).
+    var pinnedAt: String?
+    var clubManual: Bool?
+    /// 📊 投票 (nil: none; a shape the app cannot read is dropped, not the post).
+    @LenientPoll var poll: PostPoll? = nil
+    /// The member bookmarked this post (🔖 filled) / favourites its author (☆ filled).
+    var bookmarkedByMe: Bool?
+    var favoriteByMe: Bool?
 
     /// The post is just one link that has a preview: show the card, not the bare URL.
     var isBareLink: Bool {
@@ -321,6 +350,40 @@ struct UploadResponse: Decodable, Sendable {
     var urls: [String]
 }
 
+/// `poll` on a post (the web's PostPoll — its keys are camelCase on the wire too).
+struct PostPoll: Codable, Equatable, Sendable {
+    struct Option: Codable, Equatable, Sendable, Identifiable {
+        var id: Int
+        var label: String
+        var votes: Int?
+        var pct: Double?
+    }
+    var question: String?
+    var endsAt: String?
+    var closed: Bool?
+    /// The author may edit the answers (within an hour of posting).
+    var editable: Bool?
+    var totalVotes: Int?
+    var voterCount: Int?
+    var myVote: Int?
+    var options: [Option]
+}
+
+/// A `poll` the app cannot read is dropped (the post still shows), like `display`.
+@propertyWrapper
+struct LenientPoll: Codable, Equatable, Sendable {
+    var wrappedValue: PostPoll?
+    init(wrappedValue: PostPoll?) { self.wrappedValue = wrappedValue }
+    init(from decoder: Decoder) throws { wrappedValue = try? PostPoll(from: decoder) }
+    func encode(to encoder: Encoder) throws { try wrappedValue.encode(to: encoder) }
+}
+
+extension KeyedDecodingContainer {
+    func decode(_ type: LenientPoll.Type, forKey key: Key) throws -> LenientPoll {
+        (try? decodeIfPresent(type, forKey: key)) ?? LenientPoll(wrappedValue: nil)
+    }
+}
+
 /// POST /api/agent/reactions answers without `mine`; the app fills it in.
 struct PostReactionToggleResponse: Decodable, Sendable {
     struct R: Decodable, Sendable { var emoji: String; var count: Int }
@@ -331,6 +394,7 @@ struct PostReactionToggleResponse: Decodable, Sendable {
 struct ClubInfo: Decodable, Sendable, Hashable {
     var key: String
     var name: String
+    var category: String? = nil
 }
 
 

@@ -17,6 +17,14 @@ final class TimelineStore {
     private(set) var loadingMore = false
     private(set) var failed = false
     private(set) var clubs: [String: String] = [:]
+    /// The clubs in the server's order (「部活動を選択」).
+    private(set) var clubList: [ClubInfo] = []
+    /// Edit, delete, pin, bookmark, ☆, polls… (段階 3, docs/timeline-spec.md §10).
+    @ObservationIgnored private(set) lazy var actions: PostActionsModel = {
+        let a = PostActionsModel(api: api)
+        a.timeline = self
+        return a
+    }()
     /// Set by a "reply to your post" notification tap: the app shows the timeline
     /// and opens this thread.
     var openThread: Int?
@@ -50,9 +58,7 @@ final class TimelineStore {
         lastRefresh = Date()
         // Members' names decide which @ are drawn as mentions (the chat may have loaded them).
         if MemberDirectory.shared.isEmpty, let m = try? await api.members() { MemberDirectory.shared.set(m) }
-        if clubs.isEmpty, let c = try? await api.clubs() {
-            clubs = Dictionary(c.map { ($0.key, $0.name) }, uniquingKeysWith: { a, _ in a })
-        }
+        if clubs.isEmpty { await loadClubs() }
         do {
             let r = try await api.posts()
             // Keep "read on this device" marks the server has not echoed yet.
@@ -72,6 +78,27 @@ final class TimelineStore {
             HangWatch.note("timeline refresh failed: \(error.localizedDescription)")
         }
         if !hasLoaded { hasLoaded = true }
+    }
+
+    func loadClubs() async {
+        guard let c = try? await api.clubs() else { return }
+        clubList = c
+        clubs = Dictionary(c.map { ($0.key, $0.name) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// A change made here (PostActionsModel) to the posts in the list.
+    func apply(_ kind: PostChange.Kind) {
+        switch kind {
+        case .fields, .favorite, .unpinnedOthers:
+            for i in posts.indices {
+                if let q = kind.applied(to: posts[i]), q != posts[i] { posts[i] = q }
+            }
+        case let .deleted(id, parentId):
+            posts.removeAll { $0.id == id }
+            if let parentId, let i = posts.firstIndex(where: { $0.id == parentId }), let n = posts[i].replyCount, n > 0 {
+                posts[i].replyCount = n - 1
+            }
+        }
     }
 
     /// When the list was last fetched (polling resumes with a fetch if that is over a minute ago).
@@ -163,12 +190,17 @@ final class TimelineStore {
     }
 
     /// After posting or replying: show it at once (the next refresh confirms it).
-    func didPublish(_ post: Post) {
+    /// うなる (`whisper`): the reply counts but the thread stays where it is (the web's).
+    func didPublish(_ post: Post, whisper: Bool = false) {
         if let parent = post.parentId { onReplied?(parent) }
         if post.parentId == nil {
             posts.removeAll { $0.id == post.id }
             posts.insert(post, at: 0)
         } else if let i = posts.firstIndex(where: { $0.id == post.parentId }) {
+            if whisper {
+                posts[i].replyCount = (posts[i].replyCount ?? 0) + 1
+                return
+            }
             var root = posts.remove(at: i)
             root.replyCount = (root.replyCount ?? 0) + 1
             root.lastActivityAt = post.createdAt
@@ -238,15 +270,50 @@ final class TimelineStore {
                  unread: false, unreadReplies: 30),
         ]
         clubs = ["chat": "雑談", "pet": "ペット部", "apple": "リンゴ部", "improve": "機能改善", "car": "クルマ部"]
+        clubList = DemoPostServer.clubs.map { ClubInfo(key: $0.0, name: $0.1, category: $0.2) }
+        clubs = Dictionary(clubList.map { ($0.key, $0.name) }, uniquingKeysWith: { a, _ in a })
+        DemoPostServer.shared.timeline = self
+        // 段階 3: my post with a poll (open, answers editable), someone's closed poll, my pinned
+        // post, a bookmarked post and a favourite's post.
+        posts.insert(contentsOf: Self.demoActionPosts(), at: 1)
+        if let i = posts.firstIndex(where: { $0.id == 3 }) { posts[i].bookmarkedByMe = true; posts[i].favoriteByMe = true }
         // The display rules (long text, pictures, video, sound, GIF, reactions, mentions),
         // after today's jukebox post.
         posts.insert(contentsOf: TimelineDemoMedia.posts(now: now), at: 1)
         MemberDirectory.shared.set(TimelineDemoMedia.members.map { MentionMember(userId: $0, name: $0, avatar: nil) })
+        DemoPostServer.shared.seed(posts)
         // -demoPosts N / BGURU_DEMO_POSTS=N: a full first page (the server sends 30).
         let want = CommandLine.arguments.firstIndex(of: "-demoPosts").flatMap { i in i + 1 < CommandLine.arguments.count ? Int(CommandLine.arguments[i + 1]) : nil }
             ?? ProcessInfo.processInfo.environment["BGURU_DEMO_POSTS"].flatMap(Int.init) ?? 0
         debugFill(to: want)
         hasLoaded = true
+    }
+
+    /// Dev only: the operations' sample posts (ids 120–122).
+    static func demoActionPosts() -> [Post] {
+        let f = ISO8601DateFormatter()
+        let recent = f.string(from: Date().addingTimeInterval(-600))
+        let old = f.string(from: Date().addingTimeInterval(-26 * 3600))
+        var mine = Post(id: 120, authorId: "me", authorName: "ドリキン", isAuthor: true, replyCount: 1,
+                        text: "次の配信で話してほしいのはどれ？", createdAt: recent, club: "chat")
+        mine.poll = PostPoll(question: "次の配信で話してほしいのはどれ？", endsAt: f.string(from: Date().addingTimeInterval(5.5 * 3600)),
+                             closed: false, editable: true, totalVotes: 5, voterCount: 5, myVote: nil,
+                             options: [.init(id: 1201, label: "新しい MacBook", votes: 3, pct: 60),
+                                       .init(id: 1202, label: "カメラの話", votes: 2, pct: 40),
+                                       .init(id: 1203, label: "散財の振り返り", votes: 0, pct: 0)])
+        mine.pinnedAt = f.string(from: Date().addingTimeInterval(-300))
+        mine.clubManual = true
+        var closed = Post(id: 121, authorId: "a", authorName: "mazzo", isAuthor: false, replyCount: 0,
+                          text: "朝はパン派？ごはん派？", createdAt: old, club: "chat")
+        closed.poll = PostPoll(question: "朝はパン派？ごはん派？", endsAt: f.string(from: Date().addingTimeInterval(-3600)),
+                               closed: true, editable: false, totalVotes: 7, voterCount: 7, myVote: 1212,
+                               options: [.init(id: 1211, label: "パン", votes: 3, pct: 43), .init(id: 1212, label: "ごはん", votes: 4, pct: 57),
+                                         .init(id: 1213, label: "食べない", votes: 0, pct: 0)])
+        closed.favoriteByMe = true
+        let plain = Post(id: 122, authorId: "me", authorName: "ドリキン", isAuthor: true, replyCount: 0,
+                         text: "部活ラベルの無い自分の投稿（＋部活 から選べる）", images: [TimelineDemoMedia.picture("mine", 1200, 800, hue: 0.4)],
+                         createdAt: recent)
+        return [mine, closed, plain]
     }
 
     /// Dev only: made-up posts after the sample ones, up to `n`.

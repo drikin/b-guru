@@ -650,6 +650,16 @@ extension SelfTest {
             if let l = try? dec.decode(PostListResponse.self, from: Data(broken.utf8)), l.posts.count == 2, l.posts[0].display == nil {
                 print("[fixtures] ok   an unreadable display is dropped, the list stays")
             } else { fails += 1; print("[fixtures] FAIL an unreadable display broke the list") }
+            // 段階 3: the example with a poll reads its poll; a poll the app cannot read drops only the poll;
+            // the stage-3 fields (bookmarked_by_me / favorite_by_me / pinned_at) decode.
+            if let p = posts.posts.first(where: { $0.poll != nil }), p.poll?.options.count == 3, p.poll?.totalVotes == 3 {
+                print("[fixtures] ok   poll \(p.id) decoded (\(p.poll?.options.map(\.label).joined(separator: "/") ?? ""))")
+            } else { fails += 1; print("[fixtures] FAIL the example's poll did not decode") }
+            let stage3 = #"{"posts":[{"id":1,"text":"a","created_at":"x","poll":{"options":"?"},"bookmarked_by_me":true,"favorite_by_me":true,"pinned_at":"2026-10-22T00:00:00Z"},{"id":2,"text":"b","created_at":"x"}]}"#
+            if let l = try? dec.decode(PostListResponse.self, from: Data(stage3.utf8)), l.posts.count == 2, l.posts[0].poll == nil,
+               l.posts[0].bookmarkedByMe == true, l.posts[0].favoriteByMe == true, l.posts[0].pinnedAt != nil {
+                print("[fixtures] ok   an unreadable poll is dropped; bookmarked_by_me / favorite_by_me / pinned_at read")
+            } else { fails += 1; print("[fixtures] FAIL stage-3 fields") }
             if var p = posts.posts.first(where: { $0.text.utf16.count > 500 }) {
                 let n = p.text.utf16.count
                 p.display = PostDisplayHints(fold: true, foldAt: -5)
@@ -660,6 +670,298 @@ extension SelfTest {
                 else { fails += 1; print("[fixtures] FAIL fold_at clamp \(a?.utf16.count ?? -1) \(b?.utf16.count ?? -1)") }
             }
             print(fails == 0 ? "[fixtures] ok   \(posts.posts.count) examples match" : "[fixtures] FAIL \(fails) differences")
+            fflush(stdout)
+            exit(fails == 0 ? 0 : 1)
+        }
+    }
+}
+
+extension SelfTest {
+    /// `-selftest DIR -demo -actionShots`: the timeline's operations (段階 3, docs/timeline-spec.md §10)
+    /// drawn offline, light and dark → DIR/actions-*.png: posts with a poll / pin / 🔖 / ☆ / club tag,
+    /// the hover buttons, edit (full and text-only), delete (and its error), the poll's answers, a new
+    /// post with a poll, a sound and a club, the emoji picker, the pinned / favourites lists (and an
+    /// empty one), the toast, a thread's reply bar with うなる / 吠える and @mention suggestions.
+    static func runActionShots(store: ChatStore, outDir: String) {
+        Task { @MainActor in
+            let dir = URL(fileURLWithPath: outDir)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let timeline = TimelineStore(api: APIClient(token: "demo"))
+            timeline.debugLoadDemo()
+            let actions = timeline.actions
+            actions.features = store.capabilities?.features?.posts
+            actions.loadMembers()
+            actions.loadEmojis()
+            try? await Task.sleep(for: .milliseconds(600))
+            @MainActor func render(_ name: String, dark: Bool, width: CGFloat, height: CGFloat? = nil, @ViewBuilder _ view: () -> some View) async {
+                let root = view()
+                    .environment(\.postActions, actions)
+                    .environment(\.postClubs, timeline.clubList)
+                    .frame(width: width, height: height)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                let host = NSHostingView(rootView: root)
+                let size = host.fittingSize
+                let win = NSWindow(contentRect: NSRect(x: -6000, y: -6000, width: width, height: max(height ?? size.height, 100)),
+                                   styleMask: [.borderless], backing: .buffered, defer: false)
+                win.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                win.contentView = host
+                win.orderFrontRegardless()
+                try? await Task.sleep(for: .milliseconds(1500))
+                host.layoutSubtreeIfNeeded()
+                if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("actions-\(name).png"))
+                    print("[actions] wrote actions-\(name).png \(Int(host.bounds.width))x\(Int(host.bounds.height))")
+                }
+                win.orderOut(nil)
+            }
+            func dialog(@ViewBuilder _ v: () -> some View) -> some View {
+                v().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)).padding(14)
+            }
+            let ids = [120, 121, 122, 3]
+            let posts = ids.compactMap { id in timeline.posts.first { $0.id == id } }
+            let full = actions.features
+            for dark in [false, true] {
+                let look = dark ? "dark" : "light"
+                await render("\(look)-posts", dark: dark, width: 400) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(posts) { p in
+                            PostRow(post: p, clubName: p.display?.clubLabel ?? timeline.clubName(p.club), canReact: true, onReact: { _ in }, onOpenImage: { _ in })
+                            Divider()
+                        }
+                    }
+                }
+                if let p = posts.first {
+                    await render("\(look)-hover", dark: dark, width: 400) {
+                        PostRow(post: p, clubName: timeline.clubName(p.club), canReact: true, onReact: { _ in }, onOpenImage: { _ in })
+                            .environment(\.debugForceHover, true)
+                    }
+                }
+                if let p = timeline.posts.first(where: { $0.id == 122 }) {
+                    await render("\(look)-edit", dark: dark, width: 400) { dialog { EditPostDialog(post: p, actions: actions) } }
+                    actions.features?.edit = false
+                    actions.features?.editTextOnly = true
+                    await render("\(look)-edit-textonly", dark: dark, width: 400) { dialog { EditPostDialog(post: p, actions: actions) } }
+                    actions.features = full
+                }
+                if let p = posts.first {
+                    await render("\(look)-delete", dark: dark, width: 400) { dialog { DeletePostDialog(post: p, actions: actions) } }
+                    await render("\(look)-delete-error", dark: dark, width: 400) {
+                        dialog { DeletePostDialog(post: p, actions: actions, debugError: "少し時間をおいてから試してください") }
+                    }
+                    await render("\(look)-polledit", dark: dark, width: 400) { dialog { PollEditDialog(post: p, actions: actions) } }
+                }
+                let draft = PostDraft(maxImages: 5)
+                draft.text = "次の配信で話してほしいのはどれ？ @ta"
+                var poll = PollDraft()
+                poll.options = ["新しい MacBook", "カメラの話", ""]
+                poll.hours = 6
+                draft.poll = poll
+                draft.media = PickedMedia(kind: .audio, file: URL(fileURLWithPath: TimelineDemoMedia.audio.replacingOccurrences(of: "file://", with: "")))
+                draft.club = "camera"
+                await render("\(look)-compose", dark: dark, width: 420, height: 700) {
+                    ComposeSheet(api: timeline.api, maxImages: 5, actions: actions, clubs: timeline.clubList, debugDraft: draft)
+                }
+                await render("\(look)-picker", dark: dark, width: 290) { ReactionPicker { _ in } }
+                await render("\(look)-pins", dark: dark, width: 400, height: 520) {
+                    PostListDialog(kind: .pinned, timeline: timeline, capabilities: store.capabilities)
+                }
+                await render("\(look)-favorites", dark: dark, width: 400, height: 520) {
+                    PostListDialog(kind: .favorites, timeline: timeline, capabilities: store.capabilities)
+                }
+                let empty = TimelineStore(api: APIClient(token: "demo"))
+                DemoPostServer.shared.timeline = empty
+                await render("\(look)-pins-empty", dark: dark, width: 400, height: 260) {
+                    PostListDialog(kind: .pinned, timeline: empty, capabilities: store.capabilities)
+                }
+                DemoPostServer.shared.timeline = timeline
+                await render("\(look)-toast", dark: dark, width: 400, height: 90) {
+                    ActionToastView(toast: ActionToast(text: "ブックマークに保存しました（タップで取り消し）", undo: {})) {}
+                }
+                await render("\(look)-thread", dark: dark, width: 400, height: 560) {
+                    ThreadScreen(id: 120, timeline: timeline, capabilities: store.capabilities, onReconnect: {})
+                        .onAppear {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                NotificationCenter.default.post(name: .debugThreadAction, object: "mention")
+                            }
+                        }
+                }
+            }
+            fflush(stdout)
+            exit(0)
+        }
+    }
+}
+
+extension SelfTest {
+    /// `BGURU_DEV_BASE_URL=http://127.0.0.1:PORT BGURU_DEV_TOKEN=… BGURU_DEV_TOKEN2=… "B-guru Chat" -apiCheck`:
+    /// every timeline operation (段階 3) through the app's own client against a LOCAL dev server
+    /// (refuses any other host): two members (TOKEN = me, TOKEN2 = someone else). Exit 0 = all ok.
+    static func runAPICheck(token: String) {
+        Task { @MainActor in
+            guard let host = APIClient.baseURL.host, ["127.0.0.1", "localhost"].contains(host) else {
+                print("[api] FAIL refusing: BGURU_DEV_BASE_URL must be a local server (\(APIClient.baseURL))"); exit(2)
+            }
+            guard let token2 = ProcessInfo.processInfo.environment["BGURU_DEV_TOKEN2"] else { print("[api] FAIL no BGURU_DEV_TOKEN2"); exit(2) }
+            let me = APIClient(token: token), other = APIClient(token: token2)
+            var fails = 0
+            func check(_ ok: Bool, _ what: String) { print("[api] \(ok ? "ok  " : "FAIL") \(what)"); if !ok { fails += 1 } }
+            @MainActor func attempt<T>(_ what: String, _ f: @MainActor () async throws -> T) async -> T? {
+                do { return try await f() } catch { check(false, "\(what): \(error)"); return nil }
+            }
+            let caps = await attempt("capabilities") { try await me.capabilities() }
+            let f = caps?.features?.posts
+            check(f?.edit == true && f?.delete == true && f?.pin == true && f?.poll == true && f?.whisper == true && f?.clubChange == true,
+                  "capabilities.features.posts has the operations")
+            let timeline = TimelineStore(api: me)
+            let actions = timeline.actions
+            actions.features = f
+            let members = await attempt("members") { try await me.members() } ?? []
+            check(members.count >= 0, "members (\(members.count))")
+            let clubs = await attempt("clubs") { try await me.clubs() } ?? []
+            check(!clubs.isEmpty, "clubs (\(clubs.count))")
+            let emojis = await attempt("emojis") { try await me.customEmojis(path: f?.customEmojiList ?? "") } ?? []
+            check(emojis.contains { $0.name == "beagle" }, "custom emojis (\(emojis.map(\.name)))")
+
+            // 📊 someone's poll; I vote and change my vote; they edit the answers.
+            let pollPost = await attempt("publish poll") {
+                try await other.publish(PublishBody(text: "API チェックの投票？", poll: .init(question: "API チェックの投票？", options: ["A", "B", "C"], durationHours: 1)))
+            }
+            check(pollPost?.poll?.options.count == 3 && pollPost?.poll?.editable == true, "publish with a poll → poll decoded, editable")
+            if let p = pollPost, let o = p.poll?.options {
+                let v1 = await attempt("vote") { try await me.vote(postId: p.id, optionId: o[0].id) }
+                check(v1?.myVote == o[0].id && v1?.totalVotes == 1, "vote → my_vote, 1 vote")
+                let v2 = await attempt("change vote") { try await me.vote(postId: p.id, optionId: o[1].id) }
+                check(v2?.myVote == o[1].id && v2?.totalVotes == 1, "change the vote → still 1 vote")
+                do {
+                    _ = try await other.editPoll(postId: p.id, options: [(o[0].id, "A"), (o[2].id, "C"), (nil, "D")])
+                    check(false, "removing a voted answer must fail")
+                } catch { check(PostActionsModel.message(error, fallback: "?") != "?", "removing a voted answer fails: \(PostActionsModel.message(error, fallback: "?"))") }
+                var asOther = p
+                asOther.isAuthor = true
+                let otherActions = PostActionsModel(api: other)
+                let e = await otherActions.savePoll(asOther, options: [(o[0].id, "A2"), (o[1].id, "B"), (o[2].id, "C"), (nil, "D")])
+                check(e == nil, "edit the answers (rename, add) \(e ?? "")")
+                do { _ = try await me.editPoll(postId: p.id, options: [(o[0].id, "x"), (o[1].id, "y"), (o[2].id, "z")]); check(false, "someone else's poll must not be editable") }
+                catch { check(true, "someone else's poll cannot be edited: \(PostActionsModel.message(error, fallback: "?"))") }
+            }
+
+            // My post: a picture and a club chosen by hand.
+            let jpeg: Data? = {
+                guard let ctx = CGContext(data: nil, width: 64, height: 48, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+                ctx.setFillColor(CGColor(red: 0.2, green: 0.6, blue: 0.3, alpha: 1)); ctx.fill(CGRect(x: 0, y: 0, width: 64, height: 48))
+                let out = NSMutableData()
+                guard let img = ctx.makeImage(), let d = CGImageDestinationCreateWithData(out, "public.jpeg" as CFString, 1, nil) else { return nil }
+                CGImageDestinationAddImage(d, img, nil); CGImageDestinationFinalize(d); return out as Data
+            }()
+            let urls = await attempt("upload image") { try await me.upload(images: [jpeg ?? Data(), jpeg ?? Data()]) } ?? []
+            check(urls.count == 2, "upload 2 pictures")
+            let club = clubs.first?.key
+            let mine = await attempt("publish with club") { try await me.publish(PublishBody(text: "API チェック @ほかの人", images: urls, club: club)) }
+            check(mine?.club == club && mine?.clubManual == true, "publish with a club chosen by hand → club \(mine?.club ?? "nil"), manual")
+
+            // A sound (WAV) and a video (mp4), each uploaded and attached.
+            let wav = FileManager.default.temporaryDirectory.appendingPathComponent("apicheck.wav")
+            var w = Data("RIFF".utf8); let n = 8000
+            func le32(_ v: Int) -> Data { withUnsafeBytes(of: UInt32(v).littleEndian) { Data($0) } }
+            func le16(_ v: Int) -> Data { withUnsafeBytes(of: UInt16(v).littleEndian) { Data($0) } }
+            for part in [le32(36 + n), Data("WAVEfmt ".utf8), le32(16), le16(1), le16(1), le32(8000), le32(8000), le16(1), le16(8),
+                         Data("data".utf8), le32(n)] { w.append(part) }
+            w += Data(repeating: 128, count: n)
+            try? w.write(to: wav)
+            let audioURL = await attempt("upload audio") { try await me.uploadMedia(file: wav, kind: .audio) }
+            check(audioURL?.hasPrefix("/api/media/") == true, "upload a sound → \(audioURL ?? "nil")")
+            let videoFile = URL(string: TimelineDemoMedia.video)!
+            let videoURL = await attempt("upload video") { try await me.uploadMedia(file: videoFile, kind: .video) }
+            check(videoURL?.hasPrefix("/api/media/") == true, "upload a video → \(videoURL ?? "nil")")
+            let vpost = await attempt("publish video") { try await me.publish(PublishBody(text: "動画つき", videoUrl: videoURL)) }
+            check(vpost?.videoUrl == videoURL, "publish with the video")
+            do { _ = try await me.publish(PublishBody(text: "両方", videoUrl: videoURL, audioUrl: audioURL)); check(false, "video + sound must fail") }
+            catch { check(true, "video + sound refused: \(PostActionsModel.message(error, fallback: "?"))") }
+
+            // ✏️ edit: text, pictures reordered and one removed, the sound attached.
+            if let p = mine, let a = audioURL {
+                let e = await actions.saveEdit(p, text: "API チェック（編集）", images: [urls[1]], audio: .some(a))
+                check(e == nil, "edit text + pictures + sound \(e ?? "")")
+                let t = await attempt("thread") { try await me.thread(id: p.id) }
+                check(t?.post.text == "API チェック（編集）" && t?.post.images == [urls[1]] && t?.post.audioUrl == a, "the edit is stored")
+                let e2 = await actions.saveEdit(p, text: "API チェック（音声を外す）", images: nil, audio: .some(nil))
+                let t2 = await attempt("thread") { try await me.thread(id: p.id) }
+                check(e2 == nil && t2?.post.audioUrl == nil && t2?.post.images == [urls[1]], "take the sound off (pictures kept)")
+                if let v = vpost {
+                    let e3 = await actions.saveEdit(v, text: "動画に音声", images: nil, audio: .some(a))
+                    check(e3 != nil, "a sound on a video post is refused: \(e3 ?? "")")
+                }
+            }
+
+            // 📌 pin: one per member, list.
+            if let p = mine, let v = vpost {
+                let on = await attempt("pin") { try await me.togglePin(id: p.id) }
+                check(on == true, "pin")
+                _ = await attempt("pin 2") { try await me.togglePin(id: v.id) }
+                let pins = await attempt("pinned list") { try await me.postList(.pinned) }
+                check(pins?.posts.map(\.id).contains(v.id) == true && pins?.posts.map(\.id).contains(p.id) == false, "one pin per member (pinned=1 → \(pins?.posts.map(\.id) ?? []))")
+                check(pins?.posts.first?.pinnedAt != nil, "pinned_at on the pinned post")
+                let off = await attempt("unpin") { try await me.togglePin(id: v.id) }
+                check(off == false, "unpin")
+                if let pp = pollPost {
+                    do { _ = try await me.togglePin(id: pp.id); check(false, "pinning someone's post must fail") }
+                    catch { check(true, "someone's post cannot be pinned: \(PostActionsModel.message(error, fallback: "?"))") }
+                }
+            }
+
+            // 🔖 / ☆
+            if let pp = pollPost {
+                let b = await attempt("bookmark") { try await me.toggleBookmark(postId: pp.id) }
+                let bl = await attempt("bm list") { try await me.postList(.bookmarks) }
+                check(b == true && bl?.posts.first { $0.id == pp.id }?.bookmarkedByMe == true, "bookmark → in bm=1, bookmarked_by_me")
+                let b2 = await attempt("unbookmark") { try await me.toggleBookmark(postId: pp.id) }
+                check(b2 == false, "unbookmark")
+                if let author = pp.authorId {
+                    _ = await attempt("favorite") { try await me.setFavorite(userId: author, on: true) }
+                    let fl = await attempt("fav list") { try await me.postList(.favorites) }
+                    check(fl?.posts.contains { $0.id == pp.id && $0.favoriteByMe == true } == true, "☆ → fav=1 has their post, favorite_by_me")
+                    _ = await attempt("unfavorite") { try await me.setFavorite(userId: author, on: false) }
+                    let fl2 = await attempt("fav list 2") { try await me.postList(.favorites) }
+                    check(fl2?.posts.isEmpty == true, "☆ off → fav=1 empty")
+                }
+                if let mid = mine?.authorId {
+                    do { try await me.setFavorite(userId: mid, on: true); check(false, "favouriting myself must fail") }
+                    catch { check(true, "favouriting myself refused: \(PostActionsModel.message(error, fallback: "?"))") }
+                }
+            }
+
+            // 部活の付け替え
+            if let p = mine, clubs.count > 1 {
+                let r1: Void? = await attempt("set club") { try await me.setClub(id: p.id, club: clubs[1].key) }
+                let t = await attempt("thread") { try await me.thread(id: p.id) }
+                check(r1 != nil && t?.post.club == clubs[1].key, "change the club → \(clubs[1].key)")
+                let r2: Void? = await attempt("no club") { try await me.setClub(id: p.id, club: nil) }
+                let t2 = await attempt("thread") { try await me.thread(id: p.id) }
+                check(r2 != nil && t2?.post.club == nil, "ラベルなし → club nil")
+            }
+
+            // うなる: a reply that does not lift the thread.
+            if let pp = pollPost, let v = vpost {
+                let before = await attempt("list") { try await me.posts() }
+                let topBefore = before?.posts.first?.id
+                let w = await attempt("whisper") { try await me.publish(PublishBody(text: "うなる返信", parentId: pp.id, whisper: true)) }
+                let after = await attempt("list") { try await me.posts() }
+                check(w?.parentId == pp.id && after?.posts.first?.id == topBefore, "うなる: reply stored, the list's order unchanged (top \(topBefore ?? -1) / \(v.id))")
+                let r = await attempt("reaction") { try await me.togglePostReaction(id: pp.id, emoji: ":beagle:") }
+                check(r?.added == true, "custom emoji reaction :beagle:")
+            }
+
+            // 🗑 delete: someone's fails, mine works.
+            if let pp = pollPost, let v = vpost {
+                do { try await me.deletePost(id: pp.id); check(false, "deleting someone's post must fail") }
+                catch { check(true, "someone's post cannot be deleted: \(PostActionsModel.message(error, fallback: "?"))") }
+                let e = await actions.delete(v)
+                let gone: ThreadResponse? = try? await me.thread(id: v.id)
+                check(e == nil && gone == nil, "delete my post → gone")
+            }
+            print(fails == 0 ? "[api] ok   all operations" : "[api] FAIL \(fails)")
             fflush(stdout)
             exit(fails == 0 ? 0 : 1)
         }

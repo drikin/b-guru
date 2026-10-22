@@ -28,8 +28,8 @@ final class APIClient: Sendable {
     }()
 
     let token: String
-    private let session: URLSession
-    private let decoder: JSONDecoder = {
+    let session: URLSession
+    let decoder: JSONDecoder = {
         let d = JSONDecoder()
         d.keyDecodingStrategy = .convertFromSnakeCase
         return d
@@ -258,7 +258,7 @@ final class APIClient: Sendable {
 
     func members() async throws -> [MentionMember] {
         struct R: Decodable { var members: [MentionMember] }
-        let r: R = try await send(request("GET", "/api/agent/members"))
+        let r: R = try await perform(request("GET", "/api/agent/members"))
         return r.members
     }
 
@@ -288,15 +288,12 @@ final class APIClient: Sendable {
 
     func clubs() async throws -> [ClubInfo] {
         struct R: Decodable { var clubs: [ClubInfo] }
-        let r: R = try await send(request("GET", "/api/agent/clubs"))
+        let r: R = try await perform(request("GET", "/api/agent/clubs"))
         return r.clubs
     }
 
     func publish(text: String, images: [String], parentId: Int?) async throws -> Post {
-        var json: [String: Any] = ["text": text, "images": images]
-        if let parentId { json["parent_id"] = parentId }
-        let r: PublishResponse = try await send(request("POST", "/api/agent/publish", json: json))
-        return r.post
+        try await publish(PublishBody(text: text, images: images, parentId: parentId))
     }
 
     /// JPEG data for each image (already resized by the caller). Returns /api/media/… URLs.
@@ -314,12 +311,12 @@ final class APIClient: Sendable {
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
         req.timeoutInterval = 120
-        let r: UploadResponse = try await send(req)
+        let r: UploadResponse = try await perform(req)
         return r.urls
     }
 
     func togglePostReaction(id: Int, emoji: String) async throws -> PostReactionToggleResponse {
-        try await send(request("POST", "/api/agent/reactions", json: ["post_id": id, "emoji": emoji]))
+        try await perform(request("POST", "/api/agent/reactions", json: ["post_id": id, "emoji": emoji]))
     }
 
     func markPostsRead(_ ids: [Int]) async {

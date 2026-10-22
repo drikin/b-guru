@@ -291,10 +291,11 @@ extension MessageRow: @MainActor Equatable {
     }
 }
 
-private struct ActionButton: View {
+struct ActionButton: View {
     let systemImage: String?
     let text: String?
     let help: String
+    var tint: Color? = nil
     let action: () -> Void
     @State private var over = false
 
@@ -309,44 +310,66 @@ private struct ActionButton: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
         .help(help)
         .onHover { over = $0 }
     }
 }
 
-/// Quick emoji + the community's custom emoji.
+/// The reaction picker (the web's ReactionBar): 「よく使う」 12, then every emoji, then the
+/// community's custom emoji (sent as ":name:"). The chat and the timeline use the same one.
 struct ReactionPicker: View {
     let onPick: (String) -> Void
-    static let unicode = ["❤️", "👍", "😂", "🎉", "🙏", "👀", "😮", "😢", "🔥", "💯", "👏", "🤔"]
-    private let cols = Array(repeating: GridItem(.fixed(30), spacing: 4), count: 6)
+    /// The web's QUICK_EMOJIS, in its order (how often each is used).
+    static let unicode = ["❤️", "👍", "🎉", "😂", "🙏", "🔥", "👏", "😮", "😢", "🤔", "💯", "✨"]
+    /// The web's PICKER_EMOJIS.
+    static let all = ["😀","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","😉","😍","😘","😜","🤪","😝",
+        "😎","🤓","🥳","😏","😌","😴","🤤","😪","😷","🤒","🤕","🤢","🤮","🥴","😵","🤯",
+        "😤","😠","😡","🤬","😭","😢","😱","😨","😰","😥","😓","🫡","🤝","👍","👎","👌",
+        "✌️","🤞","🙏","👏","💪","🤙","👋","🤌","🖐️","✋","🤚","👈","👉","👆","👇","🏆",
+        "🔥","❤️","🧡","💛","💚","💙","💜","🖤","🤍","💔","💯","💥","✨","⭐","🌟","💫",
+        "🎉","🎊","🎁","🎂","🍰","🍺","🍻","🥂","☕","🍵","🍜","🍣","🍩","🍪","🍎","🍉",
+        "🚀","🤔","🥇","🗽","🎬","📷","🎧","🎮","💻","📱","⌚","💾","☁️","🌧️","☀️","🌙",
+        "🌈","⚡","❄️","🚗","🚕","✈️","🏠","🌸","🐶","🐱","🦊","🐻","🐼","🐨","🐸","🐝",
+        "🦄","🐙","🍀","🌍","⚽","🏀","🎯","🎲","🎳","🎹","🎸","🥁","🎨","🧸","🪙","💰",
+        "💎","⏰","📌","🔔","🔒","✅","❌","⚠️","❓","❗","💬","📢","🗯️","🧦"]
+    private let cols = Array(repeating: GridItem(.fixed(30), spacing: 4), count: 7)
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                LazyVGrid(columns: cols, spacing: 4) {
-                    ForEach(Self.unicode, id: \.self) { e in
-                        Button { onPick(e) } label: { Text(e).font(.system(size: 20)).frame(width: 30, height: 30) }
-                            .buttonStyle(.plain)
-                    }
-                }
+                Text("よく使う").font(.caption).foregroundStyle(.secondary)
+                grid(Self.unicode)
+                Text("すべて").font(.caption).foregroundStyle(.secondary)
+                grid(Self.all)
                 let custom = EmojiCatalog.shared.names
                 if !custom.isEmpty {
                     Text("カスタム絵文字").font(.caption).foregroundStyle(.secondary)
                     LazyVGrid(columns: cols, spacing: 4) {
                         ForEach(custom, id: \.self) { name in
                             Button { onPick(":\(name):") } label: {
-                                ReactionGlyph(emoji: ":\(name):").frame(width: 24, height: 24).frame(width: 30, height: 30)
+                                ReactionGlyph(emoji: ":\(name):", size: 24).frame(width: 30, height: 30)
                             }
                             .buttonStyle(.plain)
                             .help(":\(name):")
+                            .accessibilityLabel(":\(name):")
                         }
                     }
                 }
             }
             .padding(10)
         }
-        .frame(width: 230, height: EmojiCatalog.shared.names.isEmpty ? 90 : 260)
+        .frame(width: 270, height: 300)
+    }
+
+    private func grid(_ emojis: [String]) -> some View {
+        LazyVGrid(columns: cols, spacing: 4) {
+            ForEach(Array(emojis.enumerated()), id: \.offset) { _, e in
+                Button { onPick(e) } label: { Text(e).font(.system(size: 20)).frame(width: 30, height: 30) }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(e)
+            }
+        }
     }
 }
 
@@ -475,12 +498,13 @@ struct ReactorsList: View {
 /// the public catalog (GET /api/emojis), loaded once per launch.
 struct ReactionGlyph: View {
     let emoji: String
+    var size: CGFloat = 14
     var body: some View {
         if emoji.hasPrefix(":"), emoji.hasSuffix(":"), emoji.count > 2,
            let url = EmojiCatalog.shared.url(for: String(emoji.dropFirst().dropLast())) {
             // Cached (AsyncImage refetched it every time a row scrolled back into view).
             MediaImage(path: url.absoluteString, contentMode: .fit, maxPixel: 64)
-                .frame(width: 14, height: 14)
+                .frame(width: size, height: size)
         } else {
             Text(emoji).font(.caption)
         }
@@ -496,6 +520,16 @@ final class EmojiCatalog {
 
     func url(for name: String) -> URL? { urls[name] }
     var names: [String] { urls.keys.sorted() }
+
+    /// GET /api/agent/emojis with the app's token (capabilities `custom_emoji_list`).
+    func load(api: APIClient, path: String) async {
+        guard !loaded, let list = try? await api.customEmojis(path: path) else { return }
+        loaded = true
+        for e in list {
+            let base: URL? = e.imageUrl.hasPrefix("/") ? APIClient.baseURL : nil
+            if let u = URL(string: e.imageUrl, relativeTo: base) { urls[e.name] = u.absoluteURL }
+        }
+    }
 
     func load() async {
         guard !loaded else { return }

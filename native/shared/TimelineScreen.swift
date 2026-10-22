@@ -17,14 +17,43 @@ struct TimelineScreen: View {
     @State private var needsReconnect = false
     @State private var viewing: ImageViewerItem?
 
+    private var actions: PostActionsModel { timeline.actions }
+
     var body: some View {
         content
-            .sheet(isPresented: $composing) {
-                ComposeSheet(api: timeline.api, parentId: nil, maxImages: capabilities?.maxImages ?? 5) { post in
-                    timeline.didPublish(post)
+            #if os(iOS)
+            .sheet(isPresented: $composing) { composer }
+            #else
+            // Laid over the panel (a sheet bigger than the panel drew wrongly).
+            .overlay {
+                if composing {
+                    ZStack {
+                        Color.black.opacity(0.35).ignoresSafeArea()
+                        composer
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .shadow(radius: 12)
+                            .padding(12)
+                    }
                 }
             }
+            #endif
+            .modifier(PostActionPresenter(timeline: timeline, capabilities: capabilities, actions: actions))
+            .environment(\.postActions, actions)
+            .environment(\.postClubs, timeline.clubList)
             .imageViewer($viewing)
+            .onChange(of: actions.lastChange) { _, c in
+                // The open thread's post was deleted: back to the list.
+                guard case let .deleted(id, nil)? = c?.kind else { return }
+                #if os(iOS)
+                if path.count > 0 { path = NavigationPath() ; _ = id }
+                #else
+                if macThread == id { macThread = nil }
+                #endif
+            }
+            #if DEBUG
+            .task { await debugOpenAction() }
+            #endif
             .task {
                 if !timeline.hasLoaded { await timeline.refresh() }
             }
@@ -49,6 +78,64 @@ struct TimelineScreen: View {
         if capabilities?.canPublish == true { composing = true } else { needsReconnect = true }
     }
 
+    private var composer: some View {
+        ComposeSheet(api: timeline.api, parentId: nil, maxImages: capabilities?.maxImages ?? 5, actions: actions,
+                     clubs: timeline.clubList, onClose: closeComposer) { post in
+            timeline.didPublish(post)
+        }
+        .task { if timeline.clubList.isEmpty, actions.canPickClub { await timeline.loadClubs() } }
+    }
+
+    private var closeComposer: (() -> Void)? {
+        #if os(macOS)
+        return { composing = false }
+        #else
+        return nil
+        #endif
+    }
+
+    /// ピン留め・ブックマーク・お気に入りの人 (only those the server offers).
+    @ViewBuilder private var listsMenu: some View {
+        let kinds = actions.lists
+        if !kinds.isEmpty {
+            Menu {
+                ForEach(kinds) { k in
+                    Button(k.title, systemImage: k.systemImage) { actions.list = k }
+                }
+            } label: {
+                Image(systemName: "list.bullet")
+            }
+            .menuIndicator(.hidden)
+            .accessibilityLabel("一覧（ピン留め・ブックマーク・お気に入りの人）")
+        }
+    }
+
+    #if DEBUG
+    /// Dev only: `-demoAction edit|delete|pollEdit|picker|pins|bookmarks|compose|composePoll|toast`
+    /// (BGURU_DEMO_ACTION on iPhone) opens that screen of the offline demo at once.
+    private func debugOpenAction() async {
+        let a = CommandLine.arguments
+        guard let what = a.firstIndex(of: "-demoAction").flatMap({ $0 + 1 < a.count ? a[$0 + 1] : nil })
+                ?? ProcessInfo.processInfo.environment["BGURU_DEMO_ACTION"], timeline.api.token == "demo" else { return }
+        try? await Task.sleep(for: .milliseconds(900))
+        let mine = timeline.posts.first { $0.id == 120 }
+        switch what {
+        case "edit": actions.editing = timeline.posts.first { $0.id == 122 }
+        case "editPoll", "pollEdit": actions.pollEditing = mine
+        case "delete": actions.deleting = mine
+        case "picker": actions.loadEmojis(); try? await Task.sleep(for: .milliseconds(400))
+            actions.picker = ReactionPickRequest(postId: 3, onPick: { timeline.toggleReaction(3, emoji: $0) })
+        case "pins": actions.list = .pinned
+        case "bookmarks": actions.list = .bookmarks
+        case "favorites": actions.list = .favorites
+        case "compose": composing = true
+        case "toast": if let p = timeline.posts.first(where: { $0.id == 4 }) { actions.toggleBookmark(p) }
+        case "thread": open(120)
+        default: break
+        }
+    }
+    #endif
+
     @ViewBuilder private var content: some View {
         #if os(iOS)
         NavigationStack(path: $path) {
@@ -57,6 +144,7 @@ struct TimelineScreen: View {
                 .inlineNavigationTitle()
                 .toolbar {
                     if let tabPicker { ToolbarItem(placement: .principal) { tabPicker } }
+                    ToolbarItem(placement: .topBarLeading) { listsMenu }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button(action: compose) { Image(systemName: "square.and.pencil") }
                             .accessibilityLabel("投稿する")
@@ -78,6 +166,10 @@ struct TimelineScreen: View {
                 }
                 if let tabPicker { tabPicker }
                 Spacer()
+                listsMenu
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("ピン留め・ブックマーク・お気に入りの人")
                 Button { Task { await timeline.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless)
                     .keyboardShortcut("r", modifiers: .command)
@@ -315,6 +407,12 @@ struct PostRow: View {
     @Environment(\.jukebox) private var jukebox
     @Environment(\.quoteToChat) private var quoteToChat
     @Environment(\.sendToNeta) private var sendToNeta
+    @Environment(\.postActions) private var actions
+    @Environment(\.postClubs) private var clubs
+    #if os(macOS)
+    @State private var hovering = false
+    #endif
+    @Environment(\.debugForceHover) private var debugForceHover
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -322,15 +420,20 @@ struct PostRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(post.authorName ?? "").font(.subheadline.bold()).lineLimit(1)
-                    if let clubName {
-                        // 「未設定」 (the AI could not tell the club) is grey, as on the web.
-                        let tint = post.display?.clubUnset == true ? Color.secondary : Color.accentGreen
-                        Text(clubName).font(.caption2.bold())
-                            .padding(.horizontal, 6).padding(.vertical, 1)
-                            .background(Capsule().fill(tint.opacity(0.14)))
-                            .foregroundStyle(tint)
+                    if post.favoriteByMe == true {
+                        Image(systemName: "star.fill").font(.caption2).foregroundStyle(.yellow)
+                            .accessibilityLabel("お気に入り")
                     }
+                    ClubTag(post: post, name: clubName)
                     Spacer(minLength: 4)
+                    if PostActionsModel.isPinned(post) {
+                        Image(systemName: "pin.fill").font(.caption2).foregroundStyle(Color.accentGreen)
+                            .accessibilityLabel("ピン留め中")
+                    }
+                    if post.bookmarkedByMe == true {
+                        Image(systemName: "bookmark.fill").font(.caption2).foregroundStyle(.blue)
+                            .accessibilityLabel("ブックマーク済み")
+                    }
                     Text(PostRow.relative(post.createdAt)).font(.caption).foregroundStyle(.tertiary).monospacedDigit()
                 }
                 if !post.text.isEmpty && !post.isBareLink {
@@ -361,6 +464,9 @@ struct PostRow: View {
                 if let pv = TimelineRules.linkCard(post) {
                     LinkCard(preview: pv, youtube: TimelineRules.isYouTubeCard(post))
                 }
+                if let poll = post.poll, !poll.options.isEmpty {
+                    PollCard(post: post, poll: poll)
+                }
                 HStack(spacing: 12) {
                     if let rs = post.reactions, !rs.isEmpty {
                         ReactionChips(reactions: TimelineRules.sortedReactions(post), enabled: canReact, onTap: onReact)
@@ -389,18 +495,21 @@ struct PostRow: View {
         }
         .animation(.easeOut(duration: 0.6), value: post.unread)
         .contentShape(Rectangle())
+        #if os(macOS)
+        // The web's card buttons at the top right while the pointer is over the post.
+        .overlay(alignment: .topTrailing) {
+            if hovering || debugForceHover, let actions, post.id > 0 {
+                PostHoverBar(post: post, actions: actions, canReact: canReact, onReact: onReact)
+                    .padding(.top, 4).padding(.trailing, 8)
+            }
+        }
+        .onHover { h in if hovering != h { hovering = h } }
+        #endif
         .contextMenu {
-            if canReact {
-                ForEach(MessageRow.quick, id: \.self) { e in Button(e) { onReact(e) } }
-                Divider()
-            }
-            if let quoteToChat {
-                Button("チャットに引用", systemImage: "quote.bubble") { quoteToChat(post) }
-            }
-            // The article the post links to (not the post itself) — docs/neta-client-spec.md.
-            if let sendToNeta, !NetaLinks.candidates(text: post.text, previewURL: post.urlPreview?.url).isEmpty {
-                Button("ネタ帳に送る", systemImage: "note.text.badge.plus") { sendToNeta(post) }
-            }
+            // The web's order (§10.2): 🔖・チャットに引用・ネタ帳・☆・リアクション・📌・部活・✏️・🗑.
+            PostMenuItems(post: post, actions: actions, canReact: canReact, onReact: onReact,
+                          quoteToChat: quoteToChat, sendToNeta: sendToNeta, clubs: clubs)
+            Divider()
             Button("テキストをコピー", systemImage: "doc.on.doc") { Platform.copy(post.text) }
             Button("Web で開く", systemImage: "safari") {
                 Platform.open(URL(string: "https://bsm.backspace.fm/#/post/\(post.parentId ?? post.id)")!)
@@ -584,6 +693,8 @@ extension EnvironmentValues {
     /// 「ネタ帳に送る」: opens the confirmation for the article the post links to
     /// (nil when this member cannot).
     @Entry var sendToNeta: PostAction? = nil
+    /// Dev only: the Mac's hover buttons shown without the pointer (the self-test's pictures).
+    @Entry var debugForceHover: Bool = false
     /// What can be seen right now (set once per window; nil = everything).
     @Entry var screenVisibility: ScreenVisibility? = nil
 }

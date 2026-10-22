@@ -96,6 +96,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 SelfTest.runTimelineShots(store: store, outDir: CommandLine.arguments[i + 1])
                 return
             }
+            if CommandLine.arguments.contains("-actionShots") {
+                SelfTest.runActionShots(store: store, outDir: CommandLine.arguments[i + 1])
+                return
+            }
             if CommandLine.arguments.contains("-timelineCheck") {
                 SelfTest.runTimelineCheck(store: store, outDir: CommandLine.arguments[i + 1])
                 return
@@ -231,6 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         // Dev only: BGURU_DEV_TOKEN=bga_… runs against a token without touching the Keychain.
         if let dev = ProcessInfo.processInfo.environment["BGURU_DEV_TOKEN"], !dev.isEmpty {
+            if CommandLine.arguments.contains("-apiCheck") { SelfTest.runAPICheck(token: dev); return }
             startSession(token: dev)
             let args = CommandLine.arguments
             if let i = args.firstIndex(of: "-selftest"), i + 1 < args.count, let store {

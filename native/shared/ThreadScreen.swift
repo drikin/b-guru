@@ -15,6 +15,8 @@ struct ThreadScreen: View {
     @State private var needsReconnect = false
     @State private var viewing: ImageViewerItem?
     @State private var replyFocused = false
+    /// The whole thread fits on screen (iOS 18 / macOS 15: from the scroll view's geometry).
+    @State private var fits = false
 
     init(id: Int, timeline: TimelineStore, capabilities: Capabilities?, onReconnect: @escaping () -> Void) {
         self.id = id
@@ -25,6 +27,7 @@ struct ThreadScreen: View {
     }
 
     private var canReact: Bool { capabilities?.canReactPosts ?? false }
+    private var actions: PostActionsModel { timeline.actions }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,6 +36,7 @@ struct ThreadScreen: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         if let root {
                             row(root, isRoot: true)
+                                .id("root")
                             Divider()
                             if replies.isEmpty {
                                 Text("まだ返信はありません").font(.callout).foregroundStyle(.secondary)
@@ -53,6 +57,7 @@ struct ThreadScreen: View {
                     .frame(maxWidth: .infinity)
                 }
                 .pullToRefresh { await load() }
+                .modifier(FitsTracker(fits: $fits))
                 .scrollDismissesKeyboard(.interactively)
                 .dismissesKeyboardOnTap()
                 .onChange(of: replies.last?.id) { old, last in
@@ -65,8 +70,11 @@ struct ThreadScreen: View {
                     // 3 s of scrolling, 33 000 ↔ 72 000 pt, sometimes stopping half way) —
                     // the Mac froze opening threads with many replies (drikin 2026-10-21).
                     let near = old.flatMap { o in replies.firstIndex { $0.id == o } }.map { replies.count - 1 - $0 <= 3 } ?? false
+                    // A thread shorter than the screen stays at the top: scrolling its last reply to
+                    // the bottom pushed the whole thread down under the title (a big gap on iPhone).
+                    // On opening, the geometry is only known a moment later (the retries below).
                     if near {
-                        withAnimation { proxy.scrollTo(last, anchor: .bottom) }
+                        if !fits { withAnimation { proxy.scrollTo(last, anchor: .bottom) } }
                     } else {
                         proxy.scrollTo(last, anchor: .bottom)
                         // Again once the rows at the end have been measured and their pictures
@@ -75,6 +83,7 @@ struct ThreadScreen: View {
                             for ms in [0, 60, 250] {
                                 try? await Task.sleep(for: .milliseconds(ms))
                                 guard replies.last?.id == last else { return }
+                                if fits { proxy.scrollTo("root", anchor: .top); return }
                                 proxy.scrollTo(last, anchor: .bottom)
                             }
                         }
@@ -92,6 +101,8 @@ struct ThreadScreen: View {
         .navigationTitle(root?.authorName.map { "\($0) さんの投稿" } ?? "スレッド")
         .inlineNavigationTitle()
         .task { await load() }
+        // Edits, deletes, ☆, polls… made anywhere (the menu here, the list, the pinned list).
+        .onChange(of: actions.lastChange) { _, c in if let c { apply(c.kind) } }
         .imageViewer($viewing)
         #if DEBUG
         // The self-checks act in the open thread as a member would (Notification.debugThreadAction).
@@ -106,6 +117,7 @@ struct ThreadScreen: View {
                 if var r = root { r.reactions = ChatStore.toggled(r.reactions ?? [], emoji: "👍"); root = r }
             case "focus": replyFocused = true
             case "type": draft.text = "テスト"
+            case "mention": actions.loadMembers(); draft.text = "@ta"
             case "clear": draft.text = ""; replyFocused = false
             default: break
             }
@@ -124,6 +136,10 @@ struct ThreadScreen: View {
 
     private var replyBar: some View {
         VStack(alignment: .leading, spacing: 4) {
+            let matches = actions.mentionMatches(draft.text)
+            if !matches.isEmpty {
+                MentionSuggestions(members: matches) { m in draft.text = Mention.complete(draft.text, with: m.name); replyFocused = true }
+            }
             DraftImages(draft: draft)
             if let e = draft.error { Text(e).font(.caption).foregroundStyle(.red) }
             HStack(alignment: .bottom, spacing: 8) {
@@ -137,19 +153,45 @@ struct ThreadScreen: View {
                     CameraButton(draft: draft) { Image(systemName: "camera").font(.system(size: 20)) }
                 }
                 #endif
-                PostTextInput(text: $draft.text, isFocused: $replyFocused, placeholder: "返信", onSubmit: sendReply)
+                PostTextInput(text: $draft.text, isFocused: $replyFocused, placeholder: "返信", onSubmit: { sendReply() })
                     .padding(.vertical, 8)
                     .padding(.horizontal, 12)
                     .background(RoundedRectangle(cornerRadius: 18).fill(Color.primary.opacity(0.06)))
                     .disabled(capabilities?.canPublish != true)
                     .onTapGesture { if capabilities?.canPublish != true { needsReconnect = true } }
-                Button(action: sendReply) {
-                    Image(systemName: draft.sending ? "hourglass.circle.fill" : "arrow.up.circle.fill").font(.system(size: 30))
+                if actions.canWhisper {
+                    // The web's two buttons: うなる (light blue, does not lift the thread or notify), 吠える (blue).
+                    Button { sendReply(whisper: true) } label: {
+                        Text("うなる").font(.subheadline.bold())
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(Capsule().fill(Color.blue.opacity(0.14)))
+                            .foregroundStyle(Color.blue)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!draft.canSend)
+                    .opacity(draft.canSend ? 1 : 0.45)
+                    .help("スレッドを上げず、通知も出さずに返信する")
+                    .accessibilityHint("スレッドを上げず、通知も出さずに返信します")
+                    Button { sendReply() } label: {
+                        Text(draft.sending ? "…" : "吠える").font(.subheadline.bold())
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(Capsule().fill(Color.blue))
+                            .foregroundStyle(.white)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!draft.canSend)
+                    .opacity(draft.canSend ? 1 : 0.45)
+                    .help("返信する（Return）")
+                } else {
+                    Button { sendReply() } label: {
+                        Image(systemName: draft.sending ? "hourglass.circle.fill" : "arrow.up.circle.fill").font(.system(size: 30))
+                    }
+                    .disabled(!draft.canSend)
+                    .accessibilityLabel("返信を送信")
                 }
-                .disabled(!draft.canSend)
-                .accessibilityLabel("返信を送信")
             }
         }
+        .onChange(of: replyFocused) { _, f in if f { actions.loadMembers() } }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .frame(maxWidth: 760)
@@ -157,14 +199,27 @@ struct ThreadScreen: View {
         .background(.bar)
     }
 
-    private func sendReply() {
+    private func sendReply(whisper: Bool = false) {
         guard draft.canSend else { return }
         Task {
-            if let post = await draft.send(api: timeline.api, parentId: id) {
+            if let post = await draft.send(api: timeline.api, parentId: id, whisper: whisper) {
                 replies.append(post)
-                timeline.didPublish(post)
+                timeline.didPublish(post, whisper: whisper)
                 replyFocused = true
             }
+        }
+    }
+
+    /// A change made to a post on this screen or elsewhere.
+    private func apply(_ kind: PostChange.Kind) {
+        if case let .deleted(pid, _) = kind {
+            replies.removeAll { $0.id == pid }
+            if root?.id == pid, var r = root { r.replyCount = replies.count; root = r }
+            return
+        }
+        if let r = root, let q = kind.applied(to: r) { root = q }
+        for i in replies.indices {
+            if let q = kind.applied(to: replies[i]) { replies[i] = q }
         }
     }
 
@@ -180,8 +235,8 @@ struct ThreadScreen: View {
             }
             root = p
             timeline.onThreadOpened?(p)
-            replies = [Post(id: 100, authorName: "takuto", isAuthor: false, parentId: id, text: "かわいい！", createdAt: p.createdAt, unread: true),
-                       Post(id: 101, authorName: "ドリキン", isAuthor: true, parentId: id, text: "名前なんでしたっけ", createdAt: p.createdAt)]
+            replies = [Post(id: 9100, authorId: "t", authorName: "takuto", isAuthor: false, parentId: id, text: "かわいい！", createdAt: p.createdAt, unread: true),
+                       Post(id: 9101, authorId: "me", authorName: "ドリキン", isAuthor: true, parentId: id, text: "名前なんでしたっけ", createdAt: p.createdAt)]
             return
         }
         #endif
@@ -215,6 +270,22 @@ struct ThreadScreen: View {
         // Replies are not in the timeline list, so the store does not send for them.
         if !timeline.posts.contains(where: { $0.id == postId }) {
             Task { _ = try? await timeline.api.togglePostReaction(id: postId, emoji: emoji) }
+        }
+    }
+}
+
+/// Whether the content is no taller than the scroll view (iOS 18 / macOS 15; older: never).
+private struct FitsTracker: ViewModifier {
+    @Binding var fits: Bool
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, macOS 15.0, *) {
+            content.onScrollGeometryChange(for: Bool.self) { g in
+                g.contentSize.height <= g.containerSize.height - g.contentInsets.top - g.contentInsets.bottom + 1
+            } action: { _, f in
+                if fits != f { fits = f }
+            }
+        } else {
+            content
         }
     }
 }
