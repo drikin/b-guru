@@ -29,6 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var collapser: StatusBarCollapser?
     /// メニューバーのティッカー（設定でオンにした人だけ）。
     private var ticker: StatusTicker?
+    /// 新着でビーグルが吠える（絵の差し替え）。
+    private var barker: BeagleBarker?
     /// ビーグルの右の未読の数（ティッカーが流しているあいだはティッカーがタイトルを持つ）。
     private var countTitle = ""
 
@@ -45,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             button.action = #selector(statusItemClicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+        setupBarker()
         updateStatusIcon(unread: 0, mentions: 0, connection: .connecting)
         if !CommandLine.arguments.contains("-selftest") { setupCollapser(); setupTicker() }
         settings.onDockChange = { [weak self] _ in self?.applyDockSetting() }
@@ -364,6 +367,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             hover.state = settings.collapseRevealOnHover ? .on : .off
             menu.addItem(hover)
         }
+        let bark = NSMenuItem(title: "新着でビーグルが吠える", action: #selector(toggleBark), keyEquivalent: "")
+        bark.target = self
+        bark.state = settings.menuBarBark ? .on : .off
+        menu.addItem(bark)
         let tick = NSMenuItem(title: "メニューバーにティッカーを流す", action: #selector(toggleTicker), keyEquivalent: "")
         tick.target = self
         tick.state = settings.menuBarTicker ? .on : .off
@@ -392,6 +399,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc private func toggleCollapseSetting() { settings.collapseStatusItems.toggle() }
     @objc private func toggleCollapseHover() { settings.collapseRevealOnHover.toggle() }
     @objc private func toggleTicker() { settings.menuBarTicker.toggle() }
+    @objc private func toggleBark() { settings.menuBarBark.toggle() }
     @objc private func toggleTickerNames() { settings.menuBarTickerNamesOnly.toggle() }
     @objc private func signOutAction() { signOut() }
     @objc private func checkUpdates() { Updater.shared.checkNow() }
@@ -419,16 +427,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard let button = statusItem?.button else { return }
         // Posture tells the state, not colour (template image stays monochrome):
         // sitting = nothing new, filled = new messages, "@" = someone called you.
-        let symbol = unread > 0 ? "dog.fill" : "dog"
-        let img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        img?.isTemplate = true
-        button.image = img
+        // 左向きのビーグル（BeagleIcon）。吠えている途中なら、終わったときにこの状態の絵に戻る。
+        barker?.filled = unread > 0
+        if barker?.isBarking != true { button.image = BeagleIcon.image(filled: unread > 0) }
         let n = min(unread, 99)
         countTitle = unread == 0 ? "" : (mentions > 0 ? " @\(n)" : " \(n)")
         if let ticker, ticker.isShowing {
             ticker.setCount(countTitle)
         } else {
-            button.title = countTitle
+            button.attributedTitle = BeagleIcon.countTitle(countTitle)
             button.imagePosition = .imageLeading
         }
         button.appearsDisabled = connection == .offline
@@ -517,6 +524,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         collapser?.disable() // 区切りを残さない
     }
 
+    // MARK: - 新着でビーグルが吠える
+
+    private func setupBarker() {
+        let b = BeagleBarker(item: statusItem)
+        b.enabled = settings.menuBarBark
+        b.blockedReason = { [weak self] in
+            guard let self else { return "終了中" }
+            if self.store?.isVisible == true { return "チャットを見ている" }
+            var quiet = self.settings.isQuietNow()
+            #if DEBUG
+            if CommandLine.arguments.contains("-tickerTest") { quiet = false } // 開発のみ：夜中でも試せるように
+            #endif
+            return quiet ? "静かな時間" : nil
+        }
+        settings.onBarkChange = { [weak self] on in
+            self?.barker?.enabled = on
+            if !on { self?.barker?.stop() }
+            StatusBarDiag.note("新着でビーグルが吠える: \(on ? "オン" : "オフ")")
+        }
+        barker = b
+    }
+
     // MARK: - メニューバーのティッカー
 
     private func setupTicker() {
@@ -524,7 +553,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         t.collapser = collapser
         t.restoreButton = { [weak self] in
             guard let self, let button = self.statusItem.button else { return }
-            button.title = self.countTitle
+            button.attributedTitle = BeagleIcon.countTitle(self.countTitle)
             button.imagePosition = .imageLeading
         }
         t.canShow = { [weak self] in
@@ -542,6 +571,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self.showPanel()
             self.panel?.pin.tab = .chat
             if let id { self.store?.reveal(id) }
+        }
+        t.onShow = { [weak self] style in
+            switch style {
+            case .message: self?.barker?.bark(.message)
+            case .mention: self?.barker?.bark(.mention)
+            case .notice: self?.barker?.bark(.notice)
+            }
         }
         ticker = t
         let apply = { [weak self] in
@@ -561,16 +597,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// ChatStore の受信からティッカーへ（通知のほうの受け取りはそのまま）。
     private func wireTicker(_ store: ChatStore) {
         let mention = store.onMention
+        // 吠える：ティッカーがオンなら流れ始めと同時に（StatusTicker.onShow）、オフならここで。
         store.onMention = { [weak self] m in
             mention?(m)
-            self?.ticker?.enqueue(message: m)
+            guard let self else { return }
+            self.ticker?.enqueue(message: m)
+            if self.ticker?.enabled != true { self.barker?.bark(.mention) }
         }
         let newMessage = store.onNewMessage
         store.onNewMessage = { [weak self] m in
             newMessage?(m)
-            if m.kind == nil { self?.ticker?.enqueue(message: m) } // ☗ のカードはお知らせのほうで
+            guard let self, m.kind == nil else { return } // ☗ のカードはお知らせのほうで
+            self.ticker?.enqueue(message: m)
+            if self.ticker?.enabled != true { self.barker?.bark(.message) }
         }
-        store.onAnnouncement = { [weak self] m in self?.ticker?.enqueue(announcement: m) }
+        store.onAnnouncement = { [weak self] m in
+            guard let self else { return }
+            self.ticker?.enqueue(announcement: m)
+            if self.ticker?.enabled != true, !StatusTicker.isRoomNotice(m.body) { self.barker?.bark(.notice) }
+        }
     }
 
     #if DEBUG
@@ -611,6 +656,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     NSLog("[collapse] frames beagle=%@ dummies=%@", NSStringFromRect(self.statusItem.button?.window?.frame ?? .zero),
                           self.debugItems.map { NSStringFromRect($0.button?.window?.frame ?? .zero) }.joined(separator: " "))
                 case "closeAlert": NSApp.abortModal()
+                case "barkOn": self.settings.menuBarBark = true
+                case "barkOff": self.settings.menuBarBark = false
                 case "tickerOn": self.settings.menuBarTicker = true
                 case "tickerOff": self.settings.menuBarTicker = false
                 case "namesOnly": self.settings.menuBarTickerNamesOnly = true

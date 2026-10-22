@@ -31,6 +31,8 @@ final class StatusTicker {
     var canShow: () -> Bool = { true }
     /// ティッカーの部分がクリックされた（その発言へ）。
     var onOpen: ((Int?) -> Void)?
+    /// 1 件を流し始めるとき（空きがなくて流せないときも）。ビーグルが同時に吠える。
+    var onShow: ((Style) -> Void)?
     /// 流し終えて元に戻すとき、ボタンのタイトル（未読の数）と画像の位置を元どおりにする。
     var restoreButton: (() -> Void)?
     #if DEBUG
@@ -108,6 +110,7 @@ final class StatusTicker {
         guard enabled, current == nil, !queue.isEmpty, let button = item.button else { return }
         guard canShow() else { queue.removeAll(); return }
         let it = queue.removeFirst()
+        onShow?(it.style)
         let text = attributed(it)
         let textWidth = ceil(text.size().width)
         // いつも右から流すので、短い文でも流れる場所（最低 160pt）を取る。
@@ -255,7 +258,7 @@ final class StatusTicker {
         att.bounds = NSRect(x: 0, y: 0, width: spacer, height: 1)
         let t = NSMutableAttributedString(attachment: att)
         let count = countText.trimmingCharacters(in: .whitespaces)
-        t.append(NSAttributedString(string: count.isEmpty ? " " : " \(count) ", attributes: [.font: NSFont.menuBarFont(ofSize: 0)]))
+        t.append(BeagleIcon.countTitle(count.isEmpty ? " " : " \(count) "))
         return t
     }
 }

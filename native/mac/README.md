@@ -42,6 +42,17 @@ B-guru のチャットだけを切り出したメニューバー常駐アプリ�
     ```bash
     tail -n 40 ~/Library/Containers/fm.backspace.bguru.chat/Data/Library/Application\ Support/Diagnostics/statusbar.log | pbcopy
     ```
+- **メニューバーのビーグルは左向き**（2026-10-22。ティッカーの文字が左へ流れるので、左を向いて吠えて送り出す絵に）。SF Symbols の
+  dog / dog.fill をキャンバス（22×17pt、整数）の幅で左右反転して描く（`BeagleIcon`）。大きさ・alignmentRect は記号と同じなので、ボタンの
+  幅・位置・未読の数の位置は変わらない。未読の数は数字の幅をそろえた字（1→2 で幅が変わってビーグルが横にずれない）。
+  変えたのは Mac のメニューバーだけ（アプリのアイコン・iOS・Android・Web はそのまま）
+- **新着でビーグルが吠える**（⋯ メニュー／右クリックメニュー「新着でビーグルが吠える」、既定はオン）
+  - チャットの新着（自分の発言は除く）・ビーグルのお知らせで 1 回、自分へのメンションで 2 回、口を開け閉めする（約 0.8 秒、
+    0.16 秒ごとに 3 枚のコマを差し替える）。コマは通常の絵の上に、鼻先の下を細く切って口を開け、短い下あごと「ワン」の短い線
+    （顔の前＝左、キャンバスの中）を足すだけなので、体・足元は 1px も動かない（ボタンの frame も変わらない。画面の差分で確認）
+  - 刻みはタイマー（Core Animation は macOS 26 のメニューバーで動かなかった前例）。終わったら必ず最新の状態（未読・接続）の絵に戻す
+  - 吠えないとき: チャットを見ているとき、静かな時間、「視差効果を減らす」がオンのとき、前に吠えてから 10 秒以内。
+    ティッカーがオンなら流れ始めと同時に吠える。statusbar.log に「吠えた（種別）／吠えない（理由）」
 - **メニューバーのティッカー**（⋯ メニュー、またはビーグルの右クリックメニューで「メニューバーにティッカーを流す」。既定は切）
   - チャットの新着（「名前：本文」1 行。改行・長文は詰める。写真は「📷 写真」。自分の発言は流さない）、自分へのメンション（太字、
     「@ 名前：本文」）、ビーグルのお知らせ（☗ の見どころ・対局カード、散財ダッシュなど。部室の出入りは流さない）を、ビーグルの
@@ -62,7 +73,7 @@ B-guru のチャットだけを切り出したメニューバー常駐アプリ�
   - 開発のみ: `-demoPanel -tickerTest`（パネルは開かない、静かな時間も無視）＋分散通知（上と同じ名前）の
     msg / mention / notice / photo / long / room / burst / tickerOn / tickerOff / namesOnly / namesFull /
     forceLight / forceDark / forceNone（文字色の外観を固定して見本を撮る）。`-collapseTest` と一緒にも使える。
-    後片付け: `defaults delete fm.backspace.bguru.chat menuBarTicker` と `menuBarTickerNamesOnly`
+    後片付け: `defaults delete fm.backspace.bguru.chat menuBarTicker`・`menuBarTickerNamesOnly`・`menuBarBark`（barkOn / barkOff でも操作できる）
 
 ## 設計の約束
 - 依存するのは `/api/agent/*` の契約だけ（`src/lib/agent-chat.ts` が正本）。

@@ -72,6 +72,15 @@ final class AppSettings {
         }
     }
     @ObservationIgnored var onTickerChange: (() -> Void)?
+    /// 新着・メンション・ビーグルのお知らせで、メニューバーのビーグルが吠える（絵が口を開け閉めする）。既定はオン。
+    var menuBarBark: Bool {
+        didSet {
+            guard menuBarBark != oldValue else { return }
+            UserDefaults.standard.set(menuBarBark, forKey: "menuBarBark")
+            onBarkChange?(menuBarBark)
+        }
+    }
+    @ObservationIgnored var onBarkChange: ((Bool) -> Void)?
 
     static let quietStartHour = 0
     static let quietEndHour = 7
@@ -86,6 +95,7 @@ final class AppSettings {
         collapseRevealOnHover = d.object(forKey: "collapseRevealOnHover") as? Bool ?? true
         menuBarTicker = d.bool(forKey: "menuBarTicker")
         menuBarTickerNamesOnly = d.bool(forKey: "menuBarTickerNamesOnly")
+        menuBarBark = d.object(forKey: "menuBarBark") as? Bool ?? true
     }
 
     func isQuietNow(_ date: Date = Date()) -> Bool {

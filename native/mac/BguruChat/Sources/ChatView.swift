@@ -143,6 +143,7 @@ private struct ChatHeader: View {
                 if settings.collapseStatusItems {
                     Toggle("　カーソルを乗せたら出す", isOn: $settings.collapseRevealOnHover)
                 }
+                Toggle("新着でビーグルが吠える", isOn: $settings.menuBarBark)
                 Toggle("メニューバーにティッカーを流す", isOn: $settings.menuBarTicker)
                 if settings.menuBarTicker {
                     Toggle("　名前だけ（本文を出さない）", isOn: $settings.menuBarTickerNamesOnly)
