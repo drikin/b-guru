@@ -140,7 +140,7 @@ final class StatusTicker {
         let scroll = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let duration = scroll ? min(12, max(5, Double(w + textWidth) / 55)) : 6
         ov.run(text: text, textWidth: textWidth, scroll: scroll, duration: duration, scale: button.window?.backingScaleFactor ?? 2)
-        StatusBarDiag.note("ティッカー: 表示（\(Self.styleName(it.style))・幅 \(Int(w))\(lent ? "・区切りから借りた" : "")）")
+        StatusBarDiag.note("ティッカー: 表示（\(Self.styleName(it.style))・幅 \(Int(w))\(lent ? "・区切りから借りた" : "")・\(scroll ? "流す \(String(format: "%.1f", duration)) 秒" : "流さない（視差効果を減らす）")）")
         // VoiceOver には 1 回だけ読み上げる
         NSAccessibility.post(element: button, notification: .announcementRequested,
                              userInfo: [.announcement: it.text, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
@@ -263,6 +263,7 @@ final class StatusTicker {
 /// ティッカーの文字を流すビュー。クリック・ホバーはボタンへ素通し（hitTest が nil）。
 final class TickerOverlay: NSView {
     private let textLayer = CATextLayer()
+    private var stepTimer: Timer?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -289,16 +290,23 @@ final class TickerOverlay: NSView {
         textLayer.position = CGPoint(x: scroll ? bounds.width : 2, y: y)
         if textLayer.superlayer == nil { root.addSublayer(textLayer) }
         CATransaction.commit()
+        stepTimer?.invalidate()
+        stepTimer = nil
         if scroll {
-            // 右から入って左へ抜ける（1 回）
-            let a = CABasicAnimation(keyPath: "position.x")
-            a.fromValue = bounds.width
-            a.toValue = -textWidth
-            a.duration = duration
-            a.timingFunction = CAMediaTimingFunction(name: .linear)
-            a.fillMode = .forwards
-            a.isRemovedOnCompletion = false
-            textLayer.add(a, forKey: "scroll")
+            // 右から入って左へ抜ける（1 回）。Core Animation の暗黙の動きはオーナーの Mac（macOS 26）のステータスバーで
+            // 動かなかった（出るだけ）ので、刻み（60 Hz、流しているあいだだけ）で位置を書き換える。
+            let from = bounds.width, to = -textWidth, start = CACurrentMediaTime()
+            let t = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+                guard let self else { timer.invalidate(); return }
+                let p = min(1, (CACurrentMediaTime() - start) / duration)
+                CATransaction.begin()
+                CATransaction.setDisableActions(true)
+                self.textLayer.position.x = (from + (to - from) * p).rounded(.toNearestOrAwayFromZero)
+                CATransaction.commit()
+                if p >= 1 { timer.invalidate(); self.stepTimer = nil }
+            }
+            RunLoop.main.add(t, forMode: .common)
+            stepTimer = t
         } else {
             let a = CABasicAnimation(keyPath: "opacity")
             a.fromValue = 0
@@ -309,6 +317,8 @@ final class TickerOverlay: NSView {
     }
 
     func stop() {
+        stepTimer?.invalidate()
+        stepTimer = nil
         textLayer.removeAllAnimations()
     }
 }
