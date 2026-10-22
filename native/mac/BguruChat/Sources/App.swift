@@ -31,6 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var ticker: StatusTicker?
     /// 新着でビーグルが吠える（絵の差し替え）。
     private var barker: BeagleBarker?
+    /// 負荷に合わせてビーグルが走る。
+    private var runner: BeagleRunner?
     /// 端末内 AI のタイムラインのおすすめ。
     private let aiPicks = AIPicks()
     /// ビーグルの右の未読の数（ティッカーが流しているあいだはティッカーがタイトルを持つ）。
@@ -376,6 +378,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         bark.target = self
         bark.state = settings.menuBarBark ? .on : .off
         menu.addItem(bark)
+        let run = NSMenuItem(title: "負荷に合わせてビーグルが走る", action: #selector(toggleRunner), keyEquivalent: "")
+        run.target = self
+        run.state = settings.menuBarRunner ? .on : .off
+        menu.addItem(run)
+        if settings.menuBarRunner {
+            let gpu = NSMenuItem(title: "GPU の負荷も見る", action: #selector(toggleRunnerGPU), keyEquivalent: "")
+            gpu.target = self
+            gpu.indentationLevel = 1
+            gpu.state = settings.menuBarRunnerGPU ? .on : .off
+            menu.addItem(gpu)
+        }
         let tick = NSMenuItem(title: "メニューバーにティッカーを流す", action: #selector(toggleTicker), keyEquivalent: "")
         tick.target = self
         tick.state = settings.menuBarTicker ? .on : .off
@@ -417,6 +430,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc private func toggleCollapseHover() { settings.collapseRevealOnHover.toggle() }
     @objc private func toggleTicker() { settings.menuBarTicker.toggle() }
     @objc private func toggleBark() { settings.menuBarBark.toggle() }
+    @objc private func toggleRunner() { settings.menuBarRunner.toggle() }
+    @objc private func toggleRunnerGPU() { settings.menuBarRunnerGPU.toggle() }
     @objc private func toggleAIPicks() { settings.aiTimelinePicks.toggle() }
     @objc private func toggleTickerNames() { settings.menuBarTickerNamesOnly.toggle() }
     @objc private func signOutAction() { signOut() }
@@ -447,7 +462,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // sitting = nothing new, filled = new messages, "@" = someone called you.
         // 左向きのビーグル（BeagleIcon）。吠えている途中なら、終わったときにこの状態の絵に戻る。
         barker?.filled = unread > 0
-        if barker?.isBarking != true { button.image = BeagleIcon.image(filled: unread > 0) }
+        if runner?.drawsIcon == true {
+            runner?.render() // 走る機能がオンのあいだは、絵はレイヤーで描く
+        } else if barker?.isBarking != true {
+            button.image = BeagleIcon.image(filled: unread > 0)
+        }
         let n = min(unread, 99)
         countTitle = unread == 0 ? "" : (mentions > 0 ? " @\(n)" : " \(n)")
         if let ticker, ticker.isShowing {
@@ -457,6 +476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             button.imagePosition = .imageLeading
         }
         button.appearsDisabled = connection == .offline
+        if runner?.drawsIcon == true { runner?.render() } // 淡色（接続していない）もレイヤーの絵に
         let state = connection == .offline ? "、オフライン" : ""
         let detail = mentions > 0 ? "、うちメンション \(mentions) 件" : ""
         button.setAccessibilityLabel(unread > 0 ? "B-guru チャット、未読 \(unread) 件\(detail)\(state)" : "B-guru チャット\(state)")
@@ -562,6 +582,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             StatusBarDiag.note("新着でビーグルが吠える: \(on ? "オン" : "オフ")")
         }
         barker = b
+        let r = BeagleRunner(item: statusItem, barker: b)
+        runner = r
+        settings.onRunnerChange = { [weak self] on in
+            guard let self else { return }
+            self.runner?.useGPU = self.settings.menuBarRunnerGPU
+            self.runner?.enabled = on
+            StatusBarDiag.note("負荷に合わせてビーグルが走る: \(on ? "オン" : "オフ")\(self.settings.menuBarRunnerGPU ? "（GPU も見る）" : "（CPU だけ）")")
+        }
+        r.useGPU = settings.menuBarRunnerGPU
+        if !CommandLine.arguments.contains("-selftest") { r.enabled = settings.menuBarRunner }
     }
 
     // MARK: - 端末内 AI のおすすめ
@@ -735,6 +765,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     NSLog("[collapse] frames beagle=%@ dummies=%@", NSStringFromRect(self.statusItem.button?.window?.frame ?? .zero),
                           self.debugItems.map { NSStringFromRect($0.button?.window?.frame ?? .zero) }.joined(separator: " "))
                 case "closeAlert": NSApp.abortModal()
+                case "runOn": self.settings.menuBarRunner = true
+                case "runOff": self.settings.menuBarRunner = false
+                case "gpuOn": self.settings.menuBarRunnerGPU = true
+                case "gpuOff": self.settings.menuBarRunnerGPU = false
+                case "load0": self.runner?.debugLoad = 0
+                case "load25": self.runner?.debugLoad = 25
+                case "load55": self.runner?.debugLoad = 55
+                case "load90": self.runner?.debugLoad = 90
+                case "loadReal": self.runner?.debugLoad = nil
                 case "barkOn": self.settings.menuBarBark = true
                 case "barkOff": self.settings.menuBarBark = false
                 case "tickerOn": self.settings.menuBarTicker = true

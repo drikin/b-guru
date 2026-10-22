@@ -75,14 +75,31 @@ enum BeagleIcon {
             }
             return true
         }
-        img.isTemplate = true
-        // ボタンの中の縦の置き方は記号と同じ（横はキャンバス全体）
         var align = symbol.alignmentRect
         align.size.width = W
-        img.alignmentRect = align
-        img.accessibilityDescription = "B-guru"
-        cache[key] = img
-        return img
+        let baked = bake(img, alignment: align) // ボタンの中の縦の置き方は記号と同じ（横はキャンバス全体）
+        cache[key] = baked
+        return baked
+    }
+
+    /// 描き方（drawingHandler）の絵を @1x・@2x のビットマップに焼いておく（コマを差し替えるたびに描き直さない）。
+    static func bake(_ img: NSImage, alignment: NSRect) -> NSImage {
+        let out = NSImage(size: canvas)
+        for scale in [1, 2] {
+            let w = Int(canvas.width) * scale, h = Int(canvas.height) * scale
+            guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8, samplesPerPixel: 4,
+                                             hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { continue }
+            rep.size = canvas
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            img.draw(in: NSRect(origin: .zero, size: canvas))
+            NSGraphicsContext.restoreGraphicsState()
+            out.addRepresentation(rep)
+        }
+        out.isTemplate = true
+        out.alignmentRect = alignment
+        out.accessibilityDescription = "B-guru"
+        return out
     }
 }
 
@@ -115,6 +132,10 @@ final class BeagleBarker {
     private var timer: Timer?
     private var sequence: [Int] = []
     private var lastBark: Date?
+    /// 走る機能がオンのとき：コマを自分で描かず、これを呼ぶ（走る機能がレイヤーで描く）。
+    var onFrame: (() -> Void)?
+    /// 今の吠えるコマ（nil = 吠えていない）。
+    private(set) var currentFrame: Int?
     private var startFrame: NSRect?
 
     init(item: NSStatusItem) {
@@ -154,7 +175,12 @@ final class BeagleBarker {
         let before = button.frame
         let winBefore = button.window?.frame ?? .zero
         #endif
-        button.image = BeagleIcon.image(filled: filled, bark: k)
+        if let onFrame {
+            currentFrame = k
+            onFrame()
+        } else {
+            button.image = BeagleIcon.image(filled: filled, bark: k)
+        }
         #if DEBUG
         button.layoutSubtreeIfNeeded()
         if startFrame == nil { startFrame = before }
@@ -168,6 +194,7 @@ final class BeagleBarker {
         timer?.invalidate()
         timer = nil
         sequence = []
-        item.button?.image = BeagleIcon.image(filled: filled)
+        currentFrame = nil
+        if let onFrame { onFrame() } else { item.button?.image = BeagleIcon.image(filled: filled) }
     }
 }

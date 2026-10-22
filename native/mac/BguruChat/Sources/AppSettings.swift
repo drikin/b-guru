@@ -81,6 +81,23 @@ final class AppSettings {
         }
     }
     @ObservationIgnored var onBarkChange: ((Bool) -> Void)?
+    /// Mac の CPU・GPU の負荷に合わせて、メニューバーのビーグルが走る。既定は切。
+    var menuBarRunner: Bool {
+        didSet {
+            guard menuBarRunner != oldValue else { return }
+            UserDefaults.standard.set(menuBarRunner, forKey: "menuBarRunner")
+            onRunnerChange?(menuBarRunner)
+        }
+    }
+    @ObservationIgnored var onRunnerChange: ((Bool) -> Void)?
+    /// 走る速さに GPU の負荷も使う（既定は切 = CPU だけ）。
+    var menuBarRunnerGPU: Bool {
+        didSet {
+            guard menuBarRunnerGPU != oldValue else { return }
+            UserDefaults.standard.set(menuBarRunnerGPU, forKey: "menuBarRunnerGPU")
+            onRunnerChange?(menuBarRunner)
+        }
+    }
     /// 端末内 AI がタイムラインのおすすめをティッカーで教える（この Mac の中だけで動く）。既定は切。
     var aiTimelinePicks: Bool {
         didSet {
@@ -105,6 +122,8 @@ final class AppSettings {
         menuBarTicker = d.bool(forKey: "menuBarTicker")
         menuBarTickerNamesOnly = d.bool(forKey: "menuBarTickerNamesOnly")
         menuBarBark = d.object(forKey: "menuBarBark") as? Bool ?? true
+        menuBarRunner = d.bool(forKey: "menuBarRunner")
+        menuBarRunnerGPU = d.bool(forKey: "menuBarRunnerGPU")
         aiTimelinePicks = d.bool(forKey: "aiTimelinePicks")
     }
 

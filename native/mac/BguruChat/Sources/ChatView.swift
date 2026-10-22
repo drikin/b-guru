@@ -144,6 +144,10 @@ private struct ChatHeader: View {
                     Toggle("　カーソルを乗せたら出す", isOn: $settings.collapseRevealOnHover)
                 }
                 Toggle("新着でビーグルが吠える", isOn: $settings.menuBarBark)
+                Toggle("負荷に合わせてビーグルが走る", isOn: $settings.menuBarRunner)
+                if settings.menuBarRunner {
+                    Toggle("　GPU の負荷も見る", isOn: $settings.menuBarRunnerGPU)
+                }
                 Toggle("メニューバーにティッカーを流す", isOn: $settings.menuBarTicker)
                 // 端末内 AI のおすすめ（使えないときは理由を 1 行）
                 let ai = AIPicks.availability()
