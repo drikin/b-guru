@@ -368,3 +368,59 @@ extension HangWatch: MXMetricManagerSubscriber {
         }
     }
 }
+
+#if DEBUG
+// MARK: the self-checks' watcher (the long-thread check on the Mac and in the simulator)
+
+/// Pings the main thread from another thread every 100 ms; calls `onHang` (on that thread)
+/// when a ping has gone unanswered for `limit` seconds. `longest` = the longest wait seen.
+final class MainThreadWatch: @unchecked Sendable {
+    private let limit: Double
+    private let onHang: @Sendable (Double, String) -> Void
+    private let lock = NSLock()
+    private let queue = DispatchQueue(label: "fm.backspace.bguru.threadcheck")
+    private var timer: DispatchSourceTimer?
+    private var sentAt: Date?
+    private var _longest = 0.0
+    private var _step = ""
+
+    init(limit: Double, onHang: @escaping @Sendable (Double, String) -> Void) {
+        self.limit = limit
+        self.onHang = onHang
+    }
+
+    var longest: Double { lock.withLock { _longest } }
+    var step: String {
+        get { lock.withLock { _step } }
+        set { lock.withLock { _step = newValue } }
+    }
+
+    func start() {
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        t.schedule(deadline: .now() + 0.1, repeating: .milliseconds(100))
+        t.setEventHandler { [weak self] in self?.tick() }
+        timer = t
+        t.resume()
+    }
+
+    func stop() { timer?.cancel(); timer = nil }
+
+    private func tick() {
+        let now = Date()
+        let (pending, step): (Date?, String) = lock.withLock { (sentAt, _step) }
+        if let pending {
+            let waited = now.timeIntervalSince(pending)
+            if waited >= limit { onHang(waited, step) }
+            return
+        }
+        lock.withLock { sentAt = now }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.lock.withLock {
+                if let s = self.sentAt { self._longest = max(self._longest, Date().timeIntervalSince(s)) }
+                self.sentAt = nil
+            }
+        }
+    }
+}
+#endif

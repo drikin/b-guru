@@ -235,4 +235,164 @@ extension SelfTest {
         try? png.write(to: url)
     }
 }
+
+// MARK: - Long thread check (the Mac froze opening a thread with many replies, 2026-10-21)
+
+extension SelfTest {
+    /// `-selftest DIR -demo -threadCheck [-demoReplies N]`: opens the demo thread with many
+    /// replies in the real panel view (off-screen), scrolls it from the bottom to the top and
+    /// back like a member would, reacts, closes it — and checks that the main thread keeps
+    /// answering throughout. A watcher on another thread pings the main thread; if it does
+    /// not answer within the limit (default 5 s, `-threadLimit S`), the check prints FAIL
+    /// and exits 1 at once (the hang itself is also in HangWatch's hangs.log with the stack).
+    /// Writes DIR/thread.json and DIR/thread-*.png. Exit 0 = passed.
+    static func runThreadCheck(store: ChatStore, outDir: String) {
+        let args = CommandLine.arguments
+        let limit = args.firstIndex(of: "-threadLimit").flatMap { i in i + 1 < args.count ? Double(args[i + 1]) : nil } ?? 5
+        let dir = URL(fileURLWithPath: outDir)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let watch = MainThreadWatch(limit: limit) { stalled, step in
+            let line = "[thread-check] FAIL main thread did not respond for \(String(format: "%.1f", stalled)) s (during: \(step))"
+            print(line)
+            fflush(stdout)
+            try? Data((line + "\n").utf8).write(to: dir.appendingPathComponent("thread.json"))
+            exit(1)
+        }
+        Task { @MainActor in
+            var report: [String: Any] = ["replies": TimelineStore.demoLongThreadReplies, "limit_s": limit]
+            let timeline = TimelineStore(api: APIClient(token: "demo"))
+            timeline.debugLoadDemo()
+            let pin = PinState()
+            pin.windowVisible = true
+            let host = NSHostingView(rootView: MainPanelView(store: store, timeline: timeline, pin: pin, onClose: {}, onSignOut: {}, initialTab: .timeline))
+            host.sizingOptions = [] // as in the panel (ChatPanel)
+            // -threadSize WxH: the panel's size (default 380×640; the narrowest panel is 300×320).
+            let size = args.firstIndex(of: "-threadSize").flatMap { i -> [Double]? in
+                guard i + 1 < args.count else { return nil }
+                let p = args[i + 1].split(separator: "x").compactMap { Double($0) }
+                return p.count == 2 ? p : nil
+            } ?? [380, 640]
+            let win = NSWindow(contentRect: NSRect(x: -4000, y: -4000, width: size[0], height: size[1]),
+                               styleMask: [.borderless], backing: .buffered, defer: false)
+            win.contentView = host
+            win.orderFrontRegardless()
+            store.isVisible = true
+            report["size"] = "\(Int(size[0]))x\(Int(size[1]))"
+            watch.start()
+            try? await Task.sleep(for: .milliseconds(800))
+
+            @MainActor func shot(_ name: String) {
+                host.layoutSubtreeIfNeeded()
+                guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+                host.cacheDisplay(in: host.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("thread-\(name).png"))
+            }
+            /// The tallest scroll view: the open thread (the timeline under it has a few posts).
+            @MainActor func threadScroll() -> NSScrollView? {
+                var all: [NSScrollView] = []
+                func walk(_ v: NSView) { if let s = v as? NSScrollView { all.append(s) }; v.subviews.forEach(walk) }
+                walk(host)
+                return all.filter { !$0.isHidden && $0.alphaValue > 0 }.max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
+            }
+
+            let t0 = Date()
+            watch.step = "open thread"
+            timeline.openThread = TimelineStore.demoLongThreadId
+            // Opened when the thread's content is taller than many screens.
+            var scroll: NSScrollView?
+            while Date().timeIntervalSince(t0) < 10 {
+                try? await Task.sleep(for: .milliseconds(50))
+                if let s = threadScroll(), (s.documentView?.frame.height ?? 0) > 3000 { scroll = s; break }
+            }
+            report["open_ms"] = Int(Date().timeIntervalSince(t0) * 1000)
+            guard let scroll, let doc = scroll.documentView else {
+                print("[thread-check] FAIL the thread did not open")
+                report["ok"] = false
+                write(report, dir)
+                exit(1)
+            }
+            let clip = scroll.contentView
+            // The member scrolls at once, while the list may still be moving to the newest reply.
+            watch.step = "scroll while opening"
+            for _ in 0..<40 {
+                var o = clip.bounds.origin
+                o.y += doc.isFlipped ? -120 : 120
+                clip.scroll(to: o)
+                scroll.reflectScrolledClipView(clip)
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+            watch.step = "settle"
+            try? await Task.sleep(for: .milliseconds(1200)) // unread replies on screen get read
+            shot("opened")
+            report["content_height"] = Int(doc.frame.height)
+
+            // Scroll from where it is (the newest reply) to the top, a screen at a time, then
+            // jump back to the bottom and to the middle (rows built and thrown away).
+            @MainActor func scrollTo(_ y: CGFloat) async {
+                let maxY = max(0, doc.frame.height - clip.bounds.height)
+                let target = doc.isFlipped ? min(max(0, y), maxY) : maxY - min(max(0, y), maxY)
+                clip.scroll(to: NSPoint(x: 0, y: target))
+                scroll.reflectScrolledClipView(clip)
+                try? await Task.sleep(for: .milliseconds(40))
+            }
+            let s0 = Date()
+            var steps = 0
+            watch.step = "scroll up"
+            var y = doc.frame.height
+            while y > 0 {
+                y -= clip.bounds.height * 0.8
+                await scrollTo(y)
+                steps += 1
+            }
+            shot("top")
+            watch.step = "jump to bottom"
+            await scrollTo(.greatestFiniteMagnitude)
+            try? await Task.sleep(for: .milliseconds(300))
+            watch.step = "jump to middle"
+            await scrollTo(doc.frame.height / 2)
+            try? await Task.sleep(for: .milliseconds(300))
+            watch.step = "scroll down"
+            y = doc.frame.height / 2
+            while y < doc.frame.height {
+                y += clip.bounds.height * 0.8
+                await scrollTo(y)
+                steps += 1
+            }
+            report["scroll_steps"] = steps
+            report["scroll_ms"] = Int(Date().timeIntervalSince(s0) * 1000)
+
+            // Back to the timeline (the ‹ button / the mouse's back button), and open it again.
+            watch.step = "close thread"
+            NotificationCenter.default.post(name: .timelineBack, object: nil)
+            try? await Task.sleep(for: .milliseconds(600))
+            watch.step = "open thread again"
+            timeline.openThread = TimelineStore.demoLongThreadId
+            try? await Task.sleep(for: .milliseconds(1500))
+            shot("reopened")
+            // Opening shows the newest reply at the bottom (where it lands, not a failure by itself).
+            if let s = threadScroll(), let d = s.documentView {
+                let visible = s.contentView.bounds
+                let bottomGap = d.isFlipped ? d.frame.height - visible.maxY : visible.minY
+                report["reopened_bottom_gap"] = Int(bottomGap)
+            }
+            watch.step = "close thread again"
+            NotificationCenter.default.post(name: .timelineBack, object: nil)
+            try? await Task.sleep(for: .milliseconds(600))
+
+            watch.stop()
+            report["longest_stall_ms"] = Int(watch.longest * 1000)
+            report["ok"] = true
+            print("[thread-check] ok   \(TimelineStore.demoLongThreadReplies) replies: opened in \(report["open_ms"] ?? 0) ms, \(steps) scroll steps in \(report["scroll_ms"] ?? 0) ms, longest main-thread stall \(Int(watch.longest * 1000)) ms")
+            write(report, dir)
+            fflush(stdout)
+            exit(0)
+        }
+    }
+
+    private static func write(_ report: [String: Any], _ dir: URL) {
+        let json = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+        try? json?.write(to: dir.appendingPathComponent("thread.json"))
+    }
+}
+
 #endif

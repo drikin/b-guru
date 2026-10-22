@@ -217,9 +217,93 @@ final class TimelineStore {
                  createdAt: old, club: "apple", unread: false),
             Post(id: 1, authorId: "me", authorName: "ドリキン", isAuthor: true, replyCount: 12,
                  text: "ビーグルのアプリにタイムラインを追加しています", createdAt: old, club: "improve", unread: false),
+            // A long thread (the Mac froze opening threads with many replies, 2026-10-21).
+            Post(id: Self.demoLongThreadId, authorId: "me", authorName: "ドリキン", isAuthor: true, replyCount: Self.demoLongThreadReplies,
+                 text: "みなさんの今年買ってよかったものを教えてください！ **一つだけ** でも、たくさんでも。https://bsm.backspace.fm",
+                 createdAt: old, club: "chat", reactions: [Reaction(emoji: "❤️", count: 42, mine: true, reactors: []), Reaction(emoji: "👍", count: 9, mine: false, reactors: [])],
+                 unread: false, unreadReplies: 30),
         ]
         clubs = ["chat": "雑談", "pet": "ペット部", "apple": "リンゴ部", "improve": "機能改善"]
         hasLoaded = true
+    }
+
+    /// The demo thread with many replies (`-demoOpenThread`, the self-test's thread check).
+    static let demoLongThreadId = 7
+    /// How many: `-demoReplies N` (Mac) or BGURU_DEMO_REPLIES=N (simulator); 240 by default.
+    static var demoLongThreadReplies: Int {
+        if let i = CommandLine.arguments.firstIndex(of: "-demoReplies"), i + 1 < CommandLine.arguments.count,
+           let n = Int(CommandLine.arguments[i + 1]) { return n }
+        if let n = ProcessInfo.processInfo.environment["BGURU_DEMO_REPLIES"].flatMap(Int.init) { return n }
+        return 240
+    }
+
+    /// Replies of every kind: short, long, Markdown, links with cards, photos, reactions,
+    /// @mentions, unread ones at the end (as a real long thread has).
+    static func debugDemoReplies(root: Int, count: Int) -> [Post] {
+        let names = ["mazzo", "takuto", "NORIO TAKAHASHI", "リュウ", "ビーグル", "ドリキン", "kei", "sumi"]
+        let base = Date().addingTimeInterval(-Double(count) * 120)
+        let fmt = ISO8601DateFormatter()
+        let long = String(repeating: "長文の返信です。今年は本当にいろいろ買いましたが、結局毎日使っているのはこれでした。", count: 6)
+        let emojis = ["❤️", "👍", "😂", "🎉", "🙏", "👀", "🔥", "💯", "🐶", "🍣"]
+        // Pictures (wide, tall, photos, avatars, link cards): drawn here and put in the image
+        // cache, so nothing is fetched. BGURU_DEMO_MEDIA=http://127.0.0.1:PORT instead loads
+        // them from a local server, arriving after the rows are laid out, as from the real one.
+        let server = ProcessInfo.processInfo.environment["BGURU_DEMO_MEDIA"]
+        let media = server ?? "selftest-media"
+        var drawn: [String: [String]] = [:] // picture → paths that show it
+        func pic(_ name: String, _ i: Int) -> String {
+            let path = "\(media)/\(name)?i=\(i)"
+            drawn[name, default: []].append(path)
+            return path
+        }
+        let replies = (0..<count).map { i in
+            let name = names[i % names.count]
+            var text: String
+            var images: [String]? = nil
+            var preview: UrlPreview? = nil
+            switch i % 9 {
+            case 0: text = "わかります！ \(i)"
+            case 1: text = long + " (\(i))"
+            case 2: text = "これです https://www.apple.com/jp/iphone/ \(i)"
+                preview = UrlPreview(url: "https://www.apple.com/jp/iphone/", title: "iPhone - Apple（日本） \(i)",
+                                     description: "新しい iPhone を見てみましょう。", image: pic("photo.jpg", i), siteName: "Apple")
+            case 3: text = "写真です \(i)"; images = [pic(i % 2 == 0 ? "wide.jpg" : "tall.jpg", i)]
+            case 4: text = "@ドリキン さん **太字** と `code` と [リンク](https://bsm.backspace.fm) \(i)\n- 箇条書き\n- もう一つ"
+            case 5: text = "3 枚 \(i)"; images = [pic("photo.jpg", i), pic("wide.jpg", i + 1), pic("tall.jpg", i + 2)]
+            case 6: text = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+                preview = UrlPreview(url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", title: "動画 \(i)", description: "説明", image: nil, siteName: "YouTube", videoId: "dQw4w9WgXcQ")
+            case 7: text = "> 引用\n> 2 行目\n\nそれな \(i)"
+            default: text = "😂😂😂 \(i)"
+            }
+            let reactions: [Reaction]? = i % 3 == 0
+                ? (0..<(1 + i % 8)).map { k in Reaction(emoji: emojis[(i + k) % emojis.count], count: 1 + (i * 7 + k) % 23, mine: k == 0 && i % 2 == 0, reactors: ["a", "b"]) }
+                : nil
+            return Post(id: 10_000 + i, authorId: name, authorName: name, authorAvatar: pic("avatar.jpg", i % names.count),
+                        isAuthor: name == "ドリキン", parentId: root,
+                        text: text, images: images, createdAt: fmt.string(from: base.addingTimeInterval(Double(i) * 120)),
+                        reactions: reactions, unread: i >= count - 30, urlPreview: preview)
+        }
+        if server == nil {
+            let sizes = ["wide.jpg": (1800, 300), "tall.jpg": (400, 1200), "photo.jpg": (1200, 900), "avatar.jpg": (128, 128)]
+            for (name, paths) in drawn {
+                let (w, h) = sizes[name] ?? (600, 600)
+                guard let img = debugPicture(width: w, height: h, hue: CGFloat(abs(name.hashValue) % 360) / 360) else { continue }
+                for p in Set(paths) { MediaCache.shared.debugInsert(img, for: p) }
+            }
+        }
+        return replies
+    }
+
+    /// A plain picture (two colour bands), drawn with Core Graphics.
+    private static func debugPicture(width: Int, height: Int, hue: CGFloat) -> PlatformImage? {
+        guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.setFillColor(CGColor(red: 0.3 + hue * 0.6, green: 0.55, blue: 0.9 - hue * 0.5, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.35))
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height / 3))
+        return ctx.makeImage().map(PlatformImage.decoded)
     }
     #endif
 

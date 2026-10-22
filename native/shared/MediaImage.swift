@@ -26,7 +26,7 @@ final class MediaCache {
     #if DEBUG
     /// Dev only (the orientation self-test): a picture under a made-up path, at every size asked for.
     func debugInsert(_ image: PlatformImage, for raw: String) {
-        for px in [MediaImage.defaultPixels, 600, 900, 2560] { cache.setObject(image, forKey: Self.key(raw, px)) }
+        for px in [MediaImage.defaultPixels, 600, 900, 2560, AvatarCache.pixels] { cache.setObject(image, forKey: Self.key(raw, px)) }
     }
     #endif
 

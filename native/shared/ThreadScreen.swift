@@ -55,8 +55,30 @@ struct ThreadScreen: View {
                 .pullToRefresh { await load() }
                 .scrollDismissesKeyboard(.interactively)
                 .dismissesKeyboardOnTap()
-                .onChange(of: replies.last?.id) { _, last in
-                    if let last { withAnimation { proxy.scrollTo(last, anchor: .bottom) } }
+                .onChange(of: replies.last?.id) { old, last in
+                    guard let last else { return }
+                    // A reply just added under the one before (sent from here): glide to it.
+                    // Anything further — opening the thread, a reload that brought many —
+                    // jumps. Animating to the end of a long thread scrolled through every
+                    // reply in the lazy list, building and measuring each one, while the
+                    // list's guessed height swung by tens of thousands of points (300 replies:
+                    // 3 s of scrolling, 33 000 ↔ 72 000 pt, sometimes stopping half way) —
+                    // the Mac froze opening threads with many replies (drikin 2026-10-21).
+                    let near = old.flatMap { o in replies.firstIndex { $0.id == o } }.map { replies.count - 1 - $0 <= 3 } ?? false
+                    if near {
+                        withAnimation { proxy.scrollTo(last, anchor: .bottom) }
+                    } else {
+                        proxy.scrollTo(last, anchor: .bottom)
+                        // Again once the rows at the end have been measured and their pictures
+                        // have come (the first jump goes by estimated heights).
+                        Task { @MainActor in
+                            for ms in [0, 60, 250] {
+                                try? await Task.sleep(for: .milliseconds(ms))
+                                guard replies.last?.id == last else { return }
+                                proxy.scrollTo(last, anchor: .bottom)
+                            }
+                        }
+                    }
                 }
             }
             Divider()
@@ -131,6 +153,13 @@ struct ThreadScreen: View {
     private func load() async {
         #if DEBUG
         if timeline.api.token == "demo", let p = timeline.posts.first(where: { $0.id == id }) {
+            if id == TimelineStore.demoLongThreadId {
+                // As from the server: the post and all its replies arrive together, a moment later.
+                try? await Task.sleep(for: .milliseconds(300))
+                root = p
+                replies = TimelineStore.debugDemoReplies(root: id, count: TimelineStore.demoLongThreadReplies)
+                return
+            }
             root = p
             replies = [Post(id: 100, authorName: "takuto", isAuthor: false, parentId: id, text: "かわいい！", createdAt: p.createdAt, unread: true),
                        Post(id: 101, authorName: "ドリキン", isAuthor: true, parentId: id, text: "名前なんでしたっけ", createdAt: p.createdAt)]
@@ -139,6 +168,7 @@ struct ThreadScreen: View {
         #endif
         do {
             let t = try await timeline.api.thread(id: id)
+            HangWatch.note("thread \(id) loaded: \(t.replies.count) replies")
             root = t.post
             replies = t.replies
             failed = false

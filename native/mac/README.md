@@ -52,6 +52,17 @@ native/ios/scripts/orientation-check.sh [UDID]
 （緊急時だけ `SKIP_ORIENTATION=1`）。2) は画面収録の許可が要るので手で回す（描き方を変えたとき）。撮った画像は表示される出力先に残る。
 デモの後片付け（`panelNarrowed20261019`・`jukebox.*` の設定、シミュレータの外観）はスクリプトがする。
 
+## 長いスレッドのチェック（リリースの前に）
+返信の多いスレッドを開くとパネルが固まる報告（2026-10-21）を受けて、デモの 300 件の返信つきスレッドを開き、
+開いている途中からスクロール・上まで・下へ戻る・閉じてもう一度開く、を通して、メインスレッドが 5 秒以上応答しなければ失敗にする。
+```bash
+"build/dd/Build/Products/Debug/B-guru Chat.app/Contents/MacOS/B-guru Chat" \
+  -selftest ~/Library/Containers/fm.backspace.bguru.chat/Data/tmp/threadcheck -demo -threadCheck [-demoReplies 300] [-threadSize 300x320]
+native/ios/scripts/thread-check.sh [UDID] [返信の数]     # iPhone（シミュレータ）
+```
+release.sh（0/6）と testflight.sh が上下反転のチェックと一緒に回す。手で開くとき: `-demoPanel -demoOpenThread [-demoReplies N]`
+（絵はアプリ内で描く。`BGURU_DEMO_MEDIA=http://127.0.0.1:PORT` で手元のサーバーから遅れて届く絵にもできる）。
+
 ## フリーズの記録
 - 起動中は見張りのスレッドがメインスレッドを 0.5 秒ごとに確かめ、3 秒応答がないと
   `~/Library/Containers/fm.backspace.bguru.chat/Data/Library/Application Support/Diagnostics/hangs.log`

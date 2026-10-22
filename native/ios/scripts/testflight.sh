@@ -29,6 +29,12 @@ if [ "${SKIP_ORIENTATION:-0}" != "1" ]; then
     echo "ORIENTATION CHECK FAILED (or no simulator). Not uploading. SKIP_ORIENTATION=1 to override." >&2
     exit 1
   fi
+  # Freeze guard (2026-10-21: the Mac froze opening a thread with many replies; same shared screen here).
+  echo "=== long-thread check (simulator, offline demo) ==="
+  if ! "$SCRIPT_DIR/thread-check.sh" "$SIM"; then
+    echo "LONG-THREAD CHECK FAILED: the app stopped responding with a long thread open. Not uploading. SKIP_ORIENTATION=1 to override." >&2
+    exit 1
+  fi
 fi
 OUT="$PWD/build/ios-archive"
 ARCHIVE="$OUT/BguruChat-$VERSION-$BUILD.xcarchive"

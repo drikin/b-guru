@@ -34,6 +34,16 @@ if [ "${SKIP_ORIENTATION:-0}" != "1" ]; then
     echo "ORIENTATION CHECK FAILED: a screen is drawn upside down (see $ORIENT_OUT). Not releasing." >&2
     exit 1
   fi
+  # Freeze guard (2026-10-21: the panel froze opening a thread with many replies): open a demo thread with
+  # 300 replies, scroll it to the top and back, close and reopen it; fails if the main thread stops answering
+  # for 5 s. Same build, same offline demo, nothing sent.
+  echo "=== 0/6 long-thread check (Debug, offline demo) ==="
+  THREAD_OUT="$HOME/Library/Containers/fm.backspace.bguru.chat/Data/tmp/threadcheck"
+  if ! "$ROOT/build/orient/Build/Products/Debug/B-guru Chat.app/Contents/MacOS/B-guru Chat" \
+      -selftest "$THREAD_OUT" -demo -threadCheck -demoReplies 300; then
+    echo "LONG-THREAD CHECK FAILED: the app stopped responding with a long thread open (see $THREAD_OUT and hangs.log). Not releasing." >&2
+    exit 1
+  fi
   defaults delete fm.backspace.bguru.chat panelNarrowed20261019 2>/dev/null || true
   for k in jukebox.last jukebox.progress jukebox.finished; do defaults delete fm.backspace.bguru.chat "$k" 2>/dev/null || true; done
 fi

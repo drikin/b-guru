@@ -79,6 +79,8 @@ final class Session {
             let t = TimelineStore(api: APIClient(token: "demo"))
             t.debugLoadDemo()
             timeline = t
+            // BGURU_DEMO_THREAD_CHECK=1: the long-thread check (scripts/thread-check.sh).
+            ThreadCheck.runIfAsked(timeline: t)
             return
         }
         #endif

@@ -68,6 +68,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 SelfTest.runOrientation(store: store, outDir: CommandLine.arguments[i + 1])
                 return
             }
+            // -threadCheck: open a thread with many replies, scroll it, close it; exit 1 if the app stops responding.
+            if CommandLine.arguments.contains("-threadCheck") {
+                SelfTest.runThreadCheck(store: store, outDir: CommandLine.arguments[i + 1])
+                return
+            }
             SelfTest.run(store: store, outDir: CommandLine.arguments[i + 1], send: false)
             return
         }
@@ -144,6 +149,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 if CommandLine.arguments.contains("-orientationTour") { self.runOrientationTour(store: store) }
                 if CommandLine.arguments.contains("-demoTimelineTab") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.panel?.pin.tab = .timeline }
+                }
+                // -demoOpenThread: the timeline with the long demo thread open (-demoReplies N replies).
+                if CommandLine.arguments.contains("-demoOpenThread") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        self.panel?.pin.tab = .timeline
+                        timeline.openThread = TimelineStore.demoLongThreadId
+                    }
                 }
             }
             return
