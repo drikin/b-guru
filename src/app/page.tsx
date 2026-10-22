@@ -77,7 +77,7 @@ import { splitChatUrls } from "@/lib/chat-links";
 import { netaCandidates, netaDefaultTitle } from "@/lib/neta-client";
 import MacAppCard from "@/components/MacAppCard";
 import AndroidAppCard from "@/components/AndroidAppCard";
-import type { PostPoll } from "@/lib/poll";
+import { POLL_DURATIONS, POLL_LABEL_MAX, POLL_MAX_OPTIONS, POLL_MIN_OPTIONS, POLL_QUESTION_MAX, type PostPoll } from "@/lib/poll";
 import type { DuplicateCandidate } from "@/lib/duplicates";
 import { DuplicateWarning } from "@/components/DuplicateWarning";
 import VoiceBar, { VoiceMini } from "@/components/VoiceBar";
@@ -1844,7 +1844,7 @@ function PostCard({
               <Menu.Target>
                 <UnstyledButton
                   onClick={(e) => e.stopPropagation()}
-                  aria-label="部活動ラベルを変更"
+                  aria-label={clubName ? `部活：${clubName}（変更）` : "部活を付ける"}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -3905,6 +3905,7 @@ function ComposerPaper({
   onClose,
   onPreviewImage,
   onReplyTo,
+  defaultClub,
 }: {
   auth: { name?: string | null; email: string };
   avatarSrc?: string | null;
@@ -3936,12 +3937,16 @@ function ComposerPaper({
     images: string[],
     videoUrl?: string | null,
     poll?: { question: string; options: string[]; durationHours: number } | null,
-    audioUrl?: string | null
+    audioUrl?: string | null,
+    /** 手で選んだ部活（null = 自動で分類（AI））。docs/timeline-spec.md §10.2 */
+    club?: string | null
   ) => Promise<void>;
   onClose: () => void;
   onPreviewImage: (src: string, group?: string[]) => void;
   /** 重複警告から「元の投稿に返信する」を選んだとき。投稿先を切り替える。 */
   onReplyTo?: (postId: number, authorName: string) => void;
+  /** 部活で絞った一覧から開いたとき、その部活を初めから選んでおく（「自動で分類（AI）」にも戻せる）。 */
+  defaultClub?: string | null;
 }) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<string[]>([]);
@@ -3957,6 +3962,16 @@ function ComposerPaper({
     options: string[];
     durationHours: number;
   } | null>(null);
+  // 部活: null = 「自動で分類（AI）」（投稿後に AI が付ける）。選ぶと club_manual で自動分類しない（アプリと同じ・§10.2）。
+  const validDefaultClub = defaultClub && activeClubDefs().some((c) => c.key === defaultClub) ? defaultClub : null;
+  const [club, setClub] = useState<string | null>(validDefaultClub);
+  // 開いたまま一覧の部活を切り替えたら、選択もそれに合わせる（描画中に前の値と比べる React の流儀。effect で
+  // setState すると描画が二度走る）。手で選び直した分は、その後に一覧を切り替えたときだけ上書きする。
+  const [prevDefaultClub, setPrevDefaultClub] = useState<string | null>(validDefaultClub);
+  if (prevDefaultClub !== validDefaultClub) {
+    setPrevDefaultClub(validDefaultClub);
+    setClub(validDefaultClub);
+  }
   const [proofreading, setProofreading] = useState(false);
   const AI_PROOFREAD_MIN = 500; // "AI校正" button enables >500 chars
   // 重複投稿の警告（drikin 2026-09-25）。投稿をブロックはせず、同じ話題が
@@ -4078,10 +4093,21 @@ function ComposerPaper({
       posting
     )
       return;
+    // 投票付きは回答 3 つ以上・質問（本文）は 200 字まで（アプリと同じ。Enter でもボタンでも案内を出す）
+    if (pollDraft && pollDraft.options.filter((o) => o.trim()).length < POLL_MIN_OPTIONS) {
+      setError(`回答を${POLL_MIN_OPTIONS}つ以上入れてください`);
+      return;
+    }
+    if (pollDraft && text.trim().length > POLL_QUESTION_MAX) {
+      setError(`投票の質問（本文）は${POLL_QUESTION_MAX}字までです`);
+      return;
+    }
     const t = text;
     const imgs = images;
     const v = video;
     const a = audio;
+    const c = club;
+    const pd = pollDraft;
     setPosting(true);
     setError(null);
     setText("");
@@ -4089,9 +4115,17 @@ function ComposerPaper({
     setVideo(null);
     setAudio(null);
     setPollDraft(null);
+    setClub(validDefaultClub);
     try {
-      await onPublish(t, imgs, v, poll, a);
+      await onPublish(t, imgs, v, poll, a, c);
     } catch (err: any) {
+      // 失敗したら入力を元に戻す（本文・画像・動画・音声・投票・部活）。打ち直さなくてよいように。
+      setText(t);
+      setImages(imgs);
+      setVideo(v);
+      setAudio(a);
+      setPollDraft(pd);
+      setClub(c);
       setError(err.message);
     } finally {
       setPosting(false);
@@ -4149,7 +4183,7 @@ function ComposerPaper({
       </Group>
       <form onSubmit={handleSubmit}>
         <MentionTextarea
-          placeholder="今なにしてる？ (画像・動画投稿もできます)"
+          placeholder={pollDraft ? "投票の質問" : "今なにしてる？ (画像・動画投稿もできます)"}
           autosize
           minRows={2}
           autoFocus
@@ -4299,11 +4333,12 @@ function ComposerPaper({
               border: "1px solid var(--border-light)",
             }}
           >
-            <Group justify="space-between" mb={4} wrap="nowrap">
-              <Text size="sm" fw={700}>アンケート</Text>
-              <Group gap={4} wrap="nowrap" align="center">
-                <Text size="xs" c="dimmed">締切</Text>
-                {[1, 6, 12, 24].map((h) => (
+            {/* スマホ幅では締切の列を次の行へ回す（「アンケート」「締切」を縦に割らない） */}
+            <Group justify="space-between" mb={4} wrap="wrap" gap={4}>
+              <Text size="sm" fw={700} style={{ whiteSpace: "nowrap" }}>アンケート</Text>
+              <Group gap={4} wrap="nowrap" align="center" ml="auto">
+                <Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap" }}>締切</Text>
+                {POLL_DURATIONS.map((h) => (
                   <Button
                     key={h}
                     size="compact-xs"
@@ -4314,11 +4349,19 @@ function ComposerPaper({
                     {h}時間
                   </Button>
                 ))}
+                <ActionIcon size="sm" variant="subtle" color="gray" onClick={() => setPollDraft(null)} aria-label="アンケートをやめる" title="アンケートをやめる">
+                  ✕
+                </ActionIcon>
               </Group>
             </Group>
             <Text size="xs" c="dimmed" mb={6}>
               質問は投稿の本文になります。本文に投票の質問を書いてね。
             </Text>
+            {text.trim().length > POLL_QUESTION_MAX && (
+              <Text size="xs" c="red" mb={6} data-cx="poll-question-too-long">
+                投票の質問（本文）は{POLL_QUESTION_MAX}字までです（いま{text.trim().length}字）
+              </Text>
+            )}
             <Stack gap={4}>
               {pollDraft.options.map((opt, i) => (
                 <Group key={i} gap={6} wrap="nowrap">
@@ -4326,6 +4369,7 @@ function ComposerPaper({
                     size="xs"
                     flex={1}
                     placeholder={`回答 ${i + 1}`}
+                    maxLength={POLL_LABEL_MAX}
                     value={opt}
                     onChange={(e) => {
                       const v = e.currentTarget.value; // 関数型更新の中で e.currentTarget を読まない（null クラッシュ防止）
@@ -4342,7 +4386,7 @@ function ComposerPaper({
                     size="sm"
                     variant="subtle"
                     color="gray"
-                    disabled={pollDraft.options.length <= 3}
+                    disabled={pollDraft.options.length <= POLL_MIN_OPTIONS}
                     onClick={() =>
                       setPollDraft((p) =>
                         p ? { ...p, options: p.options.filter((_, idx) => idx !== i) } : p
@@ -4360,16 +4404,55 @@ function ComposerPaper({
               variant="subtle"
               color="green"
               mt={6}
-              disabled={pollDraft.options.length >= 10}
+              disabled={pollDraft.options.length >= POLL_MAX_OPTIONS}
               onClick={() => setPollDraft((p) => (p ? { ...p, options: [...p.options, ""] } : p))}
             >
-              ＋ 回答を追加（{pollDraft.options.length}/10）
+              ＋ 回答を追加（{pollDraft.options.length}/{POLL_MAX_OPTIONS}）
             </Button>
             <Text size="xs" c="dimmed" mt={6}>
               投票は1人1回・締切まで回答を変更できます。
             </Text>
           </Box>
         )}
+        {/* 部活（新しい投稿だけ・返信には出さない）。既定は「自動で分類（AI）」。アプリの ComposeSheet と同じ（§10.2）。 */}
+        <Group gap={6} mt={8} mb={6} wrap="nowrap" style={{ minWidth: 0 }}>
+          <Menu position="bottom-start" withinPortal shadow="md" width={240}>
+            <Menu.Target>
+              <Button
+                size="compact-sm"
+                variant={club ? "light" : "subtle"}
+                color={club ? "green" : "gray"}
+                aria-label="部活動を選択"
+                data-cx="composer-club"
+                style={{ maxWidth: "100%" }}
+                rightSection={
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="m6 9 6 6 6-6" />
+                  </svg>
+                }
+              >
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                  部活：{(club && clubLabel(club)) || "自動で分類（AI）"}
+                </span>
+              </Button>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item onClick={() => setClub(null)} rightSection={club == null ? <Text c="green">✓</Text> : undefined}>
+                自動で分類（AI）
+              </Menu.Item>
+              <Menu.Divider />
+              <Menu.Label>部活動を選択</Menu.Label>
+              {/* 部活は 30 前後あるので一覧の中でスクロール（PC でも画面の下まで伸ばさない） */}
+              <div style={{ maxHeight: "min(40vh, 300px)", overflowY: "auto", overscrollBehavior: "contain" }} data-cx="composer-club-list">
+                {activeClubDefs().map((c) => (
+                  <Menu.Item key={c.key} onClick={() => setClub(c.key)} rightSection={club === c.key ? <Text c="green">✓</Text> : undefined}>
+                    {c.name}
+                  </Menu.Item>
+                ))}
+              </div>
+            </Menu.Dropdown>
+          </Menu>
+        </Group>
         <Group justify="space-between">
           <Group gap="xs">
             <Button
@@ -4410,7 +4493,7 @@ function ComposerPaper({
                 setPollDraft((prev) =>
                   prev
                     ? null
-                    : { options: ["", "", ""], durationHours: 24 }
+                    : { options: Array(POLL_MIN_OPTIONS).fill(""), durationHours: 24 }
                 );
               }}
               aria-pressed={!!pollDraft}
@@ -4482,8 +4565,8 @@ function ComposerPaper({
               loading={posting}
               disabled={
                 (!text.trim() && images.length === 0 && !video && !audio) || // 内容なし
-                (pollDraft &&
-                  (!text.trim() || pollDraft.options.filter((o) => o.trim()).length < 3)) || // 投票付きは本文(質問)+3択が必要
+                // 投票付きは本文（質問）が要り、200 字まで。回答が 3 つ未満のときは押せて「回答を3つ以上入れてください」を出す
+                (pollDraft && (!text.trim() || text.trim().length > POLL_QUESTION_MAX)) ||
                 uploading ||
                 videoUploading ||
                 audioUploading
@@ -7910,7 +7993,8 @@ export default function Home() {
       images: string[],
       videoUrl?: string | null,
       poll?: { question: string; options: string[]; durationHours: number } | null,
-      audioUrl?: string | null
+      audioUrl?: string | null,
+      club?: string | null
     ) => {
       const tempId = Date.now();
       const tempPost: FeedPost = {
@@ -7932,6 +8016,8 @@ export default function Home() {
         lastActivityAt: new Date().toISOString(),
         pinnedAt: null,
         replies: [],
+        club: club ?? null,
+        clubManual: !!club,
         poll: poll
           ? {
               question: poll.question,
@@ -7959,7 +8045,8 @@ export default function Home() {
         const r = await fetch("/api/publish", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, images, videoUrl, audioUrl, poll: poll ?? null }),
+          // club: 手で選んだ部活（無ければ送らない＝自動で分類）。サーバは lib/publish.ts（アプリと同じ）。
+          body: JSON.stringify({ text, images, videoUrl, audioUrl, poll: poll ?? null, ...(club ? { club } : {}) }),
           signal: ac.signal,
         });
         const d = await r.json();
@@ -9381,7 +9468,12 @@ export default function Home() {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         // 質問は投稿の本文（別の投稿編集で変更）。ここでは回答のみ更新。
-        body: JSON.stringify({ options: pollEditDraft.options }),
+        // 空の回答は送らない・前後の空白は落とす（アプリと同じ。サーバは空の回答を 400 にする）。
+        body: JSON.stringify({
+          options: pollEditDraft.options
+            .filter((o) => o.label.trim())
+            .map((o) => ({ id: o.id, label: o.label.trim() })),
+        }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || "お題の編集に失敗しました");
@@ -12336,6 +12428,7 @@ export default function Home() {
                     uploadVideo={uploadVideo}
                     uploadAudio={uploadAudio}
                     onPublish={publishComposer}
+                    defaultClub={clubFilter}
                     onClose={() => setComposerOpen(false)}
                     onPreviewImage={openPreview}
                     onReplyTo={(postId) => {
@@ -13737,6 +13830,7 @@ export default function Home() {
                       size="xs"
                       flex={1}
                       placeholder={`回答 ${i + 1}`}
+                      maxLength={POLL_LABEL_MAX}
                       value={opt.label}
                       onChange={(e) => {
                         const v = e.currentTarget.value; // 関数型更新の中で e.currentTarget を読まない（null クラッシュ防止）
@@ -13753,7 +13847,7 @@ export default function Home() {
                       size="sm"
                       variant="subtle"
                       color="gray"
-                      disabled={hasVotes || pollEditDraft.options.length <= 3}
+                      disabled={hasVotes || pollEditDraft.options.length <= POLL_MIN_OPTIONS}
                       title={hasVotes ? "投票が付いているため削除できません" : "回答を削除"}
                       onClick={() =>
                         setPollEditDraft((p) =>
@@ -13776,7 +13870,7 @@ export default function Home() {
               size="compact-xs"
               variant="subtle"
               color="green"
-              disabled={pollEditDraft.options.length >= 10}
+              disabled={pollEditDraft.options.length >= POLL_MAX_OPTIONS}
               onClick={() =>
                 setPollEditDraft((p) =>
                   p
@@ -13791,7 +13885,7 @@ export default function Home() {
                 )
               }
             >
-              ＋ 回答を追加（{pollEditDraft.options.length}/10）
+              ＋ 回答を追加（{pollEditDraft.options.length}/{POLL_MAX_OPTIONS}）
             </Button>
             {actionError && (
               <Text size="sm" c="red">
@@ -13807,7 +13901,7 @@ export default function Home() {
                 color="green"
                 loading={savingPollEdit}
                 disabled={
-                  pollEditDraft.options.filter((o) => o.label.trim()).length < 3
+                  pollEditDraft.options.filter((o) => o.label.trim()).length < POLL_MIN_OPTIONS
                 }
                 onClick={submitPollEdit}
               >

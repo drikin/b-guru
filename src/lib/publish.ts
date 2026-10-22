@@ -69,13 +69,22 @@ export async function publishPost(
     const q = pollRaw.question ?? "";
     const opts = Array.isArray(pollRaw.options) ? pollRaw.options : [];
     const dur = typeof pollRaw.durationHours === "number" ? pollRaw.durationHours : 24;
-    const err = validatePollInput(q, opts, dur);
+    // 文字列でない回答（数・配列・オブジェクト）は弾く。以前は検査では空として数えず、保存では String() にしていたので、
+    // 上限（数・文字数）をすり抜けて保存できた（セキュリティの指摘 2026-10-22）。検査と保存は同じ値を使う。
+    if (opts.some((o: unknown) => typeof o !== "string")) {
+      return { status: 400, body: { error: "回答は文字列で入力してください" } };
+    }
+    if (typeof q !== "string") {
+      return { status: 400, body: { error: "アンケートの質問を入力してください" } };
+    }
+    const labels = (opts as string[]).map((o) => o.trim()).filter(Boolean);
+    const err = validatePollInput(q, labels, dur);
     if (err) {
       return { status: 400, body: { error: err } };
     }
     poll = {
-      question: String(q).trim(),
-      options: opts.map((o: unknown) => String(o).trim()).filter(Boolean),
+      question: q.trim(),
+      options: labels,
       durationHours: dur,
     };
   }

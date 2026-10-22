@@ -51,6 +51,8 @@ export interface FeedPost {
   poll?: PostPoll | null;
   /** 部活動ラベル（自動分類 or 手動付け替え）。キーは src/lib/clubs.ts の CLUB_KEYS。 */
   club?: string | null;
+  /** 部活ラベルが手動（投稿時の選択・付け替え）か。仮表示でも付ける。 */
+  clubManual?: boolean;
   /** エージェント由来マーク（"agent"）。DB の posts.via から。UI で 🤖 を表示。 */
   via?: string | null;
 }

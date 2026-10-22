@@ -25,6 +25,9 @@ vi.mock("../ghost", () => ({ findMemberByEmail: async () => null, isPaidMember: 
 vi.mock("../push", () => ({ sendWebPush: async () => {} }));
 vi.mock("../push-notify", () => ({ pushNewPost: async () => {}, pushPersonalNotification: async () => {} }));
 vi.mock("../clubs", () => ({ classifyPost: async () => null }));
+// Web のセッション（/api/publish・/api/poll/* を本物の DB で通す）。
+const web = vi.hoisted(() => ({ email: null as string | null }));
+vi.mock("@/lib/session", () => ({ getSessionEmail: async () => web.email }));
 
 const ME = `ops-me-${Date.now()}@test.local`;
 const OTHER = `ops-other-${Date.now()}@test.local`;
@@ -424,6 +427,62 @@ d("段階 3 の操作（DB）", () => {
       expect(await set({ post_id: id, bookmarked: false })).toBe(false);
       expect(await set({ post_id: id })).toBe(true); // 切り替え
       expect((await POST(req("http://x", appToken, { method: "POST", body: JSON.stringify({ post_id: id, bookmarked: "yes" }) }))).status).toBe(400);
+    });
+  });
+
+  describe("Web の投稿画面（アプリに合わせた部活の選択・回答の編集）", () => {
+    it("/api/publish に club を付けると club_manual で付き、自動分類しない。返信には付けられない", async () => {
+      const { POST } = await import("@/app/api/publish/route");
+      web.email = ME;
+      const pub = (body: unknown) => POST(new NextRequest(new Request("http://x/api/publish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })));
+      const r = await pub({ text: `Web から部活つき ${Date.now()}`, club: "opsclub" });
+      expect(r.status).toBe(201);
+      const post = (await r.json()).post;
+      expect(post).toMatchObject({ club: "opsclub", clubManual: true });
+      expect((await sql(`SELECT club, club_manual FROM posts WHERE id = $1`, [post.id])).rows[0]).toEqual({ club: "opsclub", club_manual: true });
+      expect((await pub({ text: "返信に部活", parentId: post.id, club: "opsclub" })).status).toBe(400);
+      expect((await pub({ text: "x", club: "nope" })).status).toBe(400);
+      web.email = null;
+    });
+
+    it("★ 投票の作成で文字列でない回答は 400（上限をすり抜けて保存できない）・Web とアプリの publish の両方", async () => {
+      const { POST: webPublish } = await import("@/app/api/publish/route");
+      const { POST: appPublish } = await import("@/app/api/agent/publish/route");
+      web.email = ME;
+      const long = "x".repeat(5000);
+      const bad = [
+        ["A", "B", { toString: () => long }],
+        ["A", "B", ["C", long]],
+        ["A", "B", 3],
+        Array.from({ length: 30 }, (_, i) => (i < 3 ? `ok${i}` : [i])),
+      ];
+      for (const options of bad) {
+        const w = await webPublish(new NextRequest(new Request("http://x/api/publish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `q ${Date.now()}`, poll: { question: "q", options, durationHours: 1 } }) })));
+        expect(w.status).toBe(400);
+        expect((await w.json()).error).toBe("回答は文字列で入力してください");
+        const a = await appPublish(req("http://x/api/agent/publish", appToken, { method: "POST", body: JSON.stringify({ text: `q ${Date.now()}`, poll: { question: "q", options, duration_hours: 1 } }) }));
+        expect(a.status).toBe(400);
+      }
+      expect((await sql(`SELECT count(*)::int AS n FROM post_poll_options WHERE length(label) > 100`)).rows[0].n).toBe(0);
+      // 文字列の回答（前後の空白・空は落とす）は今までどおり通る
+      const ok = await webPublish(new NextRequest(new Request("http://x/api/publish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `ok ${Date.now()}`, poll: { question: "q", options: [" A ", "B", "C", ""], durationHours: 1 } }) })));
+      expect(ok.status).toBe(201);
+      expect((await ok.json()).post.poll.options.map((o: { label: string }) => o.label)).toEqual(["A", "B", "C"]);
+      web.email = null;
+    });
+
+    it("/api/poll/:id の回答の編集（Web が送る形: 空を除いて trim 済み）が通る・空を混ぜると 400", async () => {
+      const { PUT } = await import("@/app/api/poll/[postId]/route");
+      web.email = ME;
+      const p = await m.posts.createPost({ authorEmail: ME, authorName: "わたし", text: "Web の回答編集", noPreview: true, poll: { question: "Web の回答編集", options: ["A", "B", "C"], durationHours: 1 } });
+      const [a, b, c] = p.poll!.options.map((o) => o.id);
+      const put = (options: unknown) =>
+        PUT(new NextRequest(new Request(`http://x/api/poll/${p.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ options }) })), { params: Promise.resolve({ postId: String(p.id) }) });
+      expect((await put([{ id: a, label: "A" }, { id: b, label: "B" }, { id: c, label: "C" }, { id: null, label: "" }])).status).toBe(400);
+      const ok = await put([{ id: a, label: "A" }, { id: b, label: "B" }, { id: c, label: "C" }, { id: null, label: "D" }]);
+      expect(ok.status).toBe(200);
+      expect((await ok.json()).poll.options.map((o: { label: string }) => o.label)).toEqual(["A", "B", "C", "D"]);
+      web.email = null;
     });
   });
 });

@@ -2617,7 +2617,7 @@ console.log("\n6m. Duplicate-post warning");
   );
 
   // Clean up: close the composer without posting.
-  await page.evaluate(`document.querySelector('[aria-label="閉じる"]')?.click()`);
+  await page.evaluate(`document.querySelector('[aria-label="投稿フォームを閉じる"]')?.click()`);
   await page.waitForTimeout(800);
 
   // ---- AI による「同じニュース」判定 -------------------------------------
@@ -2888,6 +2888,59 @@ if (imgStats.broken > 0) {
 check("images are proxied", imgStats.proxied > 0, `${imgStats.proxied}/${imgStats.total}`);
 if (notFound.length) {
   console.log(`  [info] ${notFound.length} avatar 404(s) — members without a Gravatar, expected`);
+}
+
+// ------------------------------------------- 投稿画面の部活の選択・投票の作成（2026-10-22）
+// アプリと同じ決まり（docs/timeline-spec.md §10.2）。画面を開いて閉じるだけで、投稿はしない。
+console.log("\nTL2. 投稿画面: 部活の選択・投票の作成の文言");
+{
+  await page.evaluate(`(() => {
+    const tab = [...document.querySelectorAll('.mantine-SegmentedControl-label')].find(l => l.textContent.includes('タイムライン'));
+    tab?.click();
+  })()`);
+  await page.waitForTimeout(1200);
+  await page.evaluate(`document.querySelector('[aria-label="新しい投稿を作成"]')?.click()`);
+  await page.waitForTimeout(1000);
+  const club = await page.evaluate(`(() => {
+    const b = document.querySelector('[data-cx="composer-club"]');
+    return b ? b.textContent.trim() : null;
+  })()`);
+  check("投稿画面に「部活：自動で分類（AI）」が出る", club === "部活：自動で分類（AI）", `got=${club}`);
+  await page.evaluate(`document.querySelector('[data-cx="composer-club"]')?.click()`);
+  await page.waitForTimeout(500);
+  const menu = await page.evaluate(`(() => {
+    const t = [...document.querySelectorAll('.mantine-Menu-dropdown')].map(d => d.textContent).join(' ');
+    return { auto: t.includes('自動で分類（AI）'), label: t.includes('部活動を選択'), items: document.querySelectorAll('.mantine-Menu-dropdown .mantine-Menu-item').length };
+  })()`);
+  check("部活の一覧: 「自動で分類（AI）」と「部活動を選択」の下に部活が並ぶ", menu.auto && menu.label && menu.items > 1, JSON.stringify(menu));
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+  await page.evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === '投票を追加')?.click()`);
+  await page.waitForTimeout(500);
+  const poll = await page.evaluate(`(() => {
+    const t = document.body.innerText;
+    const inputs = [...document.querySelectorAll('input[aria-label^="回答 "]')];
+    const ta = document.querySelector('textarea');
+    return {
+      deadline: ['1時間', '6時間', '12時間', '24時間'].every(h => t.includes(h)) && t.includes('締切'),
+      hint: t.includes('質問は投稿の本文になります。本文に投票の質問を書いてね。'),
+      add: t.includes('＋ 回答を追加（3/10）'),
+      rule: t.includes('投票は1人1回・締切まで回答を変更できます。'),
+      inputs: inputs.length,
+      maxLength: inputs.every(i => i.maxLength === 100),
+      placeholder: ta ? ta.placeholder : null,
+      stop: !!document.querySelector('[aria-label="アンケートをやめる"]'),
+    };
+  })()`);
+  check(
+    "投票の作成: 締切 1/6/12/24時間・案内・回答 3 つ（各 100 字まで）・＋ 回答を追加（3/10）・アンケートをやめる・本文は「投票の質問」",
+    poll.deadline && poll.hint && poll.add && poll.rule && poll.inputs === 3 && poll.maxLength && poll.stop && poll.placeholder === "投票の質問",
+    JSON.stringify(poll)
+  );
+  // 片付け: 投稿せずに閉じる
+  await page.evaluate(`document.querySelector('[aria-label="アンケートをやめる"]')?.click()`);
+  await page.evaluate(`document.querySelector('[aria-label="投稿フォームを閉じる"]')?.click()`);
+  await page.waitForTimeout(300);
 }
 
 // ------------------------------------------- タイムライン同等化 段階0（2026-10-22）
