@@ -110,7 +110,8 @@ final class StatusTicker {
         let it = queue.removeFirst()
         let text = attributed(it)
         let textWidth = ceil(text.size().width)
-        let wanted = min(textWidth + 14, Self.maxWidthCollapsed)
+        // いつも右から流すので、短い文でも流れる場所（最低 160pt）を取る。
+        let wanted = min(max(textWidth + 14, 160), Self.maxWidthCollapsed)
         var w: CGFloat
         var lent = false
         if let granted = collapser?.beginTicker(want: wanted) {
@@ -135,8 +136,9 @@ final class StatusTicker {
         let ov = TickerOverlay(frame: NSRect(x: 0, y: 0, width: w - 2, height: button.bounds.height))
         button.addSubview(ov)
         overlay = ov
-        let scroll = textWidth > w - 8 && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let duration = scroll ? min(8, max(6, Double(w + textWidth) / 55)) : 6
+        // ティッカーは短い文でも右から左へ流す（オーナー 2026-10-22「流れてない」）。止めて出すのは「視差効果を減らす」のときだけ。
+        let scroll = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let duration = scroll ? min(12, max(5, Double(w + textWidth) / 55)) : 6
         ov.run(text: text, textWidth: textWidth, scroll: scroll, duration: duration, scale: button.window?.backingScaleFactor ?? 2)
         StatusBarDiag.note("ティッカー: 表示（\(Self.styleName(it.style))・幅 \(Int(w))\(lent ? "・区切りから借りた" : "")）")
         // VoiceOver には 1 回だけ読み上げる
@@ -229,7 +231,8 @@ final class StatusTicker {
     }
 
     private func attributed(_ it: Item) -> NSAttributedString {
-        let font = NSFont.menuBarFont(ofSize: 0)
+        // メンションは色を変えず太字に（メニューバーの文字は他のアイコンと同じ色で）。
+        let font = it.style == .mention ? NSFont.boldSystemFont(ofSize: NSFont.menuBarFont(ofSize: 0).pointSize) : NSFont.menuBarFont(ofSize: 0)
         var color = NSColor.labelColor.cgColor
         let appearance: NSAppearance? = {
             #if DEBUG
@@ -239,8 +242,7 @@ final class StatusTicker {
         }()
         (appearance ?? NSAppearance.currentDrawing()).performAsCurrentDrawingAppearance {
             switch it.style {
-            case .mention: color = NSColor.systemOrange.cgColor
-            case .message, .notice: color = NSColor.labelColor.cgColor
+            case .mention, .message, .notice: color = NSColor.labelColor.cgColor
             }
         }
         return NSAttributedString(string: it.text, attributes: [.font: font, .foregroundColor: NSColor(cgColor: color) ?? .labelColor])
