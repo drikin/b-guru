@@ -2926,7 +2926,7 @@ if (!process.env.BGURU_AGENT_TOKEN) {
   const list = await getJson("/api/agent/posts?limit=30&include=reactions,display");
   const posts = list.body?.posts ?? [];
   check("GET /api/agent/posts?include=reactions,display が 200", list.status === 200 && posts.length > 0, `status=${list.status} n=${posts.length}`);
-  const KEYS = ["id", "author_id", "author_name", "author_avatar", "is_author", "parent_id", "reply_count", "text", "images", "video_url", "audio_url", "url_preview", "like_count", "created_at", "last_activity_at", "pinned_at", "club", "club_manual", "poll", "via"];
+  const KEYS = ["id", "author_id", "author_name", "author_avatar", "is_author", "parent_id", "reply_count", "text", "images", "video_url", "audio_url", "url_preview", "like_count", "created_at", "last_activity_at", "pinned_at", "club", "club_manual", "poll", "via", "bookmarked_by_me", "favorite_by_me"];
   const missing = posts.flatMap((p) => KEYS.filter((k) => !(k in p)).map((k) => `${p.id}:${k}`));
   check("投稿の形: 全項目がそろう（アバター・動画・音声・投票・ピン・via）", missing.length === 0, missing.slice(0, 5).join(","));
   const badFold = posts.filter((p) => p.display?.fold !== ((p.text ?? "").length > 500));
@@ -2951,6 +2951,19 @@ if (!process.env.BGURU_AGENT_TOKEN) {
     const th = await getJson(`/api/agent/posts/${root.id}?include=display`);
     check("スレッドも display を返す（返信も）", th.status === 200 && !!th.body?.post?.display && (th.body?.replies ?? []).every((r) => !!r.display), `status=${th.status}`);
   }
+  // 段階 3（操作）: 読むだけで確かめる（本番に書かない）。docs/timeline-spec.md §11。
+  const ops = caps.body?.features?.posts ?? {};
+  const OPS = ["edit", "delete", "edit_text_only", "whisper", "video", "audio", "poll", "poll_vote", "poll_edit", "pin", "pinned_list", "bookmarks", "bookmarks_set", "favorites", "custom_emoji_list", "club_select", "club_change", "mentions"];
+  check("capabilities: 段階 3 の操作の項目がそろう", OPS.every((k) => k in ops), OPS.filter((k) => !(k in ops)).join(","));
+  const pins = await getJson("/api/agent/posts?pinned=1&include=display");
+  check("GET /api/agent/posts?pinned=1 が 200・next_cursor は null・ピン中だけ", pins.status === 200 && pins.body?.next_cursor === null && (pins.body?.posts ?? []).every((p) => !!p.pinned_at), `status=${pins.status}`);
+  const emojis = await getJson("/api/agent/emojis");
+  check("GET /api/agent/emojis が 200・登録した人（メール）を出さない", emojis.status === 200 && Array.isArray(emojis.body?.emojis) && findEmailLeaks(emojis.body).length === 0 && (emojis.body?.emojis ?? []).every((e) => !("created_by" in e) && !("createdBy" in e)), `status=${emojis.status}`);
+  const favs = await getJson("/api/agent/favorites");
+  check("GET /api/agent/favorites が 200（user_ids だけ）", favs.status === 200 && Array.isArray(favs.body?.user_ids) && findEmailLeaks(favs.body).length === 0, `status=${favs.status}`);
+  const members = await getJson("/api/agent/members");
+  check("GET /api/agent/members（メンションの候補）が 200", members.status === 200 && Array.isArray(members.body?.members) && findEmailLeaks(members.body).length === 0, `status=${members.status}`);
+
   const plain = await getJson("/api/agent/posts?limit=3");
   check("include なしは display を付けない（古いアプリ・MCP はそのまま）", (plain.body?.posts ?? []).every((p) => p.display === undefined));
 }

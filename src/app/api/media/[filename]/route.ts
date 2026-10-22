@@ -67,6 +67,8 @@ export async function GET(
           "Cache-Control": "private, max-age=31536000, immutable",
           "Content-Length": String(vs.size),
           "X-Media-Variant": variant.label,
+          // 上げられたファイルを宣言どおりの型としてだけ扱わせる（中身から HTML 等と推測させない）。
+          "X-Content-Type-Options": "nosniff",
         },
       });
     }
@@ -78,6 +80,8 @@ export async function GET(
       // shared cache (CDN / proxy) store it and hand it to anyone.
       "Cache-Control": "private, max-age=31536000, immutable",
       "Accept-Ranges": "bytes",
+      // 上げられたファイルを宣言どおりの型としてだけ扱わせる（中身から HTML 等と推測させない）。
+      "X-Content-Type-Options": "nosniff",
     };
 
     // ---- Range request (seek/scrub) ----

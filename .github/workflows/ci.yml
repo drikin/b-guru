@@ -42,6 +42,58 @@ jobs:
           GHOST_ADMIN_API_KEY: "dummy:key"
           DATABASE_URL: "postgres://dummy:dummy@localhost:5432/dummy"
 
+  # 本物の PostgreSQL を使う DB テスト（将棋・ミニゲーム・タイムラインの操作）。使い捨ての Postgres を
+  # services で立て、テストごとに別の database を渡す（同じ DB だと initSchema が同時に走ってぶつかる）。
+  # ファイルは 1 つずつ順に流す（--no-file-parallelism）。手元では 20 秒ほど。本番の DB には触らない。
+  db-tests:
+    name: DB tests (disposable Postgres)
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch'
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SHOGI_TEST_DATABASE_URL: postgres://postgres:ci-only@localhost:5432/shogi
+      MINIGAME_TEST_DATABASE_URL: postgres://postgres:ci-only@localhost:5432/minigame
+      TIMELINE_TEST_DATABASE_URL: postgres://postgres:ci-only@localhost:5432/timeline
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create test databases
+        env:
+          PGPASSWORD: ci-only
+        run: |
+          for d in shogi minigame timeline; do
+            psql -h localhost -U postgres -c "CREATE DATABASE $d"
+          done
+
+      - name: Run DB tests
+        run: >-
+          npx vitest run --no-file-parallelism
+          src/lib/__tests__/shogi-db.test.ts
+          src/lib/__tests__/shogi-commentary-db.test.ts
+          src/lib/__tests__/minigame-db.test.ts
+          src/lib/__tests__/operations-db.test.ts
+
   # Android の単体テスト。タイムラインの例題（src/lib/__tests__/fixtures/timeline/）を
   # アプリの自前計算にも読ませ、Web・サーバとずれたら落とす（docs/timeline-spec.md §9）。
   # Gradle の初回は数分かかるので、Node のジョブとは別に並列で走らせる（全体の時間を延ばさない）。

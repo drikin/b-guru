@@ -58,10 +58,50 @@ const AUDIO_EXTS = new Set([
  *  Saved as chat-… so they can be found and deleted with the 24 h chat. */
 export const CHAT_UPLOAD = { prefix: "chat-", maxImages: 4, maxImageBytes: 4 * 1024 * 1024, maxTotalBytes: 17 * 1024 * 1024 };
 
+/* 大きなアップロードの同時数の上限（サーバ全体）。
+ * req.formData() はリクエストを丸ごとメモリに載せる（動画・音声は 1 本 100MB まで）。ストリームで解析して
+ * ディスクへ書く形にするには multipart の解析の依存（busboy 等）を足して Web とアプリの両方の経路を書き直す
+ * 必要があり大きいので、まずは同時に解析する大きな本数を絞ってメモリの山を抑える（2026-10-22 レビュー）。 */
+export const BIG_UPLOAD_BYTES = 10 * 1024 * 1024;
+export const MAX_CONCURRENT_BIG_UPLOADS = 3;
+let bigUploadsInFlight = 0;
+
+/** テスト用: 今いくつ解析中か。 */
+export function _bigUploadsInFlightForTest(): number {
+  return bigUploadsInFlight;
+}
+
 export async function handleUpload(
   req: Request,
+  email: string,
+  opts: { imagesOnly?: boolean; chat?: boolean; appMedia?: boolean } = {}
+): Promise<NextResponse> {
+  const len = Number(req.headers.get("content-length") ?? "0");
+  // No length (chunked) counts as big: formData() still reads it all into memory.
+  const big = !opts.chat && (!(len > 0) || len > BIG_UPLOAD_BYTES);
+  if (big) {
+    if (bigUploadsInFlight >= MAX_CONCURRENT_BIG_UPLOADS) {
+      return NextResponse.json(
+        { error: "アップロードが混み合っています。少し待ってからもう一度送ってください" },
+        { status: 503, headers: { "Retry-After": "10" } }
+      );
+    }
+    bigUploadsInFlight++;
+  }
+  try {
+    return await handleUploadInner(req, email, opts, len);
+  } finally {
+    if (big) bigUploadsInFlight--;
+  }
+}
+
+async function handleUploadInner(
+  req: Request,
   _email: string,
-  opts: { imagesOnly?: boolean; chat?: boolean } = {}
+  /** imagesOnly: アプリの画像だけ（合計 50MB）。appMedia: アプリから画像・動画・音声（動画・音声は Web と
+   *  同じ形式と 100MB まで、画像は imagesOnly と同じ合計 50MB まで）。chat: チャットの写真。 */
+  opts: { imagesOnly?: boolean; chat?: boolean; appMedia?: boolean },
+  len: number
 ): Promise<NextResponse> {
   const chat = !!opts.chat;
   const maxImages = chat ? CHAT_UPLOAD.maxImages : MAX_IMAGES;
@@ -70,9 +110,14 @@ export async function handleUpload(
   // before the multipart body is buffered in memory.
   if (opts.imagesOnly || chat) {
     const limit = chat ? CHAT_UPLOAD.maxTotalBytes : APP_UPLOAD_MAX_BYTES;
-    const len = Number(req.headers.get("content-length") ?? "0");
     if (!len || len > limit) {
       return NextResponse.json({ error: chat ? "写真が大きすぎます" : "画像が大きすぎます（合計 50MB まで）" }, { status: 413 });
+    }
+  } else if (opts.appMedia) {
+    // 動画・音声 1 本（100MB）＋ multipart の枠。画像だけのときは下でさらに 50MB に絞る。
+    const limit = Math.max(MAX_VIDEO_BYTES, MAX_AUDIO_BYTES) + 1024 * 1024;
+    if (!len || len > limit) {
+      return NextResponse.json({ error: "ファイルが大きすぎます（動画・音声は 100MB まで）" }, { status: 413 });
     }
   }
   let form;
@@ -192,6 +237,10 @@ export async function handleUpload(
       { videoUrl: `/api/media/${lastSavedName}` },
       { status: 201 }
     );
+  }
+
+  if (opts.appMedia && len > APP_UPLOAD_MAX_BYTES) {
+    return NextResponse.json({ error: "画像が大きすぎます（合計 50MB まで）" }, { status: 413 });
   }
 
   const files = form.getAll("images").filter(

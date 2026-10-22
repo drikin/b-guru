@@ -14,7 +14,7 @@
  */
 import crypto from "crypto";
 import { pool } from "./db";
-import { findMemberByEmail, isPaidMember } from "./ghost";
+import { findMemberByEmail, GhostUnavailableError, isPaidMember } from "./ghost";
 import { ensureUserId } from "./user";
 import { clientIp } from "./client-ip";
 
@@ -35,11 +35,22 @@ export const APP_TOKEN_SLIDING_DAYS = 90;
 export const MAX_TOKENS_PER_EMAIL = 10; // 5 → 10（drikin 2026-10-17: Mac・iPhone・iPad・Android・エージェントで足りない）
 /** Ghost 会員再判定の最小間隔（時間）。 */
 export const MEMBERSHIP_RECHECK_HOURS = 6;
+/** Ghost に届かないとき、前回の会員確認の成功からこの時間までは通す（オーナー決定 2026-10-22）。
+ *  Ghost が止まっても、確認の時期（6 時間ごと）が来た鍵が全部使えなくならないように。 */
+export const MEMBERSHIP_GRACE_HOURS = 24;
+/** Ghost に届かなかったことを覚える時間。この間は問い合わせず、猶予の判定だけ（毎回 4 秒待たせない）。 */
+export const GHOST_DOWN_MEMORY_MS = 30_000;
+let ghostDownAt = 0;
+/** テスト用: Ghost に届かなかった記憶を消す。 */
+export function _resetGhostDownForTest(): void {
+  ghostDownAt = 0;
+}
 
 export type AgentErrorCode =
   | "unauthorized"
   | "token_expired"
   | "membership_ended"
+  | "membership_unavailable"
   | "rate_limited"
   | "not_found"
   | "forbidden"
@@ -88,6 +99,9 @@ export async function issueAgentToken(input: {
   email: string;
   deviceName: string;
   scopes: AgentScope[];
+  /** 人のアプリのログイン（replace_same_device）で発行した鍵か。設定画面（外部の AI エージェント用）は false。
+   *  true の鍵だけが post スコープで自分の投稿を編集・削除できる（docs/timeline-spec.md「操作」）。 */
+  appIssued?: boolean;
 }): Promise<IssuedToken> {
   const email = input.email.trim().toLowerCase();
   const scopes = normalizeScopes(input.scopes);
@@ -95,12 +109,12 @@ export async function issueAgentToken(input: {
   // トークン上限の TOCTOU 対策: 発行 INSERT を条件付きにし、
   //   同時発行でも MAX_TOKENS_PER_EMAIL を超えられない（1 クエリでアトミック）。
   const res = await pool.query(
-    `INSERT INTO agent_tokens (token_hash, email, scopes, device_name, expires_at, last_membership_check)
-     SELECT $1, $2, $3, $4, now() + make_interval(days => $5), now()
+    `INSERT INTO agent_tokens (token_hash, email, scopes, device_name, expires_at, last_membership_check, app_issued)
+     SELECT $1, $2, $3, $4, now() + make_interval(days => $5), now(), $7
      WHERE (SELECT COUNT(*) FROM agent_tokens
             WHERE email = $2 AND revoked_at IS NULL AND expires_at > now()) < $6
      RETURNING id, expires_at`,
-    [hashToken(token), email, scopes, input.deviceName.trim() || "unknown device", AGENT_TOKEN_TTL_DAYS, MAX_TOKENS_PER_EMAIL]
+    [hashToken(token), email, scopes, input.deviceName.trim() || "unknown device", AGENT_TOKEN_TTL_DAYS, MAX_TOKENS_PER_EMAIL, !!input.appIssued]
   );
   if (res.rowCount === 0) {
     throw new AgentAuthError(400, {
@@ -203,6 +217,8 @@ export interface AgentContext {
   deviceName: string;
   scopes: AgentScope[];
   expiresAt: string;
+  /** 人のアプリのログインで発行した鍵（agent_tokens.app_issued）。外部の AI エージェント用の鍵は false。 */
+  appIssued: boolean;
 }
 
 /**
@@ -227,7 +243,7 @@ export async function verifyAgentToken(
     throw err(429, "rate_limited", "リクエストが多すぎます", "しばらくしてから再試行してください");
   }
   const res = await pool.query(
-    `SELECT id, token_hash, email, scopes, device_name, expires_at, revoked_at, last_membership_check
+    `SELECT id, token_hash, email, scopes, device_name, expires_at, revoked_at, last_membership_check, app_issued
        FROM agent_tokens WHERE token_hash = $1`,
     [hashToken(m[1])]
   );
@@ -248,24 +264,38 @@ export async function verifyAgentToken(
   // 会員資格の継続確認（6h キャッシュ）。Ghost が権威ソース（UI と同一ロジック）。
   const last = row.last_membership_check ? new Date(row.last_membership_check).getTime() : 0;
   if (Date.now() - last >= MEMBERSHIP_RECHECK_HOURS * 3600_000) {
-    let member;
-    try {
-      member = await findMemberByEmail(row.email);
-    } catch (e: any) {
-      // Fail closed: Ghost 到達不能では検証を通さない（beagle-agent-auth-design.md）。
-      throw err(502, "unauthorized", "会員確認サービスに接続できません", "しばらくしてから再試行してください");
+    // Ghost に届かないとき: 前回の確認の成功から 24 時間以内なら通す（last_membership_check は更新しない）。
+    // 超えていたら通さない（503 membership_unavailable。ログイン切れ＝unauthorized とは分ける）。
+    const cannotCheck = () =>
+      err(503, "membership_unavailable", "会員情報を確認できません。少し時間をおいて試してください", "しばらくしてから再試行してください");
+    const unavailable = () => {
+      if (Date.now() - last < MEMBERSHIP_GRACE_HOURS * 3600_000) return; // 猶予の内: 通す
+      throw cannotCheck();
+    };
+    let member: Awaited<ReturnType<typeof findMemberByEmail>> | undefined;
+    let checked = false;
+    if (Date.now() - ghostDownAt < GHOST_DOWN_MEMORY_MS) {
+      unavailable(); // 30 秒以内に届かなかった: 問い合わせずに猶予だけで決める
+    } else {
+      try {
+        member = await findMemberByEmail(row.email);
+        checked = true;
+      } catch (e: any) {
+        console.error("[agent-auth] Ghost:", e?.message);
+        // 猶予はタイムアウト・接続失敗・5xx（Ghost に届かない）のときだけ。4xx や設定の誤りは猶予なしで通さない。
+        if (!(e instanceof GhostUnavailableError && e.unreachable)) throw cannotCheck();
+        ghostDownAt = Date.now();
+        unavailable();
+      }
     }
-    if (!member || !isPaidMember(member)) {
-      await pool.query(
-        `UPDATE agent_tokens SET revoked_at = now() WHERE id = $1`,
-        [row.id]
-      );
-      throw err(403, "membership_ended", "BSM 会員資格が確認できません", "backspace.fm で会員状況をご確認ください");
+    if (checked) {
+      // Ghost が「会員でない」と答えた: 今までどおりすぐ通さない（鍵も失効）。
+      if (!member || !isPaidMember(member)) {
+        await pool.query(`UPDATE agent_tokens SET revoked_at = now() WHERE id = $1`, [row.id]);
+        throw err(403, "membership_ended", "BSM 会員資格が確認できません", "backspace.fm で会員状況をご確認ください");
+      }
+      await pool.query(`UPDATE agent_tokens SET last_membership_check = now() WHERE id = $1`, [row.id]);
     }
-    await pool.query(
-      `UPDATE agent_tokens SET last_membership_check = now() WHERE id = $1`,
-      [row.id]
-    );
   }
 
   // 使用記録（ベストエフォート — 失敗で検証を落とさない）。
@@ -296,6 +326,7 @@ export async function verifyAgentToken(
     deviceName: row.device_name ?? "",
     scopes: (row.scopes ?? []) as AgentScope[],
     expiresAt: new Date(row.expires_at).toISOString(),
+    appIssued: row.app_issued === true,
   };
 }
 
@@ -314,6 +345,22 @@ function shouldRecordUse(tokenId: number, now = Date.now()): boolean {
 /** テスト用: 間引きの記憶を消す。 */
 export function _resetLastUsedThrottleForTest(): void {
   lastUseRecorded.clear();
+}
+
+/** アプリのログインで発行した鍵（app_issued）か。段階 3 で足した「人の投稿への新しい操作」（投票・お題の編集・
+ *  ピン・部活・お気に入り・動画音声）はアプリの鍵だけ（オーナー方針: 外部の鍵は人の投稿に新しい操作をしない）。 */
+export function isAppToken(ctx: AgentContext): boolean {
+  return ctx.appIssued && ctx.scopes.includes("post");
+}
+export function requireAppIssued(ctx: AgentContext): void {
+  if (!isAppToken(ctx)) {
+    throw err(
+      403,
+      "forbidden",
+      "この操作はアプリ（B-guru のアプリでログインした鍵）からだけ使えます",
+      "外部の AI エージェントの鍵では使えません"
+    );
+  }
 }
 
 /** スコープ確認。無ければ forbidden。 */
@@ -341,10 +388,13 @@ export const RATE_RULES: Record<AgentScope, RateRule> = {
 
 /** Buckets for features with their own pace (not a scope). ☗ 将棋: moves and the
  *  30-second watch ping would eat the chat bucket (120/h) in one blitz game. */
-export type RateBucket = "shogi" | "minigame";
+export type RateBucket = "shogi" | "minigame" | "post_light";
 export const BUCKET_RATE_RULES: Record<RateBucket, RateRule> = {
   shogi: { limit: 900, window: "1 hour" }, // 指し手（1 局 100 手前後）＋観戦の合図（30 秒ごと = 120/時）＋募集・受ける
   minigame: { limit: 900, window: "1 hour" }, // 🎮 1 回 = 発行＋提出（＋次の回の先取り）。短い回を続けて遊んでも詰まらない水準
+  // アプリの軽い操作（リアクション・投票・ブックマーク・お気に入り・ピン・部活の付け替え）。投稿・編集・削除・
+  // アップロードは post の枠（1 時間 60）のまま（オーナー決定 2026-10-22）。write の鍵には使わない。
+  post_light: { limit: 300, window: "1 hour" },
 };
 
 export interface RateResult {
@@ -459,11 +509,18 @@ export function sanitizeLikePattern(input: string | undefined): string | undefin
 export async function withAgent(
   req: Request,
   endpoint: string,
-  scope: AgentScope | AgentScope[] | null,
+  /** 要るスコープ。配列はトークンが持つ最初のもの。関数はトークンを見て決める（例: アプリの鍵なら post、
+   *  それ以外は write — 編集・削除。scope ごとに回数の上限も変わる）。 */
+  scope: AgentScope | AgentScope[] | ((ctx: AgentContext) => AgentScope) | null,
   handler: (ctx: AgentContext) => Promise<{ status: number; body: unknown; headers?: Record<string, string> }>,
   /** High-frequency endpoints with their own limits (walking in the club room: a
    *  request per step) skip the hourly scope bucket and the per-request audit row. */
-  opts: { ownRateLimit?: boolean; rateBucket?: RateBucket } = {}
+  opts: {
+    ownRateLimit?: boolean;
+    rateBucket?: RateBucket;
+    /** 軽い操作: post スコープで通ったときだけ post_light の枠で数える（write で通ったら write の枠のまま）。 */
+    lightPost?: boolean;
+  } = {}
 ): Promise<{ status: number; body: unknown; headers?: Record<string, string> }> {
   let ctx: AgentContext | null = null;
   let ip: string | null = null;
@@ -472,10 +529,16 @@ export async function withAgent(
     ctx = await verifyAgentToken(req.headers.get("authorization"), { ip });
     // Several accepted scopes: the first one the token has decides (and its rate bucket).
     const c = ctx;
-    const need = Array.isArray(scope) ? scope.find((s) => c.scopes.includes(s)) ?? scope[0] : scope;
+    const need =
+      typeof scope === "function"
+        ? scope(c)
+        : Array.isArray(scope)
+          ? scope.find((s) => c.scopes.includes(s)) ?? scope[0]
+          : scope;
     if (need) requireScope(ctx, need);
     if (need && !opts.ownRateLimit) {
-      const rate = await checkRateLimit(ctx.tokenId, opts.rateBucket ?? need);
+      const bucket = opts.rateBucket ?? (opts.lightPost && need === "post" ? "post_light" : need);
+      const rate = await checkRateLimit(ctx.tokenId, bucket);
       if (!rate.allowed) {
         throw err(429, "rate_limited", "レート制限に達しました", `${rate.retryAfter} 秒後に再試行してください`);
       }

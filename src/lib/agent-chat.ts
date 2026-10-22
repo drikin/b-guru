@@ -191,10 +191,11 @@ export function toAgentVoiceDto(s: VoiceState) {
  *  calling token's, so a client knows up front which actions will be refused. */
 export function agentCapabilities(
   scopes: AgentScope[],
-  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; shogiCommentary?: boolean; minigame?: boolean } = {}
+  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; shogiCommentary?: boolean; minigame?: boolean; appIssued?: boolean } = {}
 ) {
   const ttlHours = parseInt(CHAT_TTL, 10) || 24;
   const can = (s: AgentScope) => scopes.includes(s);
+  const app = !!opts.appIssued && can("post");
   return {
     apiVersion: AGENT_API_VERSION,
     scopes,
@@ -231,6 +232,29 @@ export function agentCapabilities(
         reactions: can("post") || can("write"),
         mark_read: can("read_state"),
         max_images: 5,
+        // 段階 3「操作」（docs/timeline-spec.md §10.1・§11）。人の投稿への新しい操作はアプリのログインで
+        // 発行した鍵（app_issued）＋ post だけ。外部の鍵は今までできたことだけ（write の本文の編集・削除、
+        // post の投稿・画像・リアクション・うなる、write/post のブックマーク）。
+        edit: app,
+        delete: app || can("write"),
+        edit_text_only: !app && can("write"),
+        whisper: can("post"),
+        video: app,
+        audio: app,
+        max_media_mb: 100,
+        poll: app,
+        poll_vote: app,
+        poll_edit: app,
+        pin: app,
+        pinned_list: can("read"),
+        bookmarks: can("post") || can("write"),
+        // POST /api/agent/bookmarks に { post_id, bookmarked: true|false } を送れば冪等（無ければ切り替え）
+        bookmarks_set: can("post") || can("write"),
+        favorites: app,
+        custom_emoji_list: can("read") ? "/api/agent/emojis" : null,
+        club_select: app,
+        club_change: app,
+        mentions: can("read") ? "/api/agent/members" : null,
       },
       stream: {
         path: "/api/agent/stream",

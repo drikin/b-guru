@@ -41,6 +41,11 @@ let admin: { email: string; userId: string };
 const live: unknown[] = [];
 const personal: { to: string; ev: unknown }[] = [];
 
+/** 告知のテストの基準の時刻: now が属する日（5:00 JST で切り替わる）の 5:00 JST ちょうど。 */
+function announceBase(now: number): number {
+  return m.mg.dailyStartMs(m.mg.dailyDate(now));
+}
+
 async function sql(q: string, params: unknown[] = []) {
   return m.db.pool.query(q, params);
 }
@@ -286,6 +291,15 @@ d("🎮 散財ダッシュ（DB）", () => {
     expect(await m.mg.broadcastTopNow()).toBe(false);
   });
 
+  it("基準の時刻: 切り替わりの直前（4:59 JST）・直後（5:01 JST）・夜中でも、書く時刻がすべて同じ日に収まる", () => {
+    for (const at of ["2026-10-23T04:59:00+09:00", "2026-10-23T05:01:00+09:00", "2026-10-23T02:30:00+09:00", "2026-10-23T23:59:00+09:00"]) {
+      const now = Date.parse(at);
+      const base = announceBase(now);
+      const times = [base + 60_000, ...Array.from({ length: 15 }, (_, i) => base + (i + 1) * 11 * 60_000)];
+      for (const t of times) expect(m.mg.dailyDate(t), `${at} → ${new Date(t).toISOString()}`).toBe(m.mg.dailyDate(now));
+    }
+  });
+
   it("公開後だけ: チャットの 1 行（1 位交代・上位 5 位、10 分以内はまとめる、1 日 10 行）", async () => {
     // 公開前（メールの指定）は出さない
     process.env.MINIGAME_ENABLED = `${A},${B}`;
@@ -303,8 +317,11 @@ d("🎮 散財ダッシュ（DB）", () => {
     expect(rows[0].kind).toBe("notice");
     expect(rows[0].body).toContain("みけさんが「散財ダッシュ」今日の 1 位に！");
 
-    // 10 分以内の続きは同じ行を書き換える、10 分を過ぎたら新しい行、1 日 10 行まで
-    const base = Date.now();
+    // 10 分以内の続きは同じ行を書き換える、10 分を過ぎたら新しい行、1 日 10 行まで。
+    // ★ 基準の時刻は「今日（日付は 5:00 JST で切り替わる）の 5:01」。以前は Date.now() を基準に最大 2 時間 46 分先まで
+    //   書いていたので、JST 2:15〜5:00 に回すと日付の切り替わりをまたいで行数が数え直され、落ちていた。
+    //   今日の頭から数えれば、どの時刻に回しても同じ日に収まる（下の「基準の時刻」のテストで 4:59・5:01 も確かめる）。
+    const base = announceBase(Date.now());
     await m.mg.postAnnounce("🐶 テスト 散財ダッシュ 1", base + 60_000);
     let n = (await sql(`SELECT count(*) AS n FROM chat_messages WHERE body LIKE '%散財ダッシュ%'`)).rows[0].n;
     expect(n).toBe("1");

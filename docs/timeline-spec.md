@@ -259,7 +259,8 @@ Swift の `NSRegularExpression`・Kotlin/Java の `\s` とは集合が違うの�
 チャットに引用・ネタ帳に送る。
 キーボード（Web）：J/K で移動、N/P でルート投稿、Enter で開く、R で返信、C で新規、G で末尾（L のいいねは廃止）。
 
-アプリにどれをいつ入れるかは計画（段階 1〜4）を参照。
+アプリにどれをいつ入れるかは計画（段階 1〜4）を参照。段階 3（操作）のアプリの UI の決まりは §10、
+アプリが呼ぶ API の約束は §11。
 
 ---
 
@@ -295,3 +296,151 @@ Swift の `NSRegularExpression`・Kotlin/Java の `\s` とは集合が違うの�
   「`mention_ranges`/`user_links` の範囲が正しい文字に当たる（例：9017 の `[11,25)` が `@[Taro Yamada]`）」などを確かめる。
   ファイルはリポジトリのこのパスから読む（アプリのテストにコピーするなら、この 2 つを一緒に更新する）。
 - 見た目は Web とアプリで同じ例題を撮って並べて見比べる（画素の比較は同じ端末の前回とだけ）。
+
+---
+
+## 10. 操作（段階 3・2026-10-22）
+
+### 10.1 権限（オーナー決定：案 iii）
+
+- `agent_tokens.app_issued`（「アプリが発行した」印）。**人のアプリのログイン**（`POST /api/agent/token` に
+  `replace_same_device: true`）で発行した鍵だけ `true`。設定画面（`/settings/agent`）から発行する外部の AI エージェント用の
+  鍵は、post スコープを付けても `false`。
+- **この印は本人確認ではなく、鍵の使い道の目印**。誰の鍵かの確認はいつもどおりログイン（メールでの本人確認）と会員の確認で
+  している。印は「人がアプリの画面から操作するための鍵か、外部の AI エージェントに渡した鍵か」を分けるためのもの。
+- 既存の鍵への印付け：`initSchema` が**起動のたびに**
+  `UPDATE agent_tokens SET app_issued = TRUE WHERE 'voice' = ANY(scopes) AND NOT app_issued` を流す（冪等）。目印は
+  **voice スコープ**。根拠：2026-10-20 の全員再ログイン（`login-email-verify-reset`）でそれより前の鍵はすべて失効し、
+  それ以降に発行できる voice 付きの鍵は、アプリのログインからのものだけ（`/api/agent/token` は 2026-10-17 から voice を
+  `replace_same_device` のときにしか付けない。設定画面に voice の選択肢は無い。Android は 2026-10-18 から voice を頼む）。
+  外部の鍵に voice は付かないので、毎回流しても外部の鍵には印が付かない。期限の自動延長（90 日）も同じ目印。
+- **線引き（オーナー方針：外部の鍵は人の投稿に新しい操作をしない）**。段階 3 で足した操作は**アプリの鍵（app_issued ＋ post）だけ**：
+  編集（画像・音声の差し替え）・削除（post で）・投票の作成（publish の `poll`）・投票・お題の編集・ピン・部活の付け替えと
+  投稿時の部活の選択（publish の `club`）・お気に入りの付け外し・動画と音声（アップロードと publish の `video_url`/`audio_url`）。
+  外部の鍵ではどれも 403（`code: forbidden`）。
+- 外部の鍵ができるのは今までできたことだけ：write で本文だけの編集と削除（`agent-write.ts`・MCP も同じ）、post で投稿・返信・
+  画像・リアクション・うなる・ネタ帳、write か post でブックマーク。**post スコープだけの外部の鍵では編集も削除もできない**（403）。
+- 中身はすべて Web と同じ lib（`src/lib/post-actions.ts`・`src/lib/publish.ts`・`src/lib/upload.ts`）。Web のルート
+  （`/api/posts/[id]`・`/pin`・`/club`・`/api/poll/*`・`/api/favorites`）も同じ関数を呼ぶ。ピンと部活の付け替えは
+  ルート投稿だけ（返信は 400。Web も同じ）。
+
+### 10.2 アプリの UI の決まり（文言の正本）
+
+- **メニュー**：投稿の長押し（iOS・Android）／右クリック（Mac）。Mac はカード右上のボタンにも並べてよい。項目と順番：
+  1. 「ブックマーク」/「ブックマークを外す」
+  2. 「チャットに引用」
+  3. 「ネタ帳に送る」（送れる URL があるとき）
+  4. 「お気に入りに追加」/「お気に入りから外す」（他人の投稿）
+  5. 「リアクション」
+  6. 「ピン（24時間）」/「ピンを外す」（自分のルート投稿）
+  7. 「部活動を選択」（自分のルート投稿）
+  8. 「編集」（自分の投稿）
+  9. 「削除」（自分の投稿・赤）
+
+  出すかどうかは `capabilities.features.posts` の各項目で決める（項目が無い＝古いサーバ＝出さない）。アプリの鍵で post は
+  あるのに `edit` が false のとき（印の付く前の鍵など）、自分の投稿のメニューには「編集」「削除」の代わりに
+  **「編集するには一度ログインし直してください」**（押せない説明行）を出す。
+- **数字と単位の間に空白を入れない**（「5人」「24時間」「3票」）。
+- **削除**：確認を出す。題「投稿を削除」、本文「この投稿を削除しますか？この操作は取り消せません。」、ボタン「キャンセル」
+  「削除する」（赤）。失敗したら確認の中にサーバの `error` を赤で出す。
+- **編集**：題「投稿を編集」、ボタン「キャンセル」「保存する」。画像は差し替え（並べ直し・外す・足す、5枚まで。その投稿に
+  もう付いている画像は Web から付けたものでも残せる）、音声は付ける・外す。動画は付け替えられない（Web と同じ）。返信も同じ。
+- **うなる**：返信の入力欄で「吠える」（青）の左に「うなる」（薄い青）。うなるとスレッドを上げず、**全員へのプッシュは出ないが、
+  親の投稿者への返信の通知（とメンションの通知）は出る**（Web と同じ）。ルート投稿には無い。
+- **投稿の添付**：画像（5枚まで）・動画1本・音声1本・投票。動画と音声は同時に付けられない。**投票と画像は同時に付けられる**
+  （Web と同じ）。動画・音声は 100MB まで。部活は投稿時に選べる（選ばなければ AI が自動で分類）。
+- **投票**：カードは Web のとおり。見出し「📊 投票（N票）」、選択肢の状態は「投票する」「投票済み」「投票が終了しました」
+  （「投票済み：…」のような補足は付けない）。選択肢を押すと投票（もう一度別の選択肢を押すと変更）。投稿者は投稿後1時間だけ
+  「回答を編集」（題「アンケートの回答を編集」）。票の付いた選択肢は消せない。回答は3〜10個。
+- **ピン**：自分のルート投稿だけ。24時間で外れる。1人1件（新しくピンすると前のは外れる）。ピンの一覧が空のとき
+  「ピンはありません。自分の投稿の右上にあるピンアイコンから、その投稿を24時間ピン留めできます。」
+- **ブックマーク・お気に入りのトースト**：押したらすぐ塗る（楽観表示）。トーストは「ブックマークに保存しました（タップで取り消し）」
+  「ブックマークから外しました（タップで取り消し）」「<名前> をお気に入りに追加しました（タップで取り消し）」
+  「<名前> をお気に入りから外しました（タップで取り消し）」。**Mac は「…（クリックで取り消し）」**。ブックマークは
+  `{ post_id, bookmarked: true|false }` で送る（冪等。取り消しもこれで戻す）。状態は投稿の `bookmarked_by_me`・`favorite_by_me`。
+- **部活動を選択**：部活の一覧（今の部活に ✓）→ 最後に「ラベルなし」（赤）。
+- **カスタム絵文字**：リアクションのピッカーの最後に `GET /api/agent/emojis` の絵文字（画像）。送るのは `":name:"`。登録は Web だけ。
+- **メンションの補完**：`@` を打ったら `GET /api/agent/members` の名前で候補を出す。空白を含む名前は `@[名前]` で入れる。
+  候補が空でも入力は止めない（サーバは Ghost に届かないとき空の一覧を返す）。
+- **エラーの文言**：サーバが返す `error`（日本語・Web と同じ文言）をそのまま出す。`code` は出し分けに使う
+  （`rate_limited` は「少し時間をおいてから試してください」、`token_expired`・`unauthorized` はログインし直し、
+  アップロードの 503 は「混み合っています」なので少し待って送り直す）。
+
+- 印を外したいとき：voice を持つ鍵には起動のたびに印が付き直すので、手で `app_issued` を false にしても戻る。外すには鍵を失効させる。
+
+### 10.3 古いアプリ・外部エージェントへの影響
+
+| 相手 | 変わること | 変わらないこと |
+|---|---|---|
+| 今のアプリ（段階 2 まで） | 投稿の形に `bookmarked_by_me`・`favorite_by_me` が増える（読み飛ばせばよい） | 一覧・スレッド・投稿・画像のアップロード（`{ urls }`）・リアクション・既読。鍵の作り直しは不要（voice の鍵には起動のたびに印が付く） |
+| 段階 2 以前にログインした古いアプリ（voice の無い鍵） | なし（2026-10-20 に全部失効済み。ログインし直した鍵には voice がある） | — |
+| 外部の AI エージェント（write） | なし。段階 3 の新しい操作は使えない（403） | `PATCH`/`DELETE /api/agent/posts/:id`（本文だけ・write の枠 1 時間 10 回）、ブックマーク（write の枠）、MCP のツール |
+| 外部の AI エージェント（post を持つ） | リアクションの枠が post（1 時間 60）から post_light（1 時間 300）に変わった。段階 3 の新しい操作（投票・ピン・部活・お気に入り・動画・音声・編集・削除）は 403。publish に `club`・`poll`・`video_url`・`audio_url` を付けると、以前は読み捨てて投稿できたが今は 403（付けなければ今まで通り）。お気に入りの付け外しは 403 だが一覧 `GET /api/agent/favorites` は read で読める | 投稿・返信・画像・リアクション・うなる・ネタ帳・ブックマーク |
+| Web | 編集・削除・ピン・部活・投票・お題の編集・お気に入りの中身を lib に移した（返事の形・文言は同じ）。画像の差し替えで文字列でない値は 400。ピン・部活の付け替えは返信だと 400（画面には元から出ない）。お題の編集で他の投票の選択肢・重複・空の回答は 400。大きなアップロード（10MB 超）が同時に 4 本目なら 503。@の候補は Ghost に届かなくても 200（空か古い一覧） | 画面 |
+
+---
+
+## 11. アプリが使う API の約束（段階 0〜3）
+
+アプリ（Mac/iOS・Android）が呼ぶ `/api/agent/*` の約束をここにまとめる。形を変えるときは、項目を消さない・意味を変えない・
+足すだけ。足したら `capabilities` で知らせる。正本：`src/app/api/agent/**/route.ts`、OpenAPI は `GET /api/agent/openapi.json`。
+
+**共通**
+- 認証：`Authorization: Bearer <token>`。鍵はアプリのログインで発行（`POST /api/agent/token`、`replace_same_device: true`、
+  スコープ `read, read_state, chat, post, voice`）。アプリの鍵は `app_issued`（§10.1）で、使うたびに 90 日延びる。
+- 成功は `{ apiVersion: 1, … }`（アップロードだけ `{ urls }` / `{ video_url }` / `{ audio_url }`）。失敗は `{ error, code, hint? }`。
+  `code`：`unauthorized`・`token_expired`・`membership_ended`・`membership_unavailable`・`rate_limited`・`not_found`・`forbidden`・
+  `invalid_request`・`server_error`。`error` は日本語でそのまま見せてよい。
+  - `unauthorized`・`token_expired` だけが「ログインし直し」。`membership_ended`（403）は会員でなくなった（鍵も失効）。
+  - `membership_unavailable`（503）は会員情報を一時的に確認できないだけ。ログアウトさせず「会員情報を確認できません。
+    少し時間をおいて試してください」を出し、少し待って読み直す。
+- 会員の確認（オーナー決定 2026-10-22）：鍵ごとに 6 時間に 1 回、Ghost に会員かを問い合わせる（4 秒で打ち切り）。
+  Ghost に届かない（打ち切り・接続失敗・5xx）ときは、前回の確認の成功から **24 時間以内なら通す**（確認の時刻は更新しない）。
+  24 時間を超えていたら 503 `membership_unavailable`。届かなかったことは 30 秒覚え、その間は問い合わせずにこの判定だけをする
+  （毎回 4 秒待たせない）。Ghost が「会員でない」と答えたときは今までどおりすぐ 403 `membership_ended`。Ghost が 4xx を返す・
+  設定の誤りのときは猶予なしで 503 `membership_unavailable`。Web のセッションには定期の会員確認が無い（ログインのときだけ）。
+- 回数の上限（鍵ごと・オーナー決定 2026-10-22）。超えると 429（`code: rate_limited`、`hint` に何秒後か）。
+
+  | 枠 | 上限 | 数える操作 |
+  |---|---|---|
+  | read | 120回/分 | 一覧・スレッド・capabilities・絵文字・お気に入りの一覧・メンションの候補・部活の一覧 |
+  | read_state | 60回/分 | 既読 |
+  | post | **60回/時** | 投稿・返信（publish）・アップロード・編集・削除・お題の編集・ネタ帳 |
+  | post_light | **300回/時** | 軽い操作：リアクション・投票・ブックマーク・お気に入りの付け外し・ピン・部活の付け替え（post スコープで通ったとき） |
+  | write | 10回/時 | 外部の AI エージェント（変えない）。write を持つ鍵のブックマーク・編集・削除はこの枠のまま |
+
+  post と post_light は別々に数える（リアクションを続けても投稿の枠は減らない）。**リアクションの枠の変化**：以前は post の枠
+  （1時間60）で数えていたが、post_light（1時間300）に移した。post と write の両方を持つ外部の鍵のリアクションも post_light になる。
+- アップロードのうち 10MB を超えるものは、サーバ全体で同時に 3 本まで解析する。超えたら 503（`Retry-After: 10`、`code: busy`）。
+  `Retry-After` の秒数だけ待って送り直す。アップロードの失敗の `code`：`busy`（混み合い）・`too_large`（大きすぎる）・
+  `unsupported`（形式が非対応・外部の鍵で動画や音声）・`invalid_request`。
+- @の候補（`/api/agent/members`）とタイムラインの `display` のメンションは Ghost（会員の一覧）を使う。Ghost への問い合わせは
+  4 秒で打ち切り、古い一覧があれば待たずにそれを返して裏で取り直す（同時に 1 本だけ）。失敗したら 30 秒は取り直さない。
+  `include=display` は Ghost を待たない（一覧がまだ無ければメンション無し＝`mention_ranges: []` で返す。次の読み込みで付く）。
+- 配信するファイル（`/api/media/…`・`/api/img`・`/api/avatar/…`）は `X-Content-Type-Options: nosniff`。
+- 起動時に `GET /api/agent/capabilities` を読み、`features.posts` に無い操作は出さない。知らない項目は読み飛ばす。
+- 投稿の形・`include`・`display` は §2・§3。位置はすべて UTF-16。
+
+「アプリの鍵」= `app_issued` ＋ post（§10.1）。外部の鍵では 403。
+
+| 何を | メソッドと道 | スコープ（枠） | 送るもの | 返るもの・決まり |
+|---|---|---|---|---|
+| 一覧 | `GET /api/agent/posts` | read | `limit`（≤100）・`cursor`・`since_id`・`club`・`search`・`author_user_id`・`fav=1`・`bm=1`・`pinned=1`・`include=reactions,read,display` | `{ posts, next_cursor }`。`pinned=1` は今ピン中だけ・ピンした古い順・`next_cursor` は null |
+| スレッド | `GET /api/agent/posts/:id` | read | `include` | `{ post, replies }` |
+| 投稿・返信 | `POST /api/agent/publish` | post（post） | `{ text, images?, parent_id?, whisper?, video_url?, audio_url?, poll?: { question, options[], duration_hours? }, club? }`（`video_url`・`audio_url`・`poll`・`club` はアプリの鍵だけ） | 201 `{ post }`。画像5枚まで・動画と音声はどちらか1つ・投票と画像は一緒に付けられる・どれもアップロードしたものだけ。`whisper` は返信だけ。`club` はルート投稿だけ（付けたら自動分類しない）。投票は回答3〜10個・締切 1/6/12/24時間。同じ本文の30秒以内の二重投稿は前の投稿を返す |
+| アップロード | `POST /api/agent/upload`（multipart） | post（post） | `images[]`（5枚・合計50MB・jpeg/png/webp/gif）、アプリの鍵だけ `video`（mp4/webm/mov・100MB）か `audio`（mp3/m4a/aac/wav/ogg/opus/webm/flac・100MB） | 201 `{ urls }` / `{ video_url }` / `{ audio_url }`。1回に1種類。外部の鍵の動画・音声は 400「画像だけ送れます」 |
+| 編集 | `PATCH /api/agent/posts/:id` | アプリの鍵: post（post）／外部: write（write） | アプリ：`{ text, images?, audio_url? }`（`images` は差し替え、`audio_url: null` で外す） | `{ updated: true }`。自分の投稿だけ（Web と同じく自分の投稿すべて）・エピソード投稿は不可・動画付きに音声は付けられない・新しく足す画像はアップロードしたものだけ（もう付いている画像は残せる） |
+| 削除 | `DELETE /api/agent/posts/:id` | アプリの鍵: post（post）／外部: write（write） | — | `{ deleted: true }`。自分の投稿だけ・エピソード投稿は不可 |
+| ピン | `POST /api/agent/posts/:id/pin` | アプリの鍵（post_light） | — | `{ ok, pinned }`。付け外しの切り替え・自分のルート投稿・24時間・1人1件 |
+| 部活の付け替え | `PATCH /api/agent/posts/:id/club` | アプリの鍵（post_light） | `{ club: "<key>" \| null }` | `{ ok, club }`。投稿者のルート投稿だけ。キーは `GET /api/agent/clubs` |
+| 投票 | `POST /api/agent/posts/:id/poll/vote` | アプリの鍵（post_light） | `{ option_id }` | `{ ok, poll }`。締切後は 403「投票は終了しました」 |
+| お題の編集 | `PUT /api/agent/posts/:id/poll` | アプリの鍵（post） | `{ question?, options: [{ id\|null, label }] }` | `{ ok, poll }`。投稿者だけ・投稿後1時間・票の付いた選択肢は消せない・id はこの投票の選択肢だけで重複不可・空の回答は不可・回答3〜10個。並びは送った順（並べ替え・途中への追加もできる） |
+| リアクション | `POST /api/agent/reactions` | post（post_light）か write（write） | `{ post_id, emoji }`（カスタムは `":name:"`） | `{ added, reactions }`（切り替え） |
+| カスタム絵文字 | `GET /api/agent/emojis` | read | — | `{ emojis: [{ id, name, image_url }] }` |
+| ブックマーク | `POST /api/agent/bookmarks` | write（write）か post（post_light） | `{ post_id, bookmarked?: true\|false }` | `{ bookmarked }`。`bookmarked` を送ればその状態に（冪等・`capabilities` の `bookmarks_set`）、無ければ切り替え。一覧は `posts?bm=1` |
+| お気に入り（人） | `GET` / `POST` / `DELETE /api/agent/favorites` | read ／ アプリの鍵（post_light） | `{ user_id }` | `{ user_ids }` / `{ favorited }`（冪等）。自分自身は 400。お気に入りの人の投稿は `posts?fav=1` |
+| メンションの候補 | `GET /api/agent/members` | read | — | `{ members: [{ user_id, name, avatar }] }`。Ghost に届かないときは古い一覧か空（200） |
+| 部活の一覧 | `GET /api/agent/clubs` | read | — | 部活のキーと名前 |
+| 既読 | `POST /api/agent/read` | read_state | `{ post_ids: [...] }`（500まで） | `{ marked }` |
+| ネタ帳 | `POST /api/agent/neta` | post（post） | `{ url, title, description? }` | — |
+| 機能の可否 | `GET /api/agent/capabilities` | （鍵があれば） | — | `features.posts`：`edit`・`delete`・`edit_text_only`・`whisper`・`video`・`audio`・`max_media_mb`・`poll`・`poll_vote`・`poll_edit`・`pin`・`pinned_list`・`bookmarks`・`bookmarks_set`・`favorites`・`custom_emoji_list`・`club_select`・`club_change`・`mentions`・`display`・`include`。アプリの鍵だけの操作は外部の鍵では false |

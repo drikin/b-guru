@@ -177,6 +177,7 @@ export async function GET(req: NextRequest) {
         status: 200,
         headers: {
           "Content-Type": ct,
+          "X-Content-Type-Options": "nosniff",
           "Cache-Control": "public, max-age=1209600, immutable",
           "X-Img-Cache": "HIT",
         },
@@ -290,6 +291,7 @@ export async function GET(req: NextRequest) {
       status: 200,
       headers: {
         "Content-Type": outCt,
+        "X-Content-Type-Options": "nosniff",
         "Cache-Control": "public, max-age=1209600, immutable",
         "X-Img-Cache": "MISS",
       },

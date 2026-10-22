@@ -45,6 +45,7 @@ describe("GET /api/media", () => {
     expect(r.status).toBe(200);
     expect(r.headers.get("content-type")).toBe("image/jpeg");
     expect(r.headers.get("x-media-variant")).toBe("w2048");
+    expect(r.headers.get("x-content-type-options")).toBe("nosniff");
     expect(r.headers.get("cache-control")).toContain("private");
     const buf = Buffer.from(await r.arrayBuffer());
     const m = await sharp(buf).metadata();
@@ -69,6 +70,8 @@ describe("GET /api/media", () => {
     const v = await call("1700000000000-ccc.mp4", "", { range: "bytes=0-9" });
     expect(v.status).toBe(206);
     expect(v.headers.get("content-range")).toBe("bytes 0-9/1000");
+    expect(v.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(c.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
   it("still refuses path tricks and missing files", async () => {

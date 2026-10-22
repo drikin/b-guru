@@ -29,8 +29,67 @@ export function toProxiedAvatar(avatar: string | null | undefined): string | nul
   return avatar;
 }
 
-export async function mentionMembers(): Promise<MentionMember[]> {
+/** 失敗したらこの間は Ghost に取りに行かない（応答しない Ghost を毎回待たない）。 */
+export const MENTION_FAIL_BACKOFF_MS = 30_000;
+let refreshing: Promise<void> | null = null;
+let failedAt = 0;
+
+/** 取り直しは同時に 1 本だけ。失敗は覚えて MENTION_FAIL_BACKOFF_MS の間は取り直さない。 */
+function refreshMembers(): Promise<void> {
+  if (refreshing) return refreshing;
+  if (Date.now() - failedAt < MENTION_FAIL_BACKOFF_MS) return Promise.resolve();
+  refreshing = loadMentionMembers()
+    .then((data) => {
+      cache = { data, ts: Date.now() };
+      failedAt = 0;
+    })
+    .catch((e) => {
+      // Ghost に届かない・応答しない（4 秒で打ち切り）・GHOST_ADMIN_API_KEY が無い。画面は止めない。
+      failedAt = Date.now();
+      console.error("mentionMembers:", (e as Error)?.message, cache ? "(古い一覧を使う)" : "(空の一覧を使う)");
+    })
+    .finally(() => {
+      refreshing = null;
+    });
+  return refreshing;
+}
+
+/**
+ * @メンションの候補（会員の一覧）。
+ *  - 新しい一覧（60 秒以内）があればそれ。
+ *  - 古い一覧があれば**すぐ返し**、取り直しは裏で 1 本だけ。
+ *  - 一覧がまだ無いとき: wait=true（既定・/api/members と /api/agent/members）は取り直しを待つ（Ghost の
+ *    問い合わせは 4 秒で打ち切り）。wait=false（タイムラインの include=display）は待たずに空を返し、裏で取りに行く。
+ *  - 失敗した直後（30 秒）は取りに行かず、古い一覧か空。
+ */
+export async function mentionMembers(opts: { wait?: boolean } = {}): Promise<MentionMember[]> {
   if (cache && Date.now() - cache.ts < CACHE_TTL) return cache.data;
+  if (cache) {
+    void refreshMembers();
+    return cache.data;
+  }
+  if (opts.wait === false) {
+    void refreshMembers();
+    return [];
+  }
+  await refreshMembers();
+  return currentCache()?.data ?? [];
+}
+
+// 関数越しに読む（await の後に cache が埋まるのを TypeScript の絞り込みが知らないため）。
+function currentCache(): { data: MentionMember[]; ts: number } | null {
+  return cache;
+}
+
+/** テスト用: 覚えている一覧と失敗の記録を消す。 */
+export function _resetMentionMembersForTest(): void {
+  cache = null;
+  refreshing = null;
+  failedAt = 0;
+}
+
+async function loadMentionMembers(): Promise<MentionMember[]> {
+  // GHOST_ADMIN_API_KEY が無いときは listMembers（makeToken）が投げる → 上で空の一覧。
   const members = (await listMembers()).filter((m) => m.status === "paid" || m.status === "comped");
   // The name a member is shown (and matched for mentions) as on B-guru: the
   // profile display name first — the same name the chat's 返信 button inserts.

@@ -101,7 +101,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const issued = await issueAgentToken({ email, deviceName, scopes });
+    // アプリのログインで発行する鍵には「アプリが発行した」印を付ける（自分の投稿の編集・削除に要る）。
+    //   設定画面（外部の AI エージェント用）は replace_same_device を送らないので付かない。
+    const issued = await issueAgentToken({ email, deviceName, scopes, appIssued: nativeLogin });
     const userId = await ensureUserId(email);
     // 発行も監査対象（token_id は未発行なので null + endpoint で記録）。
     try {

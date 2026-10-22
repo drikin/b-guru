@@ -13,6 +13,8 @@ import { pushNewPost } from "@/lib/push-notify";
 import { validatePollInput } from "@/lib/poll";
 import { classifyPost } from "@/lib/clubs";
 import { ensureUserId } from "@/lib/user";
+import { isActiveClubKey } from "@/lib/club-store";
+import { setPostClub } from "@/lib/posts";
 
 // ---- Server-side duplicate prevention (30s window) ----
 // If the same author posts the exact same text + parentId within 30 seconds,
@@ -28,6 +30,8 @@ export interface PublishBody {
   videoUrl?: unknown;
   audioUrl?: unknown;
   poll?: unknown;
+  /** 部活を手動で選んで投稿する（ルート投稿だけ）。付けたら自動分類はしない（club_manual = TRUE）。 */
+  club?: unknown;
 }
 
 /** Uploaded images are served from /api/media/<name> (see /api/upload). */
@@ -74,6 +78,18 @@ export async function publishPost(
       options: opts.map((o: unknown) => String(o).trim()).filter(Boolean),
       durationHours: dur,
     };
+  }
+
+  // 部活の手動選択（任意）。投稿を作る前に検査する（作ってから弾くと投稿だけ残る）。
+  const club = typeof body.club === "string" && body.club.trim() ? body.club.trim() : null;
+  if (body.club != null && typeof body.club !== "string") {
+    return { status: 400, body: { error: "club は文字列のみ" } };
+  }
+  if (club && parentId) {
+    return { status: 400, body: { error: "返信には部活を付けられません（スレッドの部活はルート投稿で変えます）" } };
+  }
+  if (club && !(await isActiveClubKey(club))) {
+    return { status: 400, body: { error: "不正な部活動です" } };
   }
 
   if (!text && rawImages.length === 0 && !videoUrl && !audioUrl && !poll) {
@@ -190,7 +206,14 @@ export async function publishPost(
     // 部活動ラベル自動付与（ルート投稿のみ・非同期）。投稿の即時反映をブロックしない
     // よう fire-and-forget で投げる。分類完了は SSE club イベントで各クライアントへ
     // 反映される（classifyPost は内部でエラーを握りつぶし null を返すので throw しない）。
-    if (!parentId) {
+    if (club) {
+      // 手動で選んだ部活（Web の付け替えと同じ setPostClub: club_manual = TRUE・club イベント）。
+      const set = await setPostClub(post.id, email, club);
+      if (set.ok) {
+        post.club = club;
+        post.clubManual = true;
+      }
+    } else if (!parentId) {
       classifyPost(post.id).catch((e) =>
         console.error("classifyPost:", (e as any)?.message)
       );

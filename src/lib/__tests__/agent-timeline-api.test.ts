@@ -61,12 +61,13 @@ import { agentPostDto } from "@/lib/agent-post-dto";
 import { agentCapabilities } from "@/lib/agent-chat";
 
 let scopes: string[] = ["read"];
+let appIssued = false;
 let tokenId = 100;
 function authed() {
   query.mockImplementation(async (sql: unknown) => {
     const s = String(sql);
     if (s.includes("SELECT id, token_hash"))
-      return { rows: [{ id: tokenId, email: "me@example.com", scopes, device_name: "iphone", expires_at: new Date(Date.now() + 86400_000), last_membership_check: new Date() }] };
+      return { rows: [{ id: tokenId, email: "me@example.com", scopes, device_name: "iphone", expires_at: new Date(Date.now() + 86400_000), last_membership_check: new Date(), app_issued: appIssued }] };
     if (s.includes("rate_limits")) return { rows: [{ count: 1, window_start: new Date() }] };
     return { rows: [], rowCount: 0 };
   });
@@ -76,6 +77,7 @@ const req = (url: string, init?: RequestInit) => new NextRequest(new Request(url
 
 beforeEach(() => {
   scopes = ["read"];
+  appIssued = false;
   tokenId += 1;
   query.mockReset();
   publishPost.mockReset();
@@ -210,7 +212,11 @@ describe("POST /api/agent/publish・upload", () => {
       req("http://x/api/agent/publish", { method: "POST", headers: H, body: JSON.stringify({ text: "写真", images: ["/api/media/a.jpg"], parent_id: 10 }) })
     );
     expect(res.status).toBe(201);
-    expect(publishPost).toHaveBeenCalledWith("me@example.com", { text: "写真", images: ["/api/media/a.jpg"], parentId: 10 }, { localImagesOnly: true });
+    expect(publishPost).toHaveBeenCalledWith(
+      "me@example.com",
+      { text: "写真", images: ["/api/media/a.jpg"], parentId: 10, whisper: false, videoUrl: undefined, audioUrl: undefined, poll: undefined, club: undefined },
+      { localImagesOnly: true }
+    );
     expect((await res.json()).post).toMatchObject({ id: 20, images: ["/api/media/a.jpg"] });
   });
 
@@ -220,14 +226,70 @@ describe("POST /api/agent/publish・upload", () => {
     expect(LOCAL_IMAGE_RE.test("/api/media/../secret")).toBe(false);
   });
 
-  it("アップロードは画像だけ（lib/upload に imagesOnly で渡す）", async () => {
+  it("アップロード: アプリの鍵は appMedia（画像・動画・音声）、外部の鍵は今までどおり imagesOnly", async () => {
     scopes = ["read", "post"];
+    authed();
+    handleUpload.mockResolvedValueOnce(new Response(JSON.stringify({ urls: [] }), { status: 201 }));
+    await uploadPOST(req("http://x/api/agent/upload", { method: "POST", headers: { Authorization: "Bearer bga_x" }, body: "x" }));
+    expect(handleUpload.mock.calls[0][2]).toEqual({ imagesOnly: true });
+    handleUpload.mockReset();
+    appIssued = true;
     authed();
     handleUpload.mockResolvedValue(new Response(JSON.stringify({ urls: ["/api/media/b.jpg"] }), { status: 201 }));
     const res = await uploadPOST(req("http://x/api/agent/upload", { method: "POST", headers: { Authorization: "Bearer bga_x" }, body: "x" }));
     expect(res.status).toBe(201);
-    expect(handleUpload.mock.calls[0][2]).toEqual({ imagesOnly: true });
+    expect(handleUpload.mock.calls[0][2]).toEqual({ appMedia: true });
     expect(await res.json()).toEqual({ urls: ["/api/media/b.jpg"] });
+  });
+});
+
+describe("POST /api/agent/upload（動画・音声）", () => {
+  it("動画・音声は Web の形（videoUrl / audioUrl）を video_url / audio_url にして返す", async () => {
+    scopes = ["read", "post"];
+    appIssued = true;
+    authed();
+    handleUpload.mockResolvedValueOnce(new Response(JSON.stringify({ videoUrl: "/api/media/v.mp4" }), { status: 201 }));
+    const v = await uploadPOST(req("http://x/api/agent/upload", { method: "POST", headers: { Authorization: "Bearer bga_x" }, body: "x" }));
+    expect(await v.json()).toEqual({ video_url: "/api/media/v.mp4" });
+    authed();
+    handleUpload.mockResolvedValueOnce(new Response(JSON.stringify({ audioUrl: "/api/media/a.m4a" }), { status: 201 }));
+    const a = await uploadPOST(req("http://x/api/agent/upload", { method: "POST", headers: { Authorization: "Bearer bga_x" }, body: "x" }));
+    expect(await a.json()).toEqual({ audio_url: "/api/media/a.m4a" });
+    authed();
+    handleUpload.mockResolvedValueOnce(new Response(JSON.stringify({ error: "非対応の動画形式です: video/avi" }), { status: 400 }));
+    const bad = await uploadPOST(req("http://x/api/agent/upload", { method: "POST", headers: { Authorization: "Bearer bga_x" }, body: "x" }));
+    expect(bad.status).toBe(400);
+  });
+});
+
+describe("POST /api/agent/upload のエラー", () => {
+  const up = () => uploadPOST(req("http://x/api/agent/upload", { method: "POST", headers: { Authorization: "Bearer bga_x" }, body: "x" }));
+  it("混み合いの 503 は Retry-After を保ち code: busy", async () => {
+    scopes = ["read", "post"];
+    appIssued = true;
+    authed();
+    handleUpload.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "アップロードが混み合っています。少し待ってからもう一度送ってください" }), { status: 503, headers: { "Retry-After": "10" } })
+    );
+    const res = await up();
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Retry-After")).toBe("10");
+    expect((await res.json()).code).toBe("busy");
+  });
+  it("大きすぎるは too_large、形式は unsupported（文言は Web と同じ）", async () => {
+    scopes = ["read", "post"];
+    authed();
+    handleUpload.mockResolvedValueOnce(new Response(JSON.stringify({ error: "画像が大きすぎます（合計 50MB まで）" }), { status: 413 }));
+    expect(await (await up()).json()).toEqual({ error: "画像が大きすぎます（合計 50MB まで）", code: "too_large" });
+    authed();
+    handleUpload.mockResolvedValueOnce(new Response(JSON.stringify({ error: "動画は100MBまでです" }), { status: 400 }));
+    expect((await (await up()).json()).code).toBe("too_large");
+    authed();
+    handleUpload.mockResolvedValueOnce(new Response(JSON.stringify({ error: "画像だけ送れます" }), { status: 400 }));
+    expect((await (await up()).json()).code).toBe("unsupported");
+    authed();
+    handleUpload.mockResolvedValueOnce(new Response(JSON.stringify({ error: "非対応の画像形式です: image/bmp" }), { status: 400 }));
+    expect((await (await up()).json()).code).toBe("unsupported");
   });
 });
 

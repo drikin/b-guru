@@ -10,7 +10,7 @@ const spec = {
     title: "B-guru Agent API",
     version: "1.0.0",
     description:
-      "B-guru (bsm.backspace.fm) の AI エージェント向け読み取り API（フェーズ1 MVP）。認証は Authorization: Bearer <token>。エラーは {error, code, hint} に統一（code: unauthorized / token_expired / membership_ended / rate_limited / not_found / forbidden）。識別子は不透明 user_id のみ。email・member 情報は一切レスポンスに含めない。",
+      "B-guru (bsm.backspace.fm) の AI エージェント・アプリ向け API。回数の上限（鍵ごと）: read 120/分、read_state 60/分、post 60/時（投稿・アップロード・編集・削除・お題の編集・ネタ帳）、post_light 300/時（リアクション・投票・ブックマーク・お気に入り・ピン・部活の付け替えを post スコープで行ったとき）、段階 3 の新しい操作（編集・削除の画像音声、投票、お題の編集、ピン、部活、お気に入り、動画音声）はアプリのログインで発行した鍵（app_issued）だけ、write 10/時（外部エージェント）。超えると 429 rate_limited。認証は Authorization: Bearer <token>。エラーは {error, code, hint} に統一（code: unauthorized / token_expired / membership_ended / membership_unavailable / rate_limited / not_found / forbidden / invalid_request / server_error）。会員の確認は 6 時間ごと。Ghost に届かないときは前回の確認から 24 時間以内なら通し、超えたら 503 membership_unavailable（ログイン切れではない）。識別子は不透明 user_id のみ。email・member 情報は一切レスポンスに含めない。",
   },
   servers: [{ url: "https://bsm.backspace.fm" }],
   components: {
@@ -25,7 +25,9 @@ const spec = {
           error: { type: "string" },
           code: {
             type: "string",
-            enum: ["unauthorized", "token_expired", "membership_ended", "rate_limited", "not_found", "forbidden"],
+            enum: ["unauthorized", "token_expired", "membership_ended", "membership_unavailable", "rate_limited", "not_found", "forbidden", "invalid_request", "server_error"],
+            description:
+              "membership_unavailable (503): 会員情報を一時的に確認できない（Ghost に届かず、前回の会員確認から 24 時間を超えた）。ログインし直しではない。少し待って再試行する",
           },
           hint: { type: "string" },
         },
@@ -72,6 +74,8 @@ const spec = {
           club_manual: { type: "boolean" },
           poll: { type: ["object", "null"] },
           via: { type: ["string", "null"], description: "\"agent\" = AI エージェント経由の投稿" },
+          bookmarked_by_me: { type: "boolean", description: "見ている本人がブックマークしているか" },
+          favorite_by_me: { type: "boolean", description: "見ている本人がこの投稿者をお気に入りにしているか" },
           reactions: {
             type: "array",
             description:
@@ -211,6 +215,7 @@ const spec = {
           { name: "author_user_id", in: "query", schema: { type: "string" } },
           { name: "fav", in: "query", schema: { type: "string", enum: ["1"] }, description: "お気に入りの投稿者のみ" },
           { name: "bm", in: "query", schema: { type: "string", enum: ["1"] }, description: "ブックマーク済み投稿のみ" },
+          { name: "pinned", in: "query", schema: { type: "string", enum: ["1"] }, description: "今ピン中の投稿だけ（ピンした古い順・next_cursor は null）" },
           {
             name: "include",
             in: "query",
@@ -266,7 +271,8 @@ const spec = {
         },
       },
       patch: {
-        summary: "自分の投稿の本文編集（text のみ・メディア不可）・スコープ write",
+        summary:
+          "自分の投稿の編集。アプリのログインで発行した鍵（app_issued）＋ post: { text, images?, audio_url? }（Web と同じ）。それ以外は write で text のみ。post だけの外部の鍵は 403",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
         requestBody: {
           required: true,
@@ -287,7 +293,7 @@ const spec = {
         },
       },
       delete: {
-        summary: "自分の投稿の削除・スコープ write",
+        summary: "自分の投稿の削除。アプリの鍵（app_issued）＋ post、または write。post だけの外部の鍵は 403",
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
         responses: {
           "200": { description: "削除済み" },
@@ -295,6 +301,59 @@ const spec = {
           "404": { description: "見つからない", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
         },
       },
+    },
+    "/api/agent/posts/{id}/pin": {
+      post: {
+        summary: "ピンの付け外し（アプリの鍵 app_issued＋post だけ・枠 post_light・自分のルート投稿・24 時間・1 人 1 件）→ {apiVersion, ok, pinned}",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+        responses: { "200": { description: "OK" }, "403": { description: "他人の投稿・エピソード投稿" }, "404": { description: "無い" } },
+      },
+    },
+    "/api/agent/posts/{id}/club": {
+      patch: {
+        summary: "部活ラベルの付け替え（アプリの鍵だけ・枠 post_light・投稿者のルート投稿だけ）body {club: key|null} → {apiVersion, ok, club}",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+        responses: { "200": { description: "OK" }, "400": { description: "不正な部活" }, "403": { description: "投稿者でない" } },
+      },
+    },
+    "/api/agent/posts/{id}/poll": {
+      put: {
+        summary: "お題（回答）の編集（アプリの鍵だけ・枠 post・投稿者だけ・投稿後 1 時間・票の付いた選択肢は消せない・id はこの投票の選択肢で重複不可・空の回答不可・3〜10 個）body {question?, options:[{id|null,label}]} → {apiVersion, ok, poll}",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+        responses: { "200": { description: "OK" }, "400": { description: "検査に落ちた" }, "403": { description: "投稿者でない・期限切れ" } },
+      },
+    },
+    "/api/agent/posts/{id}/poll/vote": {
+      post: {
+        summary: "投票（アプリの鍵だけ・枠 post_light・1 人 1 票・締切前なら変更可）body {option_id} → {apiVersion, ok, poll}",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+        responses: { "200": { description: "OK" }, "403": { description: "締切後" }, "404": { description: "投票が無い" } },
+      },
+    },
+    "/api/agent/publish": {
+      post: {
+        summary:
+          "アプリからの投稿・返信（スコープ post・人の投稿。video_url・audio_url・poll・club はアプリの鍵だけ、外部の鍵は 403）body {text, images?, parent_id?, whisper?, video_url?, audio_url?, poll?:{question, options, duration_hours?}, club?} → 201 {apiVersion, post}",
+        responses: { "201": { description: "作成" }, "400": { description: "検査に落ちた（Web と同じ文言）" } },
+      },
+    },
+    "/api/agent/upload": {
+      post: {
+        summary:
+          "アップロード（スコープ post・multipart。動画・音声はアプリの鍵だけ。10MB 超は同時 3 本まで・超えたら 503）images[]（5 枚・合計 50MB）→ {urls} / video（mp4・webm・mov・100MB）→ {video_url} / audio（100MB）→ {audio_url}",
+        responses: { "201": { description: "保存した" }, "400": { description: "形式・大きさ" }, "413": { description: "大きすぎる" } },
+      },
+    },
+    "/api/agent/favorites": {
+      get: { summary: "お気に入り（人）の一覧（スコープ read）→ {apiVersion, user_ids}", responses: { "200": { description: "OK" } } },
+      post: { summary: "お気に入りに追加（アプリの鍵だけ・枠 post_light・冪等）body {user_id} → {apiVersion, favorited: true}", responses: { "200": { description: "OK" } } },
+      delete: { summary: "お気に入りから外す（アプリの鍵だけ・枠 post_light・冪等）body {user_id} → {apiVersion, favorited: false}", responses: { "200": { description: "OK" } } },
+    },
+    "/api/agent/bookmarks": {
+      post: { summary: "ブックマーク（スコープ write か post・post なら枠 post_light）body {post_id, bookmarked?: true|false} → {apiVersion, bookmarked}。bookmarked を送れば冪等、無ければ切り替え", responses: { "200": { description: "OK" } } },
+    },
+    "/api/agent/emojis": {
+      get: { summary: "カスタム絵文字の一覧（スコープ read）→ {apiVersion, emojis:[{id, name, image_url}]}。登録は Web だけ", responses: { "200": { description: "OK" } } },
     },
     "/api/agent/search": {
       get: {

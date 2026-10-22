@@ -298,6 +298,22 @@ describe("POST /api/agent/token", () => {
     expect(query.mock.calls.some((c) => String(c[0]).includes("device_name = $2"))).toBe(false);
   });
 
+  it("★ app_issued: アプリのログイン（replace_same_device）の鍵だけ true、設定画面の鍵は post を付けても false", async () => {
+    sessionEmail.mockResolvedValue("me@example.com");
+    findMemberByEmail.mockResolvedValue({ email: "me@example.com", status: "paid" });
+    query.mockResolvedValue({ rows: [{ id: 10, c: 0, expires_at: new Date(Date.now() + 86400_000) }], rowCount: 1 });
+    const issue = async (body: unknown) => {
+      query.mockClear();
+      await tokenPOST(req("http://x/api/agent/token", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
+      const [sql, params] = query.mock.calls.find((c) => String(c[0]).includes("INSERT INTO agent_tokens"))!;
+      expect(String(sql)).toContain("app_issued");
+      return params[6];
+    };
+    expect(await issue({ device_name: "iPhone", scopes: ["read", "post", "voice"], replace_same_device: true })).toBe(true);
+    expect(await issue({ device_name: "Hermes", scopes: ["read", "post", "write"] })).toBe(false);
+    expect(await issue({ device_name: "Hermes", scopes: ["read", "post"], replace_same_device: "yes" })).toBe(false);
+  });
+
   it("非会員は 403 membership_ended", async () => {
     sessionEmail.mockResolvedValue("me@example.com");
     findMemberByEmail.mockResolvedValue(null);

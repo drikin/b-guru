@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
       }
       return { status: 500, body: { error: "リアクションの更新に失敗しました", code: "server_error" }, headers: {} };
     }
-  });
+  }, { lightPost: true });
   return new Response(JSON.stringify(out.body), {
     status: out.status,
     headers: { "Content-Type": "application/json", ...NO_CACHE },

@@ -9,6 +9,26 @@ import crypto from "crypto";
 const MEMBER_CACHE_TTL = 60_000; // 60 seconds
 let memberCache: { at: number; members: GhostMember[] } | null = null;
 const memberByEmail = new Map<string, GhostMember>();
+/** 会員一覧を辿るページの上限（1 ページ 100 人）。暴走よけ。今の会員数（約 900 人）の 10 倍以上。 */
+export const MEMBER_LIST_MAX_PAGES = 200;
+
+/** Ghost への 1 回の問い合わせの上限（ミリ秒）。Ghost が「つながるが応答しない」とき、以前は 25 秒以上
+ *  止まり、タイムラインの include=display や @ の候補まで待たされた（QA 2026-10-22）。 */
+export const GHOST_FETCH_TIMEOUT_MS = 4_000;
+let ghostTimeoutMs = GHOST_FETCH_TIMEOUT_MS;
+/** Ghost に問い合わせられなかった（応答しない・打ち切り・接続できない・5xx）。「会員でない」という答えとは別。
+ *  unreachable=false は 4xx など「届いたが答えが使えない」とき。 */
+export class GhostUnavailableError extends Error {
+  constructor(message: string, readonly unreachable: boolean, readonly status?: number) {
+    super(message);
+    this.name = "GhostUnavailableError";
+  }
+}
+
+/** テスト用: 上限を短くする。 */
+export function _setGhostTimeoutForTest(ms: number | null): void {
+  ghostTimeoutMs = ms ?? GHOST_FETCH_TIMEOUT_MS;
+}
 
 function getCachedMembers(): GhostMember[] | null {
   if (memberCache && Date.now() - memberCache.at < MEMBER_CACHE_TTL) {
@@ -58,8 +78,12 @@ export interface GhostMember {
 
 /**
  * Look up a member by email.
- * Uses the in-process member cache (60s TTL) — falls back to a direct
- * Ghost API search on cache miss.
+ * Uses the in-process member cache (60s TTL) when it has the member. If the
+ * cache does not have them, ALWAYS asks Ghost directly for that one email
+ * (filter=email:'…') before answering "not a member": the cached list can be
+ * incomplete (it is capped by pages), and a null here revokes an app token.
+ * Unreachable Ghost → GhostUnavailableError (the caller decides; agent-auth
+ * applies its 24 h grace).
  */
 export async function findMemberByEmail(
   email: string
@@ -67,25 +91,38 @@ export async function findMemberByEmail(
   // Try cache first (populated by listMembers or a prior findMemberByEmail)
   const cached = getCachedMembers();
   if (cached) {
-    return memberByEmail.get(email.toLowerCase()) ?? null;
+    const hit = memberByEmail.get(email.toLowerCase());
+    if (hit) return hit;
+    // 一覧に居ない: 一覧が途中で打ち切られている・一覧の後に入会した、などがありうるので直接確かめる
   }
 
   const base = process.env.GHOST_ADMIN_API_URL!;
   const key = process.env.GHOST_ADMIN_API_KEY!;
   const token = makeToken(key);
 
-  const url = `${base}/ghost/api/admin/members/?search=${encodeURIComponent(
-    email
-  )}&limit=all`;
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Ghost ${token}`,
-      "Accept-Version": "v6.0",
-    },
-    cache: "no-store",
-  });
+  // その人のメールだけを完全一致で引く（NQL の文字列。' と \ は逃がす）。
+  const nql = `email:'${email.toLowerCase().replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+  const url = `${base}/ghost/api/admin/members/?filter=${encodeURIComponent(nql)}&limit=all`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: {
+        Authorization: `Ghost ${token}`,
+        "Accept-Version": "v6.0",
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(ghostTimeoutMs),
+    });
+  } catch (e) {
+    // 打ち切り（4 秒）・接続できない
+    throw new GhostUnavailableError(`Ghost に届きません: ${(e as Error)?.message}`, true);
+  }
   if (!res.ok) {
-    throw new Error(`Ghost members API error: ${res.status} ${await res.text()}`);
+    throw new GhostUnavailableError(
+      `Ghost members API error: ${res.status} ${await res.text().catch(() => "")}`,
+      res.status >= 500,
+      res.status
+    );
   }
   const data = await res.json();
   const members: GhostMember[] = data.members ?? [];
@@ -131,6 +168,9 @@ export async function listMembers(): Promise<GhostMember[]> {
   const members: GhostMember[] = [];
   let page = 1;
   let hasMore = true;
+  // 最後のページまで辿る（以前は 20 ページ＝2000 人で打ち切っていた）。暴走よけの上限は
+  // MEMBER_LIST_MAX_PAGES ページ（100 人ずつ）。60 秒のキャッシュがあるので Ghost への問い合わせは
+  // 1 分に「会員数 ÷ 100」回まで。上限に達したらログを残す（findMemberByEmail は直接確かめるので誤判定しない）。
   while (hasMore) {
     const url = `${base}/ghost/api/admin/members/?limit=100&page=${page}&include=tiers&order=created_at%20asc`;
     const res = await fetch(url, {
@@ -139,6 +179,7 @@ export async function listMembers(): Promise<GhostMember[]> {
         "Accept-Version": "v6.0",
       },
       cache: "no-store",
+      signal: AbortSignal.timeout(ghostTimeoutMs),
     });
     if (!res.ok) {
       throw new Error(`Ghost members API error: ${res.status} ${await res.text()}`);
@@ -146,9 +187,14 @@ export async function listMembers(): Promise<GhostMember[]> {
     const data = await res.json();
     const batch = data.members ?? [];
     members.push(...batch);
-    hasMore = batch.length === 100;
+    // Ghost の pagination.next（次のページ番号・最後は null）に従う。無ければ 100 件そろっているかで判断。
+    const pg = data.meta?.pagination;
+    hasMore = pg && "next" in pg ? Boolean(pg.next) : batch.length === 100;
     page++;
-    if (page > 20) break; // safety
+    if (hasMore && page > MEMBER_LIST_MAX_PAGES) {
+      console.error(`Ghost listMembers: ${MEMBER_LIST_MAX_PAGES} ページ（${MEMBER_LIST_MAX_PAGES * 100} 人）で打ち切った`);
+      break;
+    }
   }
   setCachedMembers(members);
   return members;

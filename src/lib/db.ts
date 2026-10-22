@@ -77,6 +77,39 @@ export async function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_posts_author_created ON posts(author_email, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_posts_parent ON posts(parent_id, created_at ASC) WHERE parent_id IS NOT NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_ghost ON posts(source_ghost_id) WHERE source_ghost_id IS NOT NULL;
+    -- ★ drinews の表は、下の posts の列（drinews_article_id・source_drinews_comment_id）が参照するので
+    --   その前に作る（以前は後ろにあり、空の DB では initSchema が落ちた。既存の DB では何も変わらない）。
+    -- Dori News (drinews) — drikin's daily newsletter
+    CREATE TABLE IF NOT EXISTS drinews_articles (
+      id SERIAL PRIMARY KEY,
+      author_email TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      body_md TEXT NOT NULL DEFAULT '',
+      body_html TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'draft',       -- draft | published
+      scheduled_at TIMESTAMPTZ,                  -- scheduled publish time (JST 18:00)
+      published_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_drinews_status_at ON drinews_articles(status, published_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_drinews_sched ON drinews_articles(status, scheduled_at) WHERE status = 'draft';
+    -- Header image for drinews articles (public URL, viewable in email without auth)
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='drinews_articles' AND column_name='header_image') THEN
+        ALTER TABLE drinews_articles ADD COLUMN header_image TEXT;
+      END IF;
+    END $$;
+
+    CREATE TABLE IF NOT EXISTS drinews_comments (
+      id SERIAL PRIMARY KEY,
+      article_id INTEGER NOT NULL REFERENCES drinews_articles(id) ON DELETE CASCADE,
+      author_email TEXT NOT NULL,
+      author_name TEXT,
+      comment TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_drinews_comments_article ON drinews_comments(article_id, created_at ASC);
     -- Dori News auto-post: which drinews article spawned this feed post
     -- (Beagle posts one entry to the timeline when an article is published).
     DO $$ BEGIN
@@ -148,37 +181,6 @@ export async function initSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_post_likes_post ON post_likes(post_id);
 
-    -- Dori News (drinews) — drikin's daily newsletter
-    CREATE TABLE IF NOT EXISTS drinews_articles (
-      id SERIAL PRIMARY KEY,
-      author_email TEXT NOT NULL,
-      title TEXT NOT NULL DEFAULT '',
-      body_md TEXT NOT NULL DEFAULT '',
-      body_html TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'draft',       -- draft | published
-      scheduled_at TIMESTAMPTZ,                  -- scheduled publish time (JST 18:00)
-      published_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-    CREATE INDEX IF NOT EXISTS idx_drinews_status_at ON drinews_articles(status, published_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_drinews_sched ON drinews_articles(status, scheduled_at) WHERE status = 'draft';
-    -- Header image for drinews articles (public URL, viewable in email without auth)
-    DO $$ BEGIN
-      IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='drinews_articles' AND column_name='header_image') THEN
-        ALTER TABLE drinews_articles ADD COLUMN header_image TEXT;
-      END IF;
-    END $$;
-
-    CREATE TABLE IF NOT EXISTS drinews_comments (
-      id SERIAL PRIMARY KEY,
-      article_id INTEGER NOT NULL REFERENCES drinews_articles(id) ON DELETE CASCADE,
-      author_email TEXT NOT NULL,
-      author_name TEXT,
-      comment TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-    CREATE INDEX IF NOT EXISTS idx_drinews_comments_article ON drinews_comments(article_id, created_at ASC);
     -- Mirror-link: when a timeline reply to the Beagle feed post is mirrored
     -- into a drinews comment, record the originating posts.id here so we never
     -- re-mirror it back (source_* NULL = the "real" comment from this side).
@@ -512,6 +514,30 @@ export async function initSchema() {
       last_ip INET
     );
     CREATE INDEX IF NOT EXISTS idx_agent_tokens_email ON agent_tokens(email);
+    -- 以前は手で作っていて initSchema に無かった表と列（リアクション 2026-09-24・ピン）。本番にはもうあるので
+    -- IF NOT EXISTS で何もしない。空の DB（テスト・新しい環境）でだけ作られる。定義はコードの使い方に合わせた
+    -- （ON CONFLICT (target_type, target_id, user_email, emoji)・custom_emojis.name の重複は 23505）。
+    CREATE TABLE IF NOT EXISTS reactions (
+      id SERIAL PRIMARY KEY,
+      target_type TEXT NOT NULL,
+      target_id INTEGER NOT NULL,
+      user_email TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (target_type, target_id, user_email, emoji)
+    );
+    CREATE TABLE IF NOT EXISTS custom_emojis (
+      id SERIAL PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      image_url TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    ALTER TABLE posts ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMPTZ;
+
+    -- 「アプリが発行した」印（docs/timeline-spec.md「操作」・オーナー決定 2026-10-22）。人のアプリのログイン
+    -- （replace_same_device）で発行した鍵だけが true。設定画面から発行する外部の AI エージェント用の鍵は false。
+    ALTER TABLE agent_tokens ADD COLUMN IF NOT EXISTS app_issued BOOLEAN NOT NULL DEFAULT false;
 
     -- メールでの本人確認（lib/login.ts）。1 行 = 1 通のログインメール。
     -- code_hash / link_hash / revoke_hash は SHA-256 のみ保存（平文はメールにだけ載る）。
@@ -535,6 +561,12 @@ export async function initSchema() {
       name TEXT PRIMARY KEY,
       applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    -- 既存の鍵への印付け（起動のたびに・冪等）。根拠: 2026-10-20 の login-email-verify-reset で、それより前の
+    -- 鍵はすべて失効した。それ以降に発行された鍵で voice スコープを持つのは、アプリのログイン
+    -- （replace_same_device: true）で発行したものだけ（/api/agent/token は 2026-10-17 から voice を
+    -- アプリのログインにしか付けない。設定画面に voice の選択肢は無い）。期限の自動延長も同じ目印を使っている。
+    -- 外部の鍵に voice は付かないので、毎回流しても外部の鍵に印は付かない。
+    UPDATE agent_tokens SET app_issued = TRUE WHERE 'voice' = ANY(scopes) AND NOT app_issued;
     -- メール確認なしで入れた頃のログインを全部切る（drikin 2026-10-20: 公開時に全員ログインし直し）。
     -- Web のセッションも、アプリ・AI エージェントのトークンも、確認なしのログインから発行されたため。
     DO $$ BEGIN

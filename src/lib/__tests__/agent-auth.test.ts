@@ -10,7 +10,9 @@ const query = vi.fn();
 vi.mock("../db", () => ({ pool: { query: (...a: unknown[]) => query(...a) } }));
 
 const findMemberByEmail = vi.fn();
-vi.mock("../ghost", () => ({
+vi.mock("../ghost", async (orig) => ({
+  // 本物の GhostUnavailableError（届かない／届いたが答えが使えない の区別）を使う。
+  GhostUnavailableError: ((await (orig as () => Promise<Record<string, unknown>>)()) as { GhostUnavailableError: unknown }).GhostUnavailableError,
   findMemberByEmail: (...a: unknown[]) => findMemberByEmail(...(a as [string])),
   // 本物の isPaidMember を使う（判定ロジックの複製を作らない検証）。
   isPaidMember: (m: any) =>
@@ -32,10 +34,15 @@ import {
   RATE_RULES,
   LAST_USED_EVERY_MS,
   _resetLastUsedThrottleForTest,
+  _resetGhostDownForTest,
+  GHOST_DOWN_MEMORY_MS,
 } from "../agent-auth";
+import { GhostUnavailableError } from "../ghost";
 
 beforeEach(() => {
   _resetLastUsedThrottleForTest();
+  _resetGhostDownForTest();
+  vi.useRealTimers();
   query.mockReset();
   query.mockResolvedValue({ rows: [], rowCount: 0 });
   findMemberByEmail.mockReset();
@@ -247,7 +254,8 @@ describe("verifyAgentToken", () => {
     expect(ctx.tokenId).toBe(1);
   });
 
-  it("Ghost 到達不能は fail closed (502)", async () => {
+  /** 会員確認の時期（6 時間）が来た鍵。lastHours = 前回の確認の成功から何時間か。 */
+  function tokenRow(lastHours: number) {
     query.mockImplementation(async (sql: string) => {
       if (String(sql).includes("SELECT id, token_hash")) {
         return {
@@ -258,20 +266,74 @@ describe("verifyAgentToken", () => {
               scopes: ["read"],
               device_name: "t",
               expires_at: new Date(Date.now() + 86400_000),
-              last_membership_check: new Date(Date.now() - 7 * 3600_000),
+              last_membership_check: new Date(Date.now() - lastHours * 3600_000),
             },
           ],
         };
       }
       return { rows: [], rowCount: 0 };
     });
-    findMemberByEmail.mockRejectedValue(new Error("ghost down"));
-    await expect(verifyAgentToken("Bearer bga_x")).rejects.toMatchObject({ status: 502 });
+  }
+  const updatedCheck = () => query.mock.calls.some((c) => String(c[0]).includes("SET last_membership_check = now()"));
+  const hang = new GhostUnavailableError("Ghost に届きません: The operation was aborted due to timeout", true);
+
+  it("★ Ghost に届かない（打ち切り）: 前回の確認から 24 時間以内なら通す・last_membership_check は更新しない", async () => {
+    tokenRow(7);
+    findMemberByEmail.mockRejectedValue(hang);
+    const ctx = await verifyAgentToken("Bearer bga_x");
+    expect(ctx.tokenId).toBe(1);
+    expect(updatedCheck()).toBe(false);
+  });
+
+  it("★ 24 時間を超えたら 503 membership_unavailable（unauthorized ではない＝アプリは「ログインが切れた」と出さない）", async () => {
+    tokenRow(25);
+    findMemberByEmail.mockRejectedValue(new GhostUnavailableError("Ghost members API error: 502", true, 502));
+    await expect(verifyAgentToken("Bearer bga_x")).rejects.toMatchObject({
+      status: 503,
+      body: { code: "membership_unavailable", error: "会員情報を確認できません。少し時間をおいて試してください" },
+    });
+  });
+
+  it("★ 届かなかったことを 30 秒覚え、その間は Ghost に問い合わせない（毎回 4 秒待たせない）", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    tokenRow(7);
+    findMemberByEmail.mockRejectedValue(hang);
+    await verifyAgentToken("Bearer bga_x");
+    const t0 = performance.now();
+    for (let i = 0; i < 5; i++) await verifyAgentToken("Bearer bga_x");
+    expect(performance.now() - t0).toBeLessThan(200);
+    expect(findMemberByEmail).toHaveBeenCalledTimes(1);
+    // 30 秒の間も 24 時間を超えた鍵は通さない
+    tokenRow(25);
+    await expect(verifyAgentToken("Bearer bga_x")).rejects.toMatchObject({ status: 503, body: { code: "membership_unavailable" } });
+    expect(findMemberByEmail).toHaveBeenCalledTimes(1);
+    // 30 秒を過ぎたらまた問い合わせる
+    vi.setSystemTime(Date.now() + GHOST_DOWN_MEMORY_MS + 1);
+    tokenRow(7);
+    findMemberByEmail.mockResolvedValue({ email: "a@b.c", status: "paid" });
+    await verifyAgentToken("Bearer bga_x");
+    expect(findMemberByEmail).toHaveBeenCalledTimes(2);
+    expect(updatedCheck()).toBe(true);
+  });
+
+  it("Ghost が「会員でない」と答えたら、猶予の内でも今までどおりすぐ通さない（403 membership_ended）", async () => {
+    tokenRow(7);
+    findMemberByEmail.mockResolvedValue(null);
+    await expect(verifyAgentToken("Bearer bga_x")).rejects.toMatchObject({ status: 403, body: { code: "membership_ended" } });
+  });
+
+  it("届いたが答えが使えない（4xx・設定の誤り）は猶予なしで 503 membership_unavailable", async () => {
+    tokenRow(7);
+    findMemberByEmail.mockRejectedValue(new GhostUnavailableError("Ghost members API error: 401", false, 401));
+    await expect(verifyAgentToken("Bearer bga_x")).rejects.toMatchObject({ status: 503, body: { code: "membership_unavailable" } });
+    tokenRow(7);
+    findMemberByEmail.mockRejectedValue(new TypeError("Cannot read properties of undefined (reading 'split')"));
+    await expect(verifyAgentToken("Bearer bga_x")).rejects.toMatchObject({ status: 503 });
   });
 });
 
 describe("requireScope", () => {
-  const ctx = { tokenId: 1, email: "a@b.c", userId: "u", deviceName: "t", scopes: ["read"] as any, expiresAt: "" };
+  const ctx = { tokenId: 1, email: "a@b.c", userId: "u", deviceName: "t", scopes: ["read"] as any, expiresAt: "", appIssued: false };
   it("持っているスコープは通す", () => {
     expect(() => requireScope(ctx, "read")).not.toThrow();
   });

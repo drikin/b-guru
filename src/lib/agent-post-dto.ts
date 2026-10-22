@@ -36,6 +36,10 @@ export type AgentPostDto = {
   poll: FeedPost["poll"] | null;
   /** "agent" = AI エージェント経由の投稿（Web は名前の横に 🤖）。人の投稿は null。 */
   via: string | null;
+  /** 見ている本人がこの投稿をブックマークしているか（🔖 を塗る）。 */
+  bookmarked_by_me: boolean;
+  /** 見ている本人がこの投稿者をお気に入りにしているか（☆ を塗る）。 */
+  favorite_by_me: boolean;
 };
 
 type PostLike = Partial<FeedPost> & Pick<FeedPost, "id" | "text" | "createdAt">;
@@ -62,5 +66,7 @@ export function agentPostDto(p: PostLike): AgentPostDto {
     club_manual: !!p.clubManual,
     poll: p.poll ?? null,
     via: p.via ?? null,
+    bookmarked_by_me: !!p.bookmarkedByMe,
+    favorite_by_me: !!p.favoriteByMe,
   };
 }

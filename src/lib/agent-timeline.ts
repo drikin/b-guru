@@ -30,7 +30,8 @@ type Extra = { reactions?: unknown[]; unread?: boolean; unread_replies?: number;
  *  failure (Ghost down) yields no mentions rather than failing the timeline. */
 async function memberNames(): Promise<string[]> {
   try {
-    return (await mentionMembers()).map((m) => m.name);
+    // Ghost を待たない: 一覧がまだ無ければメンション無しで返し、取り直しは裏で（QA 2026-10-22）。
+    return (await mentionMembers({ wait: false })).map((m) => m.name);
   } catch {
     return [];
   }

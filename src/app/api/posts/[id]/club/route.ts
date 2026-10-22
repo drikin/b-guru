@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { setPostClub } from "@/lib/posts";
+import { setClubAction } from "@/lib/post-actions";
 import { getSessionEmail } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -28,22 +28,6 @@ export async function PATCH(
   } catch {
     return NextResponse.json({ error: "JSON ボディが必要です" }, { status: 400 });
   }
-  const clubValue: unknown = (body as { club?: unknown })?.club ?? null;
-  if (clubValue !== null && typeof clubValue !== "string") {
-    return NextResponse.json({ error: "club は文字列または null のみ" }, { status: 400 });
-  }
-  const club = clubValue as string | null;
-
-  try {
-    const result = await setPostClub(postId, email, club);
-    if (!result.ok) {
-      const status =
-        result.error === "not_found" ? 404 : result.error === "不正な部活動です" ? 400 : 403;
-      return NextResponse.json({ error: result.error }, { status });
-    }
-    return NextResponse.json({ ok: true, club });
-  } catch (e: any) {
-    console.error("set club error:", e.message);
-    return NextResponse.json({ error: "部活動ラベルの更新に失敗しました" }, { status: 500 });
-  }
+  const r = await setClubAction(email, postId, (body as { club?: unknown })?.club ?? null);
+  return NextResponse.json(r.body, { status: r.status });
 }

@@ -1,6 +1,6 @@
 /* GET /api/agent/posts — タイムライン（読み取り専用・スコープ read）。
  * cursor ページング（last_activity ベース・既存 before と同型）、limit 上限 100。
- * フィルタ: club / search / since_id / fav / bookmark。author_user_id は
+ * フィルタ: club / search / since_id / fav / bookmark / pinned（=1: 今ピン中の投稿だけ・ピンした古い順・Web の右の欄と同じ）。author_user_id は
  * 不透明 user_id で指定（内部で email に解決・レスポンスには email を含めない）。 */
 import { NextRequest } from "next/server";
 import { listPosts } from "@/lib/posts";
@@ -30,6 +30,7 @@ export async function GET(req: NextRequest) {
     const sinceIdRaw = Number(sp.get("since_id") ?? "");
     const fav = sp.get("fav") === "1";
     const bm = sp.get("bm") === "1";
+    const pinned = sp.get("pinned") === "1";
     const authorUserId = sp.get("author_user_id") ?? undefined;
     const include = parseInclude(sp.get("include"));
 
@@ -72,12 +73,13 @@ export async function GET(req: NextRequest) {
       before: cursor || undefined,
       limit,
       author: authorEmail || undefined,
+      pinnedOnly: pinned || undefined,
     });
 
     const extras = await timelineExtras(posts, ctx.email, include);
     const last = posts[posts.length - 1];
     const nextCursor =
-      posts.length === limit && last ? (last.lastActivityAt ?? last.createdAt) : null;
+      !pinned && posts.length === limit && last ? (last.lastActivityAt ?? last.createdAt) : null;
 
     return {
       status: 200,

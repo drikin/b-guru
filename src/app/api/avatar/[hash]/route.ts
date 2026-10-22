@@ -84,6 +84,7 @@ export async function GET(
         status: 200,
         headers: {
           "Content-Type": meta.ct || "image/jpeg",
+          "X-Content-Type-Options": "nosniff",
           "Cache-Control": "public, max-age=604800, immutable",
           "X-Avatar-Cache": "HIT",
         },
@@ -162,6 +163,7 @@ export async function GET(
     status: 200,
     headers: {
       "Content-Type": ct,
+      "X-Content-Type-Options": "nosniff",
       "Cache-Control": "public, max-age=604800, immutable",
       "X-Avatar-Cache": "MISS",
     },

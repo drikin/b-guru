@@ -14,7 +14,7 @@ import { getProfile } from "./profile";
 import { emitLive } from "./live";
 import { isActiveClubKey } from "./club-store";
 import { findMemberByEmail } from "./ghost";
-import type { AgentContext } from "./agent-auth";
+import type { AgentContext, AgentScope } from "./agent-auth";
 import type { FeedPost } from "./posts";
 import { agentPostDto } from "./agent-post-dto";
 
@@ -340,6 +340,30 @@ export async function agentToggleBookmark(
   return { bookmarked: await addBookmark(ctx.email, postId) };
 }
 
+/** ブックマークを指定の状態にする（冪等。アプリが押した直後の表示と食い違っても二重に切り替わらない）。 */
+export async function agentSetBookmark(
+  ctx: AgentContext,
+  postId: number,
+  bookmarked: boolean
+): Promise<{ bookmarked: boolean }> {
+  if (!Number.isInteger(postId) || postId <= 0) {
+    const e = new Error("post_id が不正です") as Error & { code: string; status: number };
+    e.code = "invalid_request";
+    e.status = 400;
+    throw e;
+  }
+  const exists = await pool.query(`SELECT 1 FROM posts WHERE id = $1 LIMIT 1`, [postId]);
+  if (exists.rows.length === 0) {
+    const e = new Error("投稿が見つかりません") as Error & { code: string; status: number };
+    e.code = "not_found";
+    e.status = 404;
+    throw e;
+  }
+  if (bookmarked) await addBookmark(ctx.email, postId);
+  else await removeBookmark(ctx.email, postId);
+  return { bookmarked };
+}
+
 /** スレッド 1 本の取得（MCP get_thread 用・API ルートと同一の lib 経路）。 */
 export async function agentGetPostDtoById(postId: number, viewerEmail: string) {
   const res = await pool.query(`${POST_SELECT} WHERE p.id = $2 GROUP BY p.id LIMIT 1`, [
@@ -347,4 +371,13 @@ export async function agentGetPostDtoById(postId: number, viewerEmail: string) {
     postId,
   ]);
   return res.rows.length ? mapRow(res.rows[0]) : null;
+}
+
+/** 編集・削除の権限（docs/timeline-spec.md「操作」・オーナー決定 2026-10-22）。
+ *  - アプリのログインで発行した鍵（app_issued）＋ post スコープ → Web と同じ編集・削除（lib/post-actions.ts。
+ *    本文・画像の差し替え・音声。自分の投稿だけ。エピソード投稿は不可）。回数は post の枠。
+ *  - それ以外（外部の AI エージェント）→ 今までどおり write スコープの本文だけの編集・削除（agent-write.ts）。
+ *    post スコープだけの外部の鍵では編集・削除できない。 */
+export function editScope(c: AgentContext): AgentScope {
+  return c.appIssued && c.scopes.includes("post") ? "post" : "write";
 }
