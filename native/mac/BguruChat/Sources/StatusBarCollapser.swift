@@ -51,6 +51,10 @@ final class StatusBarCollapser {
     static let hoverDwell: TimeInterval = 0.4
     private var hoverTracker: HoverTracker?
     private var hoverTask: Task<Void, Never>?
+    /// ティッカーでビーグルを左へ広げている幅（0 = 流していない）。ホバーはアイコンの部分だけで見る。
+    private(set) var tickerWidth: CGFloat = 0
+    /// 測ったときに「収まった」いちばん広い区切りの幅（アプリ・画面・ビーグルの幅ごと）。ティッカーに貸せる幅の目安。
+    private var fitLo: [String: CGFloat] = [:]
     /// 畳んだあと、カーソルが一度ビーグルから外れるまではホバーで出さない（出す→外れる→畳む→また乗る、の繰り返しを防ぐ）。
     private var hoverArmed = true
 
@@ -169,6 +173,7 @@ final class StatusBarCollapser {
     /// ビーグルの幅（未読の数）が変わったとき。
     private var lastBeagleWidth: CGFloat = 0
     func beagleChanged() {
+        guard tickerWidth == 0 else { return } // ティッカーで広げているあいだの幅の変化は数えない
         let w = beagle.button?.frame.width ?? 0
         guard w != lastBeagleWidth else { return }
         lastBeagleWidth = w
@@ -200,7 +205,9 @@ final class StatusBarCollapser {
     }
 
     func mouseOverBeagle() -> Bool {
-        guard let frame = beagle.button?.window?.frame else { return false }
+        guard var frame = beagle.button?.window?.frame else { return false }
+        frame.origin.x += tickerWidth // ティッカーの部分（左）は除く
+        frame.size.width = max(0, frame.width - tickerWidth)
         return NSMouseInRect(NSEvent.mouseLocation, frame, false)
     }
 
@@ -228,6 +235,58 @@ final class StatusBarCollapser {
                 return
             }
             self.toggle(via: "ホバー")
+        }
+    }
+
+    // MARK: - ティッカーに幅を貸す
+
+    /// ティッカーがビーグルを `want` だけ左へ広げる前に呼ぶ（同じ処理の中でビーグルを広げること）。
+    /// 畳めているときは、区切りを同じだけ縮めて合計の幅を変えない（« の中のアイコンが飛び出さないように）。
+    /// 返り値: 使ってよい幅。nil = 畳めていない（ティッカー側で決める）、0 = 空きなし。
+    func beginTicker(want: CGFloat) -> CGFloat? {
+        guard isEnabled, wantCollapsed, hiding, let sep = separator else { return nil }
+        guard fitTask == nil else { return 0 } // 測っている最中は貸さない
+        let key = cacheKey()
+        // 広げたビーグルがメニューの右に収まる幅まで（区切りが収まった幅の目安から余裕を引く）
+        let room = (fitLo[key] ?? sep.length * 0.6) - 60
+        let grant = min(want, sep.length - Self.minLength - 40, room).rounded()
+        guard grant >= 60 else { return 0 }
+        sep.length -= grant
+        tickerWidth = grant
+        log("ティッカーに幅 \(Int(grant)) を貸した（区切り \(Int(sep.length))）")
+        return grant
+    }
+
+    /// 畳めていないとき（出している・安全側）にティッカーが自分で決めた幅で広げたことを知らせる。
+    func noteTicker(width: CGFloat) {
+        guard isEnabled else { return }
+        tickerWidth = width
+    }
+
+    /// ティッカーがビーグルを元に戻すときに呼ぶ（同じ処理の中で）。畳めていれば区切りを同じだけ戻す。
+    func endTicker() {
+        let w = tickerWidth
+        tickerWidth = 0
+        guard w > 0, isEnabled else { return }
+        if wantCollapsed, hiding, let sep = separator {
+            sep.length += w
+            log("ティッカーから幅 \(Int(w)) を戻した（区切り \(Int(sep.length))）")
+        }
+        scheduleCheck(after: 1.0)
+    }
+
+    /// ティッカーで広げたあと、今も « にしまえているか（だめならティッカーをやめる）。
+    func tickerStillHiding() async -> Bool {
+        let gen = generation
+        guard let f = await settledFrames(gen) else { return false }
+        let st = classify(sep: f.sep, beagle: f.beagle)
+        return st == .overflow || st == .fits
+    }
+
+    private func scheduleCheck(after delay: Double) {
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            self?.lightCheck()
         }
     }
 
@@ -356,7 +415,9 @@ final class StatusBarCollapser {
                 hiding = true
                 log("畳んだ（« ビーグル、幅 \(Int(L))）")
                 return
-            case .fits: lo = max(lo, L)
+            case .fits:
+                lo = max(lo, L)
+                fitLo[key] = max(fitLo[key] ?? 0, L)
             case .dropped:
                 hi = min(hi ?? .infinity, L)
                 // 細くしても外される＝メニューが長くて余地がない（ビーグルごと « に入っていることも）。待つ。
@@ -440,6 +501,10 @@ final class HoverTracker: NSResponder {
 @MainActor
 enum StatusBarDiag {
     static var enabled = false
+    /// 開発のみの試験中は設定に依らず書く。
+    static var forced = false
+    /// 畳む機能かティッカーのどちらかがオンなら書く。
+    static func update(collapse: Bool, ticker: Bool) { enabled = collapse || ticker || forced }
     static let maxLines = 200
     static var url: URL { HangWatch.directory.appendingPathComponent("statusbar.log") }
     private static let queue = DispatchQueue(label: "fm.backspace.bguru.statusbar-diag", qos: .utility)

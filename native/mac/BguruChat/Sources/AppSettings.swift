@@ -55,6 +55,23 @@ final class AppSettings {
         }
     }
     @ObservationIgnored var onCollapseHoverChange: ((Bool) -> Void)?
+    /// メニューバーにティッカーを流す（新着・メンション・ビーグルのお知らせをビーグルの左に 1 行ずつ）。既定は切。
+    var menuBarTicker: Bool {
+        didSet {
+            guard menuBarTicker != oldValue else { return }
+            UserDefaults.standard.set(menuBarTicker, forKey: "menuBarTicker")
+            onTickerChange?()
+        }
+    }
+    /// ティッカーに名前だけ出す（チャットの本文を出さない。配信中など）。
+    var menuBarTickerNamesOnly: Bool {
+        didSet {
+            guard menuBarTickerNamesOnly != oldValue else { return }
+            UserDefaults.standard.set(menuBarTickerNamesOnly, forKey: "menuBarTickerNamesOnly")
+            onTickerChange?()
+        }
+    }
+    @ObservationIgnored var onTickerChange: (() -> Void)?
 
     static let quietStartHour = 0
     static let quietEndHour = 7
@@ -67,6 +84,8 @@ final class AppSettings {
         notifyTimeline = d.bool(forKey: "notifyTimeline")
         collapseStatusItems = d.bool(forKey: "collapseOtherStatusItems")
         collapseRevealOnHover = d.object(forKey: "collapseRevealOnHover") as? Bool ?? true
+        menuBarTicker = d.bool(forKey: "menuBarTicker")
+        menuBarTickerNamesOnly = d.bool(forKey: "menuBarTickerNamesOnly")
     }
 
     func isQuietNow(_ date: Date = Date()) -> Bool {

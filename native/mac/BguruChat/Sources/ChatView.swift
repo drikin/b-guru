@@ -143,6 +143,10 @@ private struct ChatHeader: View {
                 if settings.collapseStatusItems {
                     Toggle("　カーソルを乗せたら出す", isOn: $settings.collapseRevealOnHover)
                 }
+                Toggle("メニューバーにティッカーを流す", isOn: $settings.menuBarTicker)
+                if settings.menuBarTicker {
+                    Toggle("　名前だけ（本文を出さない）", isOn: $settings.menuBarTickerNamesOnly)
+                }
                 Divider()
                 Button("B-guru をブラウザで開く") { NSWorkspace.shared.open(APIClient.baseURL) }
                 Button("アップデートを確認…") { Updater.shared.checkNow() }

@@ -89,6 +89,9 @@ final class ChatStore {
     /// A post or comment was created somewhere (the Mac notifies new timeline posts).
     @ObservationIgnored var onPostCreated: (() -> Void)?
     var onBecameVisible: (() -> Void)?
+    /// A note from B-guru (kind "notice" — ☗ highlights, game results, 散財ダッシュ — or a ☗ game card) arrived or
+    /// was rewritten while the panel was hidden. Room comings and goings included; the receiver filters. (Mac: menu bar ticker)
+    @ObservationIgnored var onAnnouncement: ((ChatMessage) -> Void)?
 
     private let api: APIClient
     private var streamTask: Task<Void, Never>?
@@ -235,6 +238,7 @@ final class ChatStore {
                 }
             case "edit":
                 if let m = e.message, let i = rows.firstIndex(where: { $0.message.id == m.id }) {
+                    if (m.isNotice || m.kind == "shogi"), !isVisible, rows[i].message.body != m.body { onAnnouncement?(m) }
                     var updated = m
                     updated.reactions = rows[i].message.reactions
                     updated.clientId = rows[i].message.clientId
@@ -277,6 +281,7 @@ final class ChatStore {
         if m.isAuthor { myUserId = m.authorId }
         let alreadyShown = rows.contains { $0.message.id == m.id }
         rows = Self.reconcile(rows, with: m)
+        if (m.isNotice || m.kind == "shogi"), !isVisible, !alreadyShown { onAnnouncement?(m) }
         // A quiet note (room comings and goings): in the list, but never unread or notified.
         guard !m.isAuthor, !alreadyShown, !m.isNotice else { return }
         if isVisible {
@@ -541,10 +546,11 @@ final class ChatStore {
     }
 
     /// A message from someone else, as if it came on the stream.
-    func debugReceive(_ body: String, id: Int) {
-        received(ChatMessage(id: id, authorId: "coban", authorName: "coban", avatar: nil, body: body,
+    func debugReceive(_ body: String, id: Int, author: String = "coban", mention: Bool = false,
+                      kind: String? = nil, images: [String]? = nil) {
+        received(ChatMessage(id: id, authorId: author, authorName: author, avatar: nil, body: body,
                              createdAt: ISO8601DateFormatter().string(from: Date()), edited: false, editedAt: nil,
-                             isAuthor: false, mentionsMe: false, clientId: nil, reactions: nil))
+                             isAuthor: false, mentionsMe: mention, clientId: nil, reactions: nil, images: images, kind: kind))
     }
 
     func debugAddReactionToLast() {

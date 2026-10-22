@@ -27,6 +27,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var bundledFirstId: Int?
     /// 試験的：ほかのステータスバーアイコンを畳む（設定でオンにした人だけ）。
     private var collapser: StatusBarCollapser?
+    /// メニューバーのティッカー（設定でオンにした人だけ）。
+    private var ticker: StatusTicker?
+    /// ビーグルの右の未読の数（ティッカーが流しているあいだはティッカーがタイトルを持つ）。
+    private var countTitle = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         HangWatch.shared.start()
@@ -42,7 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         updateStatusIcon(unread: 0, mentions: 0, connection: .connecting)
-        if !CommandLine.arguments.contains("-selftest") { setupCollapser() }
+        if !CommandLine.arguments.contains("-selftest") { setupCollapser(); setupTicker() }
         settings.onDockChange = { [weak self] _ in self?.applyDockSetting() }
         applyDockSetting()
 
@@ -99,6 +103,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self.store = store
             self.timeline = timeline
             panel = ChatPanel(store: store, timeline: timeline, onSignOut: {})
+            if CommandLine.arguments.contains("-tickerTest") {
+                // -tickerTest: the panel stays closed; debug commands feed the ticker (offline).
+                wireTicker(store)
+                observeStore()
+                return
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.showPanel()
                 // -demoTimelineTab: open on the timeline (UI checks).
@@ -238,8 +248,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         MediaCache.shared.token = token
         store.onMention = { [weak self] m in self?.notifyMention(m) }
         store.onNewMessage = { [weak self] m in self?.notifyNewMessage(m) }
+        wireTicker(store)
         store.onPostCreated = { [weak self] in self?.timelinePostCreated() }
-        store.onBecameVisible = { [weak self] in self?.clearBundledNotification() }
+        store.onBecameVisible = { [weak self] in
+            self?.clearBundledNotification()
+            self?.ticker?.stop(clear: true) // チャットを見ているときは流さない
+        }
         store.shogi.onOffer = { [weak self] g in self?.notifyShogi(g, offer: true) }
         store.shogi.onMyTurn = { [weak self] g in self?.notifyShogi(g, offer: false) }
         self.store = store
@@ -315,6 +329,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             collapser.toggle(via: "⌥クリック")
             return
         }
+        #if DEBUG
+        NSLog("[collapse] ビーグルの action: type=%d mouse=%@ ticker=%d", Int(NSApp.currentEvent?.type.rawValue ?? 0),
+              NSStringFromPoint(NSEvent.mouseLocation), ticker?.mouseOverTicker() == true ? 1 : 0)
+        #endif
+        // ティッカーの部分（ビーグルの左に広げた所）のクリック：チャットを開いてその発言へ。
+        if let ticker, NSApp.currentEvent?.type == .leftMouseUp, ticker.mouseOverTicker() {
+            ticker.clicked()
+            return
+        }
         if NSApp.currentEvent?.type == .rightMouseUp {
             showMenu()
         } else {
@@ -341,6 +364,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             hover.state = settings.collapseRevealOnHover ? .on : .off
             menu.addItem(hover)
         }
+        let tick = NSMenuItem(title: "メニューバーにティッカーを流す", action: #selector(toggleTicker), keyEquivalent: "")
+        tick.target = self
+        tick.state = settings.menuBarTicker ? .on : .off
+        menu.addItem(tick)
+        if settings.menuBarTicker {
+            let names = NSMenuItem(title: "名前だけ（本文を出さない）", action: #selector(toggleTickerNames), keyEquivalent: "")
+            names.target = self
+            names.indentationLevel = 1
+            names.state = settings.menuBarTickerNamesOnly ? .on : .off
+            menu.addItem(names)
+        }
         let ver = NSMenuItem(title: "バージョン \(Updater.shared.currentVersion)（ベータ）", action: nil, keyEquivalent: "")
         ver.isEnabled = false
         menu.addItem(ver)
@@ -357,6 +391,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc private func openPanelAction() { showPanel() }
     @objc private func toggleCollapseSetting() { settings.collapseStatusItems.toggle() }
     @objc private func toggleCollapseHover() { settings.collapseRevealOnHover.toggle() }
+    @objc private func toggleTicker() { settings.menuBarTicker.toggle() }
+    @objc private func toggleTickerNames() { settings.menuBarTickerNamesOnly.toggle() }
     @objc private func signOutAction() { signOut() }
     @objc private func checkUpdates() { Updater.shared.checkNow() }
     @objc private func openWeb() { NSWorkspace.shared.open(APIClient.baseURL) }
@@ -388,8 +424,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         img?.isTemplate = true
         button.image = img
         let n = min(unread, 99)
-        button.title = unread == 0 ? "" : (mentions > 0 ? " @\(n)" : " \(n)")
-        button.imagePosition = .imageLeading
+        countTitle = unread == 0 ? "" : (mentions > 0 ? " @\(n)" : " \(n)")
+        if let ticker, ticker.isShowing {
+            ticker.setCount(countTitle)
+        } else {
+            button.title = countTitle
+            button.imagePosition = .imageLeading
+        }
         button.appearsDisabled = connection == .offline
         let state = connection == .offline ? "、オフライン" : ""
         let detail = mentions > 0 ? "、うちメンション \(mentions) 件" : ""
@@ -430,7 +471,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         if settings.collapseStatusItems { applyCollapseSetting(true, userAction: false) }
         #if DEBUG
-        if CommandLine.arguments.contains("-collapseTest") { StatusBarDiag.enabled = true; startCollapseTest() }
+        if CommandLine.arguments.contains("-collapseTest") || CommandLine.arguments.contains("-tickerTest") {
+            StatusBarDiag.forced = true
+            StatusBarDiag.enabled = true
+            startDebugCommands()
+        }
+        if CommandLine.arguments.contains("-collapseTest") { startCollapseTest() }
         #endif
     }
 
@@ -439,10 +485,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if !on {
             StatusBarDiag.note("設定をオフにした")
             collapser.disable()
-            StatusBarDiag.enabled = false
+            StatusBarDiag.update(collapse: false, ticker: settings.menuBarTicker)
             return
         }
-        StatusBarDiag.enabled = true
+        StatusBarDiag.update(collapse: true, ticker: settings.menuBarTicker)
         StatusBarDiag.note("設定をオン（macOS \(ProcessInfo.processInfo.operatingSystemVersionString)）")
         let firstTime = !UserDefaults.standard.bool(forKey: "collapseHintShown")
         // 初めてオンにしたときは出した状態で説明を出す（区切りが見えるように）。
@@ -471,6 +517,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         collapser?.disable() // 区切りを残さない
     }
 
+    // MARK: - メニューバーのティッカー
+
+    private func setupTicker() {
+        let t = StatusTicker(item: statusItem)
+        t.collapser = collapser
+        t.restoreButton = { [weak self] in
+            guard let self, let button = self.statusItem.button else { return }
+            button.title = self.countTitle
+            button.imagePosition = .imageLeading
+        }
+        t.canShow = { [weak self] in
+            guard let self else { return false }
+            if self.store?.isVisible == true { return false } // チャットを見ている
+            var quiet = self.settings.isQuietNow()               // 静かな時間（0:00〜7:00）
+            #if DEBUG
+            if CommandLine.arguments.contains("-tickerTest") { quiet = false } // 開発のみ：夜中でも試せるように
+            #endif
+            if quiet { return false }
+            return true
+        }
+        t.onOpen = { [weak self] id in
+            guard let self else { return }
+            self.showPanel()
+            self.panel?.pin.tab = .chat
+            if let id { self.store?.reveal(id) }
+        }
+        ticker = t
+        let apply = { [weak self] in
+            guard let self, let t = self.ticker else { return }
+            t.enabled = self.settings.menuBarTicker
+            t.namesOnly = self.settings.menuBarTickerNamesOnly
+            StatusBarDiag.update(collapse: self.settings.collapseStatusItems, ticker: self.settings.menuBarTicker)
+        }
+        settings.onTickerChange = { [weak self] in
+            apply()
+            guard let self else { return }
+            StatusBarDiag.note("ティッカー: \(self.settings.menuBarTicker ? "オン" : "オフ")\(self.settings.menuBarTickerNamesOnly ? "（名前だけ）" : "")")
+        }
+        apply()
+    }
+
+    /// ChatStore の受信からティッカーへ（通知のほうの受け取りはそのまま）。
+    private func wireTicker(_ store: ChatStore) {
+        let mention = store.onMention
+        store.onMention = { [weak self] m in
+            mention?(m)
+            self?.ticker?.enqueue(message: m)
+        }
+        let newMessage = store.onNewMessage
+        store.onNewMessage = { [weak self] m in
+            newMessage?(m)
+            if m.kind == nil { self?.ticker?.enqueue(message: m) } // ☗ のカードはお知らせのほうで
+        }
+        store.onAnnouncement = { [weak self] m in self?.ticker?.enqueue(announcement: m) }
+    }
+
     #if DEBUG
     /// 開発のみ：-collapseTest で自分のダミーのアイコン（★ ♥）を区切りの左に置き、
     /// 分散通知 fm.backspace.bguru.chat.debugCollapse（object = コマンド）で操作する。
@@ -486,6 +588,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 self.debugItems.append(s)
             }
         }
+    }
+
+    /// 開発のみ：分散通知 fm.backspace.bguru.chat.debugCollapse（object = コマンド）で畳む機能とティッカーを操作する。
+    private var debugSeq = 0
+    private func startDebugCommands() {
         DistributedNotificationCenter.default().addObserver(forName: Notification.Name("fm.backspace.bguru.chat.debugCollapse"), object: nil, queue: .main) { [weak self] n in
             let cmd = n.object as? String ?? ""
             MainActor.assumeIsolated {
@@ -504,6 +611,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     NSLog("[collapse] frames beagle=%@ dummies=%@", NSStringFromRect(self.statusItem.button?.window?.frame ?? .zero),
                           self.debugItems.map { NSStringFromRect($0.button?.window?.frame ?? .zero) }.joined(separator: " "))
                 case "closeAlert": NSApp.abortModal()
+                case "tickerOn": self.settings.menuBarTicker = true
+                case "tickerOff": self.settings.menuBarTicker = false
+                case "namesOnly": self.settings.menuBarTickerNamesOnly = true
+                case "namesFull": self.settings.menuBarTickerNamesOnly = false
+                case "forceLight": self.ticker?.debugAppearance = NSAppearance(named: .aqua)
+                case "forceDark": self.ticker?.debugAppearance = NSAppearance(named: .darkAqua)
+                case "forceNone": self.ticker?.debugAppearance = nil
+                case "msg", "mention", "notice", "photo", "long", "room", "burst":
+                    guard let store = self.store else { return }
+                    self.debugSeq += 1
+                    let id = 5000 + self.debugSeq
+                    switch cmd {
+                    case "msg": store.debugReceive("今日の散財、届きました！\nあとで写真あげます", id: id, author: "コバン")
+                    case "mention": store.debugReceive("@ドリキン さん、明日の配信何時からですか？", id: id, author: "ゆう", mention: true)
+                    case "notice": store.debugReceive("☗ 見どころ：先手の銀が中央へ。後手は受けに回るか", id: id, author: "B-guru", kind: "notice")
+                    case "photo": store.debugReceive("📷 写真", id: id, author: "たけし", images: ["/api/media/chat-demo.jpg"])
+                    case "long": store.debugReceive(String(repeating: "とても長いメッセージを流してみるテストです。", count: 4), id: id, author: "長文さん")
+                    case "room": store.debugReceive("🎧 コバンが部室に入りました", id: id, author: "B-guru", kind: "notice")
+                    default:
+                        for k in 0..<7 { store.debugReceive("連投 \(k + 1)", id: id + 100 + k, author: "連投さん") }
+                    }
                 case "quit": NSApp.terminate(nil)
                 default: break
                 }
