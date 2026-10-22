@@ -22,9 +22,13 @@
 - 遊び方: 今日のチャレンジ（全員同じ面＝その日の種。JST 5 時に替わる。何回でも、ベストだけが順位）と自由プレイ（毎回違う面）。
 - ランキング: 今日（今日のチャレンジ）・今週（自由プレイ、JST 月曜 0 時区切り）・通算（両方。`mode` で絞れる）。
 - 回数の制限なし。今日（JST 5 時区切り）21 回目の記録の結果画面で 1 度だけビーグルが「ちょっと休憩するわん」。
-- 音: BGM なし、効果音だけ（ジャンプ・SD カード・コーヒー・無敵・ぶつかる・パワーアップ・ハイスコアほか）。WebAudio で合成（音源ファイルなし）。
+- 音: 効果音（ジャンプ・SD カード・コーヒー・無敵・ぶつかる・パワーアップ・ハイスコアほか。WebAudio で合成、音源ファイルなし）と
+  BGM（2026-10-21 追加、オーナー提供の 65.52 秒のループ。`public/minigame/bgm-<hash>.m4a`、AAC 128 kbps 約 1 MB）。
+  BGM は走っているあいだ（playing・choosing）だけ鳴らす。一時停止・画面から外れた・アプリが隠したら続きから、
+  やられた・タイトル・ランキングではフェードして次は頭から。最初の操作のあとに初めて取りに行き、AudioBuffer のループで継ぎ目なく回す
+  （AAC の先頭の詰め物をデコーダが残したときはずらす）。読めなければ BGM なしで遊べる。
   `navigator.audioSession.type = "ambient"`（使えるとき。ジュークボックス・ボイスルームの音を止めない）、音量は控えめ。
-  タイトルの 🔈/🔇 で消音（WebView の localStorage `bguru-minigame-mute`）。
+  タイトルの 🔈/🔇 で消音（効果音と BGM の両方。WebView の localStorage `bguru-minigame-mute`）。
 - 置き場所: チャット上部の切り替えに 🎮（Web は「テキスト｜ルーム｜☗｜🎮」。アイコンだけ、読み上げ・title は「ゲーム」）。
   将棋の切り替えも ☗ のアイコンだけ（読み上げ・title は「将棋」）。上にゲーム・下にチャット（スクロールしない、チャットが見える高さ）。
   🎮 と ☗ は同時に開かない（片方を開くともう片方は閉じる）。
@@ -86,7 +90,7 @@
 | `src/lib/minigame/sim.ts` | ゲームの計算（純関数・import なし・整数だけ・mulberry32・60Hz 固定刻み）。`ENGINE_VERSION`、`replay`、`traceRun` |
 | `src/lib/minigame/render.ts` | 描画（canvas。論理解像度 高さ 144・幅 256〜384、端末の画素で整数倍に拡大、`image-rendering: pixelated`、dpr は 2 まで） |
 | `src/lib/minigame/game.ts` | ゲームの部品 `DashGame`（画面・入力・繰り返し・効果音・結果・ランキング。文字は canvas の上の DOM） |
-| `src/lib/minigame/audio.ts` | 効果音 |
+| `src/lib/minigame/audio.ts` | 効果音・BGM |
 | `src/lib/minigame/host.ts` | ゲームとサーバの間の窓口の形（`GameHost`）。Web は fetch、アプリは橋渡し |
 | `src/lib/minigame/bridge.ts` | アプリの WebView 用の橋渡し（下の「橋渡し」） |
 | `src/lib/minigame/sprites.ts` | ドット絵の窓口。正本はドット絵担当の `sprites.generated.ts`（`scripts/minigame-sprites.py` が作る）。v2 の物（ドローン・ブームマイク）は `sprites.extra.ts`、それ以外で無い名前・コマは `sprites.placeholder.ts` の仮の絵で埋める |
@@ -273,4 +277,4 @@ capabilities の `stream.events` に `"minigame"` が入る。古いアプリは
 
 ## v1 に入れないもの
 
-BGM、ゴースト（他人の走りの再生）、フレンド対戦・リアルタイム対戦、ボット検出、ルームとの連動、通知（push）、2 本目のゲーム。
+ゴースト（他人の走りの再生）、フレンド対戦・リアルタイム対戦、ボット検出、ルームとの連動、通知（push）、2 本目のゲーム。

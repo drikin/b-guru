@@ -355,7 +355,15 @@ export class DashGame {
     return !this.destroyed && !this.hidden && !this.hostPaused && !this.offscreen && this.phase !== "paused" && this.phase !== "board";
   }
 
+  /** BGM は走っているあいだだけ。一時停止・画面から外れたら続きから、やられた・タイトル・ランキングでは頭から。 */
+  private syncBgm(): void {
+    const running = (this.phase === "playing" || this.phase === "choosing") && !this.destroyed && !this.hidden && !this.hostPaused && !this.offscreen;
+    if (running) this.sfx.bgm(true);
+    else this.sfx.bgm(false, this.phase === "dead" || this.phase === "title" || this.phase === "board");
+  }
+
   private updateLoop(): void {
+    this.syncBgm();
     if (this.wantsLoop()) {
       if (!this.raf) {
         this.lastFrame = performance.now();
@@ -829,6 +837,7 @@ export class DashGame {
   }
 
   private renderUi(): void {
+    this.syncBgm();
     const u = this.fit.cssH / 144;
     const px = (n: number) => `${Math.round(n * u)}px`;
     let html = "";

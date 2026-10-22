@@ -1,11 +1,19 @@
-/* 🎮 散財ダッシュ — 効果音（BGM なし）。WebAudio で短い矩形波・ノイズを合成する（音源ファイルなし）。
+/* 🎮 散財ダッシュ — 効果音と BGM。効果音は WebAudio で短い矩形波・ノイズを合成する（音源ファイルなし）。
+ * BGM（オーナー提供、65.52 秒のループ）は public/minigame/bgm-*.m4a を走っているあいだだけ鳴らす。最初の
+ * 操作のあとに初めて取りに行き（1 MB）、AudioBuffer のループで継ぎ目なく回す。
  * ジュークボックス・ボイスルームの音を止めないよう、使えるなら navigator.audioSession.type = "ambient"
- * （他の音と混ぜる）にし、音量は控えめ。消音は設定（localStorage）。 */
+ * （他の音と混ぜる）にし、音量は控えめ。消音（効果音と BGM の両方）は設定（localStorage）。 */
 
 export type SfxName = "jump" | "jump2" | "sd" | "coffee" | "lamp" | "money" | "hit" | "choose" | "powerup" | "dead" | "revive" | "slow" | "highscore" | "select" | "dive";
 
 const MUTE_KEY = "bguru-minigame-mute";
 const MASTER = 0.16;
+/** BGM の音量（効果音とは別の系統。効果音が埋もれない大きさ）。 */
+const BGM_GAIN = 0.32;
+export const BGM_URL = "/minigame/bgm-02f03e10e6.m4a";
+/** 元の WAV の長さ（48 kHz で 3,144,960 フレーム）。AAC の先頭の詰め物をデコーダが残したときはその分ずらす。 */
+const BGM_LOOP_SEC = 65.52;
+const BGM_FADE_SEC = 0.6;
 
 type Nav = Navigator & { audioSession?: { type?: string } };
 type W = Window & { webkitAudioContext?: typeof AudioContext };
@@ -14,6 +22,15 @@ export class Sfx {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private noiseBuf: AudioBuffer | null = null;
+  private bgmGain: GainNode | null = null;
+  private bgmBuf: AudioBuffer | null = null;
+  private bgmLoading = false;
+  private bgmSrc: AudioBufferSourceNode | null = null;
+  /** 鳴らしたい（走っている）か。読み込みが後から終わったときにも見る。 */
+  private bgmWanted = false;
+  /** 次に鳴らすときの位置（秒）。一時停止は位置を残し、やられた・タイトルでは 0 に戻す。 */
+  private bgmOffset = 0;
+  private bgmStartedAt = 0;
   muted: boolean;
 
   constructor() {
@@ -28,6 +45,7 @@ export class Sfx {
 
   setMuted(m: boolean): void {
     this.muted = m;
+    if (m) this.stopBgmNow(true);
     try {
       localStorage.setItem(MUTE_KEY, m ? "1" : "0");
     } catch {
@@ -58,9 +76,95 @@ export class Sfx {
       }
     }
     if (this.ctx.state === "suspended") void this.ctx.resume().catch(() => {});
+    this.loadBgm();
+    if (this.bgmWanted) this.startBgm();
+  }
+
+  /** 走っているあいだ true。false で止める（reset なら次は頭から、でなければ続きから）。 */
+  bgm(on: boolean, reset = false): void {
+    this.bgmWanted = on;
+    if (on) this.startBgm();
+    else this.stopBgm(reset);
+  }
+
+  private loadBgm(): void {
+    const c = this.ctx;
+    if (!c || this.bgmBuf || this.bgmLoading || typeof fetch === "undefined") return;
+    this.bgmLoading = true;
+    fetch(BGM_URL)
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+      .then((ab) => new Promise<AudioBuffer>((res, rej) => c.decodeAudioData(ab, res, rej)))
+      .then((buf) => {
+        this.bgmBuf = buf;
+        if (this.bgmWanted) this.startBgm();
+      })
+      .catch(() => {
+        /* BGM なしで遊べる */
+      })
+      .finally(() => {
+        this.bgmLoading = false;
+      });
+  }
+
+  private startBgm(): void {
+    const c = this.ctx;
+    if (this.muted || !c || !this.master || !this.bgmBuf || this.bgmSrc) return;
+    if (!this.bgmGain) {
+      this.bgmGain = c.createGain();
+      this.bgmGain.connect(c.destination);
+    }
+    const buf = this.bgmBuf;
+    // デコーダが AAC の先頭の詰め物（2112 フレーム）を残したときは、その分あとからループする。
+    const lead = Math.max(0, Math.min(0.1, buf.duration - BGM_LOOP_SEC - 704 / 48000));
+    const src = c.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    src.loopStart = lead;
+    src.loopEnd = Math.min(buf.duration, lead + BGM_LOOP_SEC);
+    src.connect(this.bgmGain);
+    const t0 = c.currentTime;
+    this.bgmGain.gain.cancelScheduledValues(t0);
+    this.bgmGain.gain.setValueAtTime(0.0001, t0);
+    this.bgmGain.gain.exponentialRampToValueAtTime(BGM_GAIN, t0 + 0.25);
+    src.start(t0, lead + (this.bgmOffset % BGM_LOOP_SEC));
+    this.bgmSrc = src;
+    this.bgmStartedAt = t0 - (this.bgmOffset % BGM_LOOP_SEC);
+  }
+
+  private stopBgm(reset: boolean): void {
+    const c = this.ctx;
+    const src = this.bgmSrc;
+    if (!src || !c || !this.bgmGain) {
+      if (reset) this.bgmOffset = 0;
+      return;
+    }
+    this.bgmOffset = reset ? 0 : (c.currentTime - this.bgmStartedAt) % BGM_LOOP_SEC;
+    const t0 = c.currentTime;
+    const fade = reset ? BGM_FADE_SEC : 0.12;
+    this.bgmGain.gain.cancelScheduledValues(t0);
+    this.bgmGain.gain.setValueAtTime(this.bgmGain.gain.value || BGM_GAIN, t0);
+    this.bgmGain.gain.exponentialRampToValueAtTime(0.0001, t0 + fade);
+    try {
+      src.stop(t0 + fade + 0.02);
+    } catch {
+      /* already stopped */
+    }
+    this.bgmSrc = null;
+  }
+
+  private stopBgmNow(reset: boolean): void {
+    try {
+      this.bgmSrc?.stop();
+    } catch {
+      /* already stopped */
+    }
+    this.bgmSrc = null;
+    if (reset) this.bgmOffset = 0;
   }
 
   close(): void {
+    this.stopBgmNow(true);
+    this.bgmGain = null;
     void this.ctx?.close().catch(() => {});
     this.ctx = null;
     this.master = null;
