@@ -5,7 +5,7 @@ import type { UrlPreview } from "./urlpreview";
 import type { VoiceState } from "./voice";
 import type { RoomMember } from "./room";
 import type { PresenceMember } from "./presence";
-import type { ShogiGameDto, ShogiLiveAction } from "./shogi-types";
+import type { ShogiCommentaryDto, ShogiGameDto, ShogiLiveAction } from "./shogi-types";
 import type { LeaderEntry } from "./minigame/types";
 
 // Chat delete events only carry the message id; create events carry the full
@@ -56,6 +56,8 @@ export type LiveEvent =
   /** ☗ 将棋: a public game changed (open / active / ended). Members with the feature only
    *  (the streams drop it otherwise). Offers to one member go over personal-live.ts. */
   | { type: "shogi"; action: Exclude<ShogiLiveAction, "offer">; game: ShogiGameDto }
+  /** ☗ ビーグルの実況（1 手ぶん。指し手の配信の数秒あと）。SHOGI_COMMENTARY_ENABLED の人だけ（配信の側で落とす）。 */
+  | { type: "shogi_commentary"; gameId: number; commentary: ShogiCommentaryDto }
   /** 🎮 散財ダッシュ: 今日のチャレンジの上位 10 が変わった（5 秒まとめ）。MINIGAME_ENABLED の人だけ
    *  （配信の側で落とす）。本人のベストは personal-live.ts で本人だけ。 */
   | { type: "minigame"; action: "leaderboard"; period: "today"; key: string; top: LeaderEntry[] };

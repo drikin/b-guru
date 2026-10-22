@@ -13,6 +13,7 @@ import { ensureChatSweeper } from "@/lib/chat";
 import { ensureTrendSweeper } from "@/lib/trends";
 import { personalBus, personalKey, type PersonalEvent } from "@/lib/personal-live";
 import { shogiEnabledFor } from "@/lib/shogi";
+import { commentaryEnabledFor } from "@/lib/shogi-commentary-store";
 import { minigameEnabledFor } from "@/lib/minigame";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +35,8 @@ export async function GET(req: NextRequest) {
   // ☗ 将棋: signed-in members with the feature (SHOGI_ENABLED). Offers to me come over the
   // personal bus (the same `event: shogi` shape, action "offer").
   const shogiOn = shogiEnabledFor(email);
+  // ☗ ビーグルの実況 (SHOGI_COMMENTARY_ENABLED; the owner first).
+  const commentaryOn = commentaryEnabledFor(email);
   // 🎮 散財ダッシュ (MINIGAME_ENABLED): today's top 10 over the broadcast bus, my own best over the personal bus.
   const minigameOn = minigameEnabledFor(email);
   const shogiKey = email && (shogiOn || minigameOn) ? personalKey(email) : null;
@@ -66,6 +69,7 @@ export async function GET(req: NextRequest) {
         // The club room likewise: signed-in members who have it (rollout flag).
         if (event.type === "room" && !roomOn) return;
         if (event.type === "shogi" && !shogiOn) return;
+        if (event.type === "shogi_commentary" && !commentaryOn) return;
         if (event.type === "minigame" && !minigameOn) return;
         // Names / avatars of who is online: signed-in members only (same as
         // GET /api/presence, which returns [] to visitors).

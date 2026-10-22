@@ -55,6 +55,8 @@ export function beaglePostText(input: {
   reason: EndReason | null;
   ply: number;
   baseUrl: string;
+  /** 実況の「分かれ目」の行（公開後だけ。なければ出さない）。 */
+  turningPoints?: string[];
 }): string | null {
   const { names, result, reason, ply, gameId } = input;
   if (result == null || reason === "aborted") return null;
@@ -76,6 +78,7 @@ export function beaglePostText(input: {
     lines.push(`${loser} さん、${LOSE_LINES[gameId % LOSE_LINES.length]}`);
   }
   lines.push("");
+  pushTurningPoints(lines, input.turningPoints);
   lines.push("このスレッドで感想戦をするわん。気になった局面をみんなで話すわん！");
   lines.push(`🎞 盤で再生: ${base}/#/shogi/${gameId}`);
   lines.push(`📄 棋譜（KIF）: ${base}/api/shogi/games/${gameId}/kif`);
@@ -104,6 +107,8 @@ export function beagleGamePostText(input: {
   baseUrl: string;
   /** ビーグルの色。 */
   beagle: "black" | "white";
+  /** 実況の「分かれ目」の行（公開後だけ。なければ出さない）。 */
+  turningPoints?: string[];
 }): string | null {
   const { names, result, reason, ply, gameId, beagle } = input;
   if (result == null || reason === "aborted") return null;
@@ -118,8 +123,18 @@ export function beagleGamePostText(input: {
   if (result === "draw") lines.push(`千日手で引き分けだわん。${human} さん、ねばり強かったわん！`);
   else if (result === beagle) lines.push(`${human} さん、${BEAGLE_THANKS_LOSE[gameId % BEAGLE_THANKS_LOSE.length]}`);
   else lines.push(`${human} さん、${BEAGLE_THANKS_WIN[gameId % BEAGLE_THANKS_WIN.length]}`);
+  if (input.turningPoints?.length) lines.push("");
+  pushTurningPoints(lines, input.turningPoints);
   lines.push("いつでもまた相手になるわん。このスレッドで感想戦もできるわん！");
   lines.push(`🎞 盤で再生: ${base}/#/shogi/${gameId}`);
   lines.push(`📄 棋譜（KIF）: ${base}/api/shogi/games/${gameId}/kif`);
   return lines.join("\n");
+}
+
+/** 「分かれ目」（ビーグルの実況で評価が大きく動いた手。2〜3 手）。 */
+function pushTurningPoints(lines: string[], points: string[] | undefined): void {
+  if (!points || points.length === 0) return;
+  lines.push("ビーグルが見た分かれ目だわん:");
+  for (const p of points.slice(0, 3)) lines.push(p);
+  lines.push("");
 }

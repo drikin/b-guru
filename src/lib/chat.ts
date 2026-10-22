@@ -154,14 +154,19 @@ export async function listChatMessages(opts: {
 
 /** A quiet one-line note from B-guru (kind "notice"), or an update of one (several
  *  comings and goings gathered into one line). Broadcast like any chat message. */
-export async function postChatNotice(body: string, updateId: number | null = null): Promise<ChatMessage | null> {
+export async function postChatNotice(
+  body: string,
+  updateId: number | null = null,
+  /** トランザクションの中で入れるとき（将棋の実況の見どころ: 対局の行をロックしたまま入れる）。 */
+  db: Pick<typeof pool, "query"> = pool
+): Promise<ChatMessage | null> {
   const res = updateId
-    ? await pool.query(
+    ? await db.query(
         `UPDATE chat_messages SET body = $1 WHERE id = $2 AND kind = 'notice'
          RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind`,
         [body, updateId]
       )
-    : await pool.query(
+    : await db.query(
         `INSERT INTO chat_messages (author_email, author_name, body, kind) VALUES ($1, 'B-guru', $2, 'notice')
          RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind`,
         [SYSTEM_EMAIL, body]

@@ -40,6 +40,10 @@ export async function sakuraChat(opts: {
   messages: ChatTurn[];
   temperature?: number;
   max_tokens?: number;
+  /** 打ち切り（タイムアウト・新しい依頼で古い方を捨てるとき）。 */
+  signal?: AbortSignal;
+  /** 推論型モデル（gpt-oss など）の考える量。渡したときだけ送る（既存の呼び出しは送らない）。 */
+  reasoning_effort?: "low" | "medium" | "high";
 }): Promise<SakuraResult> {
   const apiKey = process.env.SAKURA_AI_API_KEY;
   if (!apiKey) throw new Error("SAKURA_AI_API_KEY が設定されていません");
@@ -58,7 +62,9 @@ export async function sakuraChat(opts: {
       messages: opts.messages,
       temperature: opts.temperature ?? 0.7,
       max_tokens: opts.max_tokens ?? 1500,
+      ...(opts.reasoning_effort ? { reasoning_effort: opts.reasoning_effort } : {}),
     }),
+    signal: opts.signal,
   });
 
   if (!res.ok) {

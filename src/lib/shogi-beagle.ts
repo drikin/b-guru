@@ -84,6 +84,11 @@ function ignoreRace(e: unknown) {
   throw e;
 }
 
+/** ビーグルがどこかの対局で考え中か（実況の評価はビーグルの探索とぶつからないように、終わるまで待つ。ビーグルの手が最優先）。 */
+export function beagleThinkingAny(): boolean {
+  return mem.thinking.size > 0;
+}
+
 /** テスト用: 考え中の手がすべて終わるまで待つ。 */
 export async function beagleIdle(): Promise<void> {
   while (mem.inflight.size > 0) await Promise.allSettled([...mem.inflight]);

@@ -7,7 +7,7 @@
  *
  * 正本はサーバ。指した手はサーバの返事（か配信）で確定し、409 なら最新の状態に戻す。
  * 時計は server_now との差（skew）で補正して手元で数える。 */
-import type { ShogiGameDetailDto, ShogiGameDto, ShogiMoveDto } from "./shogi-types";
+import type { ShogiCommentaryDto, ShogiGameDetailDto, ShogiGameDto, ShogiMoveDto } from "./shogi-types";
 import type { Side } from "./shogi-rules";
 
 export type ShogiAvailability = "unknown" | "enabled" | "disabled";
@@ -30,6 +30,8 @@ export interface ShogiSnapshot {
   settings: ShogiSettings;
   /** サーバの時計 − 手元の時計（ms）。 */
   skew: number;
+  /** ビーグルの実況（対局ごとの最新。SHOGI_COMMENTARY_ENABLED の人にだけ届く）。 */
+  commentary: Record<number, ShogiCommentaryDto>;
 }
 
 const SETTINGS_KEY = "bguru-shogi-settings";
@@ -56,6 +58,7 @@ let snap: ShogiSnapshot = {
   notice: null,
   settings: { confirmMove: false, moveHints: true },
   skew: 0,
+  commentary: {},
 };
 const SERVER_SNAPSHOT = snap;
 const listeners = new Set<() => void>();
@@ -155,7 +158,9 @@ async function loadDetail(id: number): Promise<void> {
   }
   const d = r.body.game as ShogiGameDetailDto;
   if (snap.selectedId !== id) return;
-  set({ detail: d, games: upsert(snap.games, d), skew: skewOf(d.server_now) });
+  const patch: Partial<ShogiSnapshot> = { detail: d, games: upsert(snap.games, d), skew: skewOf(d.server_now) };
+  if (d.commentary) patch.commentary = withCommentary(snap.commentary, d.commentary);
+  set(patch);
 }
 
 /** 配信（`event: shogi`）を反映する。 */
@@ -188,6 +193,43 @@ export function applyShogiEvent(ev: { type?: string; action?: string; game?: Sho
     }
   }
   set(patch);
+}
+
+function withCommentary(map: Record<number, ShogiCommentaryDto>, c: ShogiCommentaryDto): Record<number, ShogiCommentaryDto> {
+  const cur = map[c.game_id];
+  // 古い手の実況で新しいものを戻さない（同じ手なら新しい方＝終局のまとめで上書き）。
+  if (cur && cur.ply > c.ply) return map;
+  return { ...map, [c.game_id]: c };
+}
+
+/** 配信（`event: shogi_commentary`）を反映する。{ type, gameId, commentary }。 */
+export function applyShogiCommentaryEvent(ev: { gameId?: number; commentary?: ShogiCommentaryDto }): void {
+  const c = ev?.commentary;
+  if (!c || typeof c.game_id !== "number" || typeof c.text !== "string") return;
+  const patch: Partial<ShogiSnapshot> = { commentary: withCommentary(snap.commentary, c) };
+  // 終局した対局を見ているとき: 手ごとの一覧にも足す（棋譜の再生と一緒に見る）。
+  const d = snap.detail;
+  if (d && d.id === c.game_id && d.commentaries) {
+    patch.detail = { ...d, commentaries: [...d.commentaries.filter((x) => x.ply !== c.ply), c].sort((a, b) => a.ply - b.ply) };
+  }
+  set(patch);
+}
+
+/** 盤に出す実況: 再生中はその手の実況（なければ空＝「—」）、ふだんは最新。実況が届いていなければ null（帯を出さない）。 */
+export function commentaryFor(
+  s: Pick<ShogiSnapshot, "commentary" | "detail">,
+  gameId: number,
+  viewPly: number | null
+): ShogiCommentaryDto | null {
+  const latest = s.commentary[gameId] ?? (s.detail?.id === gameId ? s.detail.commentary ?? null : null);
+  if (viewPly == null) return latest;
+  const list = s.detail?.id === gameId ? s.detail.commentaries : undefined;
+  if (!list && !latest) return null;
+  const hit = list?.find((c) => c.ply === viewPly) ?? (latest && latest.ply === viewPly ? latest : null);
+  if (hit) return hit;
+  // その手の実況がない: 形勢の棒は直前の分かっている評価で、文は空。
+  const before = (list ?? []).filter((c) => c.ply < viewPly).pop() ?? null;
+  return { game_id: gameId, ply: viewPly, move_label: "", text: "", eval_cp: before?.eval_cp ?? null, mate: before?.mate ?? null, best: null, source: "template", highlight: null, at: "" };
 }
 
 export function setShogiOpen(open: boolean): void {

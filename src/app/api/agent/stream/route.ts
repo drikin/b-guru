@@ -29,6 +29,7 @@ import {
 import { agentJson } from "../_lib";
 import { clientIp } from "@/lib/client-ip";
 import { shogiEnabledFor } from "@/lib/shogi";
+import { commentaryEnabledFor } from "@/lib/shogi-commentary-store";
 import { minigameEnabledFor } from "@/lib/minigame";
 
 export const dynamic = "force-dynamic";
@@ -98,10 +99,12 @@ export async function GET(req: NextRequest) {
 
   const roomOn = roomEnabledFor(agent.email);
   const shogiOn = shogiEnabledFor(agent.email);
+  const commentaryOn = commentaryEnabledFor(agent.email);
   const minigameOn = minigameEnabledFor(agent.email);
   const onLive = (ev: LiveEvent) => {
     if (ev.type === "room" && !roomOn) return; // the club room: only for members who have it
     if (ev.type === "shogi" && !shogiOn) return; // ☗ 将棋: behind SHOGI_ENABLED
+    if (ev.type === "shogi_commentary" && !commentaryOn) return; // ☗ ビーグルの実況: behind SHOGI_COMMENTARY_ENABLED
     if (ev.type === "minigame" && !minigameOn) return; // 🎮 散財ダッシュ: behind MINIGAME_ENABLED
     const out = liveToStreamEvent(ev, viewer);
     if (out) send(out);

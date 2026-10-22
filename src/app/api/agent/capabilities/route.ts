@@ -10,6 +10,7 @@ import { agentJson } from "../_lib";
 import { voiceEnabledFor } from "@/lib/voice";
 import { isAdmin } from "@/lib/admin";
 import { shogiEnabledFor } from "@/lib/shogi";
+import { commentaryEnabledFor } from "@/lib/shogi-commentary-store";
 import { minigameEnabledFor } from "@/lib/minigame";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +19,7 @@ export const runtime = "nodejs";
 export async function GET(req: NextRequest) {
   const out = await withAgent(req, "GET /api/agent/capabilities", null, async (ctx) => ({
     status: 200,
-    body: agentCapabilities(ctx.scopes, { voice: voiceEnabledFor(ctx.email), voiceAdmin: isAdmin(ctx.email), room: roomEnabledFor(ctx.email), jukebox: jukeboxEnabledFor(ctx.email) && !jukeboxBrokenClient(req.headers.get("user-agent")), shogi: shogiEnabledFor(ctx.email), minigame: minigameEnabledFor(ctx.email) }),
+    body: agentCapabilities(ctx.scopes, { voice: voiceEnabledFor(ctx.email), voiceAdmin: isAdmin(ctx.email), room: roomEnabledFor(ctx.email), jukebox: jukeboxEnabledFor(ctx.email) && !jukeboxBrokenClient(req.headers.get("user-agent")), shogi: shogiEnabledFor(ctx.email), shogiCommentary: commentaryEnabledFor(ctx.email), minigame: minigameEnabledFor(ctx.email) }),
     headers: {},
   }));
   return agentJson(out);

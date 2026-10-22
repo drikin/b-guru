@@ -79,8 +79,15 @@ function getWorker(): Worker {
   return w;
 }
 
-/** 別スレッドで探索する。timeoutMs で返事がなければ worker を捨てて reject。 */
-export function searchInWorker(sfen: string, opts: BeagleSearchOptions, timeoutMs: number): Promise<BeagleSearchResult> {
+/** 別スレッドで探索する。timeoutMs で返事がなければ reject。
+ *  terminateOnTimeout（既定 true = ビーグルの手番）: 止まらない worker を捨てる。false（実況の評価）は worker を捨てず、
+ *  この依頼の返事だけを捨てる（同じ worker にあるビーグルの依頼を壊さない）。 */
+export function searchInWorker(
+  sfen: string,
+  opts: BeagleSearchOptions,
+  timeoutMs: number,
+  terminateOnTimeout = true
+): Promise<BeagleSearchResult> {
   return new Promise((resolve, reject) => {
     let w: Worker;
     try {
@@ -91,10 +98,12 @@ export function searchInWorker(sfen: string, opts: BeagleSearchOptions, timeoutM
     }
     const id = ++ws.seq;
     const timer = setTimeout(() => {
-      ws.pending.delete(id);
-      // 探索が止まらない worker は捨てる（次の手で作り直す）
-      if (ws.worker === w) ws.worker = null;
-      void w.terminate().catch(() => {});
+      ws.pending.delete(id); // 遅れて来た返事は message で捨てられる（pending にない）
+      if (terminateOnTimeout) {
+        // 探索が止まらない worker は捨てる（次の手で作り直す）
+        if (ws.worker === w) ws.worker = null;
+        void w.terminate().catch(() => {});
+      }
       reject(new Error("worker timeout"));
     }, timeoutMs);
     timer.unref?.();
@@ -141,6 +150,26 @@ export async function beagleThink(
   if (quick && legal.usis.includes(quick)) return { usi: quick, result, source: "fallback" };
   const pick = legal.captures[0] ?? legal.usis[Math.floor(Math.random() * legal.usis.length)];
   return { usi: pick, result, source: "rules" };
+}
+
+/** 局面の評価だけ（ビーグルの実況用。lib/shogi-commentary.ts）。乱数なし・深さ 3・時間の上限つき。
+ *  探索は対局と同じ worker（1 つ）に頼む: 実況はビーグルが考えていない間にだけ呼ぶ（呼び出し側で待つ）ので、
+ *  ビーグルの手番の依頼が来ても待たせるのは最大でこの時間の上限だけ（ビーグルの返事の余裕 1.5 秒の内）。
+ *  worker がだめなら null（実況はひな形の文に評価なしで出す）。 */
+export async function beagleEvaluate(
+  sfen: string,
+  timeMs: number,
+  o: { /** テスト用: 返事を待つ時間 */ workerTimeoutMs?: number } = {}
+): Promise<BeagleSearchResult | null> {
+  const opts: BeagleSearchOptions = { timeMs, maxDepth: 3, noise: 0 };
+  if (inlineMode()) return beagleSearch(sfen, opts);
+  try {
+    // 時間切れでも worker は捨てない（ビーグルの依頼が同じ worker に並んでいることがある）。
+    return await searchInWorker(sfen, opts, o.workerTimeoutMs ?? timeMs + 1500, false);
+  } catch (e) {
+    console.error("[shogi commentary] worker:", (e as Error)?.message);
+    return null;
+  }
 }
 
 /** テスト用: worker を止める。 */

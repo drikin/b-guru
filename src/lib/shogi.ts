@@ -50,6 +50,14 @@ import {
 } from "./shogi-clock";
 import { beagleGamePostText, beaglePostText, cardEndText, cardStartText } from "./shogi-text";
 import type { ShogiGameDetailDto, ShogiGameDto, ShogiLiveAction, ShogiMoveDto, ShogiPlayerDto } from "./shogi-types";
+import {
+  allCommentary,
+  commentaryEnabledFor,
+  commentaryOn,
+  latestCommentary,
+  toCommentaryDto,
+  turningPointLines,
+} from "./shogi-commentary-store";
 
 const BEAGLE_NAME = "ビーグル";
 const BASE_URL = (process.env.APP_BASE_URL || "https://bsm.backspace.fm").replace(/\/+$/, "");
@@ -285,6 +293,12 @@ export function spectatorCount(gameId: number, now = Date.now()): number {
   return n;
 }
 
+/** 観戦中（盤を開いている）の人の user_id（対局者は数えない）。実況の AI を公開前に誰のために呼ぶか決めるのに使う。 */
+export function watcherIds(gameId: number, now = Date.now()): string[] {
+  spectatorCount(gameId, now); // 古い合図を捨てる
+  return [...(watchers.get(gameId)?.keys() ?? [])];
+}
+
 export function recordWatch(gameId: number, userId: string, now = Date.now()): number {
   let m = watchers.get(gameId);
   if (!m) {
@@ -413,7 +427,18 @@ export async function getGameDetail(actor: Actor, id: number): Promise<ShogiGame
     at: new Date(m.created_at).toISOString(),
   }));
   const game = await dtoOf(r);
-  return { ...game, moves, kif_url: `/api/shogi/games/${id}/kif`, my_color: playerSide(r, actor.userId) };
+  const out: ShogiGameDetailDto = { ...game, moves, kif_url: `/api/shogi/games/${id}/kif`, my_color: playerSide(r, actor.userId) };
+  // ビーグルの実況（SHOGI_COMMENTARY_ENABLED の人だけ）: 途中から開いた・読み直した人にも最新の 1 行。終局後は手ごとの全部。
+  if (commentaryEnabledFor(actor.email)) {
+    try {
+      const latest = await latestCommentary(id);
+      out.commentary = latest ? toCommentaryDto(latest) : null;
+      if (r.status === "ended") out.commentaries = (await allCommentary(id)).map(toCommentaryDto);
+    } catch (e) {
+      logErr("commentary read")(e);
+    }
+  }
+  return out;
 }
 
 export async function gameKif(actor: Actor, id: number): Promise<{ filename: string; text: string }> {
@@ -580,6 +605,14 @@ async function createBeagleGame(actor: Actor, mode: ShogiMode, rematchRaw: unkno
   const game = await broadcast(row, "state");
   kickBeagle(row);
   return game;
+}
+
+/** ビーグルの実況を頼む（指し手の確定・配信のあと。別の流れで、呼び出し側は待たない。lib/shogi-commentary.ts）。 */
+function kickCommentary(kind: "move" | "end", r: GameRow): void {
+  if (!commentaryOn()) return;
+  void import("./shogi-commentary")
+    .then((m) => (kind === "move" ? m.queueMoveCommentary(r.id, r.ply) : m.queueEndCommentary(r)))
+    .catch(logErr("commentary"));
 }
 
 /** 手番がビーグルなら、ビーグルに考えさせる（別の流れで。呼び出し側は待たない）。 */
@@ -781,10 +814,12 @@ export async function playMove(actor: Actor, id: number, input: MoveInput): Prom
     unschedule(out.row.id);
     const game = await finalize(out.row);
     if (lost) throw new ShogiError(409, "game_over", "時間切れです", game);
+    kickCommentary("move", out.row); // 詰み・千日手で終わった手の実況
     return { game, duplicate: false };
   }
   schedule(out.row);
   const game = await broadcast(out.row, "state");
+  kickCommentary("move", out.row);
   const next = sideToMove(out.row.ply) === "black" ? out.row.black_uid : out.row.white_uid;
   if (out.row.mode === "slow" && !isSelfGame(out.row) && next !== mem.beagleUid) {
     const email = await emailOf(next);
@@ -857,7 +892,9 @@ async function finalize(row: GameRow): Promise<ShogiGameDto> {
       await postShogiCard(cardEndText(names, row.mode, row.result, reason, row.ply), row.id, row.card_msg_id).catch(logErr("card end"));
     }
     const bSide = beagleSide(row);
-    const postInput = { gameId: row.id, names, mode: row.mode, result: row.result, reason, ply: row.ply, baseUrl: BASE_URL };
+    // 実況の「分かれ目」（実況を全員に公開した後だけ。評価が大きく動いた 3 手まで）。
+    const turningPoints = announces(row) && !row.result_post_id ? await turningPointLines(row.id, names).catch(() => []) : [];
+    const postInput = { gameId: row.id, names, mode: row.mode, result: row.result, reason, ply: row.ply, baseUrl: BASE_URL, turningPoints };
     const text = !announces(row) ? null : bSide ? beagleGamePostText({ ...postInput, beagle: bSide }) : beaglePostText(postInput);
     if (text && !row.result_post_id) {
       try {
@@ -869,6 +906,7 @@ async function finalize(row: GameRow): Promise<ShogiGameDto> {
         logErr("beagle post")(e);
       }
     }
+    kickCommentary("end", row);
     return await broadcast(row, "end");
   } finally {
     finalizing.delete(row.id);

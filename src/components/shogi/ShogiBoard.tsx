@@ -68,6 +68,7 @@ export default function ShogiBoard(
       topLabel: cbs.current.topLabel,
       bottomLabel: cbs.current.bottomLabel,
       showClose,
+      commentary: cbs.current.commentary,
     });
     // settings はオブジェクト: 中身で比べる。名前・時計の文字は下の setLabels で（毎秒描き直さない）。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -76,6 +77,14 @@ export default function ShogiBoard(
   useEffect(() => {
     view.current?.setLabels(topLabel, bottomLabel);
   }, [topLabel, bottomLabel]);
+
+  // ビーグルの実況の帯（数秒遅れて届く。描き直さずに帯だけ変える）。
+  const c = props.commentary ?? null;
+  useEffect(() => {
+    view.current?.setCommentary(cbs.current.commentary ?? null);
+    // 中身で比べる（毎回新しいオブジェクトでも描き直さない）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!c, c?.text, c?.evalCp, c?.mate, c?.ply, c?.moveLabel]);
 
   return <div ref={ref} style={{ width: "100%" }} />;
 }

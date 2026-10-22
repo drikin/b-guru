@@ -17,6 +17,37 @@ import { labelFor, legalUsi, type Side } from "../shogi-rules";
 
 export type BoardSettings = { confirmMove: boolean; moveHints: boolean };
 export type BoardTheme = "light" | "dark" | "auto";
+
+/** ビーグルの実況（盤の下の帯。docs/shogi-spec.md「ビーグルの実況」）。text が空なら「—」（その手の実況がない）。 */
+export type BoardCommentary = {
+  text: string;
+  /** 先手から見た評価（歩 = 100、詰み筋は ±9999）。null なら形勢の棒を真ん中に薄く。 */
+  evalCp: number | null;
+  /** 詰み筋が見えている側。 */
+  mate?: Side | null;
+  /** どの手の実況か（読み上げ・title 用）。 */
+  ply?: number | null;
+  moveLabel?: string | null;
+};
+
+/** 形勢の棒の先手の割合（0〜1）。互角 = 0.5、歩 600 枚ぶんで約 0.73。詰み筋は 0.97 / 0.03。 */
+export function evalShare(evalCp: number | null | undefined, mate?: Side | null): number {
+  if (mate === "black") return 0.97;
+  if (mate === "white") return 0.03;
+  if (evalCp == null || !Number.isFinite(evalCp)) return 0.5;
+  const s = 1 / (1 + Math.exp(-evalCp / 600));
+  return Math.max(0.03, Math.min(0.97, s));
+}
+
+/** 形勢の言葉（読み上げ用）。 */
+export function evalWords(evalCp: number | null | undefined, mate?: Side | null): string {
+  if (mate) return `${mate === "black" ? "先手" : "後手"}に詰み筋`;
+  if (evalCp == null) return "形勢不明";
+  const a = Math.abs(evalCp);
+  if (a < 300) return "互角";
+  const who = evalCp > 0 ? "先手" : "後手";
+  return a < 800 ? `${who}やや有利` : a < 1500 ? `${who}有利` : `${who}優勢`;
+}
 export type Haptic = "select" | "move" | "error";
 
 export type BoardState = {
@@ -43,6 +74,8 @@ export type BoardState = {
   showClose?: boolean;
   /** 上の帯（直前の手・⇅・✕）を出さない。狭い画面でアプリが自分の 1 行に直前の手と反転をまとめるとき。 */
   hideBand?: boolean;
+  /** 盤の下のビーグルの実況の帯（null・なしなら出さない＝高さも取らない）。hide_band とは別（上の帯を隠しても出る）。 */
+  commentary?: BoardCommentary | null;
 };
 
 export type BoardCallbacks = {
@@ -129,10 +162,10 @@ const STYLE_ID = "bguru-shogi-board-style";
 
 export const BOARD_CSS = `
 @font-face{font-family:"BguruShogiPiece";src:url("/shogi-board/fonts/shogi-piece.ttf") format("truetype");font-display:swap;}
-.sb-root{--sb-frame1:#a8784f;--sb-frame2:#7c5434;--sb-frame-ink:#fbf7f0;--sb-board:#fdf0d2;--sb-line:rgba(124,84,52,.34);--sb-star:rgba(90,58,30,.55);--sb-piece1:#ffffff;--sb-piece2:#fbf3e4;--sb-piece-edge:#2a2118;--sb-ink:#2a2118;--sb-prom:#dc2626;--sb-last:rgba(251,191,36,.42);--sb-sel:rgba(22,163,74,.30);--sb-dot:#16a34a;--sb-dot-ring:rgba(255,255,255,.85);--sb-cap:#dc2626;--sb-text:#2a2118;--sb-dim:#7a6a58;--sb-band:#efe5d6;--sb-tray:#efe5d6;--sb-tray-edge:#e2d6c4;--sb-badge:#2a2118;--sb-badge-ink:#fbf7f0;--sb-btn:#fbf7f0;--sb-btn-text:#2a2118;--sb-btn-edge:#e2d6c4;--sb-accent:#16a34a;--sb-accent-ink:#fff;--sb-label:#9e503c;
+.sb-root{--sb-frame1:#a8784f;--sb-frame2:#7c5434;--sb-frame-ink:#fbf7f0;--sb-board:#fdf0d2;--sb-line:rgba(124,84,52,.34);--sb-star:rgba(90,58,30,.55);--sb-piece1:#ffffff;--sb-piece2:#fbf3e4;--sb-piece-edge:#2a2118;--sb-ink:#2a2118;--sb-prom:#dc2626;--sb-last:rgba(251,191,36,.42);--sb-sel:rgba(22,163,74,.30);--sb-dot:#16a34a;--sb-dot-ring:rgba(255,255,255,.85);--sb-cap:#dc2626;--sb-text:#2a2118;--sb-dim:#7a6a58;--sb-band:#efe5d6;--sb-tray:#efe5d6;--sb-tray-edge:#e2d6c4;--sb-badge:#2a2118;--sb-badge-ink:#fbf7f0;--sb-btn:#fbf7f0;--sb-btn-text:#2a2118;--sb-btn-edge:#e2d6c4;--sb-accent:#16a34a;--sb-accent-ink:#fff;--sb-label:#9e503c;--sb-eval-b:#2a2118;--sb-eval-w:#fffaf0;
   --cw:39px;--ch:43px;--hw:30px;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic UI",Meiryo,sans-serif;color:var(--sb-text);user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:none;position:relative;width:100%;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;gap:3px}
-.sb-root[data-theme="dark"]{--sb-frame1:#6e4b2f;--sb-frame2:#4a3120;--sb-frame-ink:#f1e8dc;--sb-board:#3a3027;--sb-line:rgba(241,232,220,.17);--sb-star:rgba(241,232,220,.45);--sb-piece1:#f6eee2;--sb-piece2:#e6d9c5;--sb-piece-edge:#0d0b09;--sb-ink:#1d1915;--sb-prom:#d42020;--sb-last:rgba(234,108,60,.40);--sb-sel:rgba(34,197,94,.36);--sb-dot:#22c55e;--sb-dot-ring:rgba(13,11,9,.7);--sb-cap:#f87171;--sb-text:#f1e8dc;--sb-dim:#a8988a;--sb-band:#2a241e;--sb-tray:#2a241e;--sb-tray-edge:#3a3128;--sb-badge:#f1e8dc;--sb-badge-ink:#14110e;--sb-btn:#1d1915;--sb-btn-text:#f1e8dc;--sb-btn-edge:#3a3128;--sb-accent:#22c55e;--sb-accent-ink:#06210f}
-@media (prefers-color-scheme: dark){.sb-root[data-theme="auto"]{--sb-frame1:#6e4b2f;--sb-frame2:#4a3120;--sb-frame-ink:#f1e8dc;--sb-board:#3a3027;--sb-line:rgba(241,232,220,.17);--sb-star:rgba(241,232,220,.45);--sb-piece1:#f6eee2;--sb-piece2:#e6d9c5;--sb-piece-edge:#0d0b09;--sb-ink:#1d1915;--sb-prom:#d42020;--sb-last:rgba(234,108,60,.40);--sb-sel:rgba(34,197,94,.36);--sb-dot:#22c55e;--sb-dot-ring:rgba(13,11,9,.7);--sb-cap:#f87171;--sb-text:#f1e8dc;--sb-dim:#a8988a;--sb-band:#2a241e;--sb-tray:#2a241e;--sb-tray-edge:#3a3128;--sb-badge:#f1e8dc;--sb-badge-ink:#14110e;--sb-btn:#1d1915;--sb-btn-text:#f1e8dc;--sb-btn-edge:#3a3128;--sb-accent:#22c55e;--sb-accent-ink:#06210f}}
+.sb-root[data-theme="dark"]{--sb-frame1:#6e4b2f;--sb-frame2:#4a3120;--sb-frame-ink:#f1e8dc;--sb-board:#3a3027;--sb-line:rgba(241,232,220,.17);--sb-star:rgba(241,232,220,.45);--sb-piece1:#f6eee2;--sb-piece2:#e6d9c5;--sb-piece-edge:#0d0b09;--sb-ink:#1d1915;--sb-prom:#d42020;--sb-last:rgba(234,108,60,.40);--sb-sel:rgba(34,197,94,.36);--sb-dot:#22c55e;--sb-dot-ring:rgba(13,11,9,.7);--sb-cap:#f87171;--sb-text:#f1e8dc;--sb-dim:#a8988a;--sb-band:#2a241e;--sb-tray:#2a241e;--sb-tray-edge:#3a3128;--sb-badge:#f1e8dc;--sb-badge-ink:#14110e;--sb-btn:#1d1915;--sb-btn-text:#f1e8dc;--sb-btn-edge:#3a3128;--sb-accent:#22c55e;--sb-accent-ink:#06210f;--sb-eval-b:#0d0b09;--sb-eval-w:#e6d9c5}
+@media (prefers-color-scheme: dark){.sb-root[data-theme="auto"]{--sb-frame1:#6e4b2f;--sb-frame2:#4a3120;--sb-frame-ink:#f1e8dc;--sb-board:#3a3027;--sb-line:rgba(241,232,220,.17);--sb-star:rgba(241,232,220,.45);--sb-piece1:#f6eee2;--sb-piece2:#e6d9c5;--sb-piece-edge:#0d0b09;--sb-ink:#1d1915;--sb-prom:#d42020;--sb-last:rgba(234,108,60,.40);--sb-sel:rgba(34,197,94,.36);--sb-dot:#22c55e;--sb-dot-ring:rgba(13,11,9,.7);--sb-cap:#f87171;--sb-text:#f1e8dc;--sb-dim:#a8988a;--sb-band:#2a241e;--sb-tray:#2a241e;--sb-tray-edge:#3a3128;--sb-badge:#f1e8dc;--sb-badge-ink:#14110e;--sb-btn:#1d1915;--sb-btn-text:#f1e8dc;--sb-btn-edge:#3a3128;--sb-accent:#22c55e;--sb-accent-ink:#06210f;--sb-eval-b:#0d0b09;--sb-eval-w:#e6d9c5}}
 .sb-band{display:flex;align-items:center;gap:6px;width:var(--sb-w);box-sizing:border-box;padding:2px 3px 2px 6px;border-radius:999px;background:var(--sb-band);font-size:14px;font-weight:700;min-height:28px}
 .sb-band .sb-label{flex:1;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sb-disc{flex:none;width:18px;height:18px;border-radius:50%;background:radial-gradient(circle,#111 0 1.2px,var(--sb-label) 1.6px 4.6px,#1c1c1c 5px,#111 6px,#222 6.6px,#111 7.4px,#1a1a1a 8.2px,#0d0d0d 9px);box-shadow:0 1px 2px rgba(0,0,0,.25)}
@@ -179,6 +212,15 @@ export const BOARD_CSS = `
 .sb-confirm{display:flex;align-items:center;gap:8px;font-size:14px}
 .sb-confirm button.sb-go{background:var(--sb-accent);color:var(--sb-accent-ink);border-color:var(--sb-accent)}
 .sb-root.sb-pending .sb-grid{opacity:.92}
+.sb-cmt{width:var(--sb-w);box-sizing:border-box;display:flex;flex-direction:column;gap:3px;padding:4px 10px 5px 8px;border-radius:12px;background:var(--sb-band);box-shadow:inset 0 0 0 1px var(--sb-tray-edge)}
+.sb-cmt-bar{position:relative;display:flex;height:4px;border-radius:999px;overflow:hidden;background:var(--sb-eval-w);box-shadow:inset 0 0 0 1px var(--sb-tray-edge)}
+.sb-cmt-bar i{display:block;height:100%;background:var(--sb-eval-b);transition:width .5s ease}
+.sb-cmt-bar::after{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--sb-label);opacity:.7}
+.sb-cmt-bar.sb-unknown{opacity:.45}
+.sb-cmt-text{margin:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;font-size:12px;line-height:15px;height:30px;font-weight:600;color:var(--sb-text);word-break:break-all;line-break:strict}
+.sb-cmt-text.sb-none{color:var(--sb-dim);font-weight:500}
+.sb-cmt-dog{margin-right:4px}
+.sb-root[data-compact="1"] .sb-cmt-text{font-size:11.5px;line-height:14px;height:28px}
 `;
 
 function ensureStyles(doc: Document): void {
@@ -254,7 +296,8 @@ export class ShogiBoardView {
   setState(next: BoardState): void {
     const prev = this.state;
     this.state = next;
-    const refit = next.maxHeight !== prev.maxHeight || next.compact !== prev.compact || next.hideBand !== prev.hideBand;
+    const refit =
+      next.maxHeight !== prev.maxHeight || next.compact !== prev.compact || next.hideBand !== prev.hideBand || !!next.commentary !== !!prev.commentary;
     // 向き: ホストが決めていればそれ。決めていなければ、自分の色が変わったときだけ合わせる（⇅ は残す）。
     if (next.orientation != null) this.orientation = next.orientation;
     else if (next.myColor !== prev.myColor && next.myColor) this.orientation = next.myColor;
@@ -426,6 +469,8 @@ export class ShogiBoardView {
     const doc = this.el.ownerDocument;
     const st = this.state;
     this.el.dataset.theme = st.theme ?? "auto";
+    if (st.compact) this.el.dataset.compact = "1";
+    else delete this.el.dataset.compact;
     this.el.classList.toggle("sb-pending", !!this.optimistic);
     this.fit();
     const sfen = this.shownSfen();
@@ -552,6 +597,7 @@ export class ShogiBoardView {
     main.appendChild(this.renderHand(doc, pos, bottom, "bottom"));
     root.appendChild(main);
     if (st.bottomLabel) root.appendChild(this.renderWho(doc, bottom, "bottom", st.bottomLabel));
+    if (st.commentary) root.appendChild(this.renderCommentary(doc, st.commentary));
 
     if (this.pending) {
       const bar = doc.createElement("div");
@@ -575,6 +621,58 @@ export class ShogiBoardView {
     // 名前の行・確認の行の有無で高さが変わるので、高さの上限があれば測り直す。
     if (this.state.maxHeight) this.fit();
     else this.reportHeight();
+  }
+
+  /** 盤の下のビーグルの実況の帯: 形勢の細い棒（左 = ☗先手の割合、真ん中に目印）＋ 1〜2 行の文（2 行の高さで固定。
+   *  手ごとに高さが変わって盤が伸び縮みしないように）。 */
+  private renderCommentary(doc: Document, c: BoardCommentary): HTMLElement {
+    const box = doc.createElement("div");
+    box.className = "sb-cmt";
+    box.setAttribute("role", "status");
+    box.setAttribute("aria-live", "polite");
+    const bar = doc.createElement("div");
+    bar.className = "sb-cmt-bar";
+    bar.appendChild(doc.createElement("i"));
+    const p = doc.createElement("p");
+    p.className = "sb-cmt-text";
+    box.append(bar, p);
+    this.fillCommentary(box, c);
+    return box;
+  }
+
+  private fillCommentary(box: Element, c: BoardCommentary): void {
+    const bar = box.querySelector(".sb-cmt-bar") as HTMLElement | null;
+    const fill = bar?.querySelector("i") as HTMLElement | null;
+    const p = box.querySelector(".sb-cmt-text") as HTMLElement | null;
+    if (!bar || !fill || !p) return;
+    const share = evalShare(c.evalCp, c.mate);
+    fill.style.width = `${(share * 100).toFixed(1)}%`;
+    bar.classList.toggle("sb-unknown", c.evalCp == null && !c.mate);
+    const words = evalWords(c.evalCp, c.mate);
+    bar.setAttribute("aria-label", `形勢（左が☗先手）: ${words}`);
+    bar.setAttribute("title", `形勢（左が☗先手）: ${words}`);
+    const doc = box.ownerDocument;
+    const dog = doc.createElement("span");
+    dog.className = "sb-cmt-dog";
+    dog.setAttribute("aria-hidden", "true");
+    dog.textContent = "🐶";
+    const text = (c.text ?? "").trim();
+    p.classList.toggle("sb-none", !text);
+    p.replaceChildren(dog, doc.createTextNode(text || "—"));
+    const head = c.ply ? `${c.ply} 手目${c.moveLabel ? ` ${c.moveLabel}` : ""}: ` : "";
+    box.setAttribute("aria-label", `ビーグルの実況 ${head}${text || "なし"}`);
+    p.setAttribute("title", `${head}${text}`);
+  }
+
+  /** 実況の帯だけを変える（描き直さないので選択・ドラッグ・送信中の局面は残る）。帯の有無が変わるときは描き直す。 */
+  setCommentary(c: BoardCommentary | null | undefined): void {
+    this.state = { ...this.state, commentary: c ?? null };
+    const box = this.el.querySelector(".sb-cmt");
+    if (!!box !== !!c) {
+      if (!this.drag) this.render();
+      return;
+    }
+    if (box && c) this.fillCommentary(box, c);
   }
 
   /** 盤の上下の細い行（名前・時計）。上 = 左寄せ（相手の駒台の上）、下 = 右寄せ（自分の駒台の下）。 */

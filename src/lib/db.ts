@@ -702,6 +702,24 @@ export async function initSchema() {
       PRIMARY KEY (game_id, ply)
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_shogi_moves_client ON shogi_moves(game_id, client_move_id) WHERE client_move_id IS NOT NULL;
+    -- ☗ ビーグルの実況（lib/shogi-commentary.ts）。手ごとに 1 行。最新の手だけ作るので抜ける手もある。
+    -- eval_cp は先手から見た評価（歩 = 100、詰み筋は ±9999）。source は ai（さくらの AI）か template（ひな形）。
+    CREATE TABLE IF NOT EXISTS shogi_commentary (
+      game_id INT NOT NULL REFERENCES shogi_games(id) ON DELETE CASCADE,
+      ply INT NOT NULL,
+      move_label TEXT NOT NULL DEFAULT '',
+      text TEXT NOT NULL,
+      eval_cp INT,
+      best_usi TEXT,
+      best_label TEXT,
+      source TEXT NOT NULL DEFAULT 'template',
+      highlight TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (game_id, ply)
+    );
+    -- 実況の見どころをチャットに出した数と最後の時刻（1 局 2 件まで・数分あける。再起動をまたいで守る）。
+    ALTER TABLE shogi_games ADD COLUMN IF NOT EXISTS commentary_chat_count INT NOT NULL DEFAULT 0;
+    ALTER TABLE shogi_games ADD COLUMN IF NOT EXISTS commentary_chat_at TIMESTAMPTZ;
     -- チャットの対局中カード（kind 'shogi'）がどの対局のものか。
     ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS shogi_game_id INT;
     -- 将棋の通知（shogi_offer / shogi_turn）を受け取る端末。対応したアプリだけが true を送る

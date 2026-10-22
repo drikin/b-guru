@@ -41,12 +41,38 @@ export type ShogiGameDto = {
 
 export type ShogiMoveDto = { ply: number; usi: string; label: string; sfen: string; spent_ms: number; at: string };
 
+/** ビーグルの実況（1 手ぶん）。SHOGI_COMMENTARY_ENABLED の人にだけ配る（docs/shogi-spec.md「ビーグルの実況」）。 */
+export type ShogiCommentaryDto = {
+  game_id: number;
+  /** どの手の実況か（最新だけ作るので、手が早いと抜ける手がある）。 */
+  ply: number;
+  /** その手の表記（例 "▲7六歩"）。 */
+  move_label: string;
+  /** ビーグルの 1〜2 文（全角 60 字程度まで）。 */
+  text: string;
+  /** 先手から見た評価（歩 = 100。詰み筋は ±9999）。読めなかったら null。帯の形勢の棒に使う。 */
+  eval_cp: number | null;
+  /** 詰み筋が見えている側（その側の勝ち筋）。 */
+  mate: Side | null;
+  /** 次の予想手（相手の番のビーグルの最善手）。 */
+  best: { usi: string; label: string } | null;
+  /** ai = AI（さくらの AI Engine）の文、template = エンジンの事実からのひな形。 */
+  source: "ai" | "template";
+  /** 見どころ（形勢逆転・詰み筋）。 */
+  highlight: "reversal" | "mate" | null;
+  at: string;
+};
+
 /** GET games/{id} の全体。 */
 export type ShogiGameDetailDto = ShogiGameDto & {
   moves: ShogiMoveDto[];
   kif_url: string;
   /** 呼び出した人の色（対局者でなければ null）。 */
   my_color: Side | null;
+  /** 最新の実況（実況が有効な人だけ。まだなければ null）。 */
+  commentary?: ShogiCommentaryDto | null;
+  /** 終局した対局の手ごとの実況（実況が有効な人だけ。棋譜の再生と一緒に見る）。 */
+  commentaries?: ShogiCommentaryDto[];
 };
 
 /** 配信（Web: /api/posts/stream の `event: shogi`、アプリ: /api/agent/stream の `event: shogi`）。

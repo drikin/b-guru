@@ -23,3 +23,10 @@ export function featurePublic(envName: string): boolean {
   const v = raw(envName).toLowerCase();
   return v === "1" || v === "*" || v === "true";
 }
+
+/** 誰か 1 人にでも出しているか（未設定・"0"・"false" 以外）。サーバ側で「作るかどうか」を決めるとき
+ *  （例: 将棋の実況は、見る人がいなくても作っておけば、途中から開いた人に最新の 1 行を出せる）。 */
+export function featureOnForAnyone(envName: string): boolean {
+  const v = raw(envName);
+  return !!v && v !== "0" && v.toLowerCase() !== "false";
+}

@@ -8,7 +8,7 @@
  *               Android  window.ShogiBridge.postMessage(JSON 文字列)
  *               iframe   window.parent.postMessage(obj, "*")
  *               （どれもなければ window の CustomEvent "shogi-board"） */
-import { ShogiBoardView, type BoardState, type BoardTheme } from "./board";
+import { ShogiBoardView, type BoardCommentary, type BoardState, type BoardTheme } from "./board";
 import type { Side } from "../shogi-rules";
 import { INITIAL_SFEN } from "../shogi-rules";
 
@@ -26,7 +26,7 @@ type Out =
 type W = Window & {
   webkit?: { messageHandlers?: { shogi?: { postMessage: (m: unknown) => void } } };
   ShogiBridge?: { postMessage: (s: string) => void };
-  shogiBoard?: { receive: (m: unknown) => void; version: number };
+  shogiBoard?: { receive: (m: unknown) => void; version: number; features: string[] };
 };
 
 function post(msg: Out): void {
@@ -53,6 +53,17 @@ function post(msg: Out): void {
 const side = (v: unknown): Side | null => (v === "black" || v === "white" ? v : null);
 const theme = (v: unknown): BoardTheme => (v === "light" || v === "dark" ? v : "auto");
 const str = (v: unknown, max = 200): string | undefined => (typeof v === "string" ? v.slice(0, max) : undefined);
+
+/** 実況（{ text, eval_cp, mate, ply, move_label }）→ 盤の実況。null・不正なら null（帯を出さない）。
+ *  サーバの ShogiCommentaryDto（stream の shogi_commentary・GET games/{id} の commentary）をそのまま渡してよい。 */
+export function toBoardCommentary(v: unknown): BoardCommentary | null {
+  if (!v || typeof v !== "object") return null;
+  const c = v as Record<string, unknown>;
+  if (typeof c.text !== "string") return null;
+  const ev = typeof c.eval_cp === "number" && Number.isFinite(c.eval_cp) ? Math.max(-99999, Math.min(99999, c.eval_cp)) : null;
+  const ply = typeof c.ply === "number" && Number.isInteger(c.ply) && c.ply >= 0 ? c.ply : null;
+  return { text: c.text.slice(0, 140), evalCp: ev, mate: side(c.mate), ply, moveLabel: str(c.move_label, 24) ?? null };
+}
 
 /** アプリから来た state メッセージ → 盤の状態（不正な値は捨てる）。 */
 export function toBoardState(m: Record<string, unknown>, prev: BoardState): BoardState {
@@ -82,6 +93,8 @@ export function toBoardState(m: Record<string, unknown>, prev: BoardState): Boar
     bottomLabel: "bottom_label" in m ? str(m.bottom_label) : prev.bottomLabel,
     showClose: typeof m.show_close === "boolean" ? m.show_close : prev.showClose,
     hideBand: typeof m.hide_band === "boolean" ? m.hide_band : prev.hideBand,
+    // 実況: state に入っていればそれ（null で消す）、なければ前のまま（実況は state と別の便で来る）。
+    commentary: "commentary" in m ? toBoardCommentary(m.commentary) : prev.commentary,
   };
 }
 
@@ -132,6 +145,12 @@ export function startBridge(el: HTMLElement): void {
         state = { ...state, theme: theme(msg.theme) };
         view.setState(state);
         break;
+      case "commentary":
+        // ビーグルの実況（1 手ごと。数秒遅れて届く）。{ type: "commentary", text, eval_cp, mate, ply, move_label }、
+        // text が null なら帯を消す。描き直さないので送信中の手の表示は消えない。
+        state = { ...state, commentary: msg.text === null ? null : toBoardCommentary(msg) };
+        view.setCommentary(state.commentary);
+        break;
       case "flip":
         view.flip();
         break;
@@ -139,7 +158,8 @@ export function startBridge(el: HTMLElement): void {
         break;
     }
   };
-  (window as W).shogiBoard = { receive, version: BRIDGE_VERSION };
+  // features: この盤が分かる追加の約束（bridge_version は 1 のまま。アプリ・e2e が有無で判断する）。
+  (window as W).shogiBoard = { receive, version: BRIDGE_VERSION, features: ["commentary"] };
   window.addEventListener("message", (e: MessageEvent) => {
     // 自分が送ったもの（iframe の親への返事）は無視する。
     const d = e.data as { source?: string } | string;

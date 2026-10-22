@@ -13,6 +13,7 @@ import {
   cancelShogiGame,
   clearShogiNotice,
   clockNow,
+  commentaryFor,
   createShogiGame,
   declineShogiGame,
   fmtClock,
@@ -406,6 +407,9 @@ function GameView({ s }: { s: ShogiSnapshot }) {
     return `${name} ${t}${byo}${g.status === "active" && g.turn === side ? " ●" : ""}`;
   };
   const canMove = active && !!my && g.turn === my && replay == null && !s.busy;
+  // ビーグルの実況の帯（再生中はその手の分。実況が届いていなければ帯を出さない）。
+  const cm = commentaryFor(s, g.id, viewPly != null && (ended || viewPly < moves.length) ? viewPly : null);
+  const boardCommentary = cm ? { text: cm.text, evalCp: cm.eval_cp, mate: cm.mate, ply: cm.ply, moveLabel: cm.move_label } : null;
   const opponent = my === "black" ? g.white : my === "white" ? g.black : null;
   const vsBeagle = opponent?.name === BEAGLE_NAME;
 
@@ -428,6 +432,7 @@ function GameView({ s }: { s: ShogiSnapshot }) {
         settings={s.settings}
         theme={scheme === "dark" ? "dark" : "light"}
         maxHeight={boardMax}
+        commentary={boardCommentary}
         topLabel={label(top)}
         bottomLabel={label(orientation)}
         onFlip={(o) => setFlip(o)}

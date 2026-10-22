@@ -160,6 +160,11 @@ export function liveToStreamEvent(ev: LiveEvent, viewer: ChatViewer): StreamEven
   if (ev.type === "shogi") {
     return { event: "shogi", data: { action: ev.action, game: ev.game } };
   }
+  // ☗ ビーグルの実況 (the stream route drops it for members without SHOGI_COMMENTARY_ENABLED).
+  // Apps that don't know the event ignore it; a newer app relays it to the board as { type: "commentary", ... }.
+  if (ev.type === "shogi_commentary") {
+    return { event: "shogi_commentary", data: { game_id: ev.gameId, commentary: ev.commentary } };
+  }
   // 🎮 散財ダッシュ: 今日の上位 10 (the stream route drops it for members without the feature).
   if (ev.type === "minigame") {
     return { event: "minigame", data: { action: ev.action, period: ev.period, key: ev.key, top: ev.top } };
@@ -186,7 +191,7 @@ export function toAgentVoiceDto(s: VoiceState) {
  *  calling token's, so a client knows up front which actions will be refused. */
 export function agentCapabilities(
   scopes: AgentScope[],
-  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; minigame?: boolean } = {}
+  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; shogiCommentary?: boolean; minigame?: boolean } = {}
 ) {
   const ttlHours = parseInt(CHAT_TTL, 10) || 24;
   const can = (s: AgentScope) => scopes.includes(s);
@@ -226,7 +231,16 @@ export function agentCapabilities(
       },
       stream: {
         path: "/api/agent/stream",
-        events: ["ready", "chat", "presence", "notification", "voice", ...(opts.shogi ? ["shogi"] : []), ...(opts.minigame ? ["minigame"] : [])],
+        events: [
+          "ready",
+          "chat",
+          "presence",
+          "notification",
+          "voice",
+          ...(opts.shogi ? ["shogi"] : []),
+          ...(opts.shogi && opts.shogiCommentary ? ["shogi_commentary"] : []),
+          ...(opts.minigame ? ["minigame"] : []),
+        ],
         affects_presence: false,
       },
       notifications: { read: can("read"), stream: true },
@@ -249,7 +263,7 @@ export function agentCapabilities(
       jukebox: { enabled: !!opts.jukebox, path: "/api/agent/jukebox" },
       // ☗ 将棋 (docs/shogi-spec.md), behind SHOGI_ENABLED. The board is a web page the app
       // shows in a WebView (bridge_version 1); the app keeps the token and the API to itself.
-      shogi: shogiCapability(!!opts.shogi, scopes),
+      shogi: shogiCapability(!!opts.shogi, scopes, !!opts.shogi && !!opts.shogiCommentary),
       // 🎮 散財ダッシュ (docs/minigame-spec.md), behind MINIGAME_ENABLED. The game is a web page the app
       // shows in a WebView (bridge_version 1); the app keeps the token and relays the API.
       minigame: minigameCapability(!!opts.minigame, scopes),
@@ -266,7 +280,7 @@ export function agentCapabilities(
   };
 }
 
-export function shogiCapability(enabled: boolean, scopes: AgentScope[]) {
+export function shogiCapability(enabled: boolean, scopes: AgentScope[], commentary = false) {
   return {
     enabled,
     path: "/api/agent/shogi",
@@ -275,6 +289,9 @@ export function shogiCapability(enabled: boolean, scopes: AgentScope[]) {
     play: enabled && scopes.includes("chat"),
     /** ビーグルと対局（練習）できる: POST games { mode, opponent: "beagle" }（アプリがボタンを出す目印）。 */
     beagle: true,
+    /** ビーグルの実況が届く（stream の `shogi_commentary`、GET games/{id} の `commentary`）。盤には
+     *  { type: "commentary", text, eval_cp, mate, ply, move_label } を渡すと下に帯が出る（docs/shogi-spec.md）。 */
+    commentary,
     time_controls: TIME_CONTROLS,
   };
 }

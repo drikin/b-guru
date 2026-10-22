@@ -3120,6 +3120,83 @@ console.log("\nS. ☗ 将棋: 無効の間は出ない（SHOGI_ENABLED）");
   }
 }
 
+// ------------------------------------------------------------ ☗ ビーグルの実況（SHOGI_COMMENTARY_ENABLED）
+// 2026-10-21: 盤の下に実況の帯（1〜2 行＋形勢の細い棒）。本番には投稿も対局もしない: 盤の静的ページに
+// 実況のメッセージを渡して帯が出る・高さの上限に収まる・実況がなければ帯の高さを取らないことを見る。
+// チャットは読むだけ: 実況の見どころ（「🐶 ビーグルの実況（☗A vs ☖B・N 手目）」）は 1 局 2 件まで・4 分あける＝1 手ずつ流れない。
+console.log("\nS2. ☗ ビーグルの実況（帯・チャットに 1 手ずつ流れない）");
+{
+  const bp = await context.newPage();
+  try {
+    await bp.setViewportSize({ width: 390, height: 844 });
+    await bp.goto(`${BASE_URL}/shogi-board/index.html?theme=light&compact=1`, { waitUntil: "load" });
+    await bp.waitForFunction("!!window.shogiBoard", null, { timeout: 10000 }).catch(() => {});
+    const supports = await bp.evaluate(`!!(window.shogiBoard && Array.isArray(window.shogiBoard.features) && window.shogiBoard.features.includes("commentary"))`);
+    if (!supports) {
+      console.log("  [skip] the deployed board does not know commentary yet (board.js before the commentary change)");
+    } else {
+      const res = await bp.evaluate(`(async () => {
+        const el = document.getElementById('board');
+        const sfen = 'lnsgkgsnl/1r5b1/pppppp1pp/6p2/9/2P6/PP1PPPPPP/1B5R1/LNSGKGSNL b - 3';
+        window.shogiBoard.receive({ type: 'state', sfen, my_color: null, can_move: false, last_move: { usi: '3c3d', label: '△3四歩' }, compact: true });
+        await new Promise((r) => setTimeout(r, 100));
+        const noBand = !document.querySelector('.sb-cmt');
+        const h0 = el.scrollHeight;
+        window.shogiBoard.receive({ type: 'commentary', text: 'e2e の実況だわん。形勢は互角だわん', eval_cp: 600, mate: null, ply: 2, move_label: '△3四歩' });
+        await new Promise((r) => setTimeout(r, 100));
+        const band = document.querySelector('.sb-cmt');
+        const fill = band ? band.querySelector('.sb-cmt-bar i') : null;
+        const h1 = el.scrollHeight;
+        // アプリの state（commentary なし）が来ても帯は残る（実況は別の便）
+        window.shogiBoard.receive({ type: 'state', sfen, my_color: null, can_move: false, compact: true, max_height: 400 });
+        await new Promise((r) => setTimeout(r, 150));
+        const kept = !!document.querySelector('.sb-cmt');
+        const h2 = el.scrollHeight;
+        return { noBand, h0, h1, h2, kept, text: band ? band.textContent : null, fill: fill ? parseFloat(fill.style.width) : null };
+      })()`);
+      check("board shows no commentary band until commentary arrives (no extra height)", res.noBand, JSON.stringify(res));
+      check(
+        "commentary band appears under the board (text + eval bar, ≤ 2 lines tall)",
+        !!res.text && res.text.includes("e2e の実況だわん") && res.fill > 50 && res.h1 - res.h0 > 0 && res.h1 - res.h0 <= 60,
+        JSON.stringify(res)
+      );
+      check("commentary band survives a state update and fits max_height", res.kept && res.h2 <= 400, JSON.stringify(res));
+    }
+  } catch (e) {
+    check("commentary band check ran", false, String(e));
+  } finally {
+    await bp.close().catch(() => {});
+  }
+  // チャット（読むだけ）: 実況の見どころは 1 局 2 件まで・4 分あける。
+  const chat = await page
+    .evaluate(`(async () => {
+      const r = await fetch('/api/chat?limit=200', { cache: 'no-store' }).catch(() => null);
+      if (!r || !r.ok) return { error: r ? r.status : 0 };
+      const d = await r.json().catch(() => null);
+      const msgs = (d && d.messages) || [];
+      const groups = {};
+      for (const m of msgs) {
+        const mm = typeof m.body === 'string' ? m.body.match(/^🐶 ビーグルの実況（(.+)・(\\d+) 手目）/) : null;
+        if (!mm) continue;
+        (groups[mm[1]] = groups[mm[1]] || []).push(Date.parse(m.createdAt || m.created_at || ''));
+      }
+      return { groups: Object.fromEntries(Object.entries(groups).map(([k, v]) => [k, v.sort((a, b) => a - b)])) };
+    })()`)
+    .catch((e) => ({ error: String(e) }));
+  if (chat.error !== undefined) {
+    console.log(`  [skip] chat read failed (${chat.error})`);
+  } else {
+    const bad = Object.entries(chat.groups).filter(
+      ([, ts]) => ts.length > 2 || ts.some((t, i) => i > 0 && Number.isFinite(t) && Number.isFinite(ts[i - 1]) && t - ts[i - 1] < 4 * 60_000 - 5_000)
+    );
+    check(
+      "commentary is not posted to chat move by move (≤ 2 highlights per game, ≥ 4 min apart)",
+      bad.length === 0,
+      `${Object.keys(chat.groups).length} game(s) with highlights${bad.length ? `; bad: ${JSON.stringify(bad)}` : ""}`
+    );
+  }
+}
+
 // ------------------------------------------------------------ 🎮 散財ダッシュ（MINIGAME_ENABLED）
 // 2026-10-21: ミニゲームは MINIGAME_ENABLED で切り替える（未設定 = 誰にも出さない）。無効の間は 🎮 が出ず、
 // API は 404。ゲームの静的ファイル（アプリの WebView 用）はフラグに関係なく配られる。有効なら 🎮 はアイコンだけで、

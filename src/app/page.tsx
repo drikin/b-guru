@@ -87,7 +87,7 @@ import { applyRoomEvent, reloadRoomIfOn, roomChatBubble } from "@/lib/room-clien
 import { ShogiChatCard, ShogiPanel } from "@/components/shogi/ShogiPanel";
 import { GameToggles, MinigamePanel } from "@/components/minigame/MinigamePanel";
 import { applyMinigameEvent, reloadMinigame } from "@/lib/minigame-client";
-import { applyShogiEvent, openShogiGame, reloadShogi } from "@/lib/shogi-client";
+import { applyShogiCommentaryEvent, applyShogiEvent, openShogiGame, reloadShogi } from "@/lib/shogi-client";
 import { bubbleText } from "@/lib/room-logic";
 import { EDIT_HINT, SAVE_HINT, SEND_HINT, handleComposerKeyDown, useEnterSends } from "@/lib/composer-keys";
 import { mediaSized, mediaSrcSet } from "@/lib/media-url";
@@ -6993,6 +6993,14 @@ export default function Home() {
     es.addEventListener("shogi", (e: MessageEvent) => {
       try {
         applyShogiEvent(JSON.parse(e.data));
+      } catch {
+        /* ignore a malformed event */
+      }
+    });
+    // ☗ ビーグルの実況 (one move, a few seconds after the move; SHOGI_COMMENTARY_ENABLED only).
+    es.addEventListener("shogi_commentary", (e: MessageEvent) => {
+      try {
+        applyShogiCommentaryEvent(JSON.parse(e.data));
       } catch {
         /* ignore a malformed event */
       }
