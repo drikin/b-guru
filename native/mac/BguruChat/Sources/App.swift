@@ -32,6 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         HangWatch.shared.start()
         TextComposition.watchReturnKey()
         #if DEBUG
+        // Dev only: -tapDetectorTest runs the three-finger-tap logic tests and exits (1 on failure).
+        if CommandLine.arguments.contains("-tapDetectorTest") { exit(ThreeFingerTapDetector.selfTest() ? 0 : 1) }
         // Dev only: show in the Dock so UI automation can find the app.
         if CommandLine.arguments.contains("-regular") { NSApp.setActivationPolicy(.regular) }
         #endif
@@ -312,7 +314,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         //  また macOS 27 のステータスアイテムのクリックは修飾キーの消えたイベントで届くので、今押しているキーは NSEvent.modifierFlags で見る。2026-10-21 実機）
         if let collapser, collapser.isEnabled, let ev = NSApp.currentEvent, ev.type == .leftMouseUp,
            ev.modifierFlags.contains(.option) || NSEvent.modifierFlags.contains(.option) {
-            collapser.toggle()
+            collapser.toggle(via: "⌥クリック")
             return
         }
         if NSApp.currentEvent?.type == .rightMouseUp {
@@ -417,13 +419,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         settings.onCollapseChange = { [weak self] on in self?.applyCollapseSetting(on, userAction: true) }
         if settings.collapseStatusItems { applyCollapseSetting(true, userAction: false) }
         #if DEBUG
-        if CommandLine.arguments.contains("-collapseTest") { startCollapseTest() }
+        if CommandLine.arguments.contains("-collapseTest") { StatusBarDiag.enabled = true; startCollapseTest() }
         #endif
     }
 
     private func applyCollapseSetting(_ on: Bool, userAction: Bool) {
         guard let collapser else { return }
-        if !on { collapser.disable(); return }
+        if !on {
+            StatusBarDiag.note("設定をオフにした")
+            collapser.disable()
+            StatusBarDiag.enabled = false
+            return
+        }
+        StatusBarDiag.enabled = true
+        StatusBarDiag.note("設定をオン（macOS \(ProcessInfo.processInfo.operatingSystemVersionString)）")
         let firstTime = !UserDefaults.standard.bool(forKey: "collapseHintShown")
         // 初めてオンにしたときは出した状態で説明を出す（区切りが見えるように）。
         collapser.enable(collapse: !(userAction && firstTime))
@@ -472,16 +481,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 guard let self, let c = self.collapser else { return }
                 NSLog("[collapse] debug command: %@", cmd)
                 switch cmd {
-                case "toggle": c.toggle()
+                case "toggle": c.toggle(via: "デバッグ")
                 case "collapse": c.collapse()
                 case "expand": c.expand()
                 case "settingOn": self.settings.collapseStatusItems = true
                 case "settingOff": self.settings.collapseStatusItems = false
-                case "quicklook":
-                    // 3 本指タップの代わり：ビーグルのボタンに quickLook(with:) を送る（応答者の連鎖をたどるか）。
-                    if let b = self.statusItem.button, let ev = NSEvent.mouseEvent(with: .leftMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: b.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
-                        b.quickLook(with: ev)
-                    }
                 case "unread": self.updateStatusIcon(unread: 12, mentions: 0, connection: .live)
                 case "frames":
                     NSLog("[collapse] frames beagle=%@ dummies=%@", NSStringFromRect(self.statusItem.button?.window?.frame ?? .zero),

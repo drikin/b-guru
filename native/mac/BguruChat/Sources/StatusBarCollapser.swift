@@ -44,7 +44,10 @@ final class StatusBarCollapser {
     private var mouseWasInBar = false
     private var leftBarAt: Date?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
-    private let quickLook = QuickLookCatcher()
+    private var gestureMonitor: Any?
+    private var tapDetector = ThreeFingerTapDetector()
+    /// ビーグルのボタンがもともとタッチを受けていたか（オフで戻す）。
+    private var savedTouchTypes: NSTouch.TouchTypeMask?
     /// 状態が変わるたびに（ログ・デバッグ用）。
     var onLog: ((String) -> Void)?
 
@@ -71,7 +74,7 @@ final class StatusBarCollapser {
         }
         separator = sep
         showSeparatorMark(true)
-        installQuickLook()
+        installGestureWatch()
         let ws = NSWorkspace.shared.notificationCenter
         observers.append((ws, ws.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.scheduleRemeasure("前面のアプリが変わった", delay: 0.4) }
@@ -105,7 +108,7 @@ final class StatusBarCollapser {
         checkTimer?.invalidate(); checkTimer = nil
         for (center, o) in observers { center.removeObserver(o) }
         observers.removeAll()
-        removeQuickLook()
+        removeGestureWatch()
         if let sep = separator {
             sep.length = Self.minLength
             NSStatusBar.system.removeStatusItem(sep)
@@ -118,8 +121,10 @@ final class StatusBarCollapser {
 
     // MARK: - 切り替え
 
-    func toggle() {
+    /// `via`: どの合図で切り替えたか（診断の記録用）。
+    func toggle(via: String = "その他") {
         guard isEnabled else { return }
+        StatusBarDiag.note("切り替え: \(via) → \(wantCollapsed ? "出す" : "畳む")")
         if wantCollapsed { expand() } else { collapse() }
     }
 
@@ -339,40 +344,212 @@ final class StatusBarCollapser {
         b.imagePosition = .imageOnly
     }
 
-    @objc private func separatorClicked() { toggle() }
+    @objc private func separatorClicked() { toggle(via: "区切りのクリック") }
 
-    // MARK: - 3 本指タップ（調べる＆データ検出）
+    // MARK: - 3 本指タップ
 
-    /// ビーグルのボタンの次の応答者に自前の応答者を差し込み、quickLook(with:) を受ける。
-    private func installQuickLook() {
-        guard let button = beagle.button, button.nextResponder !== quickLook else { return }
-        quickLook.onQuickLook = { [weak self] in
-            self?.log("3 本指タップ")
-            self?.toggle()
+    /// 3 本指タップは 2 つの経路で受ける（どちらもカーソルがビーグルの上にあるときだけ）。
+    /// 1) 「調べる＆データ検出」を 3 本指のタップにしていると届く quickLook イベント（アプリ全体のローカルモニタ）。
+    ///    応答者の連鎖に差し込む方式（〜0.3.47）ではステータスアイテムに届かなかった（オーナーの実機、2026-10-22）。
+    /// 2) 設定に依らない自前の判定：ビーグルのボタンで間接タッチ（トラックパッド）を受け、
+    ///    3 本の指が短時間に触れて離れ、ほとんど動かなければタップとみなす（ThreeFingerTapDetector）。
+    /// 受けた合図は診断の記録（statusbar.log）に残す。macOS 27 のステータスバーにタッチや quickLook が届くかは実機で確かめる。
+    private func installGestureWatch() {
+        guard gestureMonitor == nil else { return }
+        if let button = beagle.button {
+            savedTouchTypes = button.allowedTouchTypes
+            button.allowedTouchTypes.insert(.indirect)
         }
-        quickLook.nextResponder = button.nextResponder
-        button.nextResponder = quickLook
+        tapDetector = ThreeFingerTapDetector()
+        let mask: NSEvent.EventTypeMask = [NSEvent.EventTypeMask(type: .quickLook), .gesture, .beginGesture, .endGesture, .directTouch, .smartMagnify]
+        gestureMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] ev in
+            let consume = MainActor.assumeIsolated { self?.handleGesture(ev) ?? false }
+            return consume ? nil : ev
+        }
     }
 
-    private func removeQuickLook() {
-        guard let button = beagle.button, button.nextResponder === quickLook else { return }
-        button.nextResponder = quickLook.nextResponder
-        quickLook.nextResponder = nil
-        quickLook.onQuickLook = nil
+    private func removeGestureWatch() {
+        if let m = gestureMonitor { NSEvent.removeMonitor(m) }
+        gestureMonitor = nil
+        if let button = beagle.button, let saved = savedTouchTypes { button.allowedTouchTypes = saved }
+        savedTouchTypes = nil
+    }
+
+    /// カーソルがビーグルのボタンの上にあるか（画面の座標で）。
+    private func mouseOverBeagle() -> Bool {
+        guard let frame = beagle.button?.window?.frame else { return false }
+        return NSMouseInRect(NSEvent.mouseLocation, frame, false)
+    }
+
+    /// 真を返すとそのイベントを飲み込む（ビーグルの上の quickLook だけ）。
+    private func handleGesture(_ ev: NSEvent) -> Bool {
+        guard isEnabled else { return false }
+        switch ev.type {
+        case .quickLook:
+            let over = mouseOverBeagle()
+            StatusBarDiag.note("quickLook を受けた（ビーグルの上=\(over ? "はい" : "いいえ")）")
+            guard over else { return false }
+            toggle(via: "3 本指タップ（quickLook）")
+            return true
+        case .gesture, .directTouch:
+            let over = mouseOverBeagle()
+            let touches = ev.touches(matching: .any, in: nil)
+            let input = touches.map { t in
+                ThreeFingerTapDetector.Touch(id: (t.identity as AnyObject).hash, phase: t.phase,
+                                             x: t.normalizedPosition.x, y: t.normalizedPosition.y)
+            }
+            if let r = tapDetector.feed(input, time: ev.timestamp) {
+                // 指が全部離れたときに 1 行（ビーグルの上のときだけ記録する）
+                if over || r.isTap {
+                    StatusBarDiag.note(String(format: "タッチ: %d 本・%.2f 秒・動き %.3f%@（ビーグルの上=%@）",
+                                              r.fingers, r.duration, Double(r.movement), r.cancelled ? "・中断" : "",
+                                              over ? "はい" : "いいえ"))
+                }
+                if r.isTap && over { toggle(via: "3 本指タップ（タッチ）") }
+            }
+            return false
+        case .beginGesture, .endGesture, .smartMagnify:
+            if mouseOverBeagle() { StatusBarDiag.note("ジェスチャ \(ev.type.rawValue) を受けた") }
+            return false
+        default:
+            return false
+        }
     }
 
     private func log(_ s: String) {
         onLog?(s)
+        if !s.hasPrefix("  ") { StatusBarDiag.note(s, echo: false) } // 1 回ごとの試し（幅 → 結果）は記録しない
         #if DEBUG
         NSLog("[collapse] %@", s)
         #endif
     }
 }
 
-/// 3 本指タップ（「調べる＆データ検出」）で届く quickLook(with:) を受ける応答者。
-final class QuickLookCatcher: NSResponder {
-    var onQuickLook: (() -> Void)?
-    override func quickLook(with event: NSEvent) {
-        if let onQuickLook { onQuickLook() } else { super.quickLook(with: event) }
+/// 3 本指タップの判定（ロジックだけ。単体で試せるように AppKit のイベントに依らない）。
+/// 指が 1 本でも触れたら始まり、全部離れたら 1 回分の結果を返す。
+/// タップ＝同時に触れていた指が最大 3 本・最初に触れてから全部離れるまで 0.35 秒以内・どの指もほとんど動かない（正規化座標で 0.04 未満）・中断なし。
+struct ThreeFingerTapDetector {
+    struct Touch {
+        var id: Int
+        var phase: NSTouch.Phase
+        var x: CGFloat
+        var y: CGFloat
+    }
+    struct Result: Equatable {
+        var fingers: Int
+        var duration: Double
+        var movement: CGFloat
+        var cancelled: Bool
+        var isTap: Bool { fingers == 3 && duration <= ThreeFingerTapDetector.maxDuration && movement < ThreeFingerTapDetector.maxMovement && !cancelled }
+    }
+    static let maxDuration = 0.35
+    static let maxMovement: CGFloat = 0.04
+
+    private var start: Double?
+    private var origins: [Int: CGPoint] = [:]
+    private var active: Set<Int> = []
+    private var maxFingers = 0
+    private var movement: CGFloat = 0
+    private var cancelled = false
+
+    /// その時点で触れている（いま離れたものも含む）指のようすを渡す。全部離れたら結果を返す。
+    mutating func feed(_ touches: [Touch], time: Double) -> Result? {
+        guard !touches.isEmpty else { return nil }
+        if start == nil { start = time }
+        for t in touches {
+            let p = CGPoint(x: t.x, y: t.y)
+            if origins[t.id] == nil { origins[t.id] = p }
+            if let o = origins[t.id] { movement = max(movement, hypot(p.x - o.x, p.y - o.y)) }
+            if t.phase.contains(.ended) || t.phase.contains(.cancelled) {
+                active.remove(t.id)
+                if t.phase.contains(.cancelled) { cancelled = true }
+            } else {
+                active.insert(t.id)
+            }
+        }
+        maxFingers = max(maxFingers, touches.count)
+        guard active.isEmpty, let s = start else { return nil }
+        let r = Result(fingers: maxFingers, duration: time - s, movement: movement, cancelled: cancelled)
+        self = ThreeFingerTapDetector()
+        return r
+    }
+
+    #if DEBUG
+    /// 開発のみ：-tapDetectorTest で判定の単体テスト。失敗があれば false。
+    static func selfTest() -> Bool {
+        func run(_ frames: [(Double, [Touch])]) -> Result? {
+            var d = ThreeFingerTapDetector()
+            var last: Result?
+            for (t, ts) in frames { if let r = d.feed(ts, time: t) { last = r } }
+            return last
+        }
+        func T(_ id: Int, _ ph: NSTouch.Phase, _ x: CGFloat = 0.5, _ y: CGFloat = 0.5) -> Touch { Touch(id: id, phase: ph, x: x, y: y) }
+        let cases: [(String, [(Double, [Touch])], Bool)] = [
+            ("3 本で素早くタップ", [(0, [T(1, .began, 0.4), T(2, .began), T(3, .began, 0.6)]),
+                                  (0.12, [T(1, .ended, 0.4), T(2, .ended), T(3, .ended, 0.6)])], true),
+            ("3 本が少しずれて触れて離れる", [(0, [T(1, .began)]), (0.03, [T(1, .stationary), T(2, .began, 0.6)]),
+                                         (0.05, [T(1, .stationary), T(2, .stationary, 0.6), T(3, .began, 0.7)]),
+                                         (0.18, [T(1, .ended), T(2, .stationary, 0.6), T(3, .ended, 0.7)]),
+                                         (0.20, [T(2, .ended, 0.6)])], true),
+            ("2 本は違う", [(0, [T(1, .began), T(2, .began)]), (0.1, [T(1, .ended), T(2, .ended)])], false),
+            ("4 本は違う", [(0, [T(1, .began), T(2, .began), T(3, .began), T(4, .began)]),
+                          (0.1, [T(1, .ended), T(2, .ended), T(3, .ended), T(4, .ended)])], false),
+            ("長押しは違う", [(0, [T(1, .began), T(2, .began), T(3, .began)]), (0.6, [T(1, .ended), T(2, .ended), T(3, .ended)])], false),
+            ("3 本でスワイプは違う", [(0, [T(1, .began, 0.2), T(2, .began, 0.3), T(3, .began, 0.4)]),
+                                    (0.1, [T(1, .moved, 0.4), T(2, .moved, 0.5), T(3, .moved, 0.6)]),
+                                    (0.2, [T(1, .ended, 0.4), T(2, .ended, 0.5), T(3, .ended, 0.6)])], false),
+            ("中断は違う", [(0, [T(1, .began), T(2, .began), T(3, .began)]), (0.1, [T(1, .cancelled), T(2, .cancelled), T(3, .cancelled)])], false),
+            ("1 本のクリックは違う", [(0, [T(1, .began)]), (0.08, [T(1, .ended)])], false),
+        ]
+        var ok = true
+        for (name, frames, want) in cases {
+            let r = run(frames)
+            let got = r?.isTap ?? false
+            print("[tap-test] \(got == want ? "ok  " : "FAIL") \(name): \(r.map { "\($0.fingers) 本 \(String(format: "%.2f", $0.duration)) 秒 動き \(String(format: "%.3f", Double($0.movement)))" } ?? "結果なし")")
+            if got != want { ok = false }
+        }
+        // 続けて 2 回：1 回目の後に状態が残らない
+        var d = ThreeFingerTapDetector()
+        _ = d.feed([T(1, .began), T(2, .began)], time: 0)
+        let first = d.feed([T(1, .ended), T(2, .ended)], time: 0.1)
+        _ = d.feed([T(5, .began), T(6, .began), T(7, .began)], time: 1)
+        let second = d.feed([T(5, .ended), T(6, .ended), T(7, .ended)], time: 1.1)
+        let seq = first?.isTap == false && second?.isTap == true
+        print("[tap-test] \(seq ? "ok  " : "FAIL") 2 本のあとの 3 本タップ")
+        return ok && seq
+    }
+    #endif
+}
+
+/// 「ほかのアイコンを畳む」の診断の記録（設定がオンのときだけ）。HangWatch と同じ Diagnostics フォルダの statusbar.log に
+/// 1 行ずつ、最大 200 行。受けた合図（quickLook・タッチの本数と時間・どの経路で切り替えたか）と測り直しの結果だけで、個人情報は書かない。
+@MainActor
+enum StatusBarDiag {
+    static var enabled = false
+    static let maxLines = 200
+    static var url: URL { HangWatch.directory.appendingPathComponent("statusbar.log") }
+    private static let queue = DispatchQueue(label: "fm.backspace.bguru.statusbar-diag", qos: .utility)
+    private static let clock: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+        return f
+    }()
+
+    static func note(_ s: String, echo: Bool = true) {
+        #if DEBUG
+        if echo { NSLog("[statusbar] %@", s) }
+        #endif
+        guard enabled else { return }
+        let line = "\(clock.string(from: Date())) \(s)"
+        let url = self.url
+        let max = maxLines
+        queue.async {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            var lines = (try? String(contentsOf: url, encoding: .utf8))?.split(separator: "\n", omittingEmptySubsequences: true).map(String.init) ?? []
+            lines.append(line)
+            if lines.count > max { lines.removeFirst(lines.count - max) }
+            try? (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+        }
     }
 }
