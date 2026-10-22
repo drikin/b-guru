@@ -259,6 +259,8 @@ final class ChatStore {
             minigame.apply(ev.data)
         case "shogi":
             shogi.apply(ev.data)
+        case "shogi_commentary":
+            shogi.applyCommentary(ev.data)
         case "voice":
             if let v = try? dec.decode(VoiceRoomInfo.self, from: ev.data) { voice.apply(v) }
         case "revoked":

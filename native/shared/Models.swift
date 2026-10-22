@@ -161,6 +161,8 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var play: Bool?
         /// 「🐶 ビーグルと対局（練習）」: POST games { mode, opponent: "beagle" } (docs/shogi-spec.md「ビーグル戦」).
         var beagle: Bool?
+        /// ビーグルの実況: stream `shogi_commentary`, GET games/{id} `commentary` → the band under the board.
+        var commentary: Bool?
         var timeControls: [TimeControl]?
     }
     struct Features: Decodable, Sendable, Equatable {

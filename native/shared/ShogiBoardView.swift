@@ -27,6 +27,12 @@ final class ShogiBoardController: NSObject, WKNavigationDelegate {
     private var stateJSON = ""
     private var stateKey = ""
     private var labelsJSON = ""
+    /// ビーグルの実況 (`{type:"commentary",…}`; text null = no band) — only to a board that lists
+    /// "commentary" in `window.shogiBoard.features` (an older board page is left alone).
+    private var commentaryJSON = ""
+    private var sentCommentary = ""
+    /// nil = not asked yet (after each `ready`).
+    private var boardFeatures: Set<String>?
     private var torn = false
 
     var onMove: ((String, String) -> Void)?
@@ -78,10 +84,11 @@ final class ShogiBoardController: NSObject, WKNavigationDelegate {
 
     /// The latest `state` (sent again only when it changed, or the server answered a move)
     /// and `labels` (names and clocks, every second during a fast game).
-    func update(state: String, key: String, revision: Int, labels: String) {
+    func update(state: String, key: String, revision: Int, labels: String, commentary: String) {
         stateJSON = state
         stateKey = "\(revision)|\(key)"
         labelsJSON = labels
+        commentaryJSON = commentary
         flush()
     }
 
@@ -95,6 +102,23 @@ final class ShogiBoardController: NSObject, WKNavigationDelegate {
             sentLabels = labelsJSON
             send(labelsJSON)
         }
+        // After the state (the board keeps the commentary across states; a fresh page has none).
+        if boardFeatures?.contains("commentary") == true, commentaryJSON != sentCommentary {
+            sentCommentary = commentaryJSON
+            send(commentaryJSON)
+        }
+    }
+
+    /// What this board page knows beyond bridge_version 1 (`window.shogiBoard.features`).
+    private func askFeatures() {
+        webView.evaluateJavaScript("JSON.stringify((window.shogiBoard&&window.shogiBoard.features)||[])") { [weak self] r, _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.torn, self.ready else { return }
+                let list = (r as? String).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [Any] } ?? []
+                self.boardFeatures = Set(list.compactMap { $0 as? String })
+                self.flush()
+            }
+        }
     }
 
     private func send(_ json: String) {
@@ -107,7 +131,10 @@ final class ShogiBoardController: NSObject, WKNavigationDelegate {
         case "ready":
             ready = true
             sentStateKey = ""
+            sentCommentary = ""
+            boardFeatures = nil
             flush()
+            askFeatures()
         case "move":
             guard let usi = m["usi"] as? String, usi.count <= 6 else { return }
             onMove?(usi, (m["label"] as? String) ?? "")
@@ -144,6 +171,7 @@ final class ShogiBoardController: NSObject, WKNavigationDelegate {
         // The page's process went away (memory pressure): load it again; `ready` resends the position.
         guard !torn else { return }
         ready = false
+        boardFeatures = nil
         HangWatch.note("shogi board process ended; reloading")
         webView.load(URLRequest(url: pageURL))
     }
@@ -173,6 +201,8 @@ struct ShogiBoardWebView: UIViewRepresentable {
     let stateKey: String
     let revision: Int
     let labels: String
+    /// The `commentary` message (ビーグルの実況; `text: null` = no band).
+    let commentary: String
     let onMove: (String, String) -> Void
     let onFlip: (ShogiSide) -> Void
     @Binding var height: CGFloat
@@ -189,7 +219,7 @@ struct ShogiBoardWebView: UIViewRepresentable {
         c.onFlip = onFlip
         let height = $height
         c.onHeight = { h in if abs(height.wrappedValue - h) > 0.5 { height.wrappedValue = h } }
-        c.update(state: state, key: stateKey, revision: revision, labels: labels)
+        c.update(state: state, key: stateKey, revision: revision, labels: labels, commentary: commentary)
     }
 
     static func dismantleUIView(_ uiView: ShogiBoardContainer, coordinator: ShogiBoardController) {
@@ -266,6 +296,8 @@ struct ShogiBoardWebView: NSViewRepresentable {
     let stateKey: String
     let revision: Int
     let labels: String
+    /// The `commentary` message (ビーグルの実況; `text: null` = no band).
+    let commentary: String
     let onMove: (String, String) -> Void
     let onFlip: (ShogiSide) -> Void
     @Binding var height: CGFloat
@@ -280,7 +312,7 @@ struct ShogiBoardWebView: NSViewRepresentable {
         c.onFlip = onFlip
         let height = $height
         c.onHeight = { h in if abs(height.wrappedValue - h) > 0.5 { height.wrappedValue = h } }
-        c.update(state: state, key: stateKey, revision: revision, labels: labels)
+        c.update(state: state, key: stateKey, revision: revision, labels: labels, commentary: commentary)
     }
 
     static func dismantleNSView(_ nsView: WKWebView, coordinator: ShogiBoardController) {

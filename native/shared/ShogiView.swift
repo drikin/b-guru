@@ -283,6 +283,7 @@ struct ShogiGameView: View {
                 stateKey: Self.json(state, excludingLabels: true),
                 revision: shogi.moveRevision,
                 labels: labelsJSON(at: ctx.date),
+                commentary: commentaryJSON,
                 onMove: { usi, label in Task { await shogi.play(usi: usi, label: label) } },
                 onFlip: { o in shogi.setOrientation(o, for: g.id) },
                 height: $boardHeight
@@ -339,6 +340,11 @@ struct ShogiGameView: View {
         m["top_label"] = l.top
         m["bottom_label"] = l.bottom
         return m
+    }
+
+    /// ビーグルの実況 for the band under the board (the latest; none yet = no band).
+    private var commentaryJSON: String {
+        Self.json(shogi.commentary(for: g.id)?.boardMessage ?? ["type": "commentary", "text": NSNull()])
     }
 
     private func labelsJSON(at now: Date) -> String {

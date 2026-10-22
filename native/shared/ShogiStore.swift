@@ -99,6 +99,68 @@ struct ShogiGame: Decodable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// `ShogiCommentaryDto` (src/lib/shogi-types.ts) — ビーグルの実況 for one move: the band under
+/// the board (docs/shogi-spec.md「ビーグルの実況」). The same move's commentary is replaced
+/// (template → ai): the later one wins.
+struct ShogiCommentary: Decodable, Equatable, Sendable {
+    struct Best: Decodable, Equatable, Sendable { var usi: String?; var label: String? }
+    var gameId: Int
+    var ply: Int
+    var moveLabel: String?
+    var text: String
+    /// Black's point of view (pawn = 100, a mate ±9999); nil = not read.
+    var evalCp: Double?
+    /// The side with a mate in sight.
+    var mate: String?
+    var best: Best?
+    var source: String?         // ai | template
+    var highlight: String?      // reversal | mate
+    var at: String?
+
+    /// The board's `{ type: "commentary", … }` (the server's fields, as the board reads them).
+    var boardMessage: [String: Any] {
+        var m: [String: Any] = ["type": "commentary", "text": text, "ply": ply,
+                                "eval_cp": evalCp ?? NSNull(), "mate": mate ?? NSNull(),
+                                "move_label": moveLabel ?? ""]
+        if let source { m["source"] = source }
+        return m
+    }
+
+    /// Takes the place of `old` (the latest move's; for the same move, the later one).
+    func replaces(_ old: ShogiCommentary?) -> Bool {
+        guard let old else { return true }
+        if ply != old.ply { return ply > old.ply }
+        if let a = at.flatMap(ShogiTime.parse), let b = old.at.flatMap(ShogiTime.parse) { return a >= b }
+        return true
+    }
+}
+
+/// GET games/{id}: the game, and (members who have it) the latest commentary — `commentaries`
+/// (every move) once it is over. A commentary that does not decode is dropped, never the game.
+struct ShogiGameDetail: Decodable, Sendable {
+    var game: ShogiGame
+    var commentary: ShogiCommentary?
+
+    private enum K: String, CodingKey { case game }
+    private struct Extra: Decodable {
+        var commentary: ShogiCommentary?
+        var commentaries: [ShogiCommentary]?
+        private enum K: String, CodingKey { case commentary, commentaries }
+        init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: K.self)
+            commentary = (try? c.decodeIfPresent(ShogiCommentary.self, forKey: .commentary)) ?? nil
+            commentaries = (try? c.decodeIfPresent([ShogiCommentary].self, forKey: .commentaries)) ?? nil
+        }
+    }
+
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: K.self)
+        game = try c.decode(ShogiGame.self, forKey: .game)
+        let extra = try? c.decode(Extra.self, forKey: .game)
+        commentary = extra?.commentary ?? extra?.commentaries?.max { $0.ply < $1.ply }
+    }
+}
+
 struct ShogiListResponse: Decodable, Sendable {
     struct Me: Decodable, Sendable { var userId: String?; var selfPlay: Bool? }
     var me: Me?
@@ -164,6 +226,10 @@ final class ShogiStore {
     private(set) var canPlay = true
     /// 「🐶 ビーグルと対局（練習）」 is offered (capabilities features.shogi.beagle).
     private(set) var beagle = false
+    /// ビーグルの実況 reaches this member (capabilities `features.shogi.commentary`).
+    private(set) var commentaryOn = false
+    /// The latest commentary per game (stream `shogi_commentary`, GET games/{id}).
+    private(set) var commentaries: [Int: ShogiCommentary] = [:]
     private(set) var path = "/api/agent/shogi"
     private(set) var boardPath = "/shogi-board/index.html"
     /// The ☗ 将棋 screen is shown above the chat (the third choice of テキスト｜ルーム｜☗ 将棋).
@@ -277,6 +343,8 @@ final class ShogiStore {
         if let b = f?.boardUrl, b.hasPrefix("/shogi-board/") { boardPath = b }
         canPlay = f?.play ?? true
         beagle = f?.beagle == true
+        commentaryOn = on && f?.commentary == true
+        if !commentaryOn { commentaries = [:] }
         enabled = on
         if !on {
             open = false
@@ -304,7 +372,9 @@ final class ShogiStore {
     func loadGame(_ id: Int) async {
         guard enabled, !offline else { return }
         do {
-            let g = try await api.shogiGame(path: path, id: id)
+            let d = try await api.shogiGame(path: path, id: id)
+            let g = d.game
+            if let c = d.commentary { takeCommentary(c) }
             if me == nil, let c = g.myColor.flatMap(ShogiSide.init(rawValue:)) { me = g.player(c)?.userId }
             upsert(g)
             if let n = g.serverNow { updateSkew(n) }
@@ -320,6 +390,23 @@ final class ShogiStore {
         struct E: Decodable { var action: String?; var game: ShogiGame? }
         guard enabled, let e = try? dec.decode(E.self, from: data), let g = e.game else { return }
         applyEvent(e.action ?? "state", g)
+    }
+
+    /// The stream's `event: shogi_commentary` — `{ game_id, commentary }` (members who have it).
+    func applyCommentary(_ data: Data) {
+        let dec = JSONDecoder()
+        dec.keyDecodingStrategy = .convertFromSnakeCase
+        struct E: Decodable { var gameId: Int?; var commentary: ShogiCommentary? }
+        guard enabled, commentaryOn, let e = try? dec.decode(E.self, from: data), let c = e.commentary else { return }
+        takeCommentary(c)
+    }
+
+    /// The commentary for the band under this game's board (nil = no band).
+    func commentary(for id: Int) -> ShogiCommentary? { commentaryOn ? commentaries[id] : nil }
+
+    private func takeCommentary(_ c: ShogiCommentary) {
+        guard commentaryOn, c.replaces(commentaries[c.gameId]), commentaries[c.gameId] != c else { return }
+        commentaries[c.gameId] = c
     }
 
     private func applyEvent(_ action: String, _ g: ShogiGame) {
@@ -534,6 +621,51 @@ final class ShogiStore {
         if ProcessInfo.processInfo.environment["BGURU_DEMO_SHOGI_IDLE"] != nil || CommandLine.arguments.contains("-demoShogiIdle") {
             games.removeAll { !$0.isEnded }
         }
+        // ビーグルの実況 (off with BGURU_DEMO_SHOGI_COMMENTARY=0 / -demoShogiNoCommentary: no band, as on an older server).
+        commentaryOn = ProcessInfo.processInfo.environment["BGURU_DEMO_SHOGI_COMMENTARY"] != "0"
+            && !CommandLine.arguments.contains("-demoShogiNoCommentary")
+        commentaries = [:]
+        if commentaryOn {
+            demoCommentary(101, ply: 6, label: "△8五歩", text: "△8五歩で飛車先を伸ばしたわん。☗ドリキンさんは角道を受けるか考えどころだわん", eval: 35, source: "ai")
+            demoCommentary(102, ply: 3, label: "▲6六歩", text: "▲6六歩で角道を止めたわん。じっくりした将棋になりそうだわん", eval: 60, source: "ai")
+        }
+        // BGURU_DEMO_SHOGI_CMT_CYCLE=1 / -demoShogiCommentaryCycle: on game 101, after 6 s a move (▲6六歩), its template
+        // commentary 1 s later, the AI's 2 s after that; at 12 s the board is closed and opened again (a new web view:
+        // the latest commentary must come back). Logs "[shogi-cmt] …" at each step.
+        if ProcessInfo.processInfo.environment["BGURU_DEMO_SHOGI_CMT_CYCLE"] != nil || CommandLine.arguments.contains("-demoShogiCommentaryCycle") {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(6))
+                guard let self, let g = self.games.first(where: { $0.id == 101 }) else { return }
+                self.demoPlay(g, usi: "6g6f", label: "▲6六歩")
+                print("[shogi-cmt] moved"); fflush(stdout)
+                try? await Task.sleep(for: .seconds(6))
+                self.select(nil)
+                try? await Task.sleep(for: .seconds(1))
+                self.select(101)
+                print("[shogi-cmt] reopened"); fflush(stdout)
+            }
+        }
+    }
+
+    private func demoCommentary(_ id: Int, ply: Int, label: String, text: String, eval: Double?, source: String) {
+        commentaries[id] = ShogiCommentary(gameId: id, ply: ply, moveLabel: label, text: text, evalCp: eval, mate: nil, best: nil,
+                                           source: source, highlight: nil, at: ISO8601DateFormatter().string(from: Date()))
+    }
+
+    /// After a demo move: the template at once (1 s), the AI's sentence for the same move later (it replaces it).
+    private func demoCommentaryAfter(_ g: ShogiGame) {
+        guard commentaryOn, let lm = g.lastMove else { return }
+        let id = g.id, ply = g.ply
+        let eval = Double((ply * 37) % 400 - 150)
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self, self.games.first(where: { $0.id == id })?.ply == ply else { return }
+            self.demoCommentary(id, ply: ply, label: lm.label, text: "\(lm.label)。形勢はほぼ互角だわん", eval: eval, source: "template")
+            try? await Task.sleep(for: .seconds(2))
+            guard self.games.first(where: { $0.id == id })?.ply == ply else { return }
+            self.demoCommentary(id, ply: ply, label: lm.label,
+                                text: "\(lm.label)は落ち着いた一手だわん。次は相手の飛車の動きに注目したいわん", eval: eval, source: "ai")
+        }
     }
 
     private func demoPlay(_ g: ShogiGame, usi: String, label: String) {
@@ -555,6 +687,7 @@ final class ShogiStore {
         n.turnStartedAt = ISO8601DateFormatter().string(from: Date())
         games[i] = n
         moveRevision += 1
+        demoCommentaryAfter(n)
     }
 
     private func demoStartBeagle(mode: String, rematchOf: Int?) {

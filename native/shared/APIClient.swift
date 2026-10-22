@@ -144,11 +144,9 @@ final class APIClient: Sendable {
         return try await send(req)
     }
 
-    /// GET {path}/games/{id} — the whole game (moves, my_color).
-    func shogiGame(path: String, id: Int) async throws -> ShogiGame {
-        struct R: Decodable { var game: ShogiGame }
-        let r: R = try await send(request("GET", "\(path)/games/\(id)"))
-        return r.game
+    /// GET {path}/games/{id} — the whole game (moves, my_color) and the latest ビーグルの実況.
+    func shogiGame(path: String, id: Int) async throws -> ShogiGameDetail {
+        try await send(request("GET", "\(path)/games/\(id)"))
     }
 
     /// POST {path}/games[/{id}/{action}]. Never throws: a 409 carries the latest game,

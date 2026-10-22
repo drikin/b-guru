@@ -275,6 +275,11 @@ Web のロビーは「相手を指名」と「最近の結果」を一旦出さ�
   （`shogi_commentary`）は無視する（壊れない）。既存の項目に載せる道はない（`last_move.label` はアプリの 1 行と盤の帯に使うので転用しない）。
   → 次のアプリ版で: stream の `shogi_commentary`（と `GET games/{id}` の `commentary`）を受け、`{ type: "commentary", ... }` を盤に送るだけ
   （盤は本番から読むので盤の側の対応は済み）。
+  **Mac/iOS は対応済み（次の版から）**: `ShogiStore.applyCommentary`（stream）・`loadGame`（`commentary`、終局後は `commentaries` の最後）で
+  対局ごとに最新を持ち（同じ手は `at` の新しい方）、`ShogiBoardController` が `ready` のあと `window.shogiBoard.features` に
+  `"commentary"` があるときだけ `{type:"commentary"}` を送る（state のあと。作り直した盤・再接続にも最新を送る。実況がなければ `text: null`）。
+  capabilities の `features.shogi.commentary` が true でないと出さない。デモ: `-demoShogiCommentaryCycle` / `BGURU_DEMO_SHOGI_CMT_CYCLE=1`
+  （指す→ひな形→AI→盤を開き直す）、`-demoShogiNoCommentary` / `BGURU_DEMO_SHOGI_COMMENTARY=0`（帯なし）。
 - 実装: `src/lib/shogi-commentary-core.ts`（純関数: 事実・ひな形・検査・見どころ・最新だけ・分かれ目）、`shogi-commentary.ts`（依頼・評価・AI・
   保存・配信・チャット）、`shogi-commentary-store.ts`（フラグ・DB。shogi.ts から読む）、盤 `shogi-board/board.ts`（`.sb-cmt`）・`bridge.ts`、
   Web `shogi-client.ts`（`applyShogiCommentaryEvent`・`commentaryFor`）・`ShogiPanel.tsx`。テスト: `shogi-commentary.test.ts`（DB なし）、
