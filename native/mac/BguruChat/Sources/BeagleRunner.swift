@@ -8,7 +8,7 @@ extension BeagleIcon {
     private static var runCache: [String: NSImage] = [:]
 
     /// 走るコマ（0〜3）。キャンバス・左向き・足元の基準線は通常の絵と同じ（30×17pt、足先は y=15）。
-    /// 記号の頭と胴（お腹から上）はそのまま使い、脚だけを線で描き直す（奥の脚は薄く）。宙に浮くコマだけ体が 1pt 上がる。
+    /// 記号の頭と胴（お腹から上）はそのまま使い、脚だけを描き直す（線の絵は白抜きの線画、塗りは塗り。記号の脚と同じ見た目）。宙に浮くコマだけ体が 1pt 上がる。
     /// 座標は右向きの絵の上から測った pt（犬は x 0〜22）。
     static func runImage(filled: Bool, frame k: Int) -> NSImage {
         let key = "\(filled)-\(k)"
@@ -44,10 +44,21 @@ extension BeagleIcon {
                 ctx.setLineWidth(1.3)
                 ctx.beginPath(); ctx.move(to: P(2.6, cut - 0.65)); ctx.addLine(to: P(17.6, cut - 0.65)); ctx.strokePath()
             }
-            ctx.setLineWidth(filled ? 2.2 : 1.5)
-            for (i, leg) in pose.enumerated() {
-                NSColor.black.withAlphaComponent(i % 2 == 1 ? 0.55 : 1).set() // 奥の脚は薄く
-                ctx.beginPath(); ctx.move(to: CGPoint(x: leg.0.x, y: leg.0.y + up)); ctx.addLine(to: leg.1); ctx.strokePath()
+            // 脚：いつもの絵と同じ見た目（線の絵は白抜きの線画、塗りは体と同じ塗り）。全部同じ色・同じ描き方。
+            // 外側を先に全部描いてから中を抜くので、重なった脚は 1 つの輪郭にまとまる（記号の脚と同じ）。
+            // 線の絵は手前の 2 本だけ（4 本の白抜きが重なると線がごちゃつく）。塗りは 4 本（重なっても 1 つの塗り）。
+            let shown = filled ? pose : pose.enumerated().filter { $0.offset % 2 == 0 }.map(\.element)
+            let legs = shown.map { (CGPoint(x: $0.0.x, y: $0.0.y + up), $0.1) }
+            NSColor.black.set()
+            ctx.setLineWidth(filled ? 2.8 : 2.9)
+            for (a, b) in legs { ctx.beginPath(); ctx.move(to: a); ctx.addLine(to: b); ctx.strokePath() }
+            if !filled {
+                ctx.saveGState()
+                ctx.clip(to: CGRect(x: -1, y: cut - 1.4, width: dogWidth + 2, height: 10)) // お腹の線から下を抜く（付け根は胴の中とつながる）
+                ctx.setBlendMode(.clear)
+                ctx.setLineWidth(0.8)
+                for (a, b) in legs { ctx.beginPath(); ctx.move(to: CGPoint(x: a.x, y: a.y - 1)); ctx.addLine(to: b); ctx.strokePath() }
+                ctx.restoreGState()
             }
             return true
         }
