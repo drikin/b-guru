@@ -2983,6 +2983,26 @@ for (const [label, viewport] of [["phone 390", { width: 390, height: 844 }], ["d
     return { sw: vp.scrollWidth, cw: vp.clientWidth, doc: document.documentElement.scrollWidth, vw: document.documentElement.clientWidth, widest };
   });
   check(`chat never scrolls sideways (${label})`, !!w && w.sw <= w.cw + 1 && w.doc <= w.vw + 1 && !w.widest, JSON.stringify(w));
+  // 2026-10-21: URLs in chat were plain text. Every http(s) URL shown in the chat is a link.
+  const links = await upage.evaluate(() => {
+    const chat = document.querySelector('[class*="bguru-chat-view"]');
+    if (!chat) return null;
+    const walker = document.createTreeWalker(chat, NodeFilter.SHOW_TEXT);
+    let seen = 0;
+    const bare = [];
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (!/https?:\/\/\S/.test(n.nodeValue || "")) continue;
+      if (n.parentElement?.closest("input, textarea, [contenteditable]")) continue;
+      seen++;
+      if (!n.parentElement?.closest("a[href]")) bare.push((n.nodeValue || "").slice(0, 60));
+    }
+    return { seen, bare };
+  });
+  check(
+    `URLs in chat are links (${label})`,
+    !!links && links.bare.length === 0,
+    links ? (links.seen ? JSON.stringify(links) : "skipped: no URL in the loaded chat") : "no chat view",
+  );
   await uctx.close();
 }
 

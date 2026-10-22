@@ -73,6 +73,7 @@ import { type ChatRow, CHAT_BODY_LIMIT, newChatClientId, newChatTempId, reconcil
 import { CHAT_MAX_PHOTOS, imageFiles, photoSlots, prepareChatPhoto, uploadChatPhotos } from "@/lib/chat-photos";
 import { normWs, isMentionedIn, mentionToken } from "@/lib/chat-mention";
 import { POST_PERMALINK_ORIGIN, appendQuote, postPermalink, quoteText, splitPostLinks } from "@/lib/chat-quote";
+import { splitChatUrls } from "@/lib/chat-links";
 import { netaCandidates, netaDefaultTitle } from "@/lib/neta-client";
 import MacAppCard from "@/components/MacAppCard";
 import AndroidAppCard from "@/components/AndroidAppCard";
@@ -339,6 +340,25 @@ function renderChatBody(
         )
       );
     }
+  }
+  // http(s) の URL は新しいタブで開くリンクに（@メンションは URL 以外の部分だけで探す）。
+  const urlParts = splitChatUrls(body);
+  if (urlParts.some((p) => p.url)) {
+    return urlParts.map((p, i) =>
+      p.url ? (
+        <a
+          key={`u${i}`}
+          href={p.text}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: "var(--mantine-color-anchor)", textDecoration: "underline", overflowWrap: "anywhere" }}
+        >
+          {p.text}
+        </a>
+      ) : (
+        <Fragment key={`ut${i}`}>{renderChatBody(p.text, members, myUserId)}</Fragment>
+      )
+    );
   }
   const nameSet = new Set(members.map((m) => normWs(m.name)));
   const myNameSet = new Set(
