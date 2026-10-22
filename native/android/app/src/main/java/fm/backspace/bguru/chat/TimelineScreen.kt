@@ -91,6 +91,7 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -252,6 +253,7 @@ private fun TimelineList(
                         onReact = { timeline.toggleReaction(post.id, it) },
                         onOpenImage = { onOpenImage(post.images, it) },
                         onClick = { focus.clearFocus(); onOpen(post.id) },
+                        memberNames = timeline.memberNames,
                     )
                     HorizontalDivider()
                 }
@@ -277,8 +279,13 @@ fun PostRow(
     onOpenImage: (Int) -> Unit,
     onClick: (() -> Unit)? = null,
     showReplyCount: Boolean = true,
+    /** Members' names, lower-cased: which @mentions are marked (TimelineRules). */
+    memberNames: Set<String> = emptySet(),
 ) {
     val context = LocalContext.current
+    // Every "how to show it" decision (fold, reaction order, mentions, link card) in one place.
+    val plan = remember(post, memberNames, clubName) { TimelineRules.resolve(post, memberNames) { clubName } }
+    var expanded by androidx.compose.runtime.saveable.rememberSaveable(post.id) { mutableStateOf(false) }
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
@@ -304,16 +311,38 @@ fun PostRow(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(post.authorName ?: "", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                    if (clubName != null) {
-                        Text(clubName, fontSize = 11.sp, color = AccentGreen,
-                            modifier = Modifier.background(AccentGreen.copy(alpha = 0.14f), CircleShape).padding(horizontal = 6.dp, vertical = 1.dp))
+                    // Club label (root posts: callers pass the club's name). 「未設定」 in grey, like the web.
+                    val label = plan.clubLabel
+                    if (label != null && post.parentId == null) {
+                        val c = if (plan.clubUnset) MaterialTheme.colorScheme.outline else AccentGreen
+                        Text(label, fontSize = 11.sp, color = c,
+                            modifier = Modifier.background(c.copy(alpha = 0.14f), CircleShape).padding(horizontal = 6.dp, vertical = 1.dp))
                     }
                     Spacer(Modifier.weight(1f))
                     Text(relativeTime(post.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 }
-                if (post.text.isNotEmpty() && !post.isBareLink) PostText(post.text)
-                if (post.images.isNotEmpty()) PostImages(post.images, onOpenImage)
-                if (post.images.isEmpty()) post.urlPreview?.let { LinkCard(it) }
+                if (post.text.isNotEmpty() && !post.isBareLink) {
+                    val folded = plan.folded
+                    if (folded == null) {
+                        PostText(post.text, plan.mentionTokens)
+                    } else {
+                        // Web: over 500 characters → the first 500, 「続きを読む」; here also 「閉じる」.
+                        val bg = androidx.compose.ui.graphics.lerp(MaterialTheme.colorScheme.background, AccentGreen, 0.08f * unread)
+                        Box {
+                            PostText(if (expanded) post.text else folded, plan.mentionTokens)
+                            if (!expanded) {
+                                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(56.dp)
+                                    .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(bg.copy(alpha = 0f), bg))))
+                            }
+                        }
+                        Text(if (expanded) "閉じる" else "続きを読む", style = MaterialTheme.typography.labelLarge, color = AccentGreen,
+                            modifier = Modifier.align(Alignment.CenterHorizontally).clip(CircleShape).clickable { expanded = !expanded }
+                                .padding(horizontal = 12.dp, vertical = 6.dp))
+                    }
+                }
+                if (post.images.isNotEmpty()) PostImages(post.images, plan.imageColumns, onOpenImage)
+                // Like the web: the link card under the photos too (only the server's one preview).
+                plan.linkCard?.let { (card, preview) -> LinkCard(preview, youtube = card.kind == "youtube") }
                 // An episode of the jukebox (e.g. the daily "N 年前の今日"): play it here.
                 val session = if (post.audioUrl != null && post.videoUrl == null) App.session(context) else null
                 val jukebox = session?.jukebox?.takeIf { session.store?.capabilities?.jukeboxEnabled == true }
@@ -325,14 +354,14 @@ fun PostRow(
                         modifier = Modifier.clip(CircleShape).background(AccentGreen.copy(alpha = 0.12f))
                             .clickable { if (nowPlaying) jukebox.pause() else jukebox.play(episode) }
                             .padding(horizontal = 10.dp, vertical = 5.dp))
-                } else if (post.videoUrl != null || post.audioUrl != null) {
-                    Text(if (post.videoUrl != null) "▶︎ 動画（Web で再生）" else "♪ 音声（Web で再生）",
-                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    post.audioUrl?.let { PostAudio(it) }
                 }
-                val rs = post.reactions.orEmpty()
+                post.videoUrl?.let { PostVideo(it) }
+                val rs = plan.reactions
                 if (rs.isNotEmpty() || (showReplyCount && post.replyCount > 0)) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        rs.forEach { r -> ReactionChip(r, enabled = canReact) { onReact(r.emoji) } }
+                        rs.forEach { r -> PostReactionChip(r, plan.reactorsMore[r.emoji], enabled = canReact) { onReact(r.emoji) } }
                         if (showReplyCount && post.replyCount > 0) {
                             Text("💬 ${post.replyCount}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = 2.dp))
@@ -381,29 +410,6 @@ fun PostRow(
             })
         }
         netaUrls?.let { urls -> NetaDialog(post, urls, onDismiss = { netaUrls = null }) }
-    }
-}
-
-/** 1 image: wide; 2–5: a grid of squares. Tap → full screen. */
-@Composable
-fun PostImages(images: List<String>, onOpen: (Int) -> Unit) {
-    if (images.size == 1) {
-        RemoteImage(images[0], Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(10.dp)).clickable { onOpen(0) }) {
-            Box(Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
-        }
-        return
-    }
-    val cols = if (images.size == 2 || images.size == 4) 2 else 3
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        images.withIndex().chunked(cols).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                row.forEach { (i, path) ->
-                    val m = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(8.dp))
-                    RemoteImage(path, m.clickable { onOpen(i) }, maxPx = 540) { Box(m.background(MaterialTheme.colorScheme.surfaceVariant)) }
-                }
-                repeat(cols - row.size) { Spacer(Modifier.weight(1f)) }
-            }
-        }
     }
 }
 
@@ -567,11 +573,12 @@ private fun androidx.compose.foundation.lazy.LazyListState.isShown(key: Any): Bo
 /** A link's page as a card: image, title, a line of description, the site. Opens the
  *  page in the browser (the web shows the same card under a post). */
 @Composable
-fun LinkCard(preview: UrlPreview) {
+fun LinkCard(preview: UrlPreview, youtube: Boolean = preview.videoId != null) {
     val context = LocalContext.current
     val shape = RoundedCornerShape(12.dp)
     Column(
         Modifier
+            .then(if (youtube) Modifier.widthIn(max = 480.dp) else Modifier)
             .fillMaxWidth()
             .clip(shape)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
@@ -580,13 +587,25 @@ fun LinkCard(preview: UrlPreview) {
             .semantics { contentDescription = "リンク：" + (preview.title ?: preview.url) },
     ) {
         preview.proxiedImage?.let { img ->
+            // YouTube: the thumbnail at 16:9 (the web: at most 480 wide) with ▶ (52). Others: the
+            // picture never cut, its height from its shape, at most 240 (fitted inside beyond that).
+            val abs = ApiClient.absolute(img)
+            var ratio by remember(abs) { mutableStateOf(ImageCache.ratio(abs)) }
             Box(contentAlignment = Alignment.Center) {
-                RemoteImage(img, Modifier.fillMaxWidth().height(170.dp), maxPx = 900) {
-                    Box(Modifier.fillMaxWidth().height(170.dp).background(MaterialTheme.colorScheme.surfaceVariant))
+                if (youtube) {
+                    val m = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                    RemoteImage(img, m, maxPx = 900) { Box(m.background(MaterialTheme.colorScheme.surfaceVariant)) }
+                } else {
+                    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+                        val h = minOf(maxWidth.value / (ratio ?: (1.91f)), 240f)
+                        Box(Modifier.fillMaxWidth().height(h.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                            PostPhoto(img, Modifier.fillMaxSize(), maxPx = 900) { ratio = it }
+                        }
+                    }
                 }
-                if (preview.videoId != null) {
-                    Box(Modifier.size(48.dp).background(Color.Black.copy(alpha = 0.7f), CircleShape), contentAlignment = Alignment.Center) {
-                        Text("▶", color = Color.White, fontSize = 18.sp)
+                if (youtube) {
+                    Box(Modifier.size(52.dp).background(Color.Black.copy(alpha = 0.7f), CircleShape), contentAlignment = Alignment.Center) {
+                        Text("▶", color = Color.White, fontSize = 20.sp)
                     }
                 }
             }
@@ -602,4 +621,54 @@ fun LinkCard(preview: UrlPreview) {
                 color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
+}
+
+private val CUSTOM_EMOJI = Regex("^:([\\w+-]+):$")
+
+/** A reaction under a post: tap toggles yours; long-press shows who reacted (the web's hover
+ *  list: up to 12 names, then 「他N人」 — TimelineRules.reactors). */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun PostReactionChip(r: Reaction, more: Int?, enabled: Boolean, onTap: () -> Unit) {
+    var who by remember { mutableStateOf(false) }
+    val shape = RoundedCornerShape(12.dp)
+    Box {
+        Row(
+            Modifier
+                .clip(shape)
+                .border(1.dp, if (r.mine) AccentGreen else MaterialTheme.colorScheme.outlineVariant, shape)
+                .background(if (r.mine) AccentGreen.copy(alpha = 0.10f) else Color.Transparent, shape)
+                .combinedClickable(onClick = { if (enabled) onTap() }, onLongClick = { who = true }, onLongClickLabel = "リアクションした人")
+                .padding(horizontal = 8.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            ReactionGlyph(r.emoji, 16.dp)
+            Text("${r.count}", style = MaterialTheme.typography.labelSmall)
+        }
+        DropdownMenu(expanded = who, onDismissRequest = { who = false }) {
+            val list = TimelineRules.reactors(r, more?.takeIf { r.count == r.reactors.size + it })
+            Column(Modifier.widthIn(max = 260.dp).padding(horizontal = 12.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ReactionGlyph(r.emoji, 18.dp)
+                    Text("${r.count}人", style = MaterialTheme.typography.labelLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                }
+                if (list.names.isNotEmpty()) {
+                    Text(androidx.compose.ui.text.buildAnnotatedString {
+                        append(list.names.joinToString("、"))
+                        if (list.others > 0) {
+                            withStyle(androidx.compose.ui.text.SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) { append(" 他${list.others}人") }
+                        }
+                    }, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReactionGlyph(emoji: String, size: androidx.compose.ui.unit.Dp) {
+    val custom = CUSTOM_EMOJI.find(emoji)?.groupValues?.get(1)?.let { EmojiCatalog.urls[it] }
+    if (custom != null) RemoteImage(custom, Modifier.size(size), ContentScale.Fit, maxPx = 64) { Text(emoji, fontSize = 12.sp) }
+    else Text(emoji, fontSize = (size.value * 0.875f).sp)
 }

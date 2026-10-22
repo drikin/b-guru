@@ -125,6 +125,8 @@ dependencies {
     // background playback, the notification, lock screen and Bluetooth buttons (Google, Apache-2.0).
     implementation("androidx.media3:media3-exoplayer:1.11.1")
     implementation("androidx.media3:media3-session:1.11.1")
+    // Timeline videos / sounds over the app's OkHttp (Authorization never follows a redirect to another host).
+    implementation("androidx.media3:media3-datasource-okhttp:1.11.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }

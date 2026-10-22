@@ -136,7 +136,7 @@ fun ThreadScreen(
                     item(key = "root") {
                         ReadWhenSeen(listState, "root", active = r.unread == true) { read(r, isRoot = true) }
                         Column(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
-                            PostRow(r, timeline.clubName(r.club), canReact, { react(r.id, it) }, { onOpenImage(r.images, it) }, showReplyCount = false)
+                            PostRow(r, timeline.clubName(r.club), canReact, { react(r.id, it) }, { onOpenImage(r.images, it) }, showReplyCount = false, memberNames = timeline.memberNames)
                             HorizontalDivider()
                             if (replies.isEmpty()) Text("まだ返信はありません", color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.fillMaxWidth().padding(24.dp))
@@ -145,7 +145,7 @@ fun ThreadScreen(
                     items(replies, key = { it.id }) { p ->
                         ReadWhenSeen(listState, p.id, active = p.unread == true) { read(p, isRoot = false) }
                         Column(Modifier.widthIn(max = 760.dp).fillMaxWidth().padding(start = 20.dp)) {
-                            PostRow(p, null, canReact, { react(p.id, it) }, { onOpenImage(p.images, it) }, showReplyCount = false)
+                            PostRow(p, null, canReact, { react(p.id, it) }, { onOpenImage(p.images, it) }, showReplyCount = false, memberNames = timeline.memberNames)
                             HorizontalDivider()
                         }
                     }

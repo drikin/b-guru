@@ -315,6 +315,8 @@ data class Post(
     val unreadReplies: Int? = null,
     /** The page a link in the post points to (title / image), filled in by the server. */
     val urlPreview: UrlPreview? = null,
+    /** The server's display decisions (`include=display`, TimelineDisplay.kt); null = decide here. */
+    @Serializable(with = SafePostDisplay::class) val display: PostDisplay? = null,
 ) {
     /** The post is just one link that has a preview: show the card, not the bare URL. */
     val isBareLink: Boolean
@@ -333,9 +335,11 @@ data class UrlPreview(
     val title: String? = null,
     val description: String? = null,
     val image: String? = null,
-    @kotlinx.serialization.SerialName("siteName") val siteName: String? = null,
+    @kotlinx.serialization.json.JsonNames("siteName") val siteName: String? = null,
     /** YouTube video id: a play mark over the image. */
-    @kotlinx.serialization.SerialName("videoId") val videoId: String? = null,
+    @kotlinx.serialization.json.JsonNames("videoId") val videoId: String? = null,
+    /** A Spotify link: the web embeds its player (the app shows the card — owner 2026-10-22). */
+    @kotlinx.serialization.SerialName("spotify") val spotify: SpotifyEmbed? = null,
 ) {
     /** The preview image through our server (/api/img): the site never sees the member. */
     val proxiedImage: String?

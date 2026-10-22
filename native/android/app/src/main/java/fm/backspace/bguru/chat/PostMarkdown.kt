@@ -16,8 +16,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -36,33 +40,34 @@ import androidx.compose.ui.unit.sp
 /** A post's text with its Markdown drawn, like the web timeline (src/lib/md.ts: GFM,
  *  line breaks kept) and the Apple apps (native/shared/PostMarkdown.swift). Headings,
  *  lists, quotes, rules and code blocks are blocks; bold, italic, `code`, ~~strike~~
- *  and [links](…) inside them. Bare URLs stay tappable and @mentions green. Text with
+ *  and [links](…) inside them. Bare URLs stay tappable; members' @mentions are marked
+ *  like the web's (only names of members — TimelineRules.mentionTokens). Text with
  *  no Markdown in it is drawn exactly as before. */
 @Composable
-fun PostText(text: String) {
+fun PostText(text: String, mentions: Set<String> = emptySet()) {
     val blocks = remember(text) { PostMarkdown.cached(text) }
     val single = blocks.singleOrNull() as? PostMarkdown.Block.Paragraph
     if (single != null) {
-        Text(single.text, fontSize = 16.sp)
+        MentionText(single.text, mentions, fontSize = 16.sp)
         return
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         blocks.forEach { b ->
             when (b) {
-                is PostMarkdown.Block.Paragraph -> Text(b.text, fontSize = 16.sp)
-                is PostMarkdown.Block.Heading -> Text(
-                    b.text,
+                is PostMarkdown.Block.Paragraph -> MentionText(b.text, mentions, fontSize = 16.sp)
+                is PostMarkdown.Block.Heading -> MentionText(
+                    b.text, mentions,
                     fontSize = when (b.level) { 1 -> 20.sp; 2 -> 18.sp; else -> 16.sp },
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(top = 2.dp),
                 )
                 is PostMarkdown.Block.Item -> Row(Modifier.padding(start = (b.indent * 16 + 2).dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(b.marker, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(b.text, fontSize = 16.sp)
+                    MentionText(b.text, mentions, fontSize = 16.sp)
                 }
                 is PostMarkdown.Block.Quote -> Row(Modifier.height(IntrinsicSize.Min)) {
                     Box(Modifier.width(3.dp).fillMaxHeight().background(MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(2.dp)))
-                    Text(b.text, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp))
+                    MentionText(b.text, mentions, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp))
                 }
                 is PostMarkdown.Block.Code -> Text(
                     b.text,
@@ -78,7 +83,72 @@ fun PostText(text: String) {
     }
 }
 
+/** Text with the members' @mentions drawn like the web's (globals.css `a[href^="#mention-"]`):
+ *  green, semi-bold, on a light green rounded patch; `@[Full Name]` shows as "@Full Name". Only
+ *  tokens in `mentions` (members' names — TimelineRules) are marked; any other "@…" stays text. */
+@Composable
+private fun MentionText(
+    text: AnnotatedString,
+    mentions: Set<String>,
+    modifier: Modifier = Modifier,
+    fontSize: androidx.compose.ui.unit.TextUnit = 16.sp,
+    fontWeight: FontWeight? = null,
+    color: Color = Color.Unspecified,
+) {
+    val dark = androidx.compose.foundation.isSystemInDarkTheme()
+    val fg = if (dark) Color(0xFF4ADE80) else Color(0xFF15803D)
+    val patch = if (dark) Color(0xFF13241A) else Color(0xFFF0FDF4)
+    val marked = remember(text, mentions, fg) { PostMarkdown.markMentions(text, mentions, fg) }
+    if (marked === text) {
+        Text(text, modifier, fontSize = fontSize, fontWeight = fontWeight, color = color)
+        return
+    }
+    var layout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+    val ranges = remember(marked) { marked.getStringAnnotations(PostMarkdown.MENTION_TAG, 0, marked.length) }
+    Text(
+        marked,
+        modifier.drawBehind {
+            val l = layout ?: return@drawBehind
+            val padX = 3.dp.toPx()
+            val r = androidx.compose.ui.geometry.CornerRadius(4.dp.toPx())
+            ranges.forEach { a ->
+                val first = l.getLineForOffset(a.start)
+                val last = l.getLineForOffset(maxOf(a.start, a.end - 1))
+                for (line in first..last) {
+                    val left = if (line == first) l.getHorizontalPosition(a.start, true) else l.getLineLeft(line)
+                    val right = if (line == last) l.getHorizontalPosition(a.end, true) else l.getLineRight(line)
+                    drawRoundRect(patch, androidx.compose.ui.geometry.Offset(minOf(left, right) - padX, l.getLineTop(line) + 1f),
+                        androidx.compose.ui.geometry.Size(kotlin.math.abs(right - left) + padX * 2, l.getLineBottom(line) - l.getLineTop(line) - 2f), r)
+                }
+            }
+        },
+        fontSize = fontSize, fontWeight = fontWeight, color = color,
+        onTextLayout = { layout = it },
+    )
+}
+
 object PostMarkdown {
+    const val MENTION_TAG = "mention"
+
+    /** `text` with each member mention (a token in `mentions`) replaced by its label, styled and
+     *  tagged [MENTION_TAG]. The same instance when there is none. */
+    fun markMentions(text: AnnotatedString, mentions: Set<String>, color: Color): AnnotatedString {
+        val ranges = TimelineRules.mentionRanges(text.text, mentions)
+        if (ranges.isEmpty()) return text
+        return buildAnnotatedString {
+            var at = 0
+            ranges.forEach { r ->
+                append(text.subSequence(at, r.first))
+                val label = TimelineRules.mentionLabel(text.text.substring(r.first, r.last + 1))
+                pushStringAnnotation(MENTION_TAG, label)
+                withStyle(SpanStyle(color = color, fontWeight = FontWeight.SemiBold)) { append(label) }
+                pop()
+                at = r.last + 1
+            }
+            append(text.subSequence(at, text.length))
+        }
+    }
+
     sealed interface Block {
         data class Paragraph(val text: AnnotatedString) : Block
         data class Heading(val level: Int, val text: AnnotatedString) : Block
@@ -95,12 +165,21 @@ object PostMarkdown {
     private val ITEM = Regex("""^([ \t]*)([-*+]|\d{1,3}[.)])[ \t]+(.*)$""")
     private val LINK = Regex("""^\[([^\]\n]+)]\(([^)\s]+)\)""")
     private val URL_RE = Regex("""https?://[^\s<>"]+""")
-    private val MENTION_RE = Regex("""@\[[^\]]+]|@[^\s@\[\]]+""")
     private val linkStyle = TextLinkStyles(SpanStyle(color = AccentGreen, textDecoration = TextDecoration.Underline))
 
     fun looksLikeMarkdown(s: String) = HINT.containsMatchIn(s)
 
-    fun blocks(s: String): List<Block> = if (!looksLikeMarkdown(s)) listOf(Block.Paragraph(linkified(s))) else parse(s)
+    /** Plain text with its URLs tappable. @mentions are not coloured here: only members' are
+     *  marked, by [markMentions] (the chat's `linkified` colours every "@…"). */
+    private fun urlsOnly(s: String): AnnotatedString = buildAnnotatedString {
+        append(s)
+        URL_RE.findAll(s).forEach {
+            val url = it.value.trimEnd('.', ',', ')', '」', '。')
+            addLink(LinkAnnotation.Url(url, linkStyle), it.range.first, it.range.first + url.length)
+        }
+    }
+
+    fun blocks(s: String): List<Block> = if (!looksLikeMarkdown(s)) listOf(Block.Paragraph(urlsOnly(s))) else parse(s)
 
     /** Parsed posts by text: the timeline parses them when they arrive ([warm], off the
      *  main thread), so a row coming on screen while scrolling only looks them up. */
@@ -151,7 +230,7 @@ object PostMarkdown {
             i++
         }
         flush()
-        return out.ifEmpty { listOf(Block.Paragraph(linkified(s))) }
+        return out.ifEmpty { listOf(Block.Paragraph(urlsOnly(s))) }
     }
 
     /** Bold / italic / code / strike / links inside a block, then bare URLs and @mentions. */
@@ -160,7 +239,6 @@ object PostMarkdown {
         return buildAnnotatedString {
             append(base)
             val t = base.text
-            MENTION_RE.findAll(t).forEach { addStyle(SpanStyle(color = AccentGreen), it.range.first, it.range.last + 1) }
             URL_RE.findAll(t).forEach {
                 val url = it.value.trimEnd('.', ',', ')', '」', '。')
                 val end = it.range.first + url.length

@@ -75,7 +75,7 @@ class Session(private val app: Context) {
         val base = jukeboxBase ?: "http://10.0.2.2:8098"
         jukebox?.stop()
         store = ChatStore(ApiClient("demo"), app).also { it.loadDemo(scale = images != null, images = images, withRoom = withRoom, withShogi = withShogi, shogiScenario = shogiScenario, withMinigame = withMinigame) }
-        timeline = TimelineStore(ApiClient("demo")).also { it.loadDemo(images, jukeboxAudio = JukeboxStore.demoAudioUrl(base)) }
+        timeline = TimelineStore(ApiClient("demo")).also { it.loadDemo(images, jukeboxAudio = JukeboxStore.demoAudioUrl(base), media = base) }
         jukebox = JukeboxStore(app, ApiClient("demo"), demoBase = base)
         // Debug: print this emulator's FCM token so a test push can be sent to it.
         if (Push.configured) com.google.firebase.messaging.FirebaseMessaging.getInstance().token

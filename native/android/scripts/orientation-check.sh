@@ -69,6 +69,16 @@ mkdir -p "$MEDIA"
 swift "$CHECK" --make-photo "$MEDIA/photo1.jpg"
 for i in 2 3 4; do cp "$MEDIA/photo1.jpg" "$MEDIA/photo$i.jpg"; done
 command -v ffmpeg >/dev/null && ffmpeg -loglevel error -y -f lavfi -i "sine=frequency=440:duration=120" -ac 1 -b:a 64k "$MEDIA/test.mp3" || true
+# The timeline's display examples (TimelineStore.demoParity): photos tall/wide/square, a GIF, a clip, a sound.
+if command -v ffmpeg >/dev/null; then
+  ff() { ffmpeg -loglevel error -y "$@" || true; }
+  ff -f lavfi -i "testsrc2=size=1600x800:duration=1" -frames:v 1 "$MEDIA/parity-wide.jpg"
+  ff -f lavfi -i "smptebars=size=900x1950:duration=1" -frames:v 1 "$MEDIA/parity-tall.jpg"
+  ff -f lavfi -i "mandelbrot=size=800x800" -frames:v 1 "$MEDIA/parity-square.jpg"
+  ff -f lavfi -i "testsrc=size=320x240:rate=12:duration=3" -vf "split[a][b];[a]palettegen[p];[b][p]paletteuse" -loop 0 "$MEDIA/parity-anim.gif"
+  ff -f lavfi -i "testsrc2=size=1280x720:rate=30:duration=6" -f lavfi -i "sine=frequency=330:duration=6" -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest -movflags +faststart "$MEDIA/parity-clip.mp4"
+  ff -f lavfi -i "sine=frequency=523:duration=12" -c:a aac -b:a 64k "$MEDIA/parity-voice.m4a"
+fi
 PORT=""
 for p in 8790 8791 8792 8793 8794 8795 8796 8797; do # never 8765 (the VLOG dashboard)
   lsof -iTCP:$p -sTCP:LISTEN >/dev/null 2>&1 || { PORT=$p; break; }

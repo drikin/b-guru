@@ -24,6 +24,9 @@ class TimelineStore(val api: ApiClient) {
     var loadingMore by mutableStateOf(false); private set
     var failed by mutableStateOf(false); private set
     var clubs by mutableStateOf<Map<String, String>>(emptyMap()); private set
+    /** Members' names, lower-cased: which @mentions in posts are marked (TimelineRules). */
+    var memberNames by mutableStateOf<Set<String>>(emptySet()); private set
+    private var membersJob: Job? = null
     /** Set by a "reply to your post" notification: show the timeline and open this thread. */
     var openThread by mutableStateOf<Long?>(null)
 
@@ -41,6 +44,9 @@ class TimelineStore(val api: ApiClient) {
         if (demo) return
         lastRefreshAt = android.os.SystemClock.elapsedRealtime() // tried (failures wait a minute too)
         if (clubs.isEmpty()) runCatching { clubs = api.clubs().associate { it.key to it.name } }
+        if (memberNames.isEmpty() && membersJob?.isActive != true) {
+            membersJob = scope.launch { runCatching { memberNames = api.members().map { it.name.lowercase() }.toSet() } }
+        }
         try {
             val r = api.posts()
             // Unchanged posts keep their instance (their rows skip recomposition), and an
@@ -147,9 +153,10 @@ class TimelineStore(val api: ApiClient) {
     fun stop() = scope.cancel()
 
     /** Debug only: sample timeline for offline UI checks. */
-    fun loadDemo(images: String? = null, jukeboxAudio: String? = null) {
+    fun loadDemo(images: String? = null, jukeboxAudio: String? = null, media: String? = null) {
         demo = true
         val now = java.time.Instant.now()
+        memberNames = setOf("ビーグル", "mazzo", "NORIO TAKAHASHI", "takuto", "coban", "ポンコツ散財王ドリキン").map { it.lowercase() }.toSet()
         val many = if (images == null) emptyList() else (10L..70L).map { i ->
             val n = (i % 5).toInt() + 1
             Post(i, authorName = listOf("mazzo", "takuto", "NORIO TAKAHASHI", "coban")[(i % 4).toInt()],
@@ -162,7 +169,7 @@ class TimelineStore(val api: ApiClient) {
         val anniversary = if (jukeboxAudio == null) emptyList() else listOf(
             Post(9002, authorName = "ジュークボックス", createdAt = now.minusSeconds(30).toString(), audioUrl = jukeboxAudio, replyCount = 3,
                 text = "📅 7 年前の今日の backspace.fm\n#313:Galaxy ＆ 樋口監督ドヤ vs. GoPro 8ドヤ（デモ）"))
-        posts = anniversary + listOf(Post(9001, authorName = "ビーグル", club = "chat", createdAt = now.minusSeconds(60).toString(), text = DEMO_MARKDOWN)) + many + listOf(
+        posts = anniversary + demoParity(now, media) + listOf(Post(9001, authorName = "ビーグル", club = "chat", createdAt = now.minusSeconds(60).toString(), text = DEMO_MARKDOWN)) + many + listOf(
             Post(4, authorName = "NORIO TAKAHASHI", text = "https://share.google/BM8clX7MsYzuIrrCf", createdAt = now.minusSeconds(120).toString(), club = "car",
                 urlPreview = UrlPreview("https://www.webcg.net/articles/-/50000", title = "ポルシェが未来のミドシップスーパースポーツカー「ミッションS」を発表 【ニュース】 - webCG",
                     description = "ポルシェは未来のミドシップスーパースポーツカーのコンセプトを発表した。",
@@ -177,6 +184,36 @@ class TimelineStore(val api: ApiClient) {
         )
         clubs = mapOf("pet" to "ペット部", "apple" to "リンゴ部", "improve" to "機能改善")
         hasLoaded = true
+    }
+
+    /** Debug only: one post for each of the web's display rules (TimelineDisplay.kt) — a
+     *  501-character text, photos 1/2/3/5 (tall and wide), video, sound, GIF, many reactions,
+     *  mentions. `media`: where the photos and clips are served from this Mac (orientation-check.sh
+     *  makes them: parity-*.jpg / .gif / .mp4 / .m4a); without it they show as empty boxes. */
+    private fun demoParity(now: java.time.Instant, media: String?): List<Post> {
+        fun at(min: Long) = now.minusSeconds(40 + min * 60).toString()
+        val m = media ?: "http://10.0.2.2:1"
+        val wide = "$m/parity-wide.jpg"
+        val tall = "$m/parity-tall.jpg"
+        val square = "$m/parity-square.jpg"
+        val long = buildString {
+            append("@mazzo さん、@[NORIO TAKAHASHI] さん、@nobody さん（会員でない名前は普通の文字）。\n")
+            while (length < 501) append("長い投稿の折りたたみを確かめるための文章です。Web と同じく 500 文字を超えたら先頭 500 文字で切って「続きを読む」を出します。")
+        }.take(501)
+        val names = listOf("mazzo", "takuto", "NORIO TAKAHASHI", "coban", "ビーグル", "ドリキン", "ぽん", "たろう", "はなこ", "じろう", "さぶろう", "しろう")
+        return listOf(
+            Post(9101, authorName = "ビーグル", club = "improve", createdAt = at(1), text = long, replyCount = 2,
+                reactions = listOf(Reaction("😂", 2, reactors = listOf("mazzo", "coban")), Reaction("❤️", 15, mine = true, reactors = names),
+                    Reaction("👍", 15, reactors = names.reversed()), Reaction("🎉", 1, reactors = listOf("takuto")), Reaction("🙏", 3, reactors = names.take(3)))),
+            Post(9102, authorName = "mazzo", club = TimelineRules.CLUB_UNSET, createdAt = at(2), text = "横長 1 枚（切り抜かない・最大幅 360）", images = listOf(wide)),
+            Post(9103, authorName = "takuto", createdAt = at(3), text = "縦長 1 枚（高さの上限 480）", images = listOf(tall)),
+            Post(9104, authorName = "coban", createdAt = at(4), text = "2 枚は 2 列", images = listOf(wide, tall)),
+            Post(9105, authorName = "NORIO TAKAHASHI", createdAt = at(5), text = "3 枚は 3 列", images = listOf(tall, wide, square)),
+            Post(9106, authorName = "mazzo", createdAt = at(6), text = "5 枚は 3 列 + 2", images = listOf(wide, tall, square, "$m/parity-anim.gif", wide + "?5")),
+            Post(9107, authorName = "ビーグル", createdAt = at(7), text = "動画（▶ で再生）", videoUrl = "$m/parity-clip.mp4"),
+            Post(9108, authorName = "takuto", createdAt = at(8), text = "音声", audioUrl = "$m/parity-voice.m4a"),
+            Post(9109, authorName = "coban", createdAt = at(9), text = "GIF は動く", images = listOf("$m/parity-anim.gif")),
+        )
     }
 
     companion object {

@@ -62,6 +62,43 @@ object ImageCache {
 
     fun peek(url: String, maxPx: Int): ImageBitmap? = cache.get(key(url, maxPx))
 
+    /** Width / height of images seen so far (by absolute URL): a photo shown again — scrolled
+     *  back to, or in the thread — gets its own shape at once instead of a placeholder's. */
+    private val ratios = LruCache<String, Float>(4000)
+
+    fun ratio(url: String?): Float? = url?.let { ratios.get(it) }
+
+    private fun noteRatio(url: String, w: Int, h: Int) { if (w > 0 && h > 0) ratios.put(url, w.toFloat() / h) }
+
+    /** An animated image (GIF) as a drawable that plays: decoded at most `maxPx` on its long
+     *  side. Frames are decoded as it plays (not all kept), so it costs about two frames of
+     *  memory. Not cached in memory — the bytes come from the disk cache. Null when it is not
+     *  animated after all (draw it with [RemoteImage]) or could not be loaded. */
+    suspend fun loadAnimated(url: String, maxPx: Int): android.graphics.drawable.AnimatedImageDrawable? = withContext(decoding) {
+        val req = Request.Builder().url(url).apply {
+            val t = token
+            if (t != null && url.startsWith(Net.BASE + "/")) header("Authorization", "Bearer $t")
+        }.build()
+        val call = http.newCall(req)
+        val hook = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.invokeOnCompletion { if (it != null) call.cancel() }
+        try {
+            runCatching {
+                call.execute().use { r ->
+                    if (!r.isSuccessful) return@use null
+                    val bytes = r.body.bytes()
+                    ImageDecoder.decodeDrawable(ImageDecoder.createSource(java.nio.ByteBuffer.wrap(bytes))) { d, info, _ ->
+                        val w = info.size.width
+                        val h = info.size.height
+                        val scale = minOf(1.0, maxPx.toDouble() / maxOf(w, h))
+                        if (scale < 1.0) d.setTargetSize((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1))
+                    }.also { noteRatio(url, it.intrinsicWidth, it.intrinsicHeight) } as? android.graphics.drawable.AnimatedImageDrawable
+                }
+            }.getOrNull()
+        } finally {
+            hook?.dispose()
+        }
+    }
+
     /** The image at most `maxPx` on its long side (aspect kept). Main thread. */
     suspend fun load(url: String, maxPx: Int): ImageBitmap? {
         val k = key(url, maxPx)
@@ -94,13 +131,13 @@ object ImageCache {
         // Cancelled (nobody wants it any more): abort the download itself.
         val hook = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]?.invokeOnCompletion { if (it != null) call.cancel() }
         try {
-            return runCatching { decode(call, maxPx) }.getOrNull()
+            return runCatching { decode(call, maxPx, url) }.getOrNull()
         } finally {
             hook?.dispose()
         }
     }
 
-    private fun decode(call: okhttp3.Call, maxPx: Int): ImageBitmap? =
+    private fun decode(call: okhttp3.Call, maxPx: Int, url: String): ImageBitmap? =
         call.execute().use { r ->
             if (!r.isSuccessful) return@use null
             val bytes = r.body.bytes()
@@ -112,7 +149,7 @@ object ImageCache {
                 val h = info.size.height
                 val scale = minOf(1.0, maxPx.toDouble() / maxOf(w, h))
                 if (scale < 1.0) d.setTargetSize((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1))
-            }.asImageBitmap()
+            }.also { noteRatio(url, it.width, it.height) }.asImageBitmap()
         }
 }
 

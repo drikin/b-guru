@@ -55,6 +55,13 @@ object Net {
         .readTimeout(70, TimeUnit.SECONDS)
         .callTimeout(0, TimeUnit.SECONDS)
         .build()
+
+    /** Video and audio in the timeline: a whole film streams over one call, so no overall
+     *  limit (the shared client's 20 s would cut it and make the player re-read). */
+    val media: OkHttpClient = http.newBuilder()
+        .readTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(0, TimeUnit.SECONDS)
+        .build()
 }
 
 suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
@@ -232,11 +239,11 @@ class ApiClient(val token: String) {
 
     suspend fun posts(cursor: String? = null, limit: Int = 30): PostListResponse =
         get("/api/agent/posts", buildMap {
-            put("limit", "$limit"); put("include", "reactions,read")
+            put("limit", "$limit"); put("include", "reactions,read,display")
             if (cursor != null) put("cursor", cursor)
         })
 
-    suspend fun thread(id: Long): ThreadResponse = get("/api/agent/posts/$id", mapOf("include" to "reactions,read"))
+    suspend fun thread(id: Long): ThreadResponse = get("/api/agent/posts/$id", mapOf("include" to "reactions,read,display"))
 
     suspend fun clubs(): List<ClubInfo> = get<ClubsResponse>("/api/agent/clubs").clubs
 
