@@ -247,4 +247,126 @@ class ShogiLogicTest {
         assertTrue(caps.shogiBeagle)
         assertFalse(ApiJson.decodeFromString<Capabilities>("""{"features":{"shogi":{"enabled":true,"play":true}}}""").shogiBeagle)
     }
+
+    // MARK: ビーグルの実況
+
+    private fun cmt(ply: Int, text: String, source: String = "template", at: String = "2026-10-21T00:00:0${ply % 10}.000Z", game: Long = 12) =
+        """{"game_id":$game,"commentary":{"game_id":$game,"ply":$ply,"move_label":"▲7六歩","text":"$text","eval_cp":120,"mate":null,
+            "best":{"usi":"3c3d","label":"△3四歩"},"source":"$source","highlight":null,"at":"$at","future":1}}"""
+
+    @Test fun parsesCommentaryEvent() {
+        val c = ShogiLogic.parseCommentaryEvent(cmt(1, "角道を開けたわん"))
+        assertNotNull(c)
+        assertEquals(12L, c!!.gameId)
+        assertEquals(1, c.ply)
+        assertEquals("▲7六歩", c.moveLabel)
+        assertEquals("角道を開けたわん", c.text)
+        assertEquals(120.0, c.evalCp!!, 0.0)
+        assertNull(c.mate)
+        assertEquals("△3四歩", c.best?.label)
+        assertEquals("template", c.source)
+    }
+
+    @Test fun dropsBrokenCommentary() {
+        assertNull(ShogiLogic.parseCommentaryEvent("nope"))
+        assertNull(ShogiLogic.parseCommentaryEvent("""{"game_id":12}"""))
+        assertNull(ShogiLogic.parseCommentaryEvent("""{"game_id":0,"commentary":{"ply":1,"text":"x"}}"""))
+        assertNull(ShogiLogic.parseCommentaryEvent("""{"game_id":12,"commentary":{"game_id":12,"ply":1}}""")) // no text
+        assertNull(ShogiLogic.parseCommentaryEvent("""{"game_id":12,"commentary":{"game_id":13,"ply":1,"text":"x"}}""")) // mixed up
+        // game_id only on the outside: taken from there.
+        assertEquals(12L, ShogiLogic.parseCommentaryEvent("""{"game_id":12,"commentary":{"ply":1,"text":"x"}}""")?.gameId)
+    }
+
+    @Test fun aiReplacesTemplateOfTheSameMove() {
+        val t = ShogiLogic.parseCommentaryEvent(cmt(5, "ひな形だわん", at = "2026-10-21T00:00:05.000Z"))!!
+        val ai = ShogiLogic.parseCommentaryEvent(cmt(5, "AI だわん", "ai", at = "2026-10-21T00:00:07.000Z"))!!
+        var m = ShogiLogic.mergeCommentary(emptyMap(), t)
+        m = ShogiLogic.mergeCommentary(m, ai)
+        assertEquals("AI だわん", m[12L]?.text)
+        assertEquals("ai", m[12L]?.source)
+        // A late GET reply with the template (older `at`) does not bring it back.
+        assertEquals("AI だわん", ShogiLogic.mergeCommentary(m, t)[12L]?.text)
+        // The end of the game rewrites the last move (newer `at`): it wins even over the AI's.
+        val end = t.copy(text = "投了だわん", at = "2026-10-21T00:00:09.000Z")
+        assertEquals("投了だわん", ShogiLogic.mergeCommentary(m, end)[12L]?.text)
+        // No `at`: the one arriving wins.
+        assertEquals("後", ShogiLogic.mergeCommentary(m, ai.copy(text = "後", at = ""))[12L]?.text)
+    }
+
+    @Test fun olderMoveNeverRollsBackCommentary() {
+        val m = ShogiLogic.mergeCommentary(emptyMap(), ShogiLogic.parseCommentaryEvent(cmt(7, "七手目"))!!)
+        assertEquals("七手目", ShogiLogic.mergeCommentary(m, ShogiLogic.parseCommentaryEvent(cmt(6, "六手目"))!!)[12L]?.text)
+        assertEquals("八手目", ShogiLogic.mergeCommentary(m, ShogiLogic.parseCommentaryEvent(cmt(8, "八手目"))!!)[12L]?.text)
+        // Another game is its own.
+        val other = ShogiLogic.mergeCommentary(m, ShogiLogic.parseCommentaryEvent(cmt(1, "別", game = 13))!!)
+        assertEquals("七手目", other[12L]?.text)
+        assertEquals("別", other[13L]?.text)
+    }
+
+    @Test fun detailBringsTheNewestCommentary() {
+        // An older server (no commentary field) and a member without it: nothing.
+        val plain = ShogiLogic.parseEvent(gameJson)!!.game!!
+        assertNull(plain.commentary)
+        assertNull(ShogiLogic.latestCommentary(plain))
+        val r = ApiJson.decodeFromString<ShogiReply>("""{"game":{"id":12,"status":"active","ply":3,
+            "commentary":{"game_id":12,"ply":3,"move_label":"▲2六歩","text":"最新だわん","eval_cp":-40,"mate":null,"best":null,"source":"ai","highlight":null,"at":"2026-10-21T00:00:03.000Z"}}}""")
+        assertEquals("最新だわん", ShogiLogic.latestCommentary(r.game!!)?.text)
+        assertEquals(-40.0, ShogiLogic.latestCommentary(r.game!!)?.evalCp!!, 0.0)
+        // `commentary: null` (none yet).
+        assertNull(ShogiLogic.latestCommentary(ApiJson.decodeFromString<ShogiReply>("""{"game":{"id":12,"commentary":null}}""").game!!))
+        // An ended game: the last of `commentaries`.
+        val ended = ApiJson.decodeFromString<ShogiReply>("""{"game":{"id":9,"status":"ended","ply":3,"commentary":null,"commentaries":[
+            {"game_id":9,"ply":1,"move_label":"▲7六歩","text":"一","eval_cp":10,"source":"template","at":"2026-10-21T00:00:01.000Z"},
+            {"game_id":9,"ply":3,"move_label":"▲2六歩","text":"三","eval_cp":9999,"mate":"black","source":"template","at":"2026-10-21T00:00:03.000Z"},
+            {"game_id":9,"ply":2,"move_label":"△3四歩","text":"二","eval_cp":0,"source":"ai","at":"2026-10-21T00:00:02.000Z"}]}}""").game!!
+        assertEquals("三", ShogiLogic.latestCommentary(ended)?.text)
+        assertEquals("black", ShogiLogic.latestCommentary(ended)?.mate)
+    }
+
+    @Test fun capabilitiesCommentary() {
+        val on = ApiJson.decodeFromString<Capabilities>("""{"features":{"shogi":{"enabled":true,"bridge_version":1,"commentary":true}}}""")
+        assertTrue(on.shogiCommentary)
+        val old = ApiJson.decodeFromString<Capabilities>("""{"features":{"shogi":{"enabled":true,"bridge_version":1}}}""")
+        assertFalse(old.shogiCommentary)
+    }
+
+    @Test fun commentaryMessageForTheBoard() {
+        val c = ShogiLogic.parseCommentaryEvent(cmt(5, "だわん", "ai"))!!
+        val msg = ShogiLogic.commentaryMessage(c)
+        assertEquals("commentary", (msg["type"] as JsonPrimitive).content)
+        assertEquals("だわん", (msg["text"] as JsonPrimitive).content)
+        assertEquals("120", (msg["eval_cp"] as JsonPrimitive).content) // a whole number, as the server sent it
+        assertEquals("5", (msg["ply"] as JsonPrimitive).content)
+        assertEquals("▲7六歩", (msg["move_label"] as JsonPrimitive).content)
+        assertEquals(kotlinx.serialization.json.JsonNull, msg["mate"])
+        // No commentary (yet / any more): text null = no band.
+        val none = ShogiLogic.commentaryMessage(null)
+        assertEquals(kotlinx.serialization.json.JsonNull, none["text"])
+        assertEquals(setOf("type", "text"), none.keys)
+        // Mate line, no eval.
+        val mate = ShogiLogic.commentaryMessage(c.copy(evalCp = null, mate = "white"))
+        assertEquals(kotlinx.serialization.json.JsonNull, mate["eval_cp"])
+        assertEquals("white", (mate["mate"] as JsonPrimitive).content)
+        // Goes through receiveScript as one string literal (quotes escaped).
+        val js = ShogiLogic.receiveScript(ShogiLogic.commentaryMessage(c.copy(text = "\"</script>\"")))
+        assertTrue(js.startsWith("window.shogiBoard&&window.shogiBoard.receive(\""))
+        val inner = kotlinx.serialization.json.Json.parseToJsonElement(js.removePrefix("window.shogiBoard&&window.shogiBoard.receive(").removeSuffix(");"))
+        val back = kotlinx.serialization.json.Json.parseToJsonElement((inner as JsonPrimitive).content).jsonObject
+        assertEquals("\"</script>\"", (back["text"] as JsonPrimitive).content)
+    }
+
+    @Test fun boardFeatures() {
+        assertTrue(ShogiLogic.boardHasCommentary("""["commentary"]"""))
+        assertTrue(ShogiLogic.boardHasCommentary("""["x","commentary"]"""))
+        assertFalse(ShogiLogic.boardHasCommentary("null")) // an older board
+        assertFalse(ShogiLogic.boardHasCommentary("[]"))
+        assertFalse(ShogiLogic.boardHasCommentary(null))
+        assertFalse(ShogiLogic.boardHasCommentary("\"commentary\""))
+    }
+
+    @Test fun stateMessageLeavesCommentaryAlone() {
+        // The state never carries `commentary` (the board keeps the band it has).
+        val st = ShogiLogic.stateMessage(ShogiLogic.INITIAL_SFEN, "black", true, null, "black", false, true, false, "light", null, null, hideBand = true)
+        assertFalse(st.containsKey("commentary"))
+    }
 }

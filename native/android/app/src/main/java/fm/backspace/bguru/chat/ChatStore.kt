@@ -144,7 +144,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             room = Capabilities.RoomFeatures(enabled = withRoom),
             jukebox = Capabilities.JukeboxFeatures(enabled = true),
             neta = Capabilities.NetaFeatures(enabled = true, path = "/api/agent/neta", site = "https://neta.backspace.fm"),
-            shogi = if (!withShogi) null else Capabilities.ShogiFeatures(enabled = true, path = "/api/agent/shogi", boardUrl = "/shogi-board/index.html", bridgeVersion = 1, play = true, beagle = true),
+            shogi = if (!withShogi) null else Capabilities.ShogiFeatures(enabled = true, path = "/api/agent/shogi", boardUrl = "/shogi-board/index.html", bridgeVersion = 1, play = true, beagle = true, commentary = true),
             minigame = if (!withMinigame) null else Capabilities.MinigameFeatures(enabled = true, path = "/api/agent/minigame", gameUrl = "/minigame/index.html", bridgeVersion = 1, play = true),
         ))
         // ☗ 将棋: sample games (one in progress against me, one to watch) and the chat's game card.
@@ -271,6 +271,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             }
             "room" -> room.apply(ev.data)
             "shogi" -> if (shogi.enabled) shogi.apply(ev.data)
+            "shogi_commentary" -> if (shogi.enabled) shogi.applyCommentary(ev.data) // ☗ ビーグルの実況 (the board's band)
             "minigame" -> if (minigame.enabled) minigame.onStreamEvent(ev.data)
             "voice" -> runCatching { ApiJson.decodeFromString<VoiceRoomInfo>(ev.data) }.getOrNull()?.let(voice::apply)
             "chat" -> {

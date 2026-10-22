@@ -112,6 +112,8 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         /** ビーグル戦 (practice against the beagle): POST games { mode, opponent: "beagle" }. */
         val beagle: Boolean? = null,
         val timeControls: List<ShogiTimeControl> = emptyList(),
+        /** ビーグルの実況 (stream `shogi_commentary`, GET games/{id} `commentary`). Absent on older servers. */
+        val commentary: Boolean? = null,
     )
     @Serializable data class ShogiTimeControl(val mode: String, val label: String = "", val initialMs: Long = 0, val byoyomiMs: Long = 0)
     /** 「ネタ帳に送る」: the article a post links to → BS ネタ帳 (public site). Needs the post scope. */
@@ -190,6 +192,8 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val minigameGameUrl get() = features?.minigame?.gameUrl?.takeIf { it.startsWith("/minigame/") && !it.contains("..") } ?: "/minigame/index.html"
     /** 🐶 ビーグルと対局 (practice) is offered. */
     val shogiBeagle get() = canPlayShogi && (features?.shogi?.beagle ?: false)
+    /** ビーグルの実況 is on for this member (older servers: absent = off; the app still shows any that arrive). */
+    val shogiCommentary get() = shogiEnabled && (features?.shogi?.commentary ?: false)
     /** Only paths on our own server (the request carries the token). */
     val shogiPath get() = features?.shogi?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/shogi"
     /** The board page (no token, no cookies): only under /shogi-board/ on our own server. */
@@ -410,6 +414,10 @@ data class ShogiGame(
     val moves: List<ShogiMove>? = null,
     val kifUrl: String? = null,
     val myColor: String? = null,
+    /** GET games/{id} only, for members with ビーグルの実況: the newest one (null = none yet). */
+    val commentary: ShogiCommentary? = null,
+    /** GET games/{id} of an ended game: one per move that has one. */
+    val commentaries: List<ShogiCommentary>? = null,
 ) {
     val isActive get() = status == "active"
     val isEnded get() = status == "ended" || status == "closed"
@@ -429,3 +437,22 @@ data class ShogiGame(
 )
 /** The stream's `event: shogi` (apps get `{ action, game }`). */
 @Serializable data class ShogiEvent(val action: String = "state", val game: ShogiGame? = null)
+
+/** ビーグルの実況, one move (ShogiCommentaryDto in src/lib/shogi-types.ts). The same move comes again
+ *  when the AI's text replaces the template's (`source` template → ai): the later one wins. */
+@androidx.compose.runtime.Immutable
+@Serializable data class ShogiCommentary(
+    val gameId: Long = 0,
+    val ply: Int = 0,
+    val moveLabel: String = "",
+    val text: String? = null,
+    /** From ☗'s side (歩 = 100; a mate line ±9999); null when it could not be read. */
+    val evalCp: Double? = null,
+    val mate: String? = null,
+    val best: ShogiLastMove? = null,
+    val source: String = "template",
+    val highlight: String? = null,
+    val at: String = "",
+)
+/** The stream's `event: shogi_commentary` (apps get `{ game_id, commentary }`). */
+@Serializable data class ShogiCommentaryEvent(val gameId: Long = 0, val commentary: ShogiCommentary? = null)

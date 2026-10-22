@@ -58,6 +58,69 @@ object ShogiLogic {
         }
     }
 
+    // MARK: ビーグルの実況 (docs/shogi-spec.md「ビーグルの実況」)
+
+    /** `event: shogi_commentary` data (`{ game_id, commentary }`) → the commentary (null when unusable). */
+    fun parseCommentaryEvent(data: String): ShogiCommentary? {
+        val e = runCatching { ApiJson.decodeFromString<ShogiCommentaryEvent>(data) }.getOrNull() ?: return null
+        val c = e.commentary ?: return null
+        if (e.gameId > 0 && c.gameId > 0 && e.gameId != c.gameId) return null
+        val id = if (c.gameId > 0) c.gameId else e.gameId
+        if (id <= 0 || c.text == null || c.ply < 0) return null
+        return c.copy(gameId = id)
+    }
+
+    /** Keep the newest commentary per game. An older move never replaces a newer one; the same move
+     *  comes again when the AI's text replaces the template's (or the end of the game rewrites it):
+     *  the later one (`at`, else the one arriving) wins. */
+    fun mergeCommentary(map: Map<Long, ShogiCommentary>, c: ShogiCommentary): Map<Long, ShogiCommentary> {
+        if (c.gameId <= 0 || c.text == null) return map
+        val cur = map[c.gameId]
+        if (cur != null) {
+            if (cur.ply > c.ply) return map
+            if (cur.ply == c.ply) {
+                val a = parseInstant(cur.at); val b = parseInstant(c.at)
+                if (a != null && b != null && a > b) return map
+            }
+        }
+        return map + (c.gameId to c)
+    }
+
+    /** The newest commentary GET games/{id} brought (`commentary`, or the last of an ended game's `commentaries`). */
+    fun latestCommentary(g: ShogiGame): ShogiCommentary? =
+        (listOfNotNull(g.commentary) + (g.commentaries ?: emptyList()))
+            .filter { it.text != null }
+            .map { if (it.gameId > 0) it else it.copy(gameId = g.id) }
+            .filter { it.gameId == g.id }
+            .fold(null as ShogiCommentary?) { best, c ->
+                if (best == null) c else mergeCommentary(mapOf(best.gameId to best), c)[c.gameId]
+            }
+
+    /** The board's `{ type: "commentary", ... }` (the band under the board); null → `text: null` (no band). */
+    fun commentaryMessage(c: ShogiCommentary?): JsonObject = buildJsonObject {
+        put("type", "commentary")
+        if (c?.text == null) { put("text", null as String?); return@buildJsonObject }
+        put("game_id", c.gameId)
+        put("ply", c.ply)
+        put("move_label", c.moveLabel)
+        put("text", c.text)
+        val ev = c.evalCp
+        if (ev != null && ev.isFinite()) {
+            if (ev == Math.rint(ev) && kotlin.math.abs(ev) < 1e9) put("eval_cp", ev.toLong()) else put("eval_cp", ev)
+        } else put("eval_cp", null as String?)
+        if (c.mate == "black" || c.mate == "white") put("mate", c.mate) else put("mate", null as String?)
+        put("source", c.source)
+    }
+
+    /** `window.shogiBoard.features` (as evaluateJavascript returns it) has "commentary": this board draws the band. */
+    fun boardHasCommentary(featuresJson: String?): Boolean {
+        val arr = runCatching { ApiJson.parseToJsonElement(featuresJson ?: return false) }.getOrNull() as? kotlinx.serialization.json.JsonArray ?: return false
+        return arr.any { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.content == "commentary" }
+    }
+
+    /** Asks the board what it can do (the result is a JSON array, or null on an older board). */
+    const val FEATURES_SCRIPT = "(window.shogiBoard&&Array.isArray(window.shogiBoard.features))?window.shogiBoard.features:null"
+
     fun parseInstant(iso: String?): Long? = iso?.takeIf { it.isNotBlank() }?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
 
     /** Server clock − this device's clock (ms); `prev` when the server time is missing. */

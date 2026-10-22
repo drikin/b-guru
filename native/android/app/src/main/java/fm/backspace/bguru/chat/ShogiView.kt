@@ -441,6 +441,8 @@ private fun GameView(store: ChatStore, g: ShogiGame, visible: Boolean, boardMax:
         stateEpoch = shogi.boardEpoch,
         topLabel = topLabel,
         bottomLabel = bottomLabel,
+        // ビーグルの実況: the band under the board (inside max_height: the chat keeps its room).
+        commentary = shogi.commentaryFor(g.id),
         onMove = { usi, label -> if (canMove) shogi.move(g.id, usi, label, g.ply) },
         onFlip = { flip = it },
         modifier = Modifier.fillMaxWidth(),
@@ -466,6 +468,8 @@ private class BoardHost {
     @Volatile var allowed = false
     var ready by mutableStateOf(false)
     var heightCss by mutableIntStateOf(0)
+    /** This board page draws ビーグルの実況 (`window.shogiBoard.features` has "commentary"). */
+    var commentary by mutableStateOf(false)
     var onMessage: (ShogiLogic.BoardOut) -> Unit = {}
 
     fun send(msg: JsonObject) {
@@ -537,6 +541,7 @@ private fun ShogiBoardWeb(
     available: Int,
     topLabel: String,
     bottomLabel: String,
+    commentary: ShogiCommentary?,
     onMove: (String, String) -> Unit,
     onFlip: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -545,6 +550,7 @@ private fun ShogiBoardWeb(
     val flipNow by rememberUpdatedState(onFlip)
     val stateNow by rememberUpdatedState(ShogiLogic.withMaxHeight(state, maxHeight))
     val labelsNow by rememberUpdatedState(topLabel to bottomLabel)
+    val commentaryNow by rememberUpdatedState(commentary)
     val base = remember { Uri.parse(Net.BASE) }
 
     host.onMessage = { m ->
@@ -552,6 +558,11 @@ private fun ShogiBoardWeb(
             ShogiLogic.BoardOut.Ready -> {
                 host.ready = true
                 host.send(withLabels(stateNow, labelsNow))
+                // A new page (first load, a recreated WebView, rotation): ask what it can do, then give it
+                // the newest commentary. An older board has no `features`: it never gets the message.
+                host.web?.evaluateJavascript(ShogiLogic.FEATURES_SCRIPT) { r ->
+                    host.commentary = host.ready && ShogiLogic.boardHasCommentary(r)
+                }
             }
             is ShogiLogic.BoardOut.Move -> moveNow(m.usi, m.label)
             is ShogiLogic.BoardOut.Haptic -> host.web?.let { haptic(it, m.kind) }
@@ -565,6 +576,10 @@ private fun ShogiBoardWeb(
     // State: on every change (and after a refused move); labels (clock) every second, separately.
     LaunchedEffect(state, stateEpoch, maxHeight, host.ready) { if (host.ready) host.send(withLabels(stateNow, labelsNow)) }
     LaunchedEffect(topLabel, bottomLabel, host.ready) { if (host.ready) host.send(ShogiLogic.labelsMessage(topLabel, bottomLabel)) }
+    // ビーグルの実況: its own message (it does not drop the board's 「送信中」 move); text null = no band.
+    LaunchedEffect(commentary, host.commentary, host.ready) {
+        if (host.ready && host.commentary) host.send(ShogiLogic.commentaryMessage(commentaryNow))
+    }
 
     val url = remember(boardUrl) {
         Uri.parse(Net.BASE + boardUrl).buildUpon()
@@ -610,6 +625,7 @@ private fun ShogiBoardWeb(
                     override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
                         host.allowed = isBoard(url?.let(Uri::parse))
                         host.ready = false
+                        host.commentary = false
                     }
 
                     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse {
@@ -628,6 +644,7 @@ private fun ShogiBoardWeb(
         onRelease = { w ->
             host.allowed = false
             host.ready = false
+            host.commentary = false
             host.web = null
             w.stopLoading()
             w.removeJavascriptInterface("ShogiBridge")

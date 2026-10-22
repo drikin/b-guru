@@ -47,6 +47,13 @@ class ShogiStore(private val api: ApiClient, context: Context) {
     /** Bumped when a notification / the chat card asks for the shogi screen (MainScreen shows the chat page). */
     var revealTick by mutableIntStateOf(0); private set
 
+    /** ビーグルの実況: the newest per game (stream `shogi_commentary` + GET games/{id}). Shown in the board's band. */
+    var commentaries by mutableStateOf<Map<Long, ShogiCommentary>>(emptyMap()); private set
+    /** capabilities.features.shogi.commentary (informational: any commentary that arrives is shown). */
+    var commentaryOn by mutableStateOf(false); private set
+
+    fun commentaryFor(id: Long): ShogiCommentary? = commentaries[id]
+
     var confirmMove by mutableStateOf(prefs.getBoolean("confirmMove", false)); private set
     var moveHints by mutableStateOf(prefs.getBoolean("moveHints", true)); private set
 
@@ -61,8 +68,9 @@ class ShogiStore(private val api: ApiClient, context: Context) {
         enabled = on
         canPlay = caps?.canPlayShogi == true
         beagle = caps?.shogiBeagle == true
+        commentaryOn = caps?.shogiCommentary == true
         caps?.let { basePath = it.shogiPath; boardUrl = it.shogiBoardUrl }
-        if (!on) { open = false; selectedId = null; detail = null; games = emptyList(); return }
+        if (!on) { open = false; selectedId = null; detail = null; games = emptyList(); commentaries = emptyMap(); return }
         load()
     }
 
@@ -113,6 +121,8 @@ class ShogiStore(private val api: ApiClient, context: Context) {
                 if (selectedId != id) return@launch
                 detail = g
                 games = ShogiLogic.upsert(games, g)
+                // The newest commentary (opened mid-game, reloaded, reconnected); older servers send none.
+                ShogiLogic.latestCommentary(g)?.let { commentaries = ShogiLogic.mergeCommentary(commentaries, it) }
                 skew = ShogiLogic.skewOf(g.serverNow, System.currentTimeMillis(), skew)
             } catch (e: CancellationException) {
                 throw e
@@ -124,6 +134,12 @@ class ShogiStore(private val api: ApiClient, context: Context) {
     fun apply(data: String) {
         val e = ShogiLogic.parseEvent(data) ?: return
         applyGame(e.action, e.game!!)
+    }
+
+    /** The stream's `event: shogi_commentary` (only members with ビーグルの実況 get it). */
+    fun applyCommentary(data: String) {
+        val c = ShogiLogic.parseCommentaryEvent(data) ?: return
+        commentaries = ShogiLogic.mergeCommentary(commentaries, c)
     }
 
     private fun applyGame(action: String, g: ShogiGame) {
@@ -318,6 +334,14 @@ class ShogiStore(private val api: ApiClient, context: Context) {
         // One live game at a time (site-wide): the scenario picks which.
         val live = when (scenario) { "watch" -> 13L; "offer" -> 14L; "open" -> 15L; "none" -> -1L; else -> 12L }
         games = all.filter { it.isEnded || it.id == live }
+        // ビーグルの実況 on the two games in play (the band under the board).
+        commentaryOn = true
+        commentaries = mapOf(
+            12L to ShogiCommentary(12, 4, "△8四歩", "☖mazzoさんは飛車先を伸ばしたわん。☗ドリキンさんの次は2五歩が自然だわん。",
+                evalCp = 35.0, best = ShogiLastMove("2f2e", "▲2五歩"), source = "ai", at = now.toString()),
+            13L to ShogiCommentary(13, 5, "▲4五角打", "☗takutoさんの角打ちで両取りの形だわん！☖cobanさんは受けが難しいわん。",
+                evalCp = 820.0, best = ShogiLastMove("8b8a", "△8一飛"), source = "ai", highlight = "reversal", at = now.toString()),
+        )
     }
 
     /** The game the demo's chat card shows (the live one when it is in play). */
@@ -335,6 +359,22 @@ class ShogiStore(private val api: ApiClient, context: Context) {
             moves = (g.moves ?: emptyList()) + ShogiMove(g.ply + 1, usi, label, next))
         games = ShogiLogic.upsert(games, ng)
         if (detail?.id == id) detail = ng
+        demoCommentary(ng, label)
+    }
+
+    /** Demo: the server's order — the template's text at once, the AI's text for the same move a little later. */
+    private fun demoCommentary(g: ShogiGame, label: String) {
+        val ply = g.ply
+        val prev = commentaries[g.id]?.evalCp ?: 0.0
+        val ev = prev + if (ply % 2 == 1) 60.0 else -40.0
+        val mark = label.ifBlank { "${ply}手目" }
+        commentaries = ShogiLogic.mergeCommentary(commentaries, ShogiCommentary(g.id, ply, label, "${mark}。形勢はほぼ互角だわん。",
+            evalCp = ev, source = "template", at = Instant.now().toString()))
+        scope.launch {
+            kotlinx.coroutines.delay(1_500)
+            commentaries = ShogiLogic.mergeCommentary(commentaries, ShogiCommentary(g.id, ply, label,
+                "${mark}は落ち着いた一手だわん。ここから駒がぶつかりそうだわん（デモ）。", evalCp = ev, source = "ai", at = Instant.now().toString()))
+        }
     }
 
     /** Demo: an active game against the beagle (it does not move in the demo: it keeps 「考え中」). */
