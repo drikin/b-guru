@@ -34,9 +34,9 @@ if [ "${SKIP_ORIENTATION:-0}" != "1" ]; then
     echo "ORIENTATION CHECK FAILED: a screen is drawn upside down (see $ORIENT_OUT). Not releasing." >&2
     exit 1
   fi
-  # Freeze guard (2026-10-21: the panel froze opening a thread with many replies): open a demo thread with
-  # 300 replies, scroll it to the top and back, close and reopen it; fails if the main thread stops answering
-  # for 5 s. Same build, same offline demo, nothing sent.
+  # Freeze guard (2026-10-21/22: the panel froze with a thread open): refresh the timeline 10 times with a thread
+  # open (list at the top / scrolled down, short / long thread), then open a thread with 300 replies, scroll it to
+  # the top and back, close and reopen it; fails if the main thread stops answering for 5 s. Offline demo, nothing sent.
   echo "=== 0/6 long-thread check (Debug, offline demo) ==="
   THREAD_OUT="$HOME/Library/Containers/fm.backspace.bguru.chat/Data/tmp/threadcheck"
   if ! "$ROOT/build/orient/Build/Products/Debug/B-guru Chat.app/Contents/MacOS/B-guru Chat" \

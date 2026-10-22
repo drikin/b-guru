@@ -116,7 +116,7 @@ struct TimelineScreen: View {
             if needsReconnect {
                 ReconnectBanner(onReconnect: onReconnect, onClose: { needsReconnect = false })
             }
-            TimelinePostList(timeline: timeline, capabilities: capabilities, threadOpen: macThread != nil,
+            TimelinePostList(timeline: timeline, capabilities: capabilities, threadOpen: macThread != nil || !path.isEmpty,
                              open: open, viewing: $viewing)
         }
     }
@@ -135,20 +135,29 @@ private struct TimelinePostList: View {
     @State private var atTop = true
     /// Posts that arrived above while reading further down.
     @State private var newAbove = 0
+    /// While a thread is open over the list: the posts as they were when it opened. The list
+    /// under the thread stays built (coming back returns to the same place) but is not changed
+    /// while it cannot be seen; what came in meanwhile shows when the thread is closed.
+    /// A refresh that reordered the hidden lazy list under an open thread (a post with a new
+    /// reply moving to the top) spun the Mac's main thread at 99 % for good — SwiftUI kept
+    /// updating the hidden list's items (LazyLayoutViewCache.updateItemPhases) and never
+    /// finished (drikin's hangs.log, 0.3.44, 2026-10-22).
+    @State private var frozen: [Post]?
+    private var posts: [Post] { frozen ?? timeline.posts }
 
     var body: some View {
         ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 TimelineTopSentinel(atTop: $atTop)
-                if timeline.posts.isEmpty {
+                if posts.isEmpty {
                     Text(timeline.hasLoaded ? (timeline.failed ? "読み込めませんでした。引っ張って再読み込み" : "まだ投稿がありません") : "読み込み中…")
                         .font(.callout).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity).padding(.top, 40)
                 }
                 let canReact = capabilities?.canReactPosts ?? false
-                let lastId = timeline.posts.last?.id
-                ForEach(timeline.posts) { post in
+                let lastId = posts.last?.id
+                ForEach(posts) { post in
                     Button { open(post.id) } label: {
                         PostRow(post: post, clubName: timeline.clubName(post.club),
                                 canReact: canReact,
@@ -172,9 +181,12 @@ private struct TimelinePostList: View {
         .scrollDismissesKeyboard(.immediately)
         .dismissesKeyboardOnTap()
         // Reading further down: a way back to the newest, like the chat's (drikin 2026-10-19).
-        .onChange(of: timeline.posts.map(\.id)) { old, new in
+        .onChange(of: posts.map(\.id)) { old, new in
             guard !atTop, let first = old.first, let i = new.firstIndex(of: first) else { return }
-            newAbove += new[..<i].filter { id in timeline.posts.first { $0.id == id }?.isAuthor != true }.count
+            newAbove += new[..<i].filter { id in posts.first { $0.id == id }?.isAuthor != true }.count
+        }
+        .onChange(of: threadOpen, initial: true) { _, open in
+            frozen = open ? timeline.posts : nil
         }
         .onChange(of: atTop) { _, top in if top { newAbove = 0 } }
         .overlay(alignment: .bottomTrailing) {

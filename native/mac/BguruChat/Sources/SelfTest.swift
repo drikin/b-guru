@@ -262,6 +262,7 @@ extension SelfTest {
             var report: [String: Any] = ["replies": TimelineStore.demoLongThreadReplies, "limit_s": limit]
             let timeline = TimelineStore(api: APIClient(token: "demo"))
             timeline.debugLoadDemo()
+            timeline.debugFill(to: 30) // a full first page, as the server sends
             let pin = PinState()
             pin.windowVisible = true
             let host = NSHostingView(rootView: MainPanelView(store: store, timeline: timeline, pin: pin, onClose: {}, onSignOut: {}, initialTab: .timeline))
@@ -288,13 +289,54 @@ extension SelfTest {
                 try? rep.representation(using: .png, properties: [:])?.write(to: dir.appendingPathComponent("thread-\(name).png"))
             }
             /// The tallest scroll view: the open thread (the timeline under it has a few posts).
-            @MainActor func threadScroll() -> NSScrollView? {
+            @MainActor func threadScroll(excluding: NSScrollView? = nil) -> NSScrollView? {
                 var all: [NSScrollView] = []
                 func walk(_ v: NSView) { if let s = v as? NSScrollView { all.append(s) }; v.subviews.forEach(walk) }
                 walk(host)
-                return all.filter { !$0.isHidden && $0.alphaValue > 0 }.max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
+                return all.filter { !$0.isHidden && $0.alphaValue > 0 && $0 !== excluding }
+                    .max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
             }
 
+            // 1) The minute's refresh while a thread is open (drikin 2026-10-22, 0.3.44: a thread with 4
+            //    replies open, the timeline refreshed, and the panel spun at 99 % CPU for good). With the
+            //    list at the top and scrolled down, a short and the long thread, 10 refreshes each.
+            var refreshRounds = 0
+            for (scrolled, thread) in [(false, 3), (true, 3), (true, TimelineStore.demoLongThreadId)] {
+                NotificationCenter.default.post(name: .timelineBack, object: nil)
+                try? await Task.sleep(for: .milliseconds(400))
+                if let list = threadScroll(), let d = list.documentView {
+                    let clip = list.contentView
+                    let y: CGFloat = scrolled ? d.frame.height / 2 : 0
+                    clip.scroll(to: NSPoint(x: 0, y: d.isFlipped ? y : max(0, d.frame.height - clip.bounds.height - y)))
+                    list.reflectScrolledClipView(clip)
+                }
+                try? await Task.sleep(for: .milliseconds(400))
+                watch.step = "open thread \(thread) (list \(scrolled ? "scrolled down" : "at the top"))"
+                timeline.openThread = thread
+                try? await Task.sleep(for: .milliseconds(1200))
+                // What the member does in the thread around each refresh (a click there also makes the
+                // app active, which refreshes the timeline): a picture, the reply box, a reaction.
+                let actions = ["none", "image", "none", "closeImage", "focus", "type", "react", "clear", "image", "closeImage"]
+                for r in 0..<10 {
+                    let action = actions[r % actions.count]
+                    watch.step = "refresh \(r) after \(action), thread \(thread) open (list \(scrolled ? "scrolled down" : "at the top"))"
+                    NotificationCenter.default.post(name: .debugThreadAction, object: action)
+                    try? await Task.sleep(for: .milliseconds(150))
+                    timeline.debugRefresh(round: refreshRounds)
+                    refreshRounds += 1
+                    try? await Task.sleep(for: .milliseconds(600))
+                }
+                NotificationCenter.default.post(name: .debugThreadAction, object: "closeImage")
+            }
+            report["refreshes_with_thread_open"] = refreshRounds
+            NotificationCenter.default.post(name: .timelineBack, object: nil)
+            try? await Task.sleep(for: .milliseconds(400))
+            if let list = threadScroll() { list.contentView.scroll(to: .zero); list.reflectScrolledClipView(list.contentView) }
+            try? await Task.sleep(for: .milliseconds(800))
+            shot("after-refreshes")
+
+            // 2) A long thread: open, scroll, close, reopen.
+            let timelineList = threadScroll() // the list under the thread (not the one to scroll)
             let t0 = Date()
             watch.step = "open thread"
             timeline.openThread = TimelineStore.demoLongThreadId
@@ -302,7 +344,7 @@ extension SelfTest {
             var scroll: NSScrollView?
             while Date().timeIntervalSince(t0) < 10 {
                 try? await Task.sleep(for: .milliseconds(50))
-                if let s = threadScroll(), (s.documentView?.frame.height ?? 0) > 3000 { scroll = s; break }
+                if let s = threadScroll(excluding: timelineList), (s.documentView?.frame.height ?? 0) > 3000 { scroll = s; break }
             }
             report["open_ms"] = Int(Date().timeIntervalSince(t0) * 1000)
             guard let scroll, let doc = scroll.documentView else {
@@ -370,7 +412,7 @@ extension SelfTest {
             try? await Task.sleep(for: .milliseconds(1500))
             shot("reopened")
             // Opening shows the newest reply at the bottom (where it lands, not a failure by itself).
-            if let s = threadScroll(), let d = s.documentView {
+            if let s = threadScroll(excluding: timelineList), let d = s.documentView {
                 let visible = s.contentView.bounds
                 let bottomGap = d.isFlipped ? d.frame.height - visible.maxY : visible.minY
                 report["reopened_bottom_gap"] = Int(bottomGap)
@@ -382,7 +424,7 @@ extension SelfTest {
             watch.stop()
             report["longest_stall_ms"] = Int(watch.longest * 1000)
             report["ok"] = true
-            print("[thread-check] ok   \(TimelineStore.demoLongThreadReplies) replies: opened in \(report["open_ms"] ?? 0) ms, \(steps) scroll steps in \(report["scroll_ms"] ?? 0) ms, longest main-thread stall \(Int(watch.longest * 1000)) ms")
+            print("[thread-check] ok   \(refreshRounds) refreshes with a thread open; \(TimelineStore.demoLongThreadReplies) replies: opened in \(report["open_ms"] ?? 0) ms, \(steps) scroll steps in \(report["scroll_ms"] ?? 0) ms, longest main-thread stall \(Int(watch.longest * 1000)) ms")
             write(report, dir)
             fflush(stdout)
             exit(0)

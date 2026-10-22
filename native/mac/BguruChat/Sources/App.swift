@@ -150,11 +150,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 if CommandLine.arguments.contains("-demoTimelineTab") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.panel?.pin.tab = .timeline }
                 }
-                // -demoOpenThread: the timeline with the long demo thread open (-demoReplies N replies).
-                if CommandLine.arguments.contains("-demoOpenThread") {
+                // -demoOpenThread [ID]: the timeline with a thread open (default the long demo thread, -demoReplies N replies).
+                if let i = CommandLine.arguments.firstIndex(of: "-demoOpenThread") {
+                    let id = i + 1 < CommandLine.arguments.count ? Int(CommandLine.arguments[i + 1]) : nil
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                         self.panel?.pin.tab = .timeline
-                        timeline.openThread = TimelineStore.demoLongThreadId
+                        timeline.openThread = id ?? TimelineStore.demoLongThreadId
+                    }
+                }
+                // -demoActivateEvery S: the app loses and regains focus every S seconds (a click elsewhere and back).
+                if let i = CommandLine.arguments.firstIndex(of: "-demoActivateEvery"), i + 1 < CommandLine.arguments.count,
+                   let every = Double(CommandLine.arguments[i + 1]) {
+                    var on = true
+                    Timer.scheduledTimer(withTimeInterval: every, repeats: true) { _ in
+                        MainActor.assumeIsolated {
+                            on.toggle()
+                            HangWatch.note("demo \(on ? "activate" : "deactivate")")
+                            if on { NSApp.activate(ignoringOtherApps: true); self.showPanel() } else { NSApp.deactivate() }
+                        }
+                    }
+                }
+                // -demoRefreshEvery S: the minute's refresh, every S seconds, with changes (TimelineStore.debugRefresh).
+                if let i = CommandLine.arguments.firstIndex(of: "-demoRefreshEvery"), i + 1 < CommandLine.arguments.count,
+                   let every = Double(CommandLine.arguments[i + 1]) {
+                    var round = 0
+                    Timer.scheduledTimer(withTimeInterval: every, repeats: true) { _ in
+                        MainActor.assumeIsolated {
+                            HangWatch.note("demo refresh \(round)")
+                            timeline.debugRefresh(round: round)
+                            round += 1
+                        }
                     }
                 }
             }

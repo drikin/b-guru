@@ -53,14 +53,16 @@ native/ios/scripts/orientation-check.sh [UDID]
 デモの後片付け（`panelNarrowed20261019`・`jukebox.*` の設定、シミュレータの外観）はスクリプトがする。
 
 ## 長いスレッドのチェック（リリースの前に）
-返信の多いスレッドを開くとパネルが固まる報告（2026-10-21）を受けて、デモの 300 件の返信つきスレッドを開き、
-開いている途中からスクロール・上まで・下へ戻る・閉じてもう一度開く、を通して、メインスレッドが 5 秒以上応答しなければ失敗にする。
+スレッドを開いているとパネルが固まる報告（2026-10-21・22）を受けて、まずスレッドを開いたままタイムラインの再読み込みを
+10 回（新しい返信で投稿が上に移る・既読やリアクションが変わる・新しい投稿が来る。一覧は上／下へ読み進めた所、短い／長いスレッド、
+その間に写真・返信欄・リアクション）、次にデモの 300 件の返信つきスレッドを開き、開いている途中からスクロール・上まで・下へ戻る・
+閉じてもう一度開く、を通して、メインスレッドが 5 秒以上応答しなければ失敗にする。
 ```bash
 "build/dd/Build/Products/Debug/B-guru Chat.app/Contents/MacOS/B-guru Chat" \
   -selftest ~/Library/Containers/fm.backspace.bguru.chat/Data/tmp/threadcheck -demo -threadCheck [-demoReplies 300] [-threadSize 300x320]
 native/ios/scripts/thread-check.sh [UDID] [返信の数]     # iPhone（シミュレータ）
 ```
-release.sh（0/6）と testflight.sh が上下反転のチェックと一緒に回す。手で開くとき: `-demoPanel -demoOpenThread [-demoReplies N]`
+release.sh（0/6）と testflight.sh が上下反転のチェックと一緒に回す。手で開くとき: `-demoPanel -demoPosts 30 -demoOpenThread [ID] [-demoReplies N] [-demoRefreshEvery 秒] [-demoActivateEvery 秒]`
 （絵はアプリ内で描く。`BGURU_DEMO_MEDIA=http://127.0.0.1:PORT` で手元のサーバーから遅れて届く絵にもできる）。
 
 ## フリーズの記録

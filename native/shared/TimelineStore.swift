@@ -224,7 +224,53 @@ final class TimelineStore {
                  unread: false, unreadReplies: 30),
         ]
         clubs = ["chat": "雑談", "pet": "ペット部", "apple": "リンゴ部", "improve": "機能改善"]
+        // -demoPosts N / BGURU_DEMO_POSTS=N: a full first page (the server sends 30).
+        let want = CommandLine.arguments.firstIndex(of: "-demoPosts").flatMap { i in i + 1 < CommandLine.arguments.count ? Int(CommandLine.arguments[i + 1]) : nil }
+            ?? ProcessInfo.processInfo.environment["BGURU_DEMO_POSTS"].flatMap(Int.init) ?? 0
+        debugFill(to: want)
         hasLoaded = true
+    }
+
+    /// Dev only: made-up posts after the sample ones, up to `n`.
+    func debugFill(to n: Int) {
+        guard n > posts.count else { return }
+        posts += TimelineStore.debugDemoReplies(root: 0, count: n - posts.count).enumerated().map { i, r in
+            var p = r
+            p.id = 20_000 + i
+            p.parentId = nil
+            p.replyCount = i % 4
+            p.club = ["chat", "pet", "apple", "improve"][i % 4]
+            p.unread = i % 5 == 0
+            p.unreadReplies = i % 7 == 0 ? 1 : nil
+            return p
+        }
+    }
+
+    /// Dev only: what a minute's refresh does to the list (the Mac froze when one came with a
+    /// thread open, 2026-10-22). Round by round: the same posts as fresh values, one post
+    /// moved to the top with a new reply, read marks and reactions changed, counts changed.
+    func debugRefresh(round: Int) {
+        var p = posts
+        guard !p.isEmpty else { return }
+        switch round % 4 {
+        case 0: // someone replied to a post further down: it moves to the top
+            let i = min(p.count - 1, 3 + round % max(1, p.count - 3))
+            var moved = p.remove(at: i)
+            moved.replyCount = (moved.replyCount ?? 0) + 1
+            moved.unreadReplies = (moved.unreadReplies ?? 0) + 1
+            p.insert(moved, at: 0)
+        case 1: // read marks and reactions from another device
+            for j in p.indices where j % 3 == round % 3 { p[j].unread = !(p[j].unread ?? false) }
+            if var r = p[0].reactions, !r.isEmpty { r[0].count += 1; p[0].reactions = r } else { p[0].reactions = [Reaction(emoji: "👍", count: 1, mine: false, reactors: [])] }
+        case 2: // a new post on top, the oldest falls off the first page
+            let id = 30_000 + round
+            p.insert(Post(id: id, authorId: "n", authorName: "新しい人", isAuthor: false, replyCount: 0, text: "新しい投稿 \(round)",
+                          createdAt: ISO8601DateFormatter().string(from: Date()), club: "chat", unread: true), at: 0)
+            p.removeLast()
+        default: // the same posts, nothing changed but the values were decoded again
+            break
+        }
+        posts = p
     }
 
     /// The demo thread with many replies (`-demoOpenThread`, the self-test's thread check).

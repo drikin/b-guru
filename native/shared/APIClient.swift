@@ -325,6 +325,9 @@ final class APIClient: Sendable {
     }
 
     func markPostsRead(_ ids: [Int]) async {
+        #if DEBUG
+        if token == "demo" { return } // the offline demo never sends (it read posts as it scrolled)
+        #endif
         _ = try? await session.data(for: request("POST", "/api/agent/read", json: ["post_ids": ids]))
     }
 

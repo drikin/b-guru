@@ -93,6 +93,24 @@ struct ThreadScreen: View {
         .inlineNavigationTitle()
         .task { await load() }
         .imageViewer($viewing)
+        #if DEBUG
+        // The self-checks act in the open thread as a member would (Notification.debugThreadAction).
+        .onReceive(NotificationCenter.default.publisher(for: .debugThreadAction)) { note in
+            let all = [root].compactMap { $0 } + replies
+            switch note.object as? String {
+            case "image":
+                if let p = all.first(where: { !($0.images ?? []).isEmpty }) { viewing = ImageViewerItem(images: p.images ?? [], index: 0) }
+            case "closeImage": viewing = nil
+            case "react": // on screen only (react() would send it)
+                if let i = replies.indices.last { replies[i].reactions = ChatStore.toggled(replies[i].reactions ?? [], emoji: "👍") }
+                if var r = root { r.reactions = ChatStore.toggled(r.reactions ?? [], emoji: "👍"); root = r }
+            case "focus": replyFocused = true
+            case "type": draft.text = "テスト"
+            case "clear": draft.text = ""; replyFocused = false
+            default: break
+            }
+        }
+        #endif
     }
 
     private func row(_ p: Post, isRoot: Bool) -> some View {
@@ -198,3 +216,10 @@ struct ThreadScreen: View {
         }
     }
 }
+
+#if DEBUG
+extension Notification.Name {
+    /// Dev only: something to do in the open thread (object: "image", "closeImage", "react", "focus", "type", "clear").
+    static let debugThreadAction = Notification.Name("fm.backspace.bguru.debugThreadAction")
+}
+#endif

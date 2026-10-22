@@ -20,15 +20,35 @@ enum ThreadCheck {
             exit(1)
         }
         Task { @MainActor in
+            timeline.debugFill(to: 30) // a full first page, as the server sends
             try? await Task.sleep(for: .seconds(2)) // the app and the timeline page are up
             watch.start()
+            // 1) The minute's refresh while a thread is open (the Mac spun at 99 % for good, 0.3.44).
+            var rounds = 0
+            for thread in [3, TimelineStore.demoLongThreadId] {
+                watch.step = "open thread \(thread)"
+                timeline.openThread = thread
+                try? await Task.sleep(for: .milliseconds(1500))
+                for r in 0..<10 {
+                    watch.step = "refresh \(r) with thread \(thread) open"
+                    timeline.debugRefresh(round: rounds)
+                    rounds += 1
+                    try? await Task.sleep(for: .milliseconds(600))
+                }
+                watch.step = "back from thread \(thread)"
+                popThread()
+                try? await Task.sleep(for: .milliseconds(1000))
+            }
+            // 2) A long thread: open, scroll, back, open again.
+            let before = Set(scrolls().map(ObjectIdentifier.init)) // the timeline's list (not the one to scroll)
             let t0 = Date()
             watch.step = "open thread"
             timeline.openThread = TimelineStore.demoLongThreadId
             var found: UIScrollView?
             while Date().timeIntervalSince(t0) < 10 {
                 try? await Task.sleep(for: .milliseconds(50))
-                if let s = tallestScroll(), s.contentSize.height > 3000 { found = s; break }
+                if let s = scrolls().filter({ !before.contains(ObjectIdentifier($0)) }).max(by: { $0.contentSize.height < $1.contentSize.height }),
+                   s.contentSize.height > 3000 { found = s; break }
             }
             let openMs = Int(Date().timeIntervalSince(t0) * 1000)
             guard let scroll = found else {
@@ -83,7 +103,7 @@ enum ThreadCheck {
             popThread()
             try? await Task.sleep(for: .milliseconds(1000))
             watch.stop()
-            print("[thread-check] ok   \(TimelineStore.demoLongThreadReplies) replies: opened in \(openMs) ms, \(steps) scroll steps in \(scrollMs) ms, longest main-thread stall \(Int(watch.longest * 1000)) ms")
+            print("[thread-check] ok   \(rounds) refreshes with a thread open; \(TimelineStore.demoLongThreadReplies) replies: opened in \(openMs) ms, \(steps) scroll steps in \(scrollMs) ms, longest main-thread stall \(Int(watch.longest * 1000)) ms")
             fflush(stdout)
             exit(0)
         }
@@ -93,15 +113,15 @@ enum ThreadCheck {
         UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
     }
 
-    /// The thread's list: the tallest scroll view on screen (the timeline has a few posts).
-    private static func tallestScroll() -> UIScrollView? {
+    /// The scroll views on screen.
+    private static func scrolls() -> [UIScrollView] {
         var all: [UIScrollView] = []
         func walk(_ v: UIView) {
             if let s = v as? UIScrollView, s.window != nil, !s.isHidden { all.append(s) }
             v.subviews.forEach(walk)
         }
         windows.forEach(walk)
-        return all.max { $0.contentSize.height < $1.contentSize.height }
+        return all
     }
 
     /// Back from the thread, as the ‹ button does.
