@@ -145,6 +145,11 @@ private struct ChatHeader: View {
                 }
                 Toggle("新着でビーグルが吠える", isOn: $settings.menuBarBark)
                 Toggle("メニューバーにティッカーを流す", isOn: $settings.menuBarTicker)
+                // 端末内 AI のおすすめ（使えないときは理由を 1 行）
+                let ai = AIPicks.availability()
+                Toggle("AI がタイムラインのおすすめを教える（この Mac の中だけで動きます）", isOn: $settings.aiTimelinePicks)
+                    .disabled(!ai.ok && !settings.aiTimelinePicks)
+                if let reason = ai.reason { Text("　\(reason)") }
                 if settings.menuBarTicker {
                     Toggle("　名前だけ（本文を出さない）", isOn: $settings.menuBarTickerNamesOnly)
                 }

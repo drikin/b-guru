@@ -179,6 +179,7 @@ struct ThreadScreen: View {
                 return
             }
             root = p
+            timeline.onThreadOpened?(p)
             replies = [Post(id: 100, authorName: "takuto", isAuthor: false, parentId: id, text: "かわいい！", createdAt: p.createdAt, unread: true),
                        Post(id: 101, authorName: "ドリキン", isAuthor: true, parentId: id, text: "名前なんでしたっけ", createdAt: p.createdAt)]
             return
@@ -190,6 +191,7 @@ struct ThreadScreen: View {
             root = t.post
             replies = t.replies
             failed = false
+            timeline.onThreadOpened?(t.post)
         } catch {
             failed = root == nil
         }

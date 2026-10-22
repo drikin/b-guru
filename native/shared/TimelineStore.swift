@@ -20,6 +20,10 @@ final class TimelineStore {
     /// Set by a "reply to your post" notification tap: the app shows the timeline
     /// and opens this thread.
     var openThread: Int?
+    /// A thread was opened (its root post), and a reply was sent in a thread (the root's id).
+    /// Mac: the on-device AI's picks remember what the member looked at (kept on this Mac only).
+    @ObservationIgnored var onThreadOpened: ((Post) -> Void)?
+    @ObservationIgnored var onReplied: ((Int) -> Void)?
     private var nextCursor: String?
 
     let api: APIClient
@@ -158,6 +162,7 @@ final class TimelineStore {
 
     /// After posting or replying: show it at once (the next refresh confirms it).
     func didPublish(_ post: Post) {
+        if let parent = post.parentId { onReplied?(parent) }
         if post.parentId == nil {
             posts.removeAll { $0.id == post.id }
             posts.insert(post, at: 0)
@@ -194,6 +199,13 @@ final class TimelineStore {
     ```
     @ドリキン さん https://bsm.backspace.fm/#/post/1
     """
+
+    /// Dev only: replace the list (the Mac's AI picks test brings its own posts).
+    func debugSetPosts(_ p: [Post], clubs c: [String: String]) {
+        posts = p
+        clubs = c
+        hasLoaded = true
+    }
 
     func debugLoadDemo() {
         let now = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-300))

@@ -31,6 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var ticker: StatusTicker?
     /// 新着でビーグルが吠える（絵の差し替え）。
     private var barker: BeagleBarker?
+    /// 端末内 AI のタイムラインのおすすめ。
+    private let aiPicks = AIPicks()
     /// ビーグルの右の未読の数（ティッカーが流しているあいだはティッカーがタイトルを持つ）。
     private var countTitle = ""
 
@@ -49,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         setupBarker()
         updateStatusIcon(unread: 0, mentions: 0, connection: .connecting)
-        if !CommandLine.arguments.contains("-selftest") { setupCollapser(); setupTicker() }
+        if !CommandLine.arguments.contains("-selftest") { setupCollapser(); setupTicker(); setupAIPicks() }
         settings.onDockChange = { [weak self] _ in self?.applyDockSetting() }
         applyDockSetting()
 
@@ -106,6 +108,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self.store = store
             self.timeline = timeline
             panel = ChatPanel(store: store, timeline: timeline, onSignOut: {})
+            wireAIPicks(timeline)
+            if CommandLine.arguments.contains("-aiPicksNow") { startAIPicksDemo(timeline) }
             if CommandLine.arguments.contains("-tickerTest") {
                 // -tickerTest: the panel stays closed; debug commands feed the ticker (offline).
                 wireTicker(store)
@@ -248,6 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let store = ChatStore(api: api)
         let timeline = TimelineStore(api: api)
         self.timeline = timeline
+        wireAIPicks(timeline)
         MediaCache.shared.token = token
         store.onMention = { [weak self] m in self?.notifyMention(m) }
         store.onNewMessage = { [weak self] m in self?.notifyNewMessage(m) }
@@ -382,6 +387,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             names.state = settings.menuBarTickerNamesOnly ? .on : .off
             menu.addItem(names)
         }
+        let aiState = AIPicks.availability()
+        let ai = NSMenuItem(title: "AI がタイムラインのおすすめを教える（この Mac の中だけで動きます）", action: #selector(toggleAIPicks), keyEquivalent: "")
+        ai.target = self
+        ai.state = settings.aiTimelinePicks ? .on : .off
+        ai.isEnabled = aiState.ok || settings.aiTimelinePicks
+        menu.addItem(ai)
+        if let reason = aiState.reason {
+            let r = NSMenuItem(title: reason, action: nil, keyEquivalent: "")
+            r.isEnabled = false
+            r.indentationLevel = 1
+            menu.addItem(r)
+        }
         let ver = NSMenuItem(title: "バージョン \(Updater.shared.currentVersion)（ベータ）", action: nil, keyEquivalent: "")
         ver.isEnabled = false
         menu.addItem(ver)
@@ -400,6 +417,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc private func toggleCollapseHover() { settings.collapseRevealOnHover.toggle() }
     @objc private func toggleTicker() { settings.menuBarTicker.toggle() }
     @objc private func toggleBark() { settings.menuBarBark.toggle() }
+    @objc private func toggleAIPicks() { settings.aiTimelinePicks.toggle() }
     @objc private func toggleTickerNames() { settings.menuBarTickerNamesOnly.toggle() }
     @objc private func signOutAction() { signOut() }
     @objc private func checkUpdates() { Updater.shared.checkNow() }
@@ -546,6 +564,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         barker = b
     }
 
+    // MARK: - 端末内 AI のおすすめ
+
+    private func setupAIPicks() {
+        aiPicks.blockedReason = { [weak self] in
+            guard let self else { return "終了中" }
+            if self.store?.isVisible == true { return "チャットを見ている" }
+            return self.settings.isQuietNow() ? "静かな時間" : nil
+        }
+        aiPicks.onPick = { [weak self] text, postId in self?.ticker?.enqueue(suggestion: text, postId: postId) }
+        let apply = { [weak self] in
+            guard let self else { return }
+            self.aiPicks.enabled = self.settings.aiTimelinePicks && AIPicks.availability().ok
+        }
+        settings.onAIPicksChange = { on in
+            apply()
+            StatusBarDiag.note("AI おすすめ: \(on ? "オン" : "オフ")")
+        }
+        apply()
+        StatusBarDiag.update(collapse: settings.collapseStatusItems, ticker: settings.menuBarTicker || settings.aiTimelinePicks)
+    }
+
+    #if DEBUG
+    /// 開発のみ（-aiPicksNow）：デモのタイムラインと興味の材料で、すぐにおすすめを回す（オフライン。何も送らない）。
+    private func startAIPicksDemo(_ timeline: TimelineStore) {
+        let demo = AIPicks.debugTimeline()
+        timeline.debugSetPosts(demo.posts, clubs: demo.clubs)
+        let avail = AIPicks.availability()
+        NSLog("[ai] availability ok=%d %@", avail.ok ? 1 : 0, avail.reason ?? "")
+        guard avail.ok else { return }
+        StatusBarDiag.forced = true
+        StatusBarDiag.enabled = true
+        aiPicks.enabled = true
+        aiPicks.debugForce = true
+        aiPicks.debugSeed(opened: [(801, "RED KOMODO の色の作り方を教えてください。IPP2 とログの違い"), (802, "Final Cut と DaVinci、どっちで編集してる？")],
+                          replied: [(803, "トーク動画の照明、キーライトとフィルの比率")])
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            let t0 = Date()
+            await self.aiPicks.run()
+            NSLog("[ai] 1 回目 %.1f 秒", Date().timeIntervalSince(t0))
+            let t1 = Date()
+            await self.aiPicks.run() // 2 回目（まとめは今日の分を使う・出した投稿は除く）
+            NSLog("[ai] 2 回目 %.1f 秒", Date().timeIntervalSince(t1))
+        }
+    }
+    #endif
+
+    /// タイムラインで開いたスレッド・返信を、おすすめの材料として（オンのあいだだけ、この Mac の中に）覚える。
+    private func wireAIPicks(_ timeline: TimelineStore) {
+        aiPicks.timeline = timeline
+        timeline.onThreadOpened = { [weak self] p in self?.aiPicks.noteOpened(p) }
+        timeline.onReplied = { [weak self] id in self?.aiPicks.noteReplied(id) }
+    }
+
     // MARK: - メニューバーのティッカー
 
     private func setupTicker() {
@@ -577,7 +649,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             case .message: self?.barker?.bark(.message)
             case .mention: self?.barker?.bark(.mention)
             case .notice: self?.barker?.bark(.notice)
+            case .suggest: self?.barker?.bark(.suggest)
             }
+        }
+        t.onOpenThread = { [weak self] id in
+            guard let self else { return }
+            self.showPanel()
+            self.panel?.pin.tab = .timeline
+            self.timeline?.openThread = id
         }
         ticker = t
         let apply = { [weak self] in

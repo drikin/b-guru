@@ -81,6 +81,15 @@ final class AppSettings {
         }
     }
     @ObservationIgnored var onBarkChange: ((Bool) -> Void)?
+    /// 端末内 AI がタイムラインのおすすめをティッカーで教える（この Mac の中だけで動く）。既定は切。
+    var aiTimelinePicks: Bool {
+        didSet {
+            guard aiTimelinePicks != oldValue else { return }
+            UserDefaults.standard.set(aiTimelinePicks, forKey: "aiTimelinePicks")
+            onAIPicksChange?(aiTimelinePicks)
+        }
+    }
+    @ObservationIgnored var onAIPicksChange: ((Bool) -> Void)?
 
     static let quietStartHour = 0
     static let quietEndHour = 7
@@ -96,6 +105,7 @@ final class AppSettings {
         menuBarTicker = d.bool(forKey: "menuBarTicker")
         menuBarTickerNamesOnly = d.bool(forKey: "menuBarTickerNamesOnly")
         menuBarBark = d.object(forKey: "menuBarBark") as? Bool ?? true
+        aiTimelinePicks = d.bool(forKey: "aiTimelinePicks")
     }
 
     func isQuietNow(_ date: Date = Date()) -> Bool {

@@ -74,6 +74,21 @@ B-guru のチャットだけを切り出したメニューバー常駐アプリ�
     msg / mention / notice / photo / long / room / burst / tickerOn / tickerOff / namesOnly / namesFull /
     forceLight / forceDark / forceNone（文字色の外観を固定して見本を撮る）。`-collapseTest` と一緒にも使える。
     後片付け: `defaults delete fm.backspace.bguru.chat menuBarTicker`・`menuBarTickerNamesOnly`・`menuBarBark`（barkOn / barkOff でも操作できる）
+- **AI がタイムラインのおすすめを教える（この Mac の中だけで動きます）**（⋯ メニュー／右クリックメニュー、既定は切。macOS 26 以降で
+  端末内 AI＝Foundation モデルが使えるときだけ選べる。使えないときは理由を 1 行: 未対応の Mac・Apple Intelligence がオフ・準備中・日本語未対応）
+  - 1 時間ごと（前回より新しい投稿があるとき。低電力モード・静かな時間・チャットを見ているあいだはしない）、未読・自分のでない・まだ
+    おすすめしていない投稿を最大 30 件、6 件ずつ採点（合う度 0〜10・40 字以内のひとこと、構造化出力）し、7 点以上の最上位 1 件だけを
+    ティッカーで「🐶 おすすめ：○○さん『ひとこと』」（1 回吠える）。クリックでそのスレッドを開く。1 日 6 件まで、同じ投稿は二度出さない
+  - ティッカーがオフでも、おすすめだけは流す
+  - 興味の材料: 自分の投稿・リアクションした投稿・この Mac で開いたスレッドと返信したスレッド（オンのあいだだけ、最大 200 件）・
+    その部活。1 日 1 回 AI で 200 字以内の「興味のまとめ」にする（少ないときは題材をそのまま）。記録は
+    `~/Library/Containers/fm.backspace.bguru.chat/Data/Library/Application Support/AIPicks/memory.json`（設定をオフにすると消す）。**投稿の中身・興味の記録は
+    サーバーにも外部にも送らない**。statusbar.log には本文を書かない（「出した（点・件数・秒）」「失敗（理由の種類）」だけ）
+  - AI の失敗（ガードレール・文脈超過・未対応の言語など）は黙って次回へ。試した値（macOS 27.0.1、M3 Max）: 30 件の採点に 47〜58 秒
+    （6 件で 4〜17 秒）、興味のまとめ 2 秒。そのあいだ端末内 AI のサービス（TGOnDeviceInferenceProviderService）が CPU 約 20 %・
+    メモリ 1.4〜1.8 GB、アプリ自身は CPU 2〜3 %
+  - 開発のみ: `-demoPanel -tickerTest -aiPicksNow`（いろいろな話題の投稿 30 件と興味の材料で、すぐ 2 回回す。オフライン）。
+    コンソールに採点（点・投稿 ID・ひとこと・所要時間）。後片付け: 上の AIPicks フォルダを消す
 
 ## 設計の約束
 - 依存するのは `/api/agent/*` の契約だけ（`src/lib/agent-chat.ts` が正本）。

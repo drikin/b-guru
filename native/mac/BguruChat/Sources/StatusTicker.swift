@@ -11,7 +11,7 @@ import QuartzCore
 /// 動かすのは Core Animation（レンダーサーバー側）。流していないときはタイマーもアニメーションもない。
 @MainActor
 final class StatusTicker {
-    enum Style { case message, mention, notice }
+    enum Style { case message, mention, notice, suggest }
     struct Item {
         var text: String
         var style: Style
@@ -107,7 +107,8 @@ final class StatusTicker {
     }
 
     private func showNext() {
-        guard enabled, current == nil, !queue.isEmpty, let button = item.button else { return }
+        // 端末内 AI のおすすめ（suggest）は、ティッカーがオフでも流す（その機能をオンにした人だけが入れる）。
+        guard enabled || queue.first?.style == .suggest, current == nil, !queue.isEmpty, let button = item.button else { return }
         guard canShow() else { queue.removeAll(); return }
         let it = queue.removeFirst()
         onShow?(it.style)
@@ -218,9 +219,18 @@ final class StatusTicker {
 
     func clicked() {
         let id = current?.messageId
+        let suggest = current?.style == .suggest
         StatusBarDiag.note("ティッカー: クリック")
         stop(clear: true)
-        onOpen?(id)
+        if suggest, let id { onOpenThread?(id) } else { onOpen?(id) }
+    }
+
+    /// ティッカーの部分のクリックで、おすすめの投稿のスレッドを開く。
+    var onOpenThread: ((Int) -> Void)?
+
+    /// 端末内 AI のおすすめ（ティッカーがオフでも流す）。`postId` はクリックで開くスレッド。
+    func enqueue(suggestion text: String, postId: Int) {
+        push(Item(text: text, style: .suggest, messageId: postId))
     }
 
     // MARK: - 文字
@@ -230,6 +240,7 @@ final class StatusTicker {
         case .message: return "新着"
         case .mention: return "メンション"
         case .notice: return "お知らせ"
+        case .suggest: return "おすすめ"
         }
     }
 
@@ -245,7 +256,7 @@ final class StatusTicker {
         }()
         (appearance ?? NSAppearance.currentDrawing()).performAsCurrentDrawingAppearance {
             switch it.style {
-            case .mention, .message, .notice: color = NSColor.labelColor.cgColor
+            case .mention, .message, .notice, .suggest: color = NSColor.labelColor.cgColor
             }
         }
         return NSAttributedString(string: it.text, attributes: [.font: font, .foregroundColor: NSColor(cgColor: color) ?? .labelColor])
