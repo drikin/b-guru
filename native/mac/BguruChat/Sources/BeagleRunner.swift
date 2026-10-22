@@ -3,61 +3,62 @@ import Darwin
 import IOKit
 
 extension BeagleIcon {
+    /// 記号を 16 倍のビットマップにしたもの（傾けて描くとき用）。
+    private static func hiRes(_ symbol: NSImage) -> NSImage {
+        let s = 16
+        let size = NSSize(width: dogWidth, height: 17)
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width) * s, pixelsHigh: Int(size.height) * s, bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return symbol }
+        rep.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        symbol.draw(in: NSRect(origin: .zero, size: size))
+        NSGraphicsContext.restoreGraphicsState()
+        let img = NSImage(size: size)
+        img.addRepresentation(rep)
+        return img
+    }
+
     /// 走るコマの数。
     static let runFrames = 4
     private static var runCache: [String: NSImage] = [:]
 
     /// 走るコマ（0〜3）。キャンバス・左向き・足元の基準線は通常の絵と同じ（30×17pt、足先は y=15）。
-    /// 記号の頭と胴（お腹から上）はそのまま使い、脚だけを描き直す（線の絵は白抜きの線画、塗りは塗り。記号の脚と同じ見た目）。宙に浮くコマだけ体が 1pt 上がる。
+    /// 脚は描き足さず、記号の脚の部分だけを付け根から傾けて作る（胴・頭・しっぽは元のまま）。宙に浮くコマだけ犬ごと 1pt 上がる。
     /// 座標は右向きの絵の上から測った pt（犬は x 0〜22）。
     static func runImage(filled: Bool, frame k: Int) -> NSImage {
         let key = "\(filled)-\(k)"
         if let img = runCache[key] { return img }
         let symbol = NSImage(systemSymbolName: filled ? "dog.fill" : "dog", accessibilityDescription: nil) ?? NSImage()
+        let hi = hiRes(symbol)
         let W = canvas.width
-        func P(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: x, y: y) }
-        let hipN = P(5.5, 10.2), hipF = P(4, 10.2), shN = P(16.2, 10.2), shF = P(14.8, 10.2)
-        // (付け根, 足先)：後ろの手前・後ろの奥・前の手前・前の奥
-        let poses: [[(CGPoint, CGPoint)]] = [
-            [(hipN, P(1.2, 15)), (hipF, P(2.8, 14.6)), (shN, P(20.6, 15)), (shF, P(19, 14.6))],       // 伸びる
-            [(hipN, P(5, 15)), (hipF, P(7, 14.4)), (shN, P(17, 15)), (shF, P(14.5, 14.4))],           // 着地
-            [(hipN, P(8.5, 13.4)), (hipF, P(9.5, 12.8)), (shN, P(12.5, 13.4)), (shF, P(11.5, 12.8))], // 縮む（宙に浮く）
-            [(hipN, P(3, 15)), (hipF, P(5.5, 14.4)), (shN, P(18.5, 14.4)), (shF, P(16.5, 15))],       // けり出し
-        ]
-        let bounce: [CGFloat] = [0, 0, -1, 0]
-        let pose = poses[k % poses.count]
-        let up = bounce[k % bounce.count]
+        // (前脚, 後ろ脚) の傾き（度、正 = 足先が前へ）と、体ごと上がる量。伸びる・着地・縮む（宙に浮く）・けり出す。
+        let frames: [(CGFloat, CGFloat, CGFloat)] = [(24, -24, 0), (9, -9, 0), (-24, 24, -1), (-9, 9, 0)]
+        let (front, hind, up) = frames[k % frames.count]
         let img = NSImage(size: canvas, flipped: true) { _ in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
             ctx.saveGState()
             defer { ctx.restoreGState() }
             ctx.translateBy(x: W, y: 0) // 左向き
             ctx.scaleBy(x: -1, y: 1)
-            let cut = 10.8 + up
+            ctx.translateBy(x: 0, y: up) // 宙に浮くコマは犬ごと 1pt 上へ（ほかのコマの足先は座った絵と同じ線）
+            let dog = NSRect(x: 0, y: 0, width: dogWidth, height: 17)
+            // 脚は描き足さない。記号の脚の部分（お腹の線より下）を、付け根の高さ y0 を軸に横へ傾ける（x' = x + (y − y0)·tan）。
+            // y0 ではずれが 0 なので胴との継ぎ目に段や隙間が出ず、脚の丸み・線の太さ・抜きは元の絵のまま。前脚と後ろ脚は逆向き。
+            let y0: CGFloat = 11.6
             ctx.saveGState()
-            ctx.clip(to: CGRect(x: -1, y: -2, width: dogWidth + 2, height: cut + 2))
-            symbol.draw(in: NSRect(x: 0, y: up, width: dogWidth, height: 17))
+            ctx.clip(to: CGRect(x: -2, y: -2, width: dogWidth + 4, height: y0 + 2))
+            symbol.draw(in: dog)
             ctx.restoreGState()
-            ctx.setLineCap(.round)
-            if !filled { // 線の絵：切ったお腹の下を閉じる
-                NSColor.black.set()
-                ctx.setLineWidth(1.3)
-                ctx.beginPath(); ctx.move(to: P(2.6, cut - 0.65)); ctx.addLine(to: P(17.6, cut - 0.65)); ctx.strokePath()
-            }
-            // 脚：いつもの絵と同じ見た目（線の絵は白抜きの線画、塗りは体と同じ塗り）。全部同じ色・同じ描き方。
-            // 外側を先に全部描いてから中を抜くので、重なった脚は 1 つの輪郭にまとまる（記号の脚と同じ）。
-            // 線の絵は手前の 2 本だけ（4 本の白抜きが重なると線がごちゃつく）。塗りは 4 本（重なっても 1 つの塗り）。
-            let shown = filled ? pose : pose.enumerated().filter { $0.offset % 2 == 0 }.map(\.element)
-            let legs = shown.map { (CGPoint(x: $0.0.x, y: $0.0.y + up), $0.1) }
-            NSColor.black.set()
-            ctx.setLineWidth(filled ? 2.8 : 2.9)
-            for (a, b) in legs { ctx.beginPath(); ctx.move(to: a); ctx.addLine(to: b); ctx.strokePath() }
-            if !filled {
+            let parts: [(CGRect, CGFloat)] = [(CGRect(x: -2, y: y0 - 0.3, width: 11.5, height: 8), hind),  // 後ろ脚（x < 9.5）
+                                              (CGRect(x: 9.5, y: y0 - 0.3, width: 14, height: 8), front)]  // 前脚（付け根を 0.3pt 重ねて筋を消す）
+            for (rect, deg) in parts {
                 ctx.saveGState()
-                ctx.clip(to: CGRect(x: -1, y: cut - 1.4, width: dogWidth + 2, height: 10)) // お腹の線から下を抜く（付け根は胴の中とつながる）
-                ctx.setBlendMode(.clear)
-                ctx.setLineWidth(0.8)
-                for (a, b) in legs { ctx.beginPath(); ctx.move(to: CGPoint(x: a.x, y: a.y - 1)); ctx.addLine(to: b); ctx.strokePath() }
+                ctx.clip(to: rect)
+                let t = tan(deg * .pi / 180)
+                ctx.concatenate(CGAffineTransform(a: 1, b: 0, c: t, d: 1, tx: -t * y0, ty: 0))
+                NSGraphicsContext.current?.imageInterpolation = .high
+                hi.draw(in: dog) // 傾けて描いてもぼやけないよう、16 倍のビットマップから
                 ctx.restoreGState()
             }
             return true
