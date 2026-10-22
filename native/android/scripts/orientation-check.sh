@@ -84,11 +84,21 @@ ROT_USER="$("$ADB" shell settings get system user_rotation | tr -d '\r')"
 "$ADB" shell settings put system accelerometer_rotation 0
 "$ADB" shell settings put system user_rotation 0
 
+# Run a command, but give up after SECS (macOS has no `timeout`). `am start -W` waited forever once
+# ("Activity not started, its current task has been brought to the front") and held a release for 90 min.
+within() { # SECS CMD…
+  local secs="$1"; shift
+  "$@" & local pid=$!
+  ( sleep "$secs"; kill "$pid" 2>/dev/null ) & local guard=$!
+  wait "$pid" 2>/dev/null; local rc=$?
+  kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null
+  return "$rc"
+}
 launch() { # EXTRAS… (the first start after an install can open the sign-in page: start twice)
   for _ in 1 2; do
     "$ADB" shell am force-stop "$PKG"
     sleep 1
-    "$ADB" shell am start -W -n "$ACT" --ez demo true --es demo_jukebox "$BASE" "$@" >/dev/null
+    within 30 "$ADB" shell am start -W -n "$ACT" --ez demo true --es demo_jukebox "$BASE" "$@" >/dev/null || true
     sleep 2
   done
 }
@@ -123,7 +133,7 @@ for look in no yes; do
   shot "$name-jukebox" --es demo_tab jukebox --ez demo_jukebox_play true
   # Background → foreground while it plays.
   "$ADB" shell input keyevent HOME; sleep 2
-  "$ADB" shell am start -n "$ACT" >/dev/null; grab "$name-jukebox-resumed"
+  within 30 "$ADB" shell am start -n "$ACT" >/dev/null || true; grab "$name-jukebox-resumed"
   board "$name-shogi" --es demo_open shogi
   board "$name-shogi-watch" --es demo_open shogi --es demo_shogi_game watch
   shot "$name-minigame" --es demo_open minigame
