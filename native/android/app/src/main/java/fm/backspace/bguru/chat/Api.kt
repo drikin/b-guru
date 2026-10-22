@@ -10,6 +10,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -19,6 +20,24 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+/** What a new post carries besides text and photos (each only when set). */
+data class PublishExtra(
+    val whisper: Boolean = false,
+    val videoUrl: String? = null,
+    val audioUrl: String? = null,
+    val poll: PollInput? = null,
+    val club: String? = null,
+)
+
+data class PollInput(val question: String, val options: List<String>, val durationHours: Int)
+
+/** The sound of an edited post: unchanged, taken off, or a new upload. */
+sealed interface AudioChange {
+    data object Keep : AudioChange
+    data object Remove : AudioChange
+    data class Set(val url: String) : AudioChange
+}
 
 sealed class ApiError(message: String) : Exception(message) {
     class Unauthorized(val code: String?) : ApiError("unauthorized")
@@ -76,8 +95,20 @@ suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
 
 private val JSON_TYPE = "application/json".toMediaType()
 
+/** The calls behind the timeline's operations (段階 3) — an interface so the tests can make them
+ *  fail and check that what was shown at once is put back (PostOpsTest). */
+interface PostOpsApi {
+    suspend fun toggleBookmark(postId: Long): Boolean
+    suspend fun setBookmark(postId: Long, on: Boolean): Boolean
+    suspend fun setFavorite(userId: String, on: Boolean): Boolean
+    suspend fun togglePin(id: Long): Boolean
+    suspend fun setClub(id: Long, key: String?): String?
+    suspend fun vote(id: Long, optionId: Long): PostPoll?
+    suspend fun togglePostReaction(id: Long, emoji: String): PostReactionToggle
+}
+
 /** The agent API (/api/agent/...) with this device's Bearer token. */
-class ApiClient(val token: String) {
+class ApiClient(val token: String) : PostOpsApi {
 
     private fun request(method: String, path: String, json: JsonObject? = null, query: Map<String, String> = emptyMap()): Request {
         val url = (Net.BASE + path).toHttpUrl().newBuilder().apply { query.forEach { (k, v) -> addQueryParameter(k, v) } }.build()
@@ -247,12 +278,71 @@ class ApiClient(val token: String) {
 
     suspend fun clubs(): List<ClubInfo> = get<ClubsResponse>("/api/agent/clubs").clubs
 
-    suspend fun publish(text: String, images: List<String>, parentId: Long?): Post =
-        decode<PublishResponse>(send(request("POST", "/api/agent/publish", buildJsonObject {
-            put("text", text)
-            put("images", JsonArray(images.map { JsonPrimitive(it) }))
-            if (parentId != null) put("parent_id", parentId)
-        }))).post
+    /** A post or a reply (POST /api/agent/publish). Only the fields the draft uses are sent:
+     *  an older server sees exactly what it saw before (text, images, parent_id). */
+    suspend fun publish(text: String, images: List<String>, parentId: Long?, extra: PublishExtra = PublishExtra()): Post =
+        decode<PublishResponse>(send(request("POST", "/api/agent/publish", publishBody(text, images, parentId, extra)))).post
+
+    /** The list with one filter: `pinned=1` (pins now, oldest pin first), `bm=1`, `fav=1`. */
+    suspend fun postsWhere(filter: String, cursor: String? = null, limit: Int = 30): PostListResponse =
+        get("/api/agent/posts", buildMap {
+            put("limit", "$limit"); put("include", "reactions,read,display"); put(filter, "1")
+            if (cursor != null) put("cursor", cursor)
+        })
+
+    /** PATCH own post. App keys: text + images (the new list) + audio; `textOnly` (write keys): text only. */
+    suspend fun editPost(id: Long, text: String, images: List<String>?, audio: AudioChange, textOnly: Boolean) {
+        send(request("PATCH", "/api/agent/posts/$id", editBody(text, images, audio, textOnly)))
+    }
+
+    suspend fun deletePost(id: Long) { send(request("DELETE", "/api/agent/posts/$id")) }
+
+    /** Toggle; returns whether it is pinned now. */
+    override suspend fun togglePin(id: Long): Boolean = decode<PinResponse>(send(request("POST", "/api/agent/posts/$id/pin", buildJsonObject {}))).pinned
+
+    /** key null = 「ラベルなし」. */
+    override suspend fun setClub(id: Long, key: String?): String? =
+        decode<ClubChangeResponse>(send(request("PATCH", "/api/agent/posts/$id/club", buildJsonObject {
+            if (key == null) put("club", JsonNull) else put("club", key)
+        }))).club
+
+    override suspend fun vote(id: Long, optionId: Long): PostPoll? =
+        decode<PollResponse>(send(request("POST", "/api/agent/posts/$id/poll/vote", buildJsonObject { put("option_id", optionId) }))).poll
+
+    /** The answers in order: id = an existing option, null = a new one. */
+    suspend fun editPoll(id: Long, options: List<Pair<Long?, String>>): PostPoll? =
+        decode<PollResponse>(send(request("PUT", "/api/agent/posts/$id/poll", pollEditBody(options)))).poll
+
+    override suspend fun toggleBookmark(postId: Long): Boolean =
+        decode<BookmarkResponse>(send(request("POST", "/api/agent/bookmarks", buildJsonObject { put("post_id", postId) }))).bookmarked
+
+    /** Idempotent (servers that say `bookmarks_set`): `{ post_id, bookmarked }`. */
+    override suspend fun setBookmark(postId: Long, on: Boolean): Boolean =
+        decode<BookmarkResponse>(send(request("POST", "/api/agent/bookmarks", buildJsonObject { put("post_id", postId); put("bookmarked", on) }))).bookmarked
+
+    /** Idempotent: POST adds, DELETE removes. Returns the new state. */
+    override suspend fun setFavorite(userId: String, on: Boolean): Boolean =
+        decode<FavoriteResponse>(send(request(if (on) "POST" else "DELETE", "/api/agent/favorites", buildJsonObject { put("user_id", userId) }))).favorited
+
+    suspend fun customEmojis(path: String = "/api/agent/emojis"): List<CustomEmoji> = get<EmojisResponse>(path).emojis
+
+    /** A video or a sound (multipart `video` / `audio`, one per call): /api/media/… URL. `body`
+     *  streams the file (up to 100 MB), so the call has no overall time limit beyond 15 minutes. */
+    suspend fun uploadMedia(field: String, fileName: String, body: okhttp3.RequestBody): String {
+        val form = MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart(field, fileName, body).build()
+        val req = Request.Builder().url(Net.BASE + "/api/agent/upload").header("Authorization", "Bearer $token").post(form).build()
+        val client = Net.http.newBuilder().callTimeout(15, TimeUnit.MINUTES).writeTimeout(120, TimeUnit.SECONDS).readTimeout(120, TimeUnit.SECONDS).build()
+        client.newCall(req).await().use {
+            val text = it.body.string()
+            if (!it.isSuccessful) {
+                val err = runCatching { ApiJson.decodeFromString<ApiErrorBody>(text) }.getOrNull()
+                if (it.code == 401) throw ApiError.Unauthorized(err?.code)
+                throw ApiError.Http(it.code, err?.code, err?.error)
+            }
+            val r = decode<MediaUploadResponse>(text)
+            return (if (field == "video") r.videoUrl else r.audioUrl) ?: throw ApiError.Transport("decode: no url")
+        }
+    }
 
     /** JPEGs (already resized). Returns /api/media/… URLs. */
     suspend fun upload(jpegs: List<ByteArray>): List<String> = uploadImages("/api/agent/upload", jpegs)
@@ -275,7 +365,7 @@ class ApiClient(val token: String) {
         }
     }
 
-    suspend fun togglePostReaction(id: Long, emoji: String): PostReactionToggle =
+    override suspend fun togglePostReaction(id: Long, emoji: String): PostReactionToggle =
         decode(send(request("POST", "/api/agent/reactions", buildJsonObject { put("post_id", id); put("emoji", emoji) })))
 
     suspend fun markPostsRead(ids: List<Long>) {
@@ -290,6 +380,41 @@ class ApiClient(val token: String) {
     }
 
     companion object {
+        /** The publish body (docs/timeline-spec.md §11). Pure, for the tests. */
+        fun publishBody(text: String, images: List<String>, parentId: Long?, extra: PublishExtra = PublishExtra()): JsonObject = buildJsonObject {
+            put("text", text)
+            put("images", JsonArray(images.map { JsonPrimitive(it) }))
+            if (parentId != null) put("parent_id", parentId)
+            if (extra.whisper && parentId != null) put("whisper", true)
+            extra.videoUrl?.let { put("video_url", it) }
+            extra.audioUrl?.let { put("audio_url", it) }
+            extra.poll?.let { p ->
+                put("poll", buildJsonObject {
+                    put("question", p.question)
+                    put("options", JsonArray(p.options.map { JsonPrimitive(it) }))
+                    put("duration_hours", p.durationHours)
+                })
+            }
+            if (extra.club != null && parentId == null) put("club", extra.club)
+        }
+
+        fun editBody(text: String, images: List<String>?, audio: AudioChange, textOnly: Boolean): JsonObject = buildJsonObject {
+            put("text", text)
+            if (textOnly) return@buildJsonObject
+            images?.let { put("images", JsonArray(it.map { u -> JsonPrimitive(u) })) }
+            when (audio) {
+                AudioChange.Keep -> {}
+                AudioChange.Remove -> put("audio_url", JsonNull)
+                is AudioChange.Set -> put("audio_url", audio.url)
+            }
+        }
+
+        fun pollEditBody(options: List<Pair<Long?, String>>): JsonObject = buildJsonObject {
+            put("options", JsonArray(options.map { (id, label) ->
+                buildJsonObject { if (id == null) put("id", JsonNull) else put("id", id); put("label", label) }
+            }))
+        }
+
         /** Absolute URL for avatar / emoji paths the server returns relative. */
         fun absolute(url: String?): String? = when {
             url.isNullOrBlank() -> null

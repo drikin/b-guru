@@ -59,7 +59,8 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
         SingleChoiceSegmentedButtonRow(Modifier.width(250.dp)) {
             labels.forEachIndexed { i, label ->
                 SegmentedButton(selected = selected == i, onClick = { onSelect(i) },
-                    shape = SegmentedButtonDefaults.itemShape(i, labels.size), icon = {}) {
+                    shape = SegmentedButtonDefaults.itemShape(i, labels.size), icon = {},
+                    colors = SegmentedButtonDefaults.colors(activeContainerColor = AccentGreen.copy(alpha = 0.18f), activeContentColor = AccentGreen)) {
                     Text(label, maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium)
                 }
             }
@@ -177,13 +178,13 @@ private fun CompactSegments(labels: List<String>, selected: Int, onSelect: (Int)
             if (i > 0) Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.outline))
             Box(
                 Modifier.fillMaxHeight()
-                    .background(if (i == selected) scheme.secondaryContainer else androidx.compose.ui.graphics.Color.Transparent)
+                    .background(if (i == selected) AccentGreen.copy(alpha = 0.18f) else androidx.compose.ui.graphics.Color.Transparent) // the app's green, not Material's default
                     .selectable(selected = i == selected, role = androidx.compose.ui.semantics.Role.Tab) { onSelect(i) }
                     .padding(horizontal = 9.dp),
                 contentAlignment = androidx.compose.ui.Alignment.Center,
             ) {
                 Text(label, maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium,
-                    color = if (i == selected) scheme.onSecondaryContainer else scheme.onSurface)
+                    color = if (i == selected) AccentGreen else scheme.onSurface)
             }
         }
     }

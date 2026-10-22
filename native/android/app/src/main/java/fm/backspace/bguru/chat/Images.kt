@@ -180,14 +180,21 @@ fun Avatar(url: String?, name: String, size: Dp = 28.dp) {
     }
 }
 
-/** Custom emoji (`:name:`) from /api/emojis. */
+/** Custom emoji (`:name:`): the agent API's list (GET /api/agent/emojis, capabilities
+ *  `custom_emoji_list`) or, on an older server, the web's /api/emojis. */
 object EmojiCatalog {
     @Serializable private data class Item(val name: String, val imageUrl: String)
     @Serializable private data class ListResp(val emojis: List<Item> = emptyList())
 
+    /** name → absolute image URL, in the server's order (the picker shows them in this order). */
     @Volatile var urls: Map<String, String> = emptyMap(); private set
 
     val names: List<String> get() = urls.keys.sorted()
+
+    /** Bumped when the list arrives (the picker recomposes). */
+    var version by androidx.compose.runtime.mutableIntStateOf(0); private set
+
+    private fun set(list: Map<String, String>) { urls = list; version++ }
 
     suspend fun load() {
         if (urls.isNotEmpty()) return
@@ -196,6 +203,16 @@ object EmojiCatalog {
         } ?: return
         // /api/emojis is camelCase (shared with the web), not the agent API's snake_case.
         val list = runCatching { kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString<ListResp>(text) }.getOrNull() ?: return
-        urls = list.emojis.mapNotNull { e -> ApiClient.absolute(e.imageUrl)?.let { e.name to it } }.toMap()
+        set(LinkedHashMap(list.emojis.mapNotNull { e -> ApiClient.absolute(e.imageUrl)?.let { e.name to it } }.toMap()))
     }
+
+    /** The agent API's list (with the token); falls back to [load] when it fails. */
+    suspend fun load(api: ApiClient, path: String?) {
+        if (path == null) return load()
+        val list = runCatching { api.customEmojis(path) }.getOrNull() ?: return load()
+        set(LinkedHashMap(list.mapNotNull { e -> ApiClient.absolute(e.imageUrl)?.let { e.name to it } }.toMap()))
+    }
+
+    /** Demo only: pictures served from this Mac. */
+    fun loadDemo(list: Map<String, String>) = set(LinkedHashMap(list))
 }

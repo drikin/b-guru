@@ -112,8 +112,6 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-internal val QUICK = listOf("❤️", "👍", "😂", "🎉", "🙏", "👀")
-internal val MORE = listOf("😮", "😢", "🔥", "💯", "👏", "🤔")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -643,7 +641,7 @@ private fun Composer(
 }
 
 @Composable
-private fun MentionSuggestions(members: List<MentionMember>, onPick: (MentionMember) -> Unit) {
+internal fun MentionSuggestions(members: List<MentionMember>, onPick: (MentionMember) -> Unit) {
     Surface(shape = RoundedCornerShape(10.dp), tonalElevation = 3.dp, shadowElevation = 2.dp) {
         Column {
             members.forEachIndexed { i, m ->
@@ -694,6 +692,8 @@ private fun MessageRow(
     val mine = m.isAuthor
     val stored = m.id > 0 && row.state == SendState.SENT
     var menu by remember { mutableStateOf(false) }
+    var picker by remember { mutableStateOf(false) }
+    if (picker) EmojiPickerSheet(onDismiss = { picker = false }) { e -> picker = false; onReact(e) }
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     val bg by animateColorAsState(if (highlighted) AccentGreen.copy(alpha = 0.16f) else Color.Transparent, label = "highlight")
@@ -763,14 +763,14 @@ private fun MessageRow(
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     if (canReact && stored) {
-                        Row(Modifier.padding(horizontal = 8.dp)) {
-                            (QUICK + MORE).take(6).forEach { e ->
-                                Text(e, fontSize = 22.sp, modifier = Modifier.clickable { menu = false; onReact(e) }.padding(6.dp))
-                            }
-                        }
-                        Row(Modifier.padding(horizontal = 8.dp)) {
-                            MORE.forEach { e ->
-                                Text(e, fontSize = 22.sp, modifier = Modifier.clickable { menu = false; onReact(e) }.padding(6.dp))
+                        // The web's 「よく使う」 12 in two rows, then ＋ for the whole picker (same as the timeline's).
+                        EmojiSets.QUICK.chunked(6).forEachIndexed { row, list ->
+                            Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                list.forEach { e ->
+                                    Text(e, fontSize = 22.sp, modifier = Modifier.clickable { menu = false; onReact(e) }.padding(6.dp))
+                                }
+                                if (row == 1) Text("＋", fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.clickable { menu = false; picker = true }.padding(6.dp))
                             }
                         }
                         HorizontalDivider()

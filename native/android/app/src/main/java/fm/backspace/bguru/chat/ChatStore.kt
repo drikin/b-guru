@@ -140,7 +140,11 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         members = listOf("ビーグル", "mazzo", "NORIO TAKAHASHI", "takuto", "coban", "ポンコツ散財王ドリキン").map { MentionMember(it, it) }
         capabilities = Capabilities(features = Capabilities.Features(
             Capabilities.ChatFeatures(send = true, editOwn = true, reactions = true, markRead = false, images = true, maxImages = 4),
-            Capabilities.PostFeatures(read = true, publish = true, upload = true, reactions = true, maxImages = 5),
+            // Every 段階 3 operation, like an app key on a new server (all offline: TimelineStore.demo).
+            Capabilities.PostFeatures(read = true, publish = true, upload = true, reactions = true, maxImages = 5,
+                edit = true, delete = true, editTextOnly = false, whisper = true, video = true, audio = true, maxMediaMb = 100,
+                poll = true, pollVote = true, pollEdit = true, pin = true, pinnedList = true, bookmarks = true, favorites = true,
+                customEmojiList = "/api/agent/emojis", clubSelect = true, clubChange = true, mentions = "/api/agent/members"),
             room = Capabilities.RoomFeatures(enabled = withRoom),
             jukebox = Capabilities.JukeboxFeatures(enabled = true),
             neta = Capabilities.NetaFeatures(enabled = true, path = "/api/agent/neta", site = "https://neta.backspace.fm"),
@@ -189,7 +193,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
                     ?.takeIf { it.available && it.versionCode > BuildConfig.VERSION_CODE }
                     ?.let { update = it }
             }
-            launch { EmojiCatalog.load() }
+            launch { EmojiCatalog.load(api, capabilities?.customEmojiPath) }
             runStream()
         }
     }

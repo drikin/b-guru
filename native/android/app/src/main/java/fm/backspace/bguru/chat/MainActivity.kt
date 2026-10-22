@@ -49,7 +49,8 @@ class MainActivity : ComponentActivity() {
 
     /** Demo only — open a screen at launch (scripts/orientation-check.sh walks them):
      *  `--es demo_tab timeline|chat|jukebox`, `--ez demo_jukebox_play true`,
-     *  `--es demo_open shogi|minigame|viewer` (viewer: the first photo; needs `--es demo_images`). */
+     *  `--es demo_open shogi|minigame|viewer` (viewer: the first photo; needs `--es demo_images`),
+     *  `--es demo_ops …` (the timeline's operations, TimelineStore.demoOps). */
     private fun demoScreen(session: Session) {
         val store = session.store ?: return
         when (intent.getStringExtra("demo_tab")) {
@@ -57,6 +58,12 @@ class MainActivity : ComponentActivity() {
             "jukebox" -> store.demoPage = 2
         }
         if (intent.getBooleanExtra("demo_jukebox_play", false)) session.jukebox?.let { jb -> (jb.current ?: jb.items.firstOrNull())?.let(jb::play) }
+        // `--es demo_ops menu|edit|delete|picker|poll_edit|club|pins|…` (TimelineStore.demoOps): the 段階 3
+        // operations on the timeline, offline.
+        intent.getStringExtra("demo_ops")?.let { what ->
+            store.demoPage = 0
+            session.timeline?.demoOps(what)
+        }
         when (intent.getStringExtra("demo_open")) {
             "shogi" -> { store.shogi.open = true; store.shogi.liveGame?.let { store.shogi.select(it.id) } }
             "minigame" -> store.minigame.open = true

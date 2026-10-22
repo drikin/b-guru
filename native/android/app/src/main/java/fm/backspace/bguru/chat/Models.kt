@@ -136,6 +136,27 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val reactions: Boolean? = null,
         val markRead: Boolean? = null,
         val maxImages: Int? = null,
+        // 段階 3「操作」(docs/timeline-spec.md §10–§11). Absent on older servers = not offered.
+        val edit: Boolean? = null,
+        val delete: Boolean? = null,
+        val editTextOnly: Boolean? = null,
+        val whisper: Boolean? = null,
+        val video: Boolean? = null,
+        val audio: Boolean? = null,
+        val maxMediaMb: Int? = null,
+        val poll: Boolean? = null,
+        val pollVote: Boolean? = null,
+        val pollEdit: Boolean? = null,
+        val pin: Boolean? = null,
+        val pinnedList: Boolean? = null,
+        val bookmarks: Boolean? = null,
+        /** POST /api/agent/bookmarks takes `{ post_id, bookmarked }` (set, not toggle). */
+        val bookmarksSet: Boolean? = null,
+        val favorites: Boolean? = null,
+        val customEmojiList: String? = null,
+        val clubSelect: Boolean? = null,
+        val clubChange: Boolean? = null,
+        val mentions: String? = null,
     )
     @Serializable data class ChatFeatures(
         val read: Boolean? = null,
@@ -165,6 +186,32 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val canPublish get() = features?.posts?.publish ?: false
     val canReactPosts get() = features?.posts?.reactions ?: false
     val maxImages get() = features?.posts?.maxImages ?: 5
+    private val p get() = features?.posts
+    /** Edit own posts: the whole post (app keys), or only the text (`edit_text_only`, write keys). */
+    val canEditPosts get() = (p?.edit ?: false) || (p?.editTextOnly ?: false)
+    val editTextOnly get() = !(p?.edit ?: false) && (p?.editTextOnly ?: false)
+    val canDeletePosts get() = p?.delete ?: false
+    /** A post key from before 段階 3 (the server says edit false): signing in again gives editing. */
+    val editNeedsRelogin get() = canPublish && p?.edit == false && p?.editTextOnly != true
+    /** The idempotent bookmark (else the toggle). */
+    val bookmarksSet get() = p?.bookmarksSet ?: false
+    /** 「うなる」: a reply that does not lift the thread. */
+    val canWhisper get() = p?.whisper ?: false
+    val canPostVideo get() = p?.video ?: false
+    val canPostAudio get() = p?.audio ?: false
+    val maxMediaMb get() = p?.maxMediaMb?.takeIf { it > 0 } ?: 100
+    val canCreatePoll get() = p?.poll ?: false
+    val canVote get() = p?.pollVote ?: false
+    val canEditPoll get() = p?.pollEdit ?: false
+    val canPin get() = p?.pin ?: false
+    val canListPinned get() = p?.pinnedList ?: false
+    val canBookmark get() = p?.bookmarks ?: false
+    val canFavorite get() = p?.favorites ?: false
+    /** Only paths on our own server (the request carries the token). */
+    val customEmojiPath get() = p?.customEmojiList?.takeIf { it.startsWith("/api/") }
+    val canSelectClub get() = p?.clubSelect ?: false
+    val canChangeClub get() = p?.clubChange ?: false
+    val mentionsPath get() = p?.mentions?.takeIf { it.startsWith("/api/") }
     /** Voice room is on for this member (server configured + in the rollout). */
     val voiceEnabled get() = features?.voice?.enabled ?: false
     /** This token may join (has the "voice" scope — older tokens must sign in again). */
@@ -309,6 +356,15 @@ data class Post(
     val createdAt: String = "",
     val lastActivityAt: String? = null,
     val club: String? = null,
+    /** The club was chosen by hand (not by the AI). */
+    val clubManual: Boolean? = null,
+    /** Set while the author's pin lasts (24 hours). */
+    val pinnedAt: String? = null,
+    /** A poll (the text is its question). */
+    val poll: PostPoll? = null,
+    /** This member saved the post (🔖) / follows its author (☆). Absent on older servers. */
+    val bookmarkedByMe: Boolean? = null,
+    val favoriteByMe: Boolean? = null,
     val reactions: List<Reaction>? = null,
     val unread: Boolean? = null,
     /** Root posts: replies by others this member has not read yet. */
@@ -345,6 +401,34 @@ data class UrlPreview(
     val proxiedImage: String?
         get() = image?.let { if (it.startsWith("http")) "${Net.BASE}/api/img?u=" + java.net.URLEncoder.encode(it, "UTF-8") else it }
 }
+
+/** posts.poll — the web's PostPoll (src/lib/poll.ts), camelCase inside like url_preview. */
+@androidx.compose.runtime.Immutable
+@OptIn(ExperimentalSerializationApi::class)
+@Serializable
+data class PostPoll(
+    val question: String = "",
+    @kotlinx.serialization.json.JsonNames("endsAt") val endsAt: String = "",
+    val closed: Boolean = false,
+    /** I am the author and it is within an hour of posting: 「回答を編集」. */
+    val editable: Boolean = false,
+    @kotlinx.serialization.json.JsonNames("totalVotes") val totalVotes: Int = 0,
+    @kotlinx.serialization.json.JsonNames("voterCount") val voterCount: Int = 0,
+    @kotlinx.serialization.json.JsonNames("myVote") val myVote: Long? = null,
+    val options: List<Option> = emptyList(),
+) {
+    @androidx.compose.runtime.Immutable
+    @Serializable data class Option(val id: Long, val label: String = "", val votes: Int = 0, val pct: Int = 0)
+}
+
+@Serializable data class PollResponse(val ok: Boolean = false, val poll: PostPoll? = null)
+@Serializable data class PinResponse(val ok: Boolean = false, val pinned: Boolean = false)
+@Serializable data class ClubChangeResponse(val ok: Boolean = false, val club: String? = null)
+@Serializable data class BookmarkResponse(val bookmarked: Boolean = false)
+@Serializable data class FavoriteResponse(val favorited: Boolean = false)
+@Serializable data class MediaUploadResponse(val videoUrl: String? = null, val audioUrl: String? = null)
+@Serializable data class CustomEmoji(val id: Long = 0, val name: String, val imageUrl: String)
+@Serializable data class EmojisResponse(val emojis: List<CustomEmoji> = emptyList())
 
 @Serializable data class PostListResponse(val posts: List<Post> = emptyList(), val nextCursor: String? = null)
 @Serializable data class ThreadResponse(val post: Post, val replies: List<Post> = emptyList())

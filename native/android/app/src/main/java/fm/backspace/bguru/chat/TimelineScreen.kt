@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -119,12 +120,12 @@ fun TimelineScreen(
     visible: Boolean = true,
 ) {
     var threadId by remember { mutableStateOf<Long?>(null) }
-    var composing by remember { mutableStateOf(false) }
     var needsReconnect by remember { mutableStateOf(false) }
     var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { if (!timeline.hasLoaded) timeline.refresh() }
+    androidx.compose.runtime.SideEffect { timeline.capabilities = capabilities }
     // On screen (this page, the app in front): refresh when the app comes back, and every
     // minute while it stays. Off screen (another page, background): no polling.
     val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
@@ -147,7 +148,8 @@ fun TimelineScreen(
     }
     BackHandler(enabled = threadId != null) { threadId = null }
 
-    fun compose() { if (capabilities?.canPublish == true) composing = true else needsReconnect = true }
+    fun compose() { if (capabilities?.canPublish == true) timeline.dialog = PostDialog.Compose() else needsReconnect = true }
+    var listsMenu by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -158,6 +160,20 @@ fun TimelineScreen(
                 },
                 actions = {
                     if (threadId == null) {
+                        // 📌 ピン留め・🔖 ブックマーク・☆ お気に入りの人 (simple lists in a sheet).
+                        val lists = buildList {
+                            if (capabilities?.canListPinned == true) add("pinned" to "📌 ピン留め")
+                            if (capabilities?.canBookmark == true) add("bm" to "🔖 ブックマーク")
+                            if (capabilities?.canFavorite == true) add("fav" to "☆ お気に入りの人の投稿")
+                        }
+                        if (lists.isNotEmpty()) Box {
+                            IconButton(onClick = { listsMenu = true }) { Text("📌", fontSize = 18.sp, modifier = Modifier.semantics { contentDescription = "ピン留め・ブックマーク" }) }
+                            DropdownMenu(listsMenu, onDismissRequest = { listsMenu = false }) {
+                                lists.forEach { (f, label) ->
+                                    DropdownMenuItem(text = { Text(label) }, onClick = { listsMenu = false; timeline.dialog = PostDialog.List(f) })
+                                }
+                            }
+                        }
                         IconButton(onClick = ::compose) { Icon(Icons.Default.Create, "投稿する") }
                     }
                 },
@@ -175,14 +191,11 @@ fun TimelineScreen(
                     TimelineList(timeline, capabilities, visible, listState, onOpen = { threadId = it }, onOpenImage = { imgs, i -> viewing = imgs to i })
                 }
             }
+            PostToastBar(timeline, Modifier.align(Alignment.BottomCenter).navigationBarsPadding())
         }
     }
 
-    if (composing) {
-        ComposeDialog(timeline.api, parentId = null, maxImages = capabilities?.maxImages ?: 5,
-            onDismiss = { composing = false },
-            onPosted = { timeline.didPublish(it); composing = false })
-    }
+    PostDialogHost(timeline, capabilities, onOpenThread = { threadId = it })
     viewing?.let { (imgs, i) -> ImageViewer(imgs, i) { viewing = null } }
 }
 
@@ -290,6 +303,12 @@ fun PostRow(
     val scope = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
     var netaUrls by remember { mutableStateOf<List<String>?>(null) }
+    // The operations (段階 3) go through the signed-in timeline; what is offered follows capabilities.
+    val session = App.session(context)
+    val ops = session.timeline
+    val caps = session.store?.capabilities
+    LaunchedEffect(ops?.demoMenu) { if (ops != null && ops.demoMenu == post.id) { menu = true; ops.demoMenu = null } }
+    val pinned = PostActions.isPinned(post)
     // Unread: a light green card with the web's green bar. Read after a second on
     // screen, and the colour fades out — so you can see what you just read.
     val unread by androidx.compose.animation.core.animateFloatAsState(if (post.unread == true) 1f else 0f, androidx.compose.animation.core.tween(600), label = "unread")
@@ -312,13 +331,21 @@ fun PostRow(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(post.authorName ?: "", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                     // Club label (root posts: callers pass the club's name). 「未設定」 in grey, like the web.
-                    val label = plan.clubLabel
+                    if (post.favoriteByMe == true && !post.isAuthor) Text("★", fontSize = 12.sp, color = Color(0xFFF59F00),
+                        modifier = Modifier.semantics { contentDescription = "お気に入りの人" })
+                    // My own root post: tap the label to change the club (「部活動を選択」), 「＋部活」 when none.
+                    val changeClub = ops != null && PostActions.canChangeClub(post, caps)
+                    val label = plan.clubLabel ?: if (changeClub) "＋部活" else null
                     if (label != null && post.parentId == null) {
-                        val c = if (plan.clubUnset) MaterialTheme.colorScheme.outline else AccentGreen
-                        Text(label, fontSize = 11.sp, color = c,
-                            modifier = Modifier.background(c.copy(alpha = 0.14f), CircleShape).padding(horizontal = 6.dp, vertical = 1.dp))
+                        val c = if (plan.clubUnset || plan.clubLabel == null) MaterialTheme.colorScheme.outline else AccentGreen
+                        Text(label, fontSize = 11.sp, color = c, maxLines = 1,
+                            modifier = Modifier.clip(CircleShape).background(c.copy(alpha = 0.14f), CircleShape)
+                                .then(if (changeClub) Modifier.clickable { ops?.dialog = PostDialog.Club(post) } else Modifier)
+                                .padding(horizontal = 6.dp, vertical = 1.dp))
                     }
                     Spacer(Modifier.weight(1f))
+                    if (post.bookmarkedByMe == true) Text("🔖", fontSize = 11.sp, modifier = Modifier.semantics { contentDescription = "ブックマーク済み" })
+                    if (pinned) Text("📌", fontSize = 11.sp, modifier = Modifier.semantics { contentDescription = "ピン留め中" })
                     Text(relativeTime(post.createdAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 }
                 if (post.text.isNotEmpty() && !post.isBareLink) {
@@ -358,6 +385,10 @@ fun PostRow(
                     post.audioUrl?.let { PostAudio(it) }
                 }
                 post.videoUrl?.let { PostVideo(it) }
+                post.poll?.let { poll ->
+                    PollCard(post, poll, canVote = ops != null && caps?.canVote == true, canEdit = ops != null && caps?.canEditPoll == true && post.isAuthor,
+                        onVote = { ops?.vote(post, it) }, onEdit = { ops?.dialog = PostDialog.PollEdit(post) })
+                }
                 val rs = plan.reactions
                 if (rs.isNotEmpty() || (showReplyCount && post.replyCount > 0)) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -376,42 +407,62 @@ fun PostRow(
                 }
             }
         }
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+        // At most the window less Material's 48 dp margins: on a phone on its side the menu then scrolls
+        // instead of being pushed up under the status bar.
+        val maxMenu = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp - 112).coerceAtLeast(160).dp
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, modifier = Modifier.heightIn(max = maxMenu)) {
             if (canReact) {
-                Row(Modifier.padding(horizontal = 8.dp)) {
-                    QUICK.forEach { e -> Text(e, fontSize = 22.sp, modifier = Modifier.clickable { menu = false; onReact(e) }.padding(6.dp)) }
+                // The quick row (the web's first six 「よく使う」) and ＋ for the whole picker.
+                Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    EmojiSets.QUICK.take(6).forEach { e -> Text(e, fontSize = 22.sp, modifier = Modifier.clickable { menu = false; onReact(e) }.padding(6.dp)) }
+                    if (ops != null) Text("＋", fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.clickable { menu = false; ops.dialog = PostDialog.Picker(post) }.padding(6.dp)
+                            .semantics { contentDescription = "ほかのリアクション" })
                 }
                 HorizontalDivider()
             }
-            DropdownMenuItem(text = { Text("テキストをコピー") }, onClick = {
-                menu = false
-                scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("post", post.text))) }
-            })
-            // 「チャットに引用」: the post's link into the chat composer (MainScreen shows the chat).
-            if (App.session(context).store?.capabilities?.canSend == true) {
-                DropdownMenuItem(text = { Text("チャットに引用") }, onClick = {
-                    menu = false
-                    ChatQuote.pending = ChatQuote.forPost(post)
-                })
-            }
-            // 「ネタ帳に送る」: only posts that link an article (docs/neta-client-spec.md).
-            if (App.session(context).store?.capabilities?.netaEnabled == true) {
-                val urls = remember(post.text, post.urlPreview?.url) { netaCandidates(post.text, post.urlPreview?.url) }
-                if (urls.isNotEmpty()) {
-                    DropdownMenuItem(text = { Text("ネタ帳に送る") }, onClick = {
+            val urls = remember(post.text, post.urlPreview?.url) { netaCandidates(post.text, post.urlPreview?.url) }
+            // The web card's top-right buttons, in the same order (docs/timeline-spec.md §4.2, §10.2).
+            PostActions.menu(post, caps, chatCanSend = caps?.canSend == true, hasNetaUrls = urls.isNotEmpty()).forEach { item ->
+                if (ops == null && item in OPS_ITEMS) return@forEach
+                if (item == PostActions.Item.COPY) HorizontalDivider()
+                val red = item == PostActions.Item.DELETE
+                val note = PostActions.isNote(item)
+                DropdownMenuItem(
+                    text = {
+                        Text(PostActions.label(item, post, pinned),
+                            color = when { red -> MaterialTheme.colorScheme.error; note -> MaterialTheme.colorScheme.onSurfaceVariant; else -> Color.Unspecified },
+                            style = if (note) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyLarge)
+                    },
+                    enabled = !note,
+                    onClick = {
                         menu = false
-                        netaUrls = urls
-                    })
-                }
+                        when (item) {
+                            PostActions.Item.BOOKMARK -> ops?.toggleBookmark(post)
+                            // 「チャットに引用」: the post's link into the chat composer (MainScreen shows the chat).
+                            PostActions.Item.QUOTE -> ChatQuote.pending = ChatQuote.forPost(post)
+                            // 「ネタ帳に送る」: only posts that link an article (docs/neta-client-spec.md).
+                            PostActions.Item.NETA -> netaUrls = urls
+                            PostActions.Item.FAVORITE -> ops?.toggleFavorite(post)
+                            PostActions.Item.REACT -> ops?.dialog = PostDialog.Picker(post)
+                            PostActions.Item.PIN -> ops?.togglePin(post)
+                            PostActions.Item.CLUB -> ops?.dialog = PostDialog.Club(post)
+                            PostActions.Item.EDIT_RELOGIN -> {}
+                            PostActions.Item.EDIT -> ops?.dialog = PostDialog.Edit(post)
+                            PostActions.Item.DELETE -> ops?.dialog = PostDialog.Delete(post)
+                            PostActions.Item.COPY -> scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("post", post.text))) }
+                            PostActions.Item.WEB -> context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ChatQuote.permalink(post))))
+                        }
+                    },
+                )
             }
-            DropdownMenuItem(text = { Text("Web で開く") }, onClick = {
-                menu = false
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ChatQuote.permalink(post))))
-            })
         }
         netaUrls?.let { urls -> NetaDialog(post, urls, onDismiss = { netaUrls = null }) }
     }
 }
+
+/** The menu items that need the timeline store (always there when signed in or in the demo). */
+private val OPS_ITEMS = setOf(PostActions.Item.BOOKMARK, PostActions.Item.FAVORITE, PostActions.Item.REACT, PostActions.Item.PIN, PostActions.Item.CLUB, PostActions.Item.EDIT, PostActions.Item.DELETE)
 
 /** Full screen, swipe between images, pinch to zoom. */
 @Composable
@@ -451,85 +502,6 @@ fun ReconnectBanner(onReconnect: () -> Unit, onClose: (() -> Unit)? = null) {
                 Button(onClick = onReconnect, colors = ButtonDefaults.buttonColors(containerColor = AccentGreen)) { Text("再接続する") }
             }
             if (onClose != null) IconButton(onClick = onClose) { Icon(Icons.Default.Close, "閉じる") }
-        }
-    }
-}
-
-/** Thumbnails of the attached photos with ✕. */
-@Composable
-fun DraftImages(draft: PostDraft) {
-    if (draft.loading > 0) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
-            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-            Text("画像を読み込み中…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-    if (draft.images.isEmpty()) return
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 4.dp)) {
-        itemsIndexed(draft.images) { i, bmp ->
-            Box {
-                Image(bmp.asImageBitmap(), null, Modifier.size(64.dp).clip(RoundedCornerShape(8.dp)), contentScale = ContentScale.Crop)
-                Box(Modifier.align(Alignment.TopEnd).size(22.dp).background(Color.Black.copy(alpha = 0.55f), CircleShape).clickable { draft.remove(i) },
-                    contentAlignment = Alignment.Center) { Icon(Icons.Default.Close, "画像 ${i + 1} を外す", tint = Color.White, modifier = Modifier.size(14.dp)) }
-            }
-        }
-    }
-}
-
-/** The Android Photo Picker (no storage permission needed), up to the draft's remaining slots. */
-@Composable
-fun rememberPhotoPicker(draft: PostDraft): () -> Unit {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(5)) { uris ->
-        if (BuildConfig.DEBUG) android.util.Log.d("BguruDraft", "picked ${uris.size}")
-        if (uris.isNotEmpty()) scope.launch { draft.add(context, uris) }
-    }
-    return { launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
-}
-
-/** New post: text + photos. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ComposeDialog(api: ApiClient, parentId: Long?, maxImages: Int, onDismiss: () -> Unit, onPosted: (Post) -> Unit) {
-    val draft = remember { PostDraft(maxImages) }
-    val scope = rememberCoroutineScope()
-    val pick = rememberPhotoPicker(draft)
-    val camera = rememberCameraCapture { ctx, uri -> draft.add(ctx, listOf(uri)) }
-    Dialog(onDismissRequest = { if (!draft.sending && draft.text.isEmpty() && draft.images.isEmpty()) onDismiss() },
-        properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize().imePadding()) {
-                TopAppBar(
-                    title = { Text(if (parentId == null) "新しい投稿" else "返信") },
-                    navigationIcon = { TextButton(onClick = onDismiss, enabled = !draft.sending) { Text("キャンセル") } },
-                    actions = {
-                        TextButton(enabled = draft.canSend, onClick = {
-                            scope.launch { draft.send(api, parentId)?.let(onPosted) }
-                        }) { Text(if (draft.sending) "送信中…" else "投稿") }
-                    },
-                )
-                Column(Modifier.padding(16.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextField(
-                        value = draft.value, onValueChange = { draft.value = it },
-                        placeholder = { Text(composerPlaceholder("いまどうしてる？")) },
-                        keyboardOptions = ComposerKeyboardOptions,
-                        modifier = Modifier.fillMaxWidth().weight(1f, fill = false)
-                            .composerKeys(draft.value, { draft.value = it }, onSend = {
-                                if (draft.canSend) scope.launch { draft.send(api, parentId)?.let(onPosted) }
-                            }),
-                        minLines = 5,
-                        colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
-                    )
-                    DraftImages(draft)
-                    draft.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = pick, enabled = draft.remaining > 0) { Text("🖼️ 写真") }
-                        CameraButton(onClick = camera, enabled = draft.remaining > 0)
-                        Text("${draft.images.size}/${draft.maxImages}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
         }
     }
 }
