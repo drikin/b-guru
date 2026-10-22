@@ -286,6 +286,10 @@ object ShogiLogic {
         if (hideBand) put("hide_band", true)
     }
 
+    /** "whole" when the board's page (`need` CSS px: its `size` + the body's padding) is all on screen
+     *  (`shown` px of its view; 2 px slack for rounding), else "cut". */
+    fun boardVisibility(need: Int, shown: Int): String = if (shown + 2 >= need) "whole" else "cut"
+
     /** The board fits itself into this many CSS px (bridge `max_height`). */
     fun withMaxHeight(state: JsonObject, maxHeight: Int?): JsonObject =
         if (maxHeight == null || maxHeight <= 0) state else JsonObject(state + ("max_height" to JsonPrimitive(maxHeight)))

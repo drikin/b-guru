@@ -80,6 +80,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
 import okhttp3.Request
@@ -588,9 +590,20 @@ private fun ShogiBoardWeb(
             .build().toString()
     }
     val h = host.heightCss
+    // Debug builds: say in the log whether the whole board is on screen (scripts/orientation-check.sh reads it).
+    var shownCss by remember { mutableIntStateOf(-1) }
+    if (BuildConfig.DEMO) LaunchedEffect(h, shownCss) {
+        if (h > 0 && shownCss >= 0) android.util.Log.i("BguruShogi", "board-visible: ${ShogiLogic.boardVisibility(h + BOARD_BODY_PADDING, shownCss)} need=${h + BOARD_BODY_PADDING} shown=$shownCss")
+    }
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
     AndroidView(
         // Exactly the board's height (its `size` + the body's padding), within the space it has.
-        modifier = modifier.height((if (h > 0) minOf(h + BOARD_BODY_PADDING, available) else available).dp),
+        modifier = modifier.height((if (h > 0) minOf(h + BOARD_BODY_PADDING, available) else available).dp)
+            .then(if (BuildConfig.DEMO) Modifier.onGloballyPositioned { c ->
+                // What of the page is on screen: its own height, cut by every parent's bounds.
+                val b = c.boundsInWindow()
+                shownCss = kotlin.math.floor(minOf(c.size.height.toFloat(), b.height) / density + 0.5f).toInt()
+            } else Modifier),
         factory = { ctx ->
             WebView(ctx).apply {
                 host.web = this

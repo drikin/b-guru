@@ -26,6 +26,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -252,6 +258,19 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
         scope.launch { kotlinx.coroutines.delay(300); runCatching { focus.requestFocus() } }
     }
 
+    // A short, wide window (a phone on its side): ☗ / 🎮 go beside the chat at the full height of the
+    // screen — above the chat they would get a sliver of it and the board would be cut off.
+    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+    val beside = store.panelOpen && SidePanelLayout.beside(maxWidth, maxHeight)
+    val chatWidth = SidePanelLayout.chatWidth(maxWidth)
+    Row(Modifier.fillMaxSize()) {
+    if (beside) {
+        SidePanel(store, visible, composerFocused, Modifier.weight(1f).fillMaxHeight())
+        androidx.compose.material3.VerticalDivider()
+    }
+    // The chat keeps its place (and its state) whether the panel is beside it or not.
+    androidx.compose.runtime.key("chat") {
+    Box(if (beside) Modifier.width(chatWidth).fillMaxHeight() else Modifier.weight(1f).fillMaxHeight()) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -385,7 +404,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             val room = store.room
             val shogi = store.shogi
             val minigame = store.minigame
-            if (minigame.enabled && minigame.open && !(room.enabled && room.roomView)) {
+            if (!beside && minigame.enabled && minigame.open && !(room.enabled && room.roomView)) {
                 // 🎮: the game above, the chat below (no scrolling; the game is as tall as it says, at most
                 // about 45 % of the column, 150–420 dp — the chat stays in sight). Typing in the chat pauses it.
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
@@ -395,7 +414,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                         chatPane(Modifier.weight(1f).fillMaxWidth())
                     }
                 }
-            } else if (shogi.enabled && shogi.open && !(room.enabled && room.roomView)) {
+            } else if (!beside && shogi.enabled && shogi.open && !(room.enabled && room.roomView)) {
                 // ☗ 将棋: the panel above, the chat below — split like the room, watching or playing
                 // (drikin 2026-10-21: the chat must stay in sight).
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
@@ -435,6 +454,10 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                 chatPane(Modifier.weight(1f).fillMaxWidth())
             }
         }
+    }
+    }
+    }
+    }
     }
 
     selecting?.let { m ->
@@ -919,5 +942,41 @@ internal fun JumpToLatest(count: Int, modifier: Modifier, arrow: String = "↓",
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
         )
+    }
+}
+
+/** ☗ 将棋 or 🎮 is the mode chosen above the chat (and the room is not in its own view). */
+val ChatStore.panelOpen: Boolean
+    get() = !(room.enabled && room.roomView) && ((minigame.enabled && minigame.open) || (shogi.enabled && shogi.open))
+
+/** When the board / the game goes beside the chat instead of above it: a window wider than tall and too
+ *  short for the board above the chat (a phone on its side, 411 dp). The board needs about 260 dp of height
+ *  at its smallest (22 px squares squashed to 0.78, the name rows and the commentary band); above the chat
+ *  it got 40 % of what is left under the bars and over the composer (about 65 dp) and was cut off. */
+object SidePanelLayout {
+    val MAX_HEIGHT = 560.dp
+    val MIN_WIDTH = 600.dp
+    fun beside(width: androidx.compose.ui.unit.Dp, height: androidx.compose.ui.unit.Dp) = width > height && height < MAX_HEIGHT && width >= MIN_WIDTH
+    /** The chat beside the panel: 45 % of the window, 300–420 dp. */
+    fun chatWidth(width: androidx.compose.ui.unit.Dp) = (width * 0.45f).coerceIn(300.dp, 420.dp)
+}
+
+/** ☗ / 🎮 beside the chat, as tall as the screen (inside the status and navigation bars). */
+@Composable
+private fun SidePanel(store: ChatStore, visible: Boolean, composerFocused: Boolean, modifier: Modifier) {
+    androidx.compose.material3.Surface(modifier, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        val insets = androidx.compose.foundation.layout.WindowInsets.systemBars
+            .union(androidx.compose.foundation.layout.WindowInsets.displayCutout)
+            .only(androidx.compose.foundation.layout.WindowInsetsSides.Vertical + androidx.compose.foundation.layout.WindowInsetsSides.Start)
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(insets)) {
+            val h = maxHeight
+            if (store.minigame.enabled && store.minigame.open) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    MinigamePanel(store, active = visible && !composerFocused, maxHeight = h, modifier = Modifier.fillMaxWidth())
+                }
+            } else {
+                ShogiPanel(store, visible, h, Modifier.fillMaxSize())
+            }
+        }
     }
 }

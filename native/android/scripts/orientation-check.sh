@@ -8,8 +8,10 @@
 # on each screen — chat, timeline, jukebox playing (and after background → foreground), ☗ board,
 # 🎮, the picture viewer, landscape — in light and dark, takes a screenshot of each
 # (adb exec-out screencap) and reads them with native/mac/scripts/orientation-check.swift
-# (Vision: upright must read clearly better than mirrored top to bottom). Exit 0 = every screen
-# upright, 1 = something upside down (or unreadable), 2 = could not run.
+# (Vision: upright must read clearly better than mirrored top to bottom). The ☗ screens (playing,
+# watching; portrait and on its side) also check that the whole board is on screen (the debug app's
+# log line `board-visible:`). Exit 0 = every screen upright and every board whole, 1 = something
+# upside down (or unreadable) or a board cut off, 2 = could not run.
 # Starts the emulator when none is running and closes it again; puts back dark mode and
 # rotation; stops only the processes it started itself.
 set -euo pipefail
@@ -97,6 +99,21 @@ grab() { # NAME
   SHOTS+=("$OUT/$1.png")
 }
 shot() { local name="$1"; shift; launch "$@"; grab "$name"; }
+# A ☗ board screen: also whether the whole board is on screen. The debug app logs it
+# (ShogiView.kt: `board-visible: whole|cut need=<board px> shown=<px on screen>`).
+BOARD=()
+BOARD_FAIL=0
+board() { # NAME EXTRAS…
+  local name="$1"; shift
+  "$ADB" logcat -c
+  shot "$name" "$@"
+  local line
+  line="$("$ADB" logcat -d -s BguruShogi:I | grep 'board-visible:' | tail -1 | sed -E 's/.*board-visible: //' | tr -d '\r')"
+  case "$line" in
+    whole*) BOARD+=("ok   $name.png: board whole ($line)") ;;
+    *) BOARD+=("FAIL $name.png: board ${line:-not reported} — cut off"); BOARD_FAIL=1 ;;
+  esac
+}
 
 for look in no yes; do
   name="$([ "$look" = yes ] && echo dark || echo light)"
@@ -107,7 +124,8 @@ for look in no yes; do
   # Background → foreground while it plays.
   "$ADB" shell input keyevent HOME; sleep 2
   "$ADB" shell am start -n "$ACT" >/dev/null; grab "$name-jukebox-resumed"
-  shot "$name-shogi" --es demo_open shogi
+  board "$name-shogi" --es demo_open shogi
+  board "$name-shogi-watch" --es demo_open shogi --es demo_shogi_game watch
   shot "$name-minigame" --es demo_open minigame
   shot "$name-viewer" --es demo_images "$BASE" --es demo_open viewer
 done
@@ -116,6 +134,18 @@ done
 launch
 "$ADB" shell settings put system user_rotation 1; grab "landscape-chat"
 "$ADB" shell settings put system user_rotation 0; grab "portrait-again"
+# A phone on its side: ☗ (playing, watching) and 🎮 beside the chat, the whole board on screen
+# (2026-10-21: above the chat only its top rows showed). Light and dark.
+"$ADB" shell settings put system user_rotation 1
+for look in no yes; do
+  name="landscape-$([ "$look" = yes ] && echo dark || echo light)"
+  "$ADB" shell cmd uimode night "$look" >/dev/null
+  board "$name-shogi" --es demo_open shogi
+  board "$name-shogi-watch" --es demo_open shogi --es demo_shogi_game watch
+  shot "$name-minigame" --es demo_open minigame
+done
+"$ADB" shell cmd uimode night "$NIGHT" >/dev/null
+"$ADB" shell settings put system user_rotation 0
 
 echo "=== ${#SHOTS[@]} screens in $OUT ==="
 # The check itself must catch a flipped screen: a copy of the first one, mirrored top to bottom.
@@ -126,4 +156,9 @@ if swift "$CHECK" "$FLIP" >/dev/null; then
   exit 2
 fi
 echo "selftest ok: the flipped copy of ${SHOTS[0]##*/} is caught"
-swift "$CHECK" "${SHOTS[@]}"
+RC=0
+swift "$CHECK" "${SHOTS[@]}" || RC=1
+echo "=== the ☗ board on screen (${#BOARD[@]} screens) ==="
+printf '%s\n' "${BOARD[@]}"
+[ "$BOARD_FAIL" = 0 ] || RC=1
+exit "$RC"

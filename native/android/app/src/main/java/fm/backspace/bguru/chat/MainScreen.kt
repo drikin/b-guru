@@ -75,16 +75,23 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
                 LaunchedEffect(ChatQuote.pending) { if (ChatQuote.pending != null) right = 0 }
                 // ☗ 将棋 from a notification / the chat card: show the chat (the shogi panel is above it).
                 LaunchedEffect(store.shogi.revealTick) { if (store.shogi.revealTick > 0) right = 0 }
+                androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
+                // A phone on its side with ☗ / 🎮 open: the board / game takes the timeline's place, beside the chat
+                // (ChatScreen puts it there at the full height; above the chat it would be cut off).
+                val panelBeside = right == 0 && store.panelOpen && SidePanelLayout.beside(maxWidth, maxHeight)
                 Row(Modifier.fillMaxSize()) {
-                    Row(Modifier.width(420.dp).fillMaxHeight()) {
-                        TimelineScreen(timeline, store.capabilities, tabSwitch = null, onReconnect = onSignOut)
+                    if (!panelBeside) {
+                        Row(Modifier.width(420.dp).fillMaxHeight()) {
+                            TimelineScreen(timeline, store.capabilities, tabSwitch = null, onReconnect = onSignOut)
+                        }
+                        VerticalDivider()
                     }
-                    VerticalDivider()
                     val switch: (@Composable () -> Unit)? = if (jb == null) null else {
                         { Segments(listOf(if (store.unreadCount > 0) "💬•" else "💬", "📻"), right) { right = it } }
                     }
                     if (jb != null && right == 1) JukeboxScreen(jb, store.capabilities, switch, onOpenThread = { timeline.openThread = it })
                     else PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch) }
+                }
                 }
             } else {
                 Pages(store, timeline, jb, onSignOut) { labels, selected, onSelect -> Segments(labels, selected, onSelect) }
