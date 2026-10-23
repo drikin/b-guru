@@ -2179,6 +2179,11 @@ function PostCard({
                 // batch). Lazy cuts concurrent fetches to the 2-4 visible.
                 loading="lazy"
                 decoding="async"
+                // 相手のサイトの og:image が 404 などで読めないときは、空の枠を出さずに画像の欄ごと隠す
+                onError={(e) => {
+                  const box = e.currentTarget.parentElement;
+                  if (box) box.style.display = "none";
+                }}
                 style={{
                   width: "100%",
                   maxWidth: post.urlPreview.videoId ? 480 : "none",
