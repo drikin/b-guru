@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         HangWatch.shared.start()
         TextComposition.watchReturnKey()
         #if DEBUG
+        // Dev only: -assistantSelfTest runs the assistant's filter / addressee tests and exits (1 on failure).
+        if CommandLine.arguments.contains("-assistantSelfTest") { exit(Assistant.selfTest() ? 0 : 1) }
         // Dev only: show in the Dock so UI automation can find the app.
         if CommandLine.arguments.contains("-regular") { NSApp.setActivationPolicy(.regular) }
         #endif
@@ -53,7 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         setupBarker()
         updateStatusIcon(unread: 0, mentions: 0, connection: .connecting)
-        if !CommandLine.arguments.contains("-selftest") { setupCollapser(); setupTicker(); setupAIPicks() }
+        if !CommandLine.arguments.contains("-selftest") { setupCollapser(); setupTicker(); setupAIPicks(); setupAssistant() }
         settings.onDockChange = { [weak self] _ in self?.applyDockSetting() }
         applyDockSetting()
 
@@ -309,10 +311,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             _ = store.mentionCount
             _ = store.connection
             _ = store.signedOut
+            _ = store.capabilities
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self, let store = self.store else { return }
                 self.updateStatusIcon(unread: store.unreadCount, mentions: store.mentionCount, connection: store.connection)
+                self.applyAssistant() // capabilities（features.mac_assistant）が届いたら
                 if store.signedOut { self.signOut(revoke: false) } else { self.observeStore() }
             }
         }
@@ -439,6 +443,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             r.indentationLevel = 1
             menu.addItem(r)
         }
+        addAssistantMenu(to: menu)
         let ver = NSMenuItem(title: "バージョン \(Updater.shared.currentVersion)（ベータ）", action: nil, keyEquivalent: "")
         ver.isEnabled = false
         menu.addItem(ver)
@@ -545,7 +550,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         if settings.collapseStatusItems { applyCollapseSetting(true, userAction: false) }
         #if DEBUG
-        if CommandLine.arguments.contains("-collapseTest") || CommandLine.arguments.contains("-tickerTest") {
+        if CommandLine.arguments.contains("-collapseTest") || CommandLine.arguments.contains("-tickerTest")
+            || CommandLine.arguments.contains("-assistantTest") {
             StatusBarDiag.forced = true
             StatusBarDiag.enabled = true
             startDebugCommands()
@@ -624,6 +630,193 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     // MARK: - 端末内 AI のおすすめ
+
+    // MARK: - アシスタント（試験的）
+
+    /// アシスタントのメニュー項目を出してよいか（サーバーの capabilities `features.mac_assistant` が true のときだけ。古いサーバー・false では出さない）。
+    private var assistantAllowed: Bool {
+        #if DEBUG
+        if CommandLine.arguments.contains("-assistantTest") { return true }
+        #endif
+        return store?.capabilities?.macAssistantEnabled == true
+    }
+    /// 静かな時間に出せなかった知らせ（明けたら最新の 3 件だけ出す）。
+    private var assistantHeld: [Assistant.Notice] = []
+    private var assistantHoldTimer: Timer?
+    #if DEBUG
+    private var debugQuiet = false
+    #endif
+
+    private var assistantQuiet: Bool {
+        #if DEBUG
+        if debugQuiet { return true }
+        if CommandLine.arguments.contains("-assistantTest") { return false }
+        #endif
+        return settings.isQuietNow()
+    }
+
+    private func setupAssistant() {
+        let a = Assistant.shared
+        a.blockedReason = { [weak self] in (self?.settings.isQuietNow() ?? false) ? "静かな時間" : nil }
+        a.ownerNames = { [weak self] in
+            var names = [NSFullUserName(), NSUserName()]
+            if let me = self?.store?.lastOwnMessage?.authorName { names.insert(me, at: 0) }
+            return names.filter { !$0.isEmpty }
+        }
+        a.deliver = { [weak self] notice in self?.deliverAssistant(notice) }
+        settings.onAssistantChange = { [weak self] in
+            self?.applyAssistant()
+            // 記録は実際に動いているかで（開発の -assistantTest は設定がオフのまま動くので、設定の値だと「オフ（一時停止）」になる）
+            StatusBarDiag.note("アシスタント: \(Assistant.shared.enabled ? "オン" : "オフ")\(self?.settings.assistantPaused == true ? "（一時停止）" : "")")
+        }
+        #if DEBUG
+        if CommandLine.arguments.contains("-assistantTest") {
+            // 開発のみ：自分のテスト用の窓だけを見張る。ほかのアプリの中身は読まない。
+            a.testOwnWindowsOnly = true
+            // 通しの試験では件数の上限を切る（同じ知らせの 30 分の見送りは残す）
+            let n = CommandLine.arguments.firstIndex(of: "-assistantTestWindows").flatMap { i in i + 1 < CommandLine.arguments.count ? Int(CommandLine.arguments[i + 1]) : nil } ?? 3
+            AssistantTestWindows.shared.show(count: n)
+        }
+        #endif
+        // 静かな時間が明けたら、保留した知らせの最新 3 件を出す
+        assistantHoldTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.flushHeldAssistant()
+                // 端末内 AI が後から使えるようになったら（準備中 → 使える）、再起動を待たずにオンにする
+                if self.settings.assistant, !Assistant.shared.enabled { self.applyAssistant() }
+            }
+        }
+        applyAssistant()
+    }
+
+    private func applyAssistant() {
+        let a = Assistant.shared
+        a.paused = settings.assistantPaused
+        a.autoFront = settings.assistantAutoFront
+        a.interest = settings.assistantInterest.isEmpty ? Assistant.defaultInterest : settings.assistantInterest
+        a.excluded = settings.assistantExcluded
+        var on = settings.assistant && Assistant.availability().ok && assistantAllowed
+        #if DEBUG
+        if CommandLine.arguments.contains("-assistantTest") { on = (settings.assistant || !debugAssistantOff) && Assistant.availability().ok }
+        #endif
+        a.enabled = on
+        // 設定がオフなら、AI が使えない Mac でも必ず記録を消す
+        if !settings.assistant {
+            #if DEBUG
+            if CommandLine.arguments.contains("-assistantTest") && !debugAssistantOff { return }
+            #endif
+            a.eraseMemory()
+        } else if store?.capabilities != nil, !assistantAllowed {
+            // サーバー側で対象から外した（capabilities が届いて false）：設定は残し、記録は消す
+            a.eraseMemory()
+        }
+    }
+    #if DEBUG
+    private var debugAssistantOff = false
+    #endif
+
+    /// 知らせを届ける：パネルが見えていればヘッダーに 1 行、見えていなければティッカー、静かな時間は保留。
+    private func deliverAssistant(_ n: Assistant.Notice) {
+        if assistantQuiet {
+            assistantHeld.append(n)
+            if assistantHeld.count > 3 { assistantHeld.removeFirst(assistantHeld.count - 3) }
+            StatusBarDiag.note("アシスタント: 静かな時間なので保留（\(assistantHeld.count) 件）")
+            return
+        }
+        let text = Assistant.shared.tickerText(n, namesOnly: settings.menuBarTickerNamesOnly)
+        if store?.isVisible == true {
+            AssistantBanner.shared.current = n
+            AssistantBanner.shared.text = text
+            barker?.bark(.assistant)
+            StatusBarDiag.note("アシスタント: パネルのヘッダーに出した")
+        } else {
+            ticker?.enqueue(assistant: text) { Assistant.shared.bringToFront(n) }
+        }
+    }
+
+    private func flushHeldAssistant() {
+        guard !assistantHeld.isEmpty, !assistantQuiet else { return }
+        let held = assistantHeld.suffix(3)
+        assistantHeld.removeAll()
+        StatusBarDiag.note("アシスタント: 保留していた \(held.count) 件を出す")
+        for n in held { deliverAssistant(n) }
+    }
+
+    @objc private func toggleAssistant() {
+        if settings.assistant { AssistantUI.disable(settings) } else { AssistantUI.enable(settings) }
+    }
+    @objc private func toggleAssistantAuto() { settings.assistantAutoFront.toggle() }
+    @objc private func toggleAssistantPause() { settings.assistantPaused.toggle() }
+    @objc private func assistantWrong(_ sender: NSMenuItem) { Assistant.shared.markWrong(sender.representedObject as? UUID) }
+    @objc private func assistantRight(_ sender: NSMenuItem) { Assistant.shared.markRight(sender.representedObject as? UUID) }
+    @objc private func assistantMuteApp(_ sender: NSMenuItem) { muteAssistantApp(sender.representedObject as? UUID) }
+    /// 最近の知らせのアプリを除外リストに入れる（1 クリック。「除外するアプリ…」で外せる）。
+    private func muteAssistantApp(_ id: UUID?) {
+        let a = Assistant.shared
+        guard let n = id.flatMap({ id in a.recent.first { $0.id == id } }) ?? a.recent.first else { return }
+        let key = n.bundleID.isEmpty ? n.app : n.bundleID
+        if !settings.assistantExcluded.contains(key) { settings.assistantExcluded.append(key) }
+        a.forgetRecent(app: n.app)
+        StatusBarDiag.note("アシスタント: このアプリは知らせない（\(n.app)）")
+    }
+    @objc private func editAssistantInterest() { AssistantUI.editInterest(settings) }
+    @objc private func editAssistantExcluded() { AssistantUI.editExcluded(settings) }
+
+    private func addAssistantMenu(to menu: NSMenu) {
+        guard assistantAllowed else { return }
+        let avail = Assistant.availability()
+        let item = NSMenuItem(title: "アシスタント：ウインドウの変化を知らせる（試験的）", action: #selector(toggleAssistant), keyEquivalent: "")
+        item.target = self
+        item.state = settings.assistant ? .on : .off
+        item.isEnabled = avail.ok || settings.assistant
+        menu.addItem(item)
+        if let reason = avail.reason {
+            let r = NSMenuItem(title: reason, action: nil, keyEquivalent: "")
+            r.isEnabled = false
+            r.indentationLevel = 1
+            menu.addItem(r)
+            return
+        }
+        guard settings.assistant else { return }
+        let sub = NSMenu()
+        func add(_ title: String, _ action: Selector?, state: Bool? = nil, object: Any? = nil, indent: Int = 0) {
+            let i = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            i.target = self
+            i.representedObject = object
+            i.indentationLevel = indent
+            if let state { i.state = state ? .on : .off }
+            if action == nil { i.isEnabled = false }
+            sub.addItem(i)
+        }
+        let a = Assistant.shared
+        add(a.permissionMissing ? "画面収録の許可が要ります（システム設定 → プライバシーとセキュリティ → 画面収録）" : "見張っているウインドウ：\(a.watchingCount) 個", nil)
+        add(a.weekSummary, nil)
+        if !a.recent.isEmpty {
+            sub.addItem(.separator())
+            add("最近の知らせ（違う・合ってたを選ぶ）", nil)
+            let f = DateFormatter()
+            f.dateFormat = "H:mm"
+            let namesOnly = settings.menuBarTickerNamesOnly
+            for n in a.recent {
+                // 「名前だけ」の設定ではアプリ名だけ（理由は画面の文字から作られることがあるので出さない）
+                add(namesOnly ? "\(f.string(from: n.at)) \(n.app)" : "\(f.string(from: n.at)) \(n.app)：\(AIPicks.short(n.reason, 20))", nil, indent: 1)
+                add("違う（次から知らせない）", #selector(assistantWrong(_:)), object: n.id, indent: 2)
+                add("合ってた", #selector(assistantRight(_:)), object: n.id, indent: 2)
+                add("このアプリは知らせない", #selector(assistantMuteApp(_:)), object: n.id, indent: 2)
+            }
+        }
+        sub.addItem(.separator())
+        add("知りたいこと…", #selector(editAssistantInterest))
+        add("除外するアプリ…", #selector(editAssistantExcluded))
+        add("自動で前に出す（離席中だけ・ブラウザは除く）", #selector(toggleAssistantAuto), state: settings.assistantAutoFront)
+        add("見張りを一時停止", #selector(toggleAssistantPause), state: settings.assistantPaused)
+        add("画面の中身は Mac の中の AI だけが読み、外には出しません", nil)
+        let parent = NSMenuItem(title: "アシスタントの設定", action: nil, keyEquivalent: "")
+        parent.submenu = sub
+        parent.indentationLevel = 1
+        menu.addItem(parent)
+    }
 
     private func setupAIPicks() {
         aiPicks.blockedReason = { [weak self] in
@@ -709,6 +902,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             case .mention: self?.barker?.bark(.mention)
             case .notice: self?.barker?.bark(.notice)
             case .suggest: self?.barker?.bark(.suggest)
+            case .assistant: self?.barker?.bark(.assistant)
             }
         }
         t.onOpenThread = { [weak self] id in
@@ -776,7 +970,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 開発のみ：分散通知 fm.backspace.bguru.chat.debugCollapse（object = コマンド）で畳む機能とティッカーを操作する。
     private var debugSeq = 0
     private func startDebugCommands() {
-        DistributedNotificationCenter.default().addObserver(forName: Notification.Name("fm.backspace.bguru.chat.debugCollapse"), object: nil, queue: .main) { [weak self] n in
+        DistributedNotificationCenter.default().addObserver(forName: Notification.Name("fm.backspace.bguru.chat.debugCollapse" + (ProcessInfo.processInfo.environment["BGURU_DEBUG_CHANNEL"] ?? "")), object: nil, queue: .main) { [weak self] n in
             let cmd = n.object as? String ?? ""
             MainActor.assumeIsolated {
                 guard let self, let c = self.collapser else { return }
@@ -827,7 +1021,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         for k in 0..<7 { store.debugReceive("連投 \(k + 1)", id: id + 100 + k, author: "連投さん") }
                     }
                 case "quit": NSApp.terminate(nil)
-                default: break
+                case "awWrong": Assistant.shared.markWrong()
+                case "awRight": Assistant.shared.markRight()
+                case "awMute": self.muteAssistantApp(nil)
+                case "awExcluded": NSLog("[assistant] 除外 %d 件・最後: %@", self.settings.assistantExcluded.count, self.settings.assistantExcluded.last ?? "")
+                case "awAutoOn": self.settings.assistantAutoFront = true
+                case "awAutoOff": self.settings.assistantAutoFront = false
+                case "awPause": self.settings.assistantPaused = true
+                case "awResume": self.settings.assistantPaused = false
+                case "awOff": self.debugAssistantOff = true; self.applyAssistant()
+                case "awOn": self.debugAssistantOff = false; self.applyAssistant()
+                case "awQuietOn": self.debugQuiet = true
+                case "awQuietOff": self.debugQuiet = false; self.flushHeldAssistant()
+                case "awFrontCheckBrowser":
+                    if var n = Assistant.shared.recent.first {
+                        n.bundleID = "com.apple.Safari"
+                        NSLog("[assistant] ブラウザなら自動で出すか: %@", Assistant.shared.autoFrontBlockReason(n) ?? "出す")
+                    }
+                case "awFrontCheck":
+                    if let n = Assistant.shared.recent.first { NSLog("[assistant] 自動で出すか: %@", Assistant.shared.autoFrontBlockReason(n) ?? "出す") }
+                case "awMemory":
+                    NSLog("[assistant] 見張り %d 個・覚えている行 %d", Assistant.shared.watchingCount, Assistant.shared.lineCount)
+                case "showPanel": self.showPanel()
+                case "hidePanel": self.panel?.dismiss()
+                default:
+                    if cmd.hasPrefix("aw:") { AssistantTestWindows.shared.command(cmd) }
+                    if cmd.hasPrefix("awForceKind:") { Assistant.shared.debugForceKind = String(cmd.dropFirst("awForceKind:".count)) }
                 }
             }
         }

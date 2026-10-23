@@ -186,8 +186,18 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var commentary: Bool?
         var timeControls: [TimeControl]?
     }
+    /// Mac のアシスタント（試験的）: features.mac_assistant。true か {"enabled": true} のときだけ Mac がメニューに出す（最初はオーナーだけ）。
+    struct FlagFeature: Decodable, Sendable, Equatable {
+        var enabled: Bool
+        init(from decoder: Decoder) throws {
+            if let b = try? decoder.singleValueContainer().decode(Bool.self) { enabled = b; return }
+            struct Obj: Decodable { var enabled: Bool? }
+            enabled = (try? Obj(from: decoder))?.enabled ?? false
+        }
+    }
     struct Features: Decodable, Sendable, Equatable {
         var chat: ChatFeatures?
+        var macAssistant: FlagFeature?
         var posts: PostFeatures?
         var voice: VoiceFeatures?
         var room: RoomFeatures?
@@ -201,6 +211,8 @@ struct Capabilities: Decodable, Sendable, Equatable {
     var features: Features?
 
     var canSend: Bool { features?.chat?.send ?? false }
+    /// Mac のアシスタント（試験的）を出してよいか。古いサーバー・false では出さない。
+    var macAssistantEnabled: Bool { features?.macAssistant?.enabled ?? false }
     /// Photos in the chat (servers from before them say nothing → off).
     var canSendChatImages: Bool { features?.chat?.images ?? false }
     var maxChatImages: Int { features?.chat?.maxImages ?? 4 }

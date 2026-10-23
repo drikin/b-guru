@@ -11,11 +11,13 @@ import QuartzCore
 /// 動かすのは Core Animation（レンダーサーバー側）。流していないときはタイマーもアニメーションもない。
 @MainActor
 final class StatusTicker {
-    enum Style { case message, mention, notice, suggest }
+    enum Style { case message, mention, notice, suggest, assistant }
     struct Item {
         var text: String
         var style: Style
         var messageId: Int?
+        /// アシスタントの知らせ：クリックで行うこと（そのアプリを前に出す）。
+        var action: (() -> Void)?
     }
 
     static let maxQueue = 5
@@ -108,7 +110,7 @@ final class StatusTicker {
 
     private func showNext() {
         // 端末内 AI のおすすめ（suggest）は、ティッカーがオフでも流す（その機能をオンにした人だけが入れる）。
-        guard enabled || queue.first?.style == .suggest, current == nil, !queue.isEmpty, let button = item.button else { return }
+        guard enabled || queue.first?.style == .suggest || queue.first?.style == .assistant, current == nil, !queue.isEmpty, let button = item.button else { return }
         guard canShow() else { queue.removeAll(); return }
         let it = queue.removeFirst()
         onShow?(it.style)
@@ -220,8 +222,10 @@ final class StatusTicker {
     func clicked() {
         let id = current?.messageId
         let suggest = current?.style == .suggest
+        let action = current?.action
         StatusBarDiag.note("ティッカー: クリック")
         stop(clear: true)
+        if let action { action(); return }
         if suggest, let id { onOpenThread?(id) } else { onOpen?(id) }
     }
 
@@ -233,6 +237,11 @@ final class StatusTicker {
         push(Item(text: text, style: .suggest, messageId: postId))
     }
 
+    /// アシスタントの知らせ（ティッカーがオフでも流す）。クリックで `action`（そのアプリを前に出す）。
+    func enqueue(assistant text: String, action: @escaping () -> Void) {
+        push(Item(text: text, style: .assistant, messageId: nil, action: action))
+    }
+
     // MARK: - 文字
 
     private static func styleName(_ s: Style) -> String {
@@ -241,6 +250,7 @@ final class StatusTicker {
         case .mention: return "メンション"
         case .notice: return "お知らせ"
         case .suggest: return "おすすめ"
+        case .assistant: return "アシスタント"
         }
     }
 
@@ -256,7 +266,7 @@ final class StatusTicker {
         }()
         (appearance ?? NSAppearance.currentDrawing()).performAsCurrentDrawingAppearance {
             switch it.style {
-            case .mention, .message, .notice, .suggest: color = NSColor.labelColor.cgColor
+            case .mention, .message, .notice, .suggest, .assistant: color = NSColor.labelColor.cgColor
             }
         }
         return NSAttributedString(string: it.text, attributes: [.font: font, .foregroundColor: NSColor(cgColor: color) ?? .labelColor])

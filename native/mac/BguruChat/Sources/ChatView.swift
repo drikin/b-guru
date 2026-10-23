@@ -29,6 +29,7 @@ struct ChatView: View {
         VStack(spacing: 0) {
             ChatHeader(store: store, pin: pin, tabPicker: tabPicker, onSignOut: onSignOut)
             Divider()
+            AssistantBannerRow()
             if store.minigame.enabled && store.minigame.open {
                 // 🎮 (its choice sits in the header): the game above the chat, at its own height.
                 MinigameScreen(minigame: store.minigame)
@@ -154,6 +155,31 @@ private struct ChatHeader: View {
                 Toggle("AI がタイムラインのおすすめを教える（この Mac の中だけで動きます）", isOn: $settings.aiTimelinePicks)
                     .disabled(!ai.ok && !settings.aiTimelinePicks)
                 if let reason = ai.reason { Text("　\(reason)") }
+                // アシスタント（試験的）：サーバーが features.mac_assistant を true にしたときだけ。オン・オフは説明と同意を通す。
+                if store.capabilities?.macAssistantEnabled == true {
+                    let asst = Assistant.availability()
+                    Toggle("アシスタント：ウインドウの変化を知らせる（試験的）", isOn: Binding(
+                        get: { settings.assistant },
+                        set: { on in if on { AssistantUI.enable(settings) } else { AssistantUI.disable(settings) } }))
+                        .disabled(!asst.ok && !settings.assistant)
+                    if let reason = asst.reason { Text("　\(reason)") }
+                    if settings.assistant {
+                        Menu("　アシスタントの設定") {
+                            Text(Assistant.shared.weekSummary)
+                            ForEach(Assistant.shared.recent) { n in
+                                Menu("\(n.app)：\(AIPicks.short(n.reason, 20))") {
+                                    Button("違う（次から知らせない）") { Assistant.shared.markWrong(n.id) }
+                                    Button("合ってた") { Assistant.shared.markRight(n.id) }
+                                }
+                            }
+                            Button("知りたいこと…") { AssistantUI.editInterest(settings) }
+                            Button("除外するアプリ…") { AssistantUI.editExcluded(settings) }
+                            Toggle("自動で前に出す（離席中だけ・ブラウザは除く）", isOn: $settings.assistantAutoFront)
+                            Toggle("見張りを一時停止", isOn: $settings.assistantPaused)
+                            Text("画面の中身は Mac の中の AI だけが読み、外には出しません")
+                        }
+                    }
+                }
                 if settings.menuBarTicker {
                     Toggle("　名前だけ（本文を出さない）", isOn: $settings.menuBarTickerNamesOnly)
                 }
@@ -465,5 +491,33 @@ private struct FocusOnChatTab: View {
                     focused.wrappedValue = false
                 }
             }
+    }
+}
+
+/// アシスタントの知らせ（パネルが見えているとき、ヘッダーの下に 1 行）。クリックでそのアプリを前に、× で閉じる。
+private struct AssistantBannerRow: View {
+    @Bindable private var banner = AssistantBanner.shared
+
+    var body: some View {
+        if let n = banner.current {
+            HStack(spacing: 6) {
+                Button {
+                    Assistant.shared.bringToFront(n)
+                    banner.current = nil
+                } label: {
+                    Text(banner.text).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .help("クリックで \(n.app) を前に出す")
+                Button { banner.current = nil } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.borderless)
+                    .help("閉じる")
+            }
+            .font(.callout)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.accentColor.opacity(0.12))
+            Divider()
+        }
     }
 }

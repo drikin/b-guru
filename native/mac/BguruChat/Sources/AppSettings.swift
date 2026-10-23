@@ -90,6 +90,23 @@ final class AppSettings {
         }
     }
     @ObservationIgnored var onRunnerChange: ((Bool) -> Void)?
+    /// アシスタント（試験的）：裏のウインドウの変化を端末内 AI が見て知らせる。既定は切。
+    var assistant: Bool {
+        didSet { guard assistant != oldValue else { return }; UserDefaults.standard.set(assistant, forKey: "assistant"); onAssistantChange?() }
+    }
+    var assistantAutoFront: Bool {
+        didSet { guard assistantAutoFront != oldValue else { return }; UserDefaults.standard.set(assistantAutoFront, forKey: "assistantAutoFront"); onAssistantChange?() }
+    }
+    var assistantPaused: Bool {
+        didSet { guard assistantPaused != oldValue else { return }; UserDefaults.standard.set(assistantPaused, forKey: "assistantPaused"); onAssistantChange?() }
+    }
+    var assistantInterest: String {
+        didSet { guard assistantInterest != oldValue else { return }; UserDefaults.standard.set(assistantInterest, forKey: "assistantInterest"); onAssistantChange?() }
+    }
+    var assistantExcluded: [String] {
+        didSet { guard assistantExcluded != oldValue else { return }; UserDefaults.standard.set(assistantExcluded, forKey: "assistantExcluded"); onAssistantChange?() }
+    }
+    @ObservationIgnored var onAssistantChange: (() -> Void)?
     /// 走る速さに GPU の負荷も使う（既定は切 = CPU だけ）。
     var menuBarRunnerGPU: Bool {
         didSet {
@@ -123,6 +140,11 @@ final class AppSettings {
         menuBarTickerNamesOnly = d.bool(forKey: "menuBarTickerNamesOnly")
         menuBarBark = d.object(forKey: "menuBarBark") as? Bool ?? true
         menuBarRunner = d.bool(forKey: "menuBarRunner")
+        assistant = d.bool(forKey: "assistant")
+        assistantAutoFront = d.bool(forKey: "assistantAutoFront")
+        assistantPaused = d.bool(forKey: "assistantPaused")
+        assistantInterest = d.string(forKey: "assistantInterest") ?? Assistant.defaultInterest
+        assistantExcluded = d.stringArray(forKey: "assistantExcluded") ?? Assistant.defaultExcluded
         menuBarRunnerGPU = d.bool(forKey: "menuBarRunnerGPU")
         aiTimelinePicks = d.bool(forKey: "aiTimelinePicks")
     }

@@ -116,7 +116,7 @@ extension BeagleIcon {
 @MainActor
 final class BeagleBarker {
     enum Kind: String {
-        case message = "新着", mention = "メンション", notice = "お知らせ", suggest = "おすすめ"
+        case message = "新着", mention = "メンション", notice = "お知らせ", suggest = "おすすめ", assistant = "アシスタント"
     }
     static let frameInterval: TimeInterval = 0.15
     /// 1 回の吠え（約 1.2 秒）：頭を上げて口を開け、線が伸びて「!」、最後に通常の絵で一息。新着・お知らせは 2 回、メンションは 3 回。
@@ -154,7 +154,7 @@ final class BeagleBarker {
             return
         }
         lastBark = Date()
-        let times = kind == .mention ? 3 : (kind == .suggest ? 1 : 2)
+        let times = kind == .mention ? 3 : (kind == .suggest || kind == .assistant ? 1 : 2)
         sequence = Array(repeating: Self.once, count: times).flatMap { $0 }
         startFrame = nil
         StatusBarDiag.note("吠えた（\(kind.rawValue)）")
