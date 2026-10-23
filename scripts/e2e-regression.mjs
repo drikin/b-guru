@@ -3151,8 +3151,9 @@ console.log("\nP. Performance (2026-10-20): presence list in SSE, sized images, 
   await page.goto(BASE_URL, { waitUntil: "networkidle", timeout: 60000 });
   await page.waitForTimeout(1500);
   const media = await page.evaluate(() => {
+    // カスタム絵文字（emoji-…、リアクションや本文の小さい絵）は縮小版を使わないので除く
     const imgs = [...document.querySelectorAll('[data-post-id] img')]
-      .filter((i) => /\/api\/media\/(?!chat-)[^?]+\.(jpe?g|png|webp)/i.test(i.getAttribute("src") || ""));
+      .filter((i) => /\/api\/media\/(?!chat-|emoji-)[^?]+\.(jpe?g|png|webp)/i.test(i.getAttribute("src") || ""));
     return imgs.slice(0, 20).map((i) => ({ src: i.getAttribute("src"), srcset: i.getAttribute("srcset") || "" }));
   });
   if (media.length === 0) {
