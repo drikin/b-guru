@@ -442,6 +442,9 @@ Swift の `NSRegularExpression`・Kotlin/Java の `\s` とは集合が違うの�
   `include=display` は Ghost を待たない（一覧がまだ無ければメンション無し＝`mention_ranges: []` で返す。次の読み込みで付く）。
 - 配信するファイル（`/api/media/…`・`/api/img`・`/api/avatar/…`）は `X-Content-Type-Options: nosniff`。
 - 起動時に `GET /api/agent/capabilities` を読み、`features.posts` に無い操作は出さない。知らない項目は読み飛ばす。
+- `features.mac_assistant`（boolean）：Mac のアシスタント機能を出すか。サーバの `MAC_ASSISTANT_ENABLED`（未設定＝誰にも出さない・
+  メールのカンマ区切り＝その人だけ・`1`＝全員。`src/lib/feature-flag.ts`）を、鍵の持ち主のメールで判定する。最初はオーナーだけ。
+  false か項目が無ければ Mac アプリは出さない。
 - 投稿の形・`include`・`display` は §2・§3。位置はすべて UTF-16。
 
 「アプリの鍵」= `app_issued` ＋ post（§10.1）。外部の鍵では 403。

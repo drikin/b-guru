@@ -443,6 +443,8 @@ const spec = {
     "/api/agent/capabilities": {
       get: {
         summary: "サーバーが今サポートする機能とトークンで使える操作。クライアントは無い機能を隠し、知らない項目を無視する",
+        description:
+          "features.mac_assistant (boolean): Mac のアシスタント機能を出すか。MAC_ASSISTANT_ENABLED（未設定=誰にも出さない・メールのカンマ区切り=その人だけ・1=全員）を鍵の持ち主のメールで判定。false・項目なしなら出さない",
         responses: { "200": { description: "OK" } },
       },
     },

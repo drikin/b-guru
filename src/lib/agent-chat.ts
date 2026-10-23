@@ -191,7 +191,7 @@ export function toAgentVoiceDto(s: VoiceState) {
  *  calling token's, so a client knows up front which actions will be refused. */
 export function agentCapabilities(
   scopes: AgentScope[],
-  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; shogiCommentary?: boolean; minigame?: boolean; appIssued?: boolean } = {}
+  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; shogiCommentary?: boolean; minigame?: boolean; appIssued?: boolean; macAssistant?: boolean } = {}
 ) {
   const ttlHours = parseInt(CHAT_TTL, 10) || 24;
   const can = (s: AgentScope) => scopes.includes(s);
@@ -294,6 +294,8 @@ export function agentCapabilities(
       // 🎮 散財ダッシュ (docs/minigame-spec.md), behind MINIGAME_ENABLED. The game is a web page the app
       // shows in a WebView (bridge_version 1); the app keeps the token and relays the API.
       minigame: minigameCapability(!!opts.minigame, scopes),
+      // Mac のアシスタント機能（MAC_ASSISTANT_ENABLED・最初はオーナーだけ）。false なら Mac アプリは出さない。
+      mac_assistant: !!opts.macAssistant,
       voice: {
         enabled: !!opts.voice,
         join: !!opts.voice && can("voice"),

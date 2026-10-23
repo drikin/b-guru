@@ -30,3 +30,11 @@ export function featureOnForAnyone(envName: string): boolean {
   const v = raw(envName);
   return !!v && v !== "0" && v.toLowerCase() !== "false";
 }
+
+/** Mac のアシスタント機能（最初はオーナーだけに見せる）。MAC_ASSISTANT_ENABLED: 未設定＝誰にも出さない、
+ *  メールのカンマ区切り＝その人だけ、"1" ＝全員。判定はアプリ用の鍵の持ち主のメール（capabilities の
+ *  features.mac_assistant）。 */
+export const MAC_ASSISTANT_FLAG = "MAC_ASSISTANT_ENABLED";
+export function macAssistantEnabledFor(email: string | null | undefined): boolean {
+  return featureEnabledFor(MAC_ASSISTANT_FLAG, email);
+}
