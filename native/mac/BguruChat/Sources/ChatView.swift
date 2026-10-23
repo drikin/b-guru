@@ -223,7 +223,9 @@ private struct ChatMessageList: View {
     @Environment(\.screenVisibility) private var visibility
     private var onScreen: Bool { visibility?.chat ?? true }
     @State private var frozen: [ChatRow]?
-    private var rows: [ChatRow] { frozen ?? store.rows }
+    /// The live rows as soon as the chat shows (not one update later: a message to jump to —
+    /// a notification's — must already be in the list when the jump is asked for).
+    private var rows: [ChatRow] { onScreen ? store.rows : (frozen ?? store.rows) }
 
     var body: some View {
         ScrollViewReader { proxy in

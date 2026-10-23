@@ -33,6 +33,8 @@ final class TimelineStore {
     @ObservationIgnored var onThreadOpened: ((Post) -> Void)?
     @ObservationIgnored var onReplied: ((Int) -> Void)?
     private var nextCursor: String?
+    /// How many posts the last refresh's first page had (the rest came from loading more).
+    @ObservationIgnored private var firstPageCount = 0
 
     let api: APIClient
     private var pendingRead = Set<Int>()
@@ -50,7 +52,9 @@ final class TimelineStore {
 
     var unreadCount: Int { posts.filter { $0.unread == true }.count }
 
-    func refresh() async {
+    /// `full`: asked for (pull, ⟳) — the list starts again from the first page. Otherwise
+    /// (every minute, on coming back) the pages read further down are kept.
+    func refresh(full: Bool = false) async {
         #if DEBUG
         if api.token == "demo" { return }
         #endif
@@ -72,8 +76,19 @@ final class TimelineStore {
             // with the first 30 every minute cut it short under someone reading post 80: the
             // scroll position fell past the end, the last row came on screen, the next page
             // loaded, and a minute later the same again (drikin 2026-10-23, freezes / jank).
+            // Of the previous first page, what is missing now was either pushed down by as many
+            // posts that came in (kept, at the top of the older part) or deleted (dropped). What
+            // was on later pages is kept as it was until a full refresh.
             let freshIds = Set(fresh.map(\.id))
-            let older = posts.count > fresh.count ? posts.filter { !freshIds.contains($0.id) } : []
+            var older: [Post] = []
+            if !full, posts.count > firstPageCount {
+                let prevFirst = posts.prefix(firstPageCount)
+                let prevIds = Set(prevFirst.map(\.id))
+                let cameIn = fresh.filter { !prevIds.contains($0.id) }.count
+                let pushedDown = prevFirst.filter { !freshIds.contains($0.id) }.suffix(cameIn)
+                older = Array(pushedDown) + posts.dropFirst(firstPageCount).filter { !freshIds.contains($0.id) }
+            }
+            firstPageCount = fresh.count
             let merged = older.isEmpty ? fresh : fresh + older
             // Nothing new (most minutes): leave the list alone. Every assignment, even of
             // the same posts, made the whole list (and everything reading it) update.

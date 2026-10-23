@@ -20,6 +20,9 @@ struct ChatScrolling: ViewModifier {
     private var onScreen: Bool { visibility?.chat ?? true }
     /// The panel opened with unread messages while the chat was hidden: go to them once it shows.
     @State private var openPending = false
+    /// When the list last went to the unread line: coming on screen in the same moment must
+    /// not then send it to the bottom (that also zeroed 「↓ 新着 N」).
+    @State private var wentToUnreadAt = Date.distantPast
 
     /// Sending also shrinks the composer (and a LazyVStack only estimates rows it
     /// hasn't drawn), so one scroll can land short of the bottom. Scroll now, then
@@ -38,6 +41,7 @@ struct ChatScrolling: ViewModifier {
     private func scrollToUnread() {
         guard let id = store.unreadMarkerId,
               let row = store.rows.first(where: { $0.message.id == id }) else { return }
+        wentToUnreadAt = Date()
         let unread = store.rows.filter { r in
             r.message.id >= id && !r.message.isAuthor && !r.message.isNotice
         }.count
@@ -76,16 +80,23 @@ struct ChatScrolling: ViewModifier {
                 }
             }
             .onChange(of: store.openSeq) { _, _ in
-                if onScreen { scrollToUnread() } else { openPending = true }
+                if onScreen {
+                    openPending = false
+                    scrollToUnread()
+                } else {
+                    openPending = true
+                }
             }
             .onChange(of: onScreen) { _, shown in
                 guard shown else { return }
-                // After the rows caught up (the list unfreezes in the same update).
+                // After the rows caught up (the list unfreezes in the same update) and after a
+                // jump the same update asked for (a notification's message, the unread line).
                 DispatchQueue.main.async {
                     if openPending {
                         openPending = false
                         scrollToUnread()
-                    } else if atBottom {
+                    } else if atBottom, store.scrollTarget == nil, store.highlightId == nil,
+                              Date().timeIntervalSince(wentToUnreadAt) > 1 {
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }

@@ -170,7 +170,7 @@ struct TimelineScreen: View {
                     .menuStyle(.borderlessButton)
                     .fixedSize()
                     .help("ピン留め・ブックマーク・お気に入りの人")
-                Button { Task { await timeline.refresh() } } label: { Image(systemName: "arrow.clockwise") }
+                Button { Task { await timeline.refresh(full: true) } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless)
                     .keyboardShortcut("r", modifiers: .command)
                     .help("再読み込み（⌘R）")
@@ -277,7 +277,7 @@ private struct TimelinePostList: View {
             .environment(\.mediaActive, !threadOpen)
         }
         .modifier(TopTracker(atTop: $atTop))
-        .pullToRefresh { await timeline.refresh() }
+        .pullToRefresh { await timeline.refresh(full: true) }
         .scrollDismissesKeyboard(.immediately)
         .dismissesKeyboardOnTap()
         // Reading further down: a way back to the newest, like the chat's (drikin 2026-10-19).
@@ -450,7 +450,10 @@ struct PostRow: View, Equatable {
                         Image(systemName: "bookmark.fill").font(.caption2).foregroundStyle(.blue)
                             .accessibilityLabel("ブックマーク済み")
                     }
-                    Text(PostRow.relative(post.createdAt)).font(.caption).foregroundStyle(.tertiary).monospacedDigit()
+                    // Its own clock: the row is only redrawn when the post changes.
+                    TimelineView(.periodic(from: .now, by: 60)) { ctx in
+                        Text(PostRow.relative(post.createdAt, now: ctx.date)).font(.caption).foregroundStyle(.tertiary).monospacedDigit()
+                    }
                 }
                 if !post.text.isEmpty && !post.isBareLink {
                     PostBody(post: post)
