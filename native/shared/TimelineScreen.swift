@@ -234,8 +234,13 @@ private struct TimelinePostList: View {
     /// reply moving to the top) spun the Mac's main thread at 99 % for good — SwiftUI kept
     /// updating the hidden list's items (LazyLayoutViewCache.updateItemPhases) and never
     /// finished (drikin's hangs.log, 0.3.44, 2026-10-22).
+    /// The same while the timeline is not on screen at all (the chat or the jukebox shows, or
+    /// the panel is closed): refreshes still come in then (a new post's notice, the AI's picks,
+    /// the app coming back) and reordered the hidden list just the same (drikin 2026-10-23).
     @State private var frozen: [Post]?
     private var posts: [Post] { frozen ?? timeline.posts }
+    @Environment(\.screenVisibility) private var visibility
+    private var onScreen: Bool { visibility?.timeline ?? true }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -255,6 +260,7 @@ private struct TimelinePostList: View {
                                 canReact: canReact,
                                 onReact: { timeline.toggleReaction(post.id, emoji: $0) },
                                 onOpenImage: { HangWatch.note("open image (post \(post.id))"); viewing = ImageViewerItem(images: post.images ?? [], index: $0) })
+                            .equatable()
                     }
                     .buttonStyle(.plain)
                     .readWhenSeen(post.unread == true && !threadOpen) { timeline.sawPost(post.id) }
@@ -279,8 +285,8 @@ private struct TimelinePostList: View {
             guard !atTop, let first = old.first, let i = new.firstIndex(of: first) else { return }
             newAbove += new[..<i].filter { id in posts.first { $0.id == id }?.isAuthor != true }.count
         }
-        .onChange(of: threadOpen, initial: true) { _, open in
-            frozen = open ? timeline.posts : nil
+        .onChange(of: threadOpen || !onScreen, initial: true) { _, hidden in
+            frozen = hidden ? timeline.posts : nil
         }
         .onChange(of: atTop) { _, top in if top { newAbove = 0 } }
         .overlay(alignment: .bottomTrailing) {
@@ -396,8 +402,14 @@ struct ImageViewerItem: Identifiable {
     let index: Int
 }
 
-/// One post (also used for the thread's root and replies).
-struct PostRow: View {
+/// One post (also used for the thread's root and replies). Compared by what it shows (the
+/// closures act on the same post): a post read or reacted to redraws its own row, not every
+/// row on screen.
+struct PostRow: View, Equatable {
+    nonisolated static func == (a: PostRow, b: PostRow) -> Bool {
+        a.post == b.post && a.clubName == b.clubName && a.canReact == b.canReact && a.showReplyCount == b.showReplyCount
+    }
+
     let post: Post
     let clubName: String?
     let canReact: Bool
@@ -411,6 +423,10 @@ struct PostRow: View {
     @Environment(\.postClubs) private var clubs
     #if os(macOS)
     @State private var hovering = false
+    /// The reaction picker is open from the hover buttons. They stay while it is: the picker is
+    /// a popover anchored to them, and moving the pointer onto it left the post — the buttons
+    /// went away and took the picker with them (drikin 2026-10-23: 「選ぼうとすると閉じちゃう」).
+    @State private var picking = false
     #endif
     @Environment(\.debugForceHover) private var debugForceHover
 
@@ -498,8 +514,8 @@ struct PostRow: View {
         #if os(macOS)
         // The web's card buttons at the top right while the pointer is over the post.
         .overlay(alignment: .topTrailing) {
-            if hovering || debugForceHover, let actions, post.id > 0 {
-                PostHoverBar(post: post, actions: actions, canReact: canReact, onReact: onReact)
+            if hovering || picking || debugForceHover, let actions, post.id > 0 {
+                PostHoverBar(post: post, actions: actions, canReact: canReact, onReact: onReact, picking: $picking)
                     .padding(.top, 4).padding(.trailing, 8)
             }
         }
@@ -859,8 +875,9 @@ struct LinkCard: View {
                             MediaImage(path: img, contentMode: .fit, maxPixel: 900, onSize: { size in
                                 let a = size.width / max(size.height, 1)
                                 guard mediaActive else { pending = a; return }
+                                let drawn = aspect ?? ImageAspects.aspect(img)
                                 ImageAspects.record(img, size)
-                                if aspect != a { aspect = a }
+                                if drawn != a { aspect = a }
                             })
                         }
                         .onChange(of: mediaActive) { _, on in

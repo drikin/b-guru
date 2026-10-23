@@ -11,6 +11,15 @@ struct ChatScrolling: ViewModifier {
     let proxy: ScrollViewProxy
     @Binding var atBottom: Bool
     @Binding var newBelow: Int
+    /// Whether the chat is the tab / page on screen. The Mac keeps the chat built under the
+    /// timeline: scrolling its hidden lazy list each time a message arrived (three scrollTo,
+    /// animated, while the member read the timeline) is the shape of the hang that froze the
+    /// panel for good before (a hidden lazy list kept updating and never settled — drikin
+    /// 2026-10-22 / 10-23). Hidden, it does not scroll; it catches up when it shows.
+    @Environment(\.screenVisibility) private var visibility
+    private var onScreen: Bool { visibility?.chat ?? true }
+    /// The panel opened with unread messages while the chat was hidden: go to them once it shows.
+    @State private var openPending = false
 
     /// Sending also shrinks the composer (and a LazyVStack only estimates rows it
     /// hasn't drawn), so one scroll can land short of the bottom. Scroll now, then
@@ -21,23 +30,45 @@ struct ChatScrolling: ViewModifier {
         } else {
             proxy.scrollTo("bottom", anchor: .bottom)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { proxy.scrollTo("bottom", anchor: .bottom) }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { proxy.scrollTo("bottom", anchor: .bottom) }
+        // (Not once the chat has gone off screen meanwhile; `visibility` is read when they run.)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { if onScreen { proxy.scrollTo("bottom", anchor: .bottom) } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { if onScreen { proxy.scrollTo("bottom", anchor: .bottom) } }
+    }
+
+    private func scrollToUnread() {
+        guard let id = store.unreadMarkerId,
+              let row = store.rows.first(where: { $0.message.id == id }) else { return }
+        let unread = store.rows.filter { r in
+            r.message.id >= id && !r.message.isAuthor && !r.message.isNotice
+        }.count
+        // Wait for the rows to be laid out (a freshly opened panel / first load),
+        // then once more: a LazyVStack only estimates rows it has not drawn yet.
+        DispatchQueue.main.async {
+            proxy.scrollTo(row.id, anchor: .top)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                proxy.scrollTo(row.id, anchor: .top)
+                newBelow = atBottom ? 0 : unread
+            }
+        }
     }
 
     func body(content: Content) -> some View {
         content
-            .keepsBottomOnResize(atBottom)
+            .keepsBottomOnResize(atBottom && onScreen)
             .modifier(BottomTracker(atBottom: $atBottom))
             .onChange(of: store.rows.last?.id) { _, _ in
                 guard store.scrollTarget == nil, let last = store.rows.last?.message else { return }
+                if !onScreen {
+                    if !atBottom, !last.isAuthor, !last.isNotice { newBelow += 1 }
+                    return
+                }
                 if last.isAuthor && last.id < 0 {
                     // My own message just went out: show it, and keep following while it
                     // settles (sending → sent, photos loading) — drikin 2026-10-19
                     // "投稿した時にスクロール位置が更新されない時がある".
                     atBottom = true
                     toBottom(animated: store.isVisible)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { if atBottom { proxy.scrollTo("bottom", anchor: .bottom) } }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { if atBottom, onScreen { proxy.scrollTo("bottom", anchor: .bottom) } }
                 } else if atBottom {
                     toBottom(animated: store.isVisible)
                 } else if !last.isAuthor && !last.isNotice {
@@ -45,18 +76,17 @@ struct ChatScrolling: ViewModifier {
                 }
             }
             .onChange(of: store.openSeq) { _, _ in
-                guard let id = store.unreadMarkerId,
-                      let row = store.rows.first(where: { $0.message.id == id }) else { return }
-                let unread = store.rows.filter { r in
-                    r.message.id >= id && !r.message.isAuthor && !r.message.isNotice
-                }.count
-                // Wait for the rows to be laid out (a freshly opened panel / first load),
-                // then once more: a LazyVStack only estimates rows it has not drawn yet.
+                if onScreen { scrollToUnread() } else { openPending = true }
+            }
+            .onChange(of: onScreen) { _, shown in
+                guard shown else { return }
+                // After the rows caught up (the list unfreezes in the same update).
                 DispatchQueue.main.async {
-                    proxy.scrollTo(row.id, anchor: .top)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        proxy.scrollTo(row.id, anchor: .top)
-                        newBelow = atBottom ? 0 : unread
+                    if openPending {
+                        openPending = false
+                        scrollToUnread()
+                    } else if atBottom {
+                        proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }
             }

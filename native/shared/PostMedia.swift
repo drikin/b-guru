@@ -70,8 +70,11 @@ struct PostImages: View {
         let found: (CGSize) -> Void = { size in
             let a = size.width / max(size.height, 1)
             guard mediaActive else { pending[path] = a; return }
+            // Already drawn at this shape (from an earlier showing — most rows scrolled back
+            // into view): no write, so no second layout of the row each time it appears.
+            let drawn = aspects[path] ?? ImageAspects.aspect(path)
             ImageAspects.record(path, size)
-            if aspects[path] != a { aspects[path] = a }
+            if drawn != a { aspects[path] = a }
         }
         // The picture at its own shape, rounded, at the top of its cell (the cell is only
         // taller than the picture when its shape is beyond the limits in PictureRows); the

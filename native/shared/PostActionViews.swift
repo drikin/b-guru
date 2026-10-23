@@ -137,7 +137,8 @@ struct PostHoverBar: View {
     let actions: PostActionsModel
     let canReact: Bool
     let onReact: (String) -> Void
-    @State private var picking = false
+    /// Held by the post: the bar must not go away while its popover is open.
+    @Binding var picking: Bool
 
     var body: some View {
         HStack(spacing: 0) {

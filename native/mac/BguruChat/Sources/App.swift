@@ -271,6 +271,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         #endif
         if let token = Keychain.load() {
             startSession(token: token)
+            #if DEBUG
+            // Dev only: open the panel at once (checking the real timeline without the menu bar).
+            if CommandLine.arguments.contains("-showPanel") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.showPanel() }
+            }
+            #endif
         } else {
             showLogin()
         }

@@ -216,12 +216,20 @@ private struct ChatMessageList: View {
     @Binding var viewing: ImageViewerItem?
     @State private var atBottom = true
     @State private var newBelow = 0
+    /// While the chat is not on screen (the timeline or the jukebox shows, or the panel is
+    /// closed): the rows as they were. The list stays built under the other tabs, and a hidden
+    /// lazy list that keeps changing is what froze the panel (see ChatScrolling). What came
+    /// in meanwhile shows when the chat does.
+    @Environment(\.screenVisibility) private var visibility
+    private var onScreen: Bool { visibility?.chat ?? true }
+    @State private var frozen: [ChatRow]?
+    private var rows: [ChatRow] { frozen ?? store.rows }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 6) {
-                    if store.rows.isEmpty {
+                    if rows.isEmpty {
                         Text(store.hasLoaded ? "今日はまだ静かだわん" : "読み込み中…")
                             .font(.callout).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity).padding(.top, 40)
@@ -229,8 +237,9 @@ private struct ChatMessageList: View {
                     let canReact = store.capabilities?.canReact ?? false
                     let canEdit = store.capabilities?.canEdit ?? false
                     let editingId = composer.editingId
-                    ForEach(Array(store.rows.enumerated()), id: \.element.id) { idx, row in
-                        let prev = idx > 0 ? store.rows[idx - 1].message : nil
+                    let rows = rows
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                        let prev = idx > 0 ? rows[idx - 1].message : nil
                         if store.unreadMarkerId == row.message.id { UnreadDivider() }
                         MessageRow(
                             row: row,
@@ -260,8 +269,11 @@ private struct ChatMessageList: View {
             // Reacting to / editing the LAST message makes its row taller (chips
             // appear under the bubble). Without this the new chips land below the
             // viewport and the list looks like it jumped (drikin 2026-10-15).
+            .onChange(of: onScreen, initial: true) { _, on in
+                frozen = on ? nil : store.rows
+            }
             .onChange(of: lastRowSignature) { _, _ in
-                guard store.scrollTarget == nil, atBottom else { return }
+                guard store.scrollTarget == nil, atBottom, onScreen else { return }
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
             .onChange(of: store.scrollTarget) { _, target in

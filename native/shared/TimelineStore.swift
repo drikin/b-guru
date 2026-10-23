@@ -67,10 +67,18 @@ final class TimelineStore {
                 if pendingRead.contains(p.id) { p.unread = false }
                 return p
             }
+            // The first page replaces the top; the older pages already read further down stay
+            // under it (and so does the cursor for the next one). Replacing the whole list
+            // with the first 30 every minute cut it short under someone reading post 80: the
+            // scroll position fell past the end, the last row came on screen, the next page
+            // loaded, and a minute later the same again (drikin 2026-10-23, freezes / jank).
+            let freshIds = Set(fresh.map(\.id))
+            let older = posts.count > fresh.count ? posts.filter { !freshIds.contains($0.id) } : []
+            let merged = older.isEmpty ? fresh : fresh + older
             // Nothing new (most minutes): leave the list alone. Every assignment, even of
             // the same posts, made the whole list (and everything reading it) update.
-            if fresh != posts { posts = fresh }
-            if nextCursor != r.nextCursor { nextCursor = r.nextCursor }
+            if merged != posts { posts = merged }
+            if older.isEmpty, nextCursor != r.nextCursor { nextCursor = r.nextCursor }
             if failed { failed = false }
             HangWatch.note("timeline refreshed → \(posts.count) posts")
         } catch {
@@ -140,9 +148,25 @@ final class TimelineStore {
     /// debounced, batched).
     func sawPost(_ id: Int) {
         guard let i = posts.firstIndex(where: { $0.id == id }), posts[i].unread == true else { return }
-        posts[i].unread = false
         markRead([id])
+        // The list shows it as read a moment later, together with the others read meanwhile:
+        // each change to `posts` re-runs the whole list, and scrolling through unread posts
+        // changed it for every one of them in turn.
+        seenNotShown.insert(id)
+        guard seenTask == nil else { return }
+        seenTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard let self else { return }
+            seenTask = nil
+            let ids = seenNotShown
+            seenNotShown = []
+            var p = posts
+            for i in p.indices where ids.contains(p[i].id) && p[i].unread == true { p[i].unread = false }
+            if p != posts { posts = p }
+        }
     }
+    @ObservationIgnored private var seenNotShown = Set<Int>()
+    @ObservationIgnored private var seenTask: Task<Void, Never>?
 
     /// A reply in an open thread was read: one fewer "新着" on its root in the list.
     func sawReply(_ id: Int, root: Int) {
