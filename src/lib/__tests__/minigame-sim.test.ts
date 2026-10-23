@@ -195,7 +195,7 @@ describe("手触り", () => {
       expect(r.sim.tick / 60).toBeLessThan(200);
       expect(r.sim.stage).toBe(S.STAGE_COUNT - 1);
     }
-  });
+  }, 120_000); // 3 局を最後まで流すので、CI の遅い機械では既定の 5 秒を超える（手元 4 秒、CI 4〜8 秒）
 
   it("どの型も、出てくる区間の速さで、どのキャラでも完璧な操作なら当たらずに越せる", () => {
     const zoneTick: number[] = [];

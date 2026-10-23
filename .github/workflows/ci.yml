@@ -115,12 +115,13 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      # 既定の packages（"tools platform-tools"）の "tools" は新しい cmdline-tools に無く、sdkmanager が
+      # 終了コード 1 で止まる（2026-10 から）。入れるものを明示する。compileSdk 37 の platform もここで入れる
+      # （AGP にビルドの途中で取りに行かせない）。
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-
-      # compileSdk 37: install the platform up front rather than letting AGP fetch it mid-build.
-      - name: Install Android platform
-        run: sdkmanager "platforms;android-37"
+        with:
+          packages: "platform-tools platforms;android-37"
 
       - name: Setup Gradle (cache)
         uses: gradle/actions/setup-gradle@v4
