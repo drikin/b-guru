@@ -459,7 +459,10 @@ final class ChatStore {
     /// My message just went out and calls @ビーグル: write the answer here and post it for everyone.
     private func askBeagleIfCalled(_ m: ChatMessage) {
         guard m.id > 0, canAskBeagle, BeagleOnDevice.asksBeagle(m.body) else { return }
-        let chat = rows.filter { !$0.message.isNotice && !$0.message.isShogiCard && $0.message.id != m.id && !$0.message.body.isEmpty }
+        // Not Beagle's own earlier answers (it read them back and repeated them in every answer —
+        // 「18Pro を使っているみたい」), not notices, not other @ビーグル questions.
+        let chat = rows.filter { !$0.message.isNotice && !$0.message.isShogiCard && !$0.message.isBeagleAI && $0.message.id != m.id
+            && !$0.message.body.isEmpty && !BeagleOnDevice.asksBeagle($0.message.body) }
             .map { BeagleOnDevice.Note(name: $0.message.authorName ?? "?", text: $0.message.body) }
         let posts = beagleTimeline?() ?? []
         let asker = rows.last(where: { $0.message.id == m.id })?.message.authorName ?? "会員"

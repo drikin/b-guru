@@ -44,6 +44,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         #if DEBUG
         // Dev only: -assistantSelfTest runs the assistant's filter / addressee tests and exits (1 on failure).
         if CommandLine.arguments.contains("-assistantSelfTest") { exit(Assistant.selfTest() ? 0 : 1) }
+        // Dev only: -beagleAsk Q1 Q2 … — 🐶 Beagle's on-device answers to these questions, with the demo
+        // chat and timeline as knowledge, printed to stderr (to compare prompt changes; nothing is sent).
+        if let i = CommandLine.arguments.firstIndex(of: "-beagleAsk") {
+            let questions = Array(CommandLine.arguments[(i + 1)...]).filter { !$0.hasPrefix("-") }
+            let store = ChatStore(api: APIClient(token: "demo"))
+            store.debugLoadDemo()
+            let timeline = TimelineStore(api: APIClient(token: "demo"))
+            timeline.debugLoadDemo()
+            let chat = store.rows.map { BeagleOnDevice.Note(name: $0.message.authorName ?? "?", text: $0.message.body) }
+            let posts = timeline.beagleNotes()
+            Task {
+                FileHandle.standardError.write("[beagle] available=\(BeagleOnDevice.isAvailable)\n".data(using: .utf8)!)
+                for q in questions {
+                    let a = await BeagleOnDevice.answer(question: "@ビーグル " + q, asker: "ドリキン", chat: chat, posts: posts)
+                    FileHandle.standardError.write("Q: \(q)\nA: \(a ?? "(nil)")\n\n".data(using: .utf8)!)
+                }
+                exit(0)
+            }
+            return
+        }
         // Dev only: show in the Dock so UI automation can find the app.
         if CommandLine.arguments.contains("-regular") { NSApp.setActivationPolicy(.regular) }
         #endif
