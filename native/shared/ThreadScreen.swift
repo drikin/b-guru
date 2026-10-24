@@ -135,14 +135,24 @@ struct ThreadScreen: View {
     }
 
     private var replyBar: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 8) {
             let matches = actions.mentionMatches(draft.text)
             if !matches.isEmpty {
                 MentionSuggestions(members: matches) { m in draft.text = Mention.complete(draft.text, with: m.name); replyFocused = true }
             }
             DraftImages(draft: draft)
             if let e = draft.error { Text(e).font(.app(.caption)).foregroundStyle(.red) }
-            HStack(alignment: .bottom, spacing: 8) {
+            // Two rows: the field the whole width, the buttons under it. In one row with 📷, 🖼,
+            // うなる and 吠える the field was a few characters wide on the iPhone (drikin
+            // 2026-10-24 「テキスト入力の部分が狭すぎて文字が入力しづらい」, the Mac panel too).
+            PostTextInput(text: $draft.text, isFocused: $replyFocused, placeholder: "返信", onSubmit: { sendReply() })
+                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 18).fill(Color.primary.opacity(0.06)))
+                .disabled(capabilities?.canPublish != true)
+                .onTapGesture { if capabilities?.canPublish != true { needsReconnect = true } }
+            HStack(alignment: .center, spacing: 14) {
                 PhotosPicker(selection: $draft.picks, maxSelectionCount: max(1, draft.maxImages - draft.images.count), matching: .images) {
                     Image(systemName: "photo.on.rectangle").font(.app(size: 20))
                 }
@@ -153,17 +163,12 @@ struct ThreadScreen: View {
                     CameraButton(draft: draft) { Image(systemName: "camera").font(.app(size: 20)) }
                 }
                 #endif
-                PostTextInput(text: $draft.text, isFocused: $replyFocused, placeholder: "返信", onSubmit: { sendReply() })
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 12)
-                    .background(RoundedRectangle(cornerRadius: 18).fill(Color.primary.opacity(0.06)))
-                    .disabled(capabilities?.canPublish != true)
-                    .onTapGesture { if capabilities?.canPublish != true { needsReconnect = true } }
+                Spacer(minLength: 0)
                 if actions.canWhisper {
                     // The web's two buttons: うなる (light blue, does not lift the thread or notify), 吠える (blue).
                     Button { sendReply(whisper: true) } label: {
                         Text("うなる").font(.app(.subheadline, weight: .bold))
-                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .padding(.horizontal, 14).padding(.vertical, 7)
                             .background(Capsule().fill(Color.blue.opacity(0.14)))
                             .foregroundStyle(Color.blue)
                     }
@@ -174,7 +179,7 @@ struct ThreadScreen: View {
                     .accessibilityHint("スレッドを上げず、通知も出さずに返信します")
                     Button { sendReply() } label: {
                         Text(draft.sending ? "…" : "吠える").font(.app(.subheadline, weight: .bold))
-                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .padding(.horizontal, 14).padding(.vertical, 7)
                             .background(Capsule().fill(Color.blue))
                             .foregroundStyle(.white)
                     }
