@@ -241,6 +241,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         }
                     }
                 }
+                // -demoToggleEvery S: the panel closes and opens again every S seconds (the menu bar icon).
+                if let i = CommandLine.arguments.firstIndex(of: "-demoToggleEvery"), i + 1 < CommandLine.arguments.count,
+                   let every = Double(CommandLine.arguments[i + 1]) {
+                    Timer.scheduledTimer(withTimeInterval: every, repeats: true) { _ in
+                        MainActor.assumeIsolated {
+                            guard let panel = self.panel else { return }
+                            if panel.isVisible && !panel.isDismissing { panel.dismiss() } else { self.showPanel() }
+                        }
+                    }
+                }
                 // -demoRefreshEvery S: the minute's refresh, every S seconds, with changes (TimelineStore.debugRefresh).
                 if let i = CommandLine.arguments.firstIndex(of: "-demoRefreshEvery"), i + 1 < CommandLine.arguments.count,
                    let every = Double(CommandLine.arguments[i + 1]) {

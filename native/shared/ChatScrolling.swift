@@ -41,6 +41,34 @@ struct ChatScrolling: ViewModifier {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { if onScreen { proxy.scrollTo("bottom", anchor: .bottom) } }
     }
 
+    /// Whether the list keeps its bottom edge fixed by itself when the content's height changes
+    /// (`keepsBottomOnResize`). Not on the Mac: there the lazy list re-measuring rows it had only
+    /// estimated moved the view to keep the bottom, which brought other rows in to measure, and
+    /// so on — the main thread at 100 % for 20 s and more a few seconds after the panel opened
+    /// (macOS 26, 419 messages; hangs.log 2026-10-24, LazyStack measureEstimates / updateItemPhases
+    /// in every sample). The Mac follows by hand instead (`followGrowth`), a bounded number of times.
+    #if os(macOS)
+    static let anchorsSizeChanges = false
+    #else
+    static let anchorsSizeChanges = true
+    #endif
+    /// The last moments `followGrowth` scrolled.
+    @State private var follows: [Date] = []
+
+    /// Rows grew while the list was at the bottom: back to the bottom, once per update and at most
+    /// 8 times in 3 s (more means the list is chasing its own estimates; it stops and says so).
+    private func followGrowth() {
+        guard !Self.anchorsSizeChanges, onScreen, store.scrollTarget == nil, store.highlightId == nil else { return }
+        let now = Date()
+        follows = follows.filter { now.timeIntervalSince($0) < 3 }
+        guard follows.count < 8 else {
+            if follows.count == 8 { HangWatch.note("chat follow stopped (rows kept changing height)"); follows.append(now) }
+            return
+        }
+        follows.append(now)
+        DispatchQueue.main.async { if onScreen, atBottom { proxy.scrollTo("bottom", anchor: .bottom) } }
+    }
+
     private func scrollToUnread() {
         guard let id = store.unreadMarkerId,
               let row = store.rows.first(where: { $0.message.id == id }) else { return }
@@ -61,8 +89,8 @@ struct ChatScrolling: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .keepsBottomOnResize(atBottom && onScreen)
-            .modifier(BottomTracker(atBottom: $atBottom))
+            .keepsBottomOnResize(Self.anchorsSizeChanges && atBottom && onScreen)
+            .modifier(BottomTracker(atBottom: $atBottom, grewAtBottom: followGrowth))
             .onChange(of: store.rows.last?.id) { _, _ in
                 guard store.scrollTarget == nil, let last = store.rows.last?.message else { return }
                 if !onScreen {
@@ -151,6 +179,9 @@ struct JumpButton: View {
 /// after one's own message went out.
 private struct BottomTracker: ViewModifier {
     @Binding var atBottom: Bool
+    /// The content grew under a list that was at the bottom (the Mac follows by hand, see
+    /// ChatScrolling.anchorsSizeChanges).
+    var grewAtBottom: () -> Void = {}
 
     private struct Metrics: Equatable {
         /// Where the visible part starts (moves only when scrolled) and how tall it is.
@@ -166,6 +197,9 @@ private struct BottomTracker: ViewModifier {
                 Metrics(top: g.visibleRect.minY, height: g.visibleRect.height,
                         below: g.contentSize.height - g.visibleRect.maxY)
             } action: { old, new in
+                if new.top == old.top, new.height == old.height, new.below > old.below + 1, atBottom {
+                    grewAtBottom()
+                }
                 guard new.top != old.top || new.height != old.height else { return }
                 // Near the end counts: a scroll to the bottom can land a little short while
                 // rows the lazy stack only estimated get their real height.
