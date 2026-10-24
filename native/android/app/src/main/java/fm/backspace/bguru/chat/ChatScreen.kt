@@ -404,9 +404,10 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             val minigame = store.minigame
             if (!beside && minigame.enabled && minigame.open && !(room.enabled && room.roomView)) {
                 // 🎮: the game above, the chat below (no scrolling; the game is as tall as it says, at most
-                // about 45 % of the column, 150–420 dp — the chat stays in sight). Typing in the chat pauses it.
+                // half the column, 150–520 dp — the chat stays in sight; the game fills the width up to it,
+                // drikin 2026-10-24). Typing in the chat pauses it.
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                    val cap = (maxHeight * 0.45f).coerceIn(150.dp, 420.dp)
+                    val cap = (maxHeight * 0.5f).coerceIn(150.dp, 520.dp)
                     Column(Modifier.fillMaxSize()) {
                         MinigamePanel(store, active = visible && !composerFocused, maxHeight = cap, modifier = Modifier.fillMaxWidth())
                         chatPane(Modifier.weight(1f).fillMaxWidth())
@@ -425,9 +426,11 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                     } else {
                         // As tall as the board needs (+ one band), at most half the column: the chat keeps the
                         // rest — 40 % of the screen, 4 to 5 lines above the composer on a phone (drikin 2026-10-21).
-                        // 40 %: the board squashes its squares vertically to fit and keeps the full width
-                        // (drikin 2026-10-21「少し縦に圧縮してもいい」).
-                        val cap = maxHeight * 0.4f
+                        // The board squashes its squares vertically to fit and keeps the full width
+                        // (drikin 2026-10-21「少し縦に圧縮してもいい」). 2026-10-24 (bigger for older eyes, the
+                        // hands now above / below the board on a narrow screen): 52 % on a phone so the chat
+                        // under it shows a few messages, 60 % on a taller column — the same as the iPhone / Mac.
+                        val cap = maxHeight * (if (maxHeight < 760.dp) 0.52f else 0.6f)
                         Column(Modifier.fillMaxSize()) {
                             ShogiPanel(store, visible, cap, Modifier.fillMaxWidth().heightIn(max = cap))
                             chatPane(Modifier.weight(1f).fillMaxWidth())
