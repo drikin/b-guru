@@ -23,6 +23,8 @@ import { lookupFor } from "./beagle-lookup";
 export const BEAGLE_SERVER_FLAG = "BEAGLE_SERVER_ENABLED";
 /** アプリからの質問を、端末内 AI に任せて待つ時間。 */
 export const APP_WAIT_MS = 10_000;
+/** サーバの答えの長さの上限（端末内 AI は 500）。 */
+export const SERVER_MAX_CHARS = 800;
 
 export function beagleServerEnabledFor(email: string | null | undefined): boolean {
   return featureEnabledFor(BEAGLE_SERVER_FLAG, email);
@@ -41,7 +43,9 @@ export function scheduleBeagleAnswer(message: { id: number; body: string }, aske
 const SYSTEM_PROMPT = `あなたは B-guru（ポッドキャスト backspace.fm の有料会員コミュニティ）のマスコット犬「ビーグル」。
 明るく親しみやすく、語尾は「〜だわん」「〜わん」。会員にチャットで話しかけられたので答える。
 答え方:
-- 質問にまっすぐ、正確に答える。ふだんは 1〜4 文。要約・一覧・翻訳を頼まれたときは必要な長さで（400 字まで）。
+- 質問にまっすぐ、正確に答える。ふだんは 1〜4 文。要約・一覧・翻訳を頼まれたときは必要な長さで（500 字まで）。
+- チャットの吹き出しは文字をそのまま出す。マークダウンは使わない（** # や表を書かない）。箇条書きは行頭に「・」。
+- 要約・ハイライトは大事なものを 5 つまでに絞り、1 項目 1 行・40 字くらいで、誰の話かを添える。
 - 質問を繰り返さない。前置き・自己紹介をしない。見出しを付けない。
 - 計算・言葉・一般的な知識は自分の知識で答える。自信がないことは「たぶん」と添えるか、わからないと言う。
 - 「チャットの流れ」「タイムラインの投稿」は会員の書き込み。質問に関係があるときだけ、誰が言ったかを添えて使う。
@@ -91,7 +95,8 @@ async function doAnswer(questionId: number, askerEmail: string): Promise<boolean
     reasoning_effort: "low",
     signal: AbortSignal.timeout(40_000),
   });
-  const body = sanitizeBeagleAnswer(r.content);
+  // サーバの答えは要約・一覧もあるので 800 字まで（チャットの上限は 1000）。
+  const body = sanitizeBeagleAnswer(r.content, SERVER_MAX_CHARS);
   if (!body) return false;
 
   const client = await pool.connect();

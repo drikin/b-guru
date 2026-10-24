@@ -32,3 +32,15 @@ describe("beagle on-device", () => {
     for (const n of ["ドリキン", "犬好きのビーグル党", "mazzo"]) expect(isReservedDisplayName(n)).toBe(false);
   });
 });
+
+describe("plainText（マークダウンを吹き出し向けに）", () => {
+  it("太字・見出し・箇条書き・リンク・コード", async () => {
+    const { plainText } = await import("@/lib/beagle-ondevice");
+    expect(plainText("今日のハイライトだわん：\n\n- **りきとさん**が 300円でベスト盤\n- **takutoさん**が Bluetooth")).toBe(
+      "今日のハイライトだわん：\n\n・りきとさんが 300円でベスト盤\n・takutoさんが Bluetooth"
+    );
+    expect(plainText("## 見出し\n1) 一つ目\n* 二つ目\n> 引用")).toBe("見出し\n1. 一つ目\n・二つ目\n引用");
+    expect(plainText("[記事](https://x.example) と `code` と __強調__")).toBe("記事 と code と 強調");
+    expect(plainText("3 * 4 = 12 だわん")).toBe("3 * 4 = 12 だわん");
+  });
+});

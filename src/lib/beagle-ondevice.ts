@@ -37,9 +37,9 @@ export function asksBeagle(body: string): boolean {
 }
 
 /** 出す本文: URL を取り、@ を全角にして呼び出しにしない、空白を整え、500 字まで。空なら null。 */
-export function sanitizeBeagleAnswer(raw: unknown): string | null {
+export function sanitizeBeagleAnswer(raw: unknown, maxChars: number = BEAGLE_AI_MAX_CHARS): string | null {
   if (typeof raw !== "string") return null;
-  let t = raw
+  let t = plainText(raw)
     .replace(/https?:\/\/\S+/gi, "")
     .replace(/\bwww\.\S+/gi, "")
     .replace(/@/g, "＠")
@@ -48,8 +48,26 @@ export function sanitizeBeagleAnswer(raw: unknown): string | null {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   if (!t) return null;
-  if ([...t].length > BEAGLE_AI_MAX_CHARS) t = [...t].slice(0, BEAGLE_AI_MAX_CHARS - 1).join("") + "…";
+  if ([...t].length > maxChars) t = [...t].slice(0, maxChars - 1).join("") + "…";
   return t;
+}
+
+/** マークダウンを、チャットの吹き出し（文字をそのまま出す）で読める形に: 太字・斜体・見出し・引用・コードの印を取り、
+ *  「- 」「* 」「1. 」の箇条書きは「・」に、[文字](URL) は文字だけに（ドリキン 2026-10-24: ** がそのまま出ていた）。 */
+export function plainText(raw: string): string {
+  return raw
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/```[a-z]*\n?/gi, "")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/(^|[^\p{L}\p{N}*])\*([^*\n]+)\*(?=[^\p{L}\p{N}*]|$)/gu, "$1$2")
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, "")
+    .replace(/^[ \t]{0,3}>[ \t]?/gm, "")
+    .replace(/^[ \t]*[-*+][ \t]+/gm, "・")
+    .replace(/^[ \t]*(\d+)[.)][ \t]+/gm, "$1. ")
+    .replace(/^[ \t]*[-*_]{3,}[ \t]*$/gm, "")
+    .replace(/\*\*/g, "");
 }
 
 /** 発言者名: 誰の端末が出したかを、どの画面でも見えるように名前に入れる。 */
