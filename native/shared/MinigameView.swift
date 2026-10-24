@@ -17,10 +17,11 @@ struct MinigameScreen: View {
     @Environment(\.screenVisibility) private var visibility
     @State private var height: CGFloat = 0
 
-    /// The game's height limit: ~45 % of the chat column (150–420), so the chat stays in view.
+    /// The game's height limit: half the chat column (150–520), so the chat keeps the other half. The game
+    /// fills the width up to this (drikin 2026-10-24: it was drawn at whole multiples only and came out small).
     private var maxHeight: Int {
         let area = minigame.areaHeight > 0 ? minigame.areaHeight : 600
-        return Int(min(420, max(150, area * 0.45)))
+        return Int(min(520, max(150, area * 0.5)))
     }
 
     var body: some View {

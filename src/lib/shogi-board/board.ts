@@ -221,6 +221,12 @@ export const BOARD_CSS = `
 .sb-cmt-text.sb-none{color:var(--sb-dim);font-weight:500}
 .sb-cmt-dog{margin-right:4px}
 .sb-root[data-compact="1"] .sb-cmt-text{font-size:11.5px;line-height:14px;height:28px}
+/* 狭い枠（スマホ・Mac のパネル）: 駒台を盤の上下の横の列に（盤が横幅をほぼ全部使える。ドリキン 2026-10-24「横幅いっぱい」） */
+.sb-root[data-hands="rows"] .sb-main{flex-direction:column;align-items:center}
+.sb-root[data-hands="rows"] .sb-hand{width:var(--sb-w);height:calc(var(--ch)*.8 + 6px);flex-direction:row;align-items:center;padding:0 6px;gap:6px}
+.sb-root[data-hands="rows"] .sb-hand-bottom{flex-direction:row}
+.sb-root[data-hands="rows"] .sb-hand .sb-who{width:auto;flex:1 1 auto;min-width:0;padding:0 4px 0 0;justify-content:flex-start;font-size:13px}
+.sb-root[data-hands="rows"] .sb-hp{width:calc(var(--cw)*.8);height:calc(var(--ch)*.8);justify-content:center}
 `;
 
 function ensureStyles(doc: Document): void {
@@ -366,6 +372,9 @@ export class ShogiBoardView {
   /** 横幅: 9 升 + 盤の縁と段の数字 + 左右の駒台（升の 0.84 倍ずつ）+ すき間。 */
   private static readonly FIXED_W = 2 + 11 + 5 + 6;
   private static readonly HAND_RATIO = 0.84;
+  /** これより狭い枠（CSS px）では駒台を盤の上下に置く。 */
+  private static readonly ROWS_BELOW = 600;
+  private rows = false;
 
   /** 升の縦横の比（縦 / 横）。ふだんは将棋盤らしい縦長、高さが足りなければ 0.78 まで縦に潰す
    *  （横幅いっぱいを保ったまま縦を詰める。ドリキン 2026-10-21「少し縦に圧縮してもいい」）。 */
@@ -377,16 +386,21 @@ export class ShogiBoardView {
     this.el.style.setProperty("--cw", `${cw}px`);
     this.el.style.setProperty("--ch", `${Math.round(cw * ratio)}px`);
     this.el.style.setProperty("--hw", `${hw}px`);
-    this.el.style.setProperty("--sb-w", `${cw * 9 + 2 * hw + ShogiBoardView.FIXED_W}px`);
+    this.el.style.setProperty("--sb-w", `${cw * 9 + (this.rows ? 0 : 2 * hw) + ShogiBoardView.FIXED_W}px`);
   }
 
   private fit(): void {
     const w = this.el.clientWidth || 360;
-    // 広い画面でも盤が大きくなりすぎないように（升 48px ≒ 盤全体 幅 540px）。観戦は小さめ。
-    const maxCell = this.state.compact ? 35 : 48;
-    const cw = Math.max(22, Math.min(maxCell, Math.floor((w - ShogiBoardView.FIXED_W) / (9 + 2 * ShogiBoardView.HAND_RATIO))));
+    // 狭い枠では駒台を上下へ（横は 9 升だけ）。広い枠は今までどおり左右。
+    this.rows = w < ShogiBoardView.ROWS_BELOW;
+    this.el.dataset.hands = this.rows ? "rows" : "sides";
+    // 広い画面でも盤が大きくなりすぎないように（升 48px ≒ 盤全体 幅 540px）。観戦も同じ大きさ
+    // （小さくしていたが、老眼で見づらい — ドリキン 2026-10-24）。
+    const maxCell = 48;
+    const handsW = this.rows ? 0 : 2 * ShogiBoardView.HAND_RATIO;
+    const cw = Math.max(22, Math.min(maxCell, Math.floor((w - ShogiBoardView.FIXED_W) / (9 + handsW))));
     this.applyCell(cw);
-    // 高さの上限: 升の高さに比例する部分（盤 9 升。持ち駒は左右なので高さに足さない）と、帯・名前の行などの決まった部分に分けて縮める。
+    // 高さの上限: 升の高さに比例する部分（盤 9 升。駒台が上下のときはその 2 列も升に比例するが、見積もりのずれは下の測り直しで詰める）と、帯・名前の行などの決まった部分に分けて縮める。
     const max = this.state.maxHeight;
     if (max && max > 0) {
       // 見積もりで縮めたあと、実際に測って収まるまで 1px ずつ詰める（帯の折り返しなどで見積もりがずれるため）。
@@ -513,10 +527,15 @@ export class ShogiBoardView {
     }
     if (!st.hideBand) root.appendChild(band);
 
-    if (st.topLabel) root.appendChild(this.renderWho(doc, top, "top", st.topLabel));
+    // 駒台が上下のときは、名前と時計をその駒台の行の左に入れる（行を分けると空の駒台と名前で 2 行使っていた）。
+    const topWho = st.topLabel ? this.renderWho(doc, top, "top", st.topLabel) : null;
+    const bottomWho = st.bottomLabel ? this.renderWho(doc, bottom, "bottom", st.bottomLabel) : null;
+    if (topWho && !this.rows) root.appendChild(topWho);
     const main = doc.createElement("div");
     main.className = "sb-main";
-    main.appendChild(this.renderHand(doc, pos, top, "top"));
+    const topHand = this.renderHand(doc, pos, top, "top");
+    if (topWho && this.rows) topHand.prepend(topWho);
+    main.appendChild(topHand);
 
     const wrap = doc.createElement("div");
     wrap.className = "sb-wrap";
@@ -594,9 +613,11 @@ export class ShogiBoardView {
       grid.appendChild(box);
     }
     main.appendChild(wrap);
-    main.appendChild(this.renderHand(doc, pos, bottom, "bottom"));
+    const bottomHand = this.renderHand(doc, pos, bottom, "bottom");
+    if (bottomWho && this.rows) bottomHand.prepend(bottomWho);
+    main.appendChild(bottomHand);
     root.appendChild(main);
-    if (st.bottomLabel) root.appendChild(this.renderWho(doc, bottom, "bottom", st.bottomLabel));
+    if (bottomWho && !this.rows) root.appendChild(bottomWho);
     if (st.commentary) root.appendChild(this.renderCommentary(doc, st.commentary));
 
     if (this.pending) {

@@ -266,11 +266,16 @@ struct ShogiGameView: View {
     /// I am playing this game (the big board); watching gets the compact one.
     private var playing: Bool { my != nil && g.isActive }
 
-    /// The board's height limit: 38 % of the chat column, less this bar (and the end's buttons). The board
-    /// squashes its squares vertically to fit and keeps the full width (drikin 2026-10-21「少し縦に圧縮してもいい」).
+    /// The board's height limit: 60 % (52 % in a short column) of the chat column, less this bar (and the end's buttons) — the
+    /// chat keeps the other 40 % (drikin 2026-10-24: bigger for older eyes, the chat still in view; it was
+    /// 38 % and the board came out small). The board squashes its squares vertically to fit and keeps the
+    /// full width (drikin 2026-10-21「少し縦に圧縮してもいい」).
     private var boardMax: CGFloat? {
         guard shogi.areaHeight > 0 else { return nil }
-        return max(200, shogi.areaHeight * 0.38 - 26 - (g.isEnded ? 50 : 0))
+        // A short column (an iPhone, the Mac panel's default size): 52 %, the squares a little squashed
+        // instead, so the chat under it shows a few messages (drikin「特にスマホでチャットが見えるように」).
+        let share: CGFloat = shogi.areaHeight < 760 ? 0.52 : 0.6
+        return max(220, shogi.areaHeight * share - 26 - (g.isEnded ? 50 : 0))
     }
 
     private func board(maxHeight: CGFloat?) -> some View {
@@ -290,7 +295,7 @@ struct ShogiGameView: View {
             )
         }
         .frame(height: boardHeight > 0 ? boardHeight : (maxHeight ?? 360))
-        .frame(maxWidth: playing ? 520 : 440)
+        // The whole width: the board sizes itself (at most 48 px a square, ~540 wide).
         .frame(maxWidth: .infinity)
         .accessibilityLabel("将棋盤")
     }

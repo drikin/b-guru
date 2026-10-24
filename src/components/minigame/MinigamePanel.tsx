@@ -75,13 +75,13 @@ export function GameToggles({ row = false }: { row?: boolean }) {
   return <div style={{ padding: "6px 10px 0", display: "flex", gap: 6, alignItems: "center" }}>{items}</div>;
 }
 
-/** ゲームの高さの上限: チャット欄の高さの約 45%（残りでチャットが見える。将棋と同じ考え方）。 */
+/** ゲームの高さの上限: チャット欄の高さの半分（残りでチャットが見える。アプリと同じ。ゲームは横幅いっぱいまで広がる）。 */
 function usePanelMax(ref: React.RefObject<HTMLDivElement | null>, on: boolean): number {
   const [max, setMax] = useState(260);
   useEffect(() => {
     const col = ref.current?.parentElement;
     if (!on || !col || typeof ResizeObserver === "undefined") return;
-    const update = () => setMax(Math.round(Math.max(150, Math.min(420, col.clientHeight * 0.45))));
+    const update = () => setMax(Math.round(Math.max(150, Math.min(520, col.clientHeight * 0.5))));
     update();
     const ro = new ResizeObserver(update);
     ro.observe(col);

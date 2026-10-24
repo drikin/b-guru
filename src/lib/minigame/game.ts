@@ -342,7 +342,8 @@ export class DashGame {
     this.stage.style.width = `${this.fit.cssW}px`;
     this.stage.style.height = `${this.fit.cssH}px`;
     const u = this.fit.cssH / 144;
-    const fs = Math.max(10, Math.min(15, Math.round(u * 8)));
+    // 文字（タイトル・ボタン・順位表）も絵と一緒に大きく。小さい枠でも 11px は保つ。
+    const fs = Math.max(11, Math.min(20, Math.round(u * 8.5)));
     this.stage.style.setProperty("--fs", `${fs}px`);
     this.stage.style.setProperty("--u", `${u}`);
     this.draw();

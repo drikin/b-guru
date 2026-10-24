@@ -1,7 +1,8 @@
 /* 🎮 散財ダッシュ — 描画（canvas）。sim.ts の状態を読むだけで、状態は変えない。
  *
  * 論理解像度は高さ 144・幅 256〜384（枠の横幅に合わせる）。canvas はその大きさで描き、CSS で
- * 端末の画素の整数倍に拡大する（image-rendering: pixelated、devicePixelRatio は 2 まで）。
+ * 枠の横幅いっぱいまで拡大する（image-rendering: pixelated。整数倍に限ると、幅 380 の Mac のパネルでは
+ * 1 倍の高さ 144px にしかならず小さすぎた — ドリキン 2026-10-24「老眼でも見やすいサイズ」）。
  * 横に広い枠でも、sim は 448px 先まで物を出しているので画面の右端で物が湧いて見えない。 */
 import { SPRITE_SET, type Sprite } from "./sprites";
 import {
@@ -48,16 +49,20 @@ export const STAGE_LOOK: { sky: [string, string, string]; star: string }[] = [
   { sky: ["#1d1410", "#3a2416", "#4b2f1d"], star: "#c98a2e" }, // 4 機材の山
 ];
 
+/** k: 論理の 1 画素が端末の何画素か（整数とは限らない）。 */
 export type Fit = { k: number; w: number; cssW: number; cssH: number; dpr: number };
 
-/** 枠の横幅（CSS px）と高さの上限から、拡大率（端末の画素で整数倍）と論理の横幅を決める。 */
+/** 枠の横幅（CSS px）と高さの上限から、論理の横幅と拡大率を決める。横幅いっぱいに広げ、高さの上限を
+ *  超えるときだけ論理の横幅を広げて（見える範囲が先へ伸びる）収める。それでも高ければ上限の高さで中央に置く。
+ *  論理の横幅は 256 より狭くしない（先の見通しを減らさない。sim は見た目の幅に関係なく同じ）。 */
 export function fitView(cssWidth: number, maxCssHeight: number, devicePixelRatio: number): Fit {
   const dpr = Math.min(2, Math.max(1, devicePixelRatio || 1));
-  const devW = Math.max(1, Math.floor(cssWidth * dpr));
-  let k = Math.max(1, Math.floor(devW / VIEW_W_MIN));
-  while (k > 1 && (VIEW_H * k) / dpr > maxCssHeight) k--;
-  const w = Math.max(VIEW_W_MIN, Math.min(VIEW_W_MAX, Math.floor(devW / k)));
-  return { k, w, cssW: (w * k) / dpr, cssH: (VIEW_H * k) / dpr, dpr };
+  const cw = Math.max(1, cssWidth);
+  const w = Math.max(VIEW_W_MIN, Math.min(VIEW_W_MAX, Math.ceil((VIEW_H * cw) / Math.max(1, maxCssHeight))));
+  let scale = cw / w;
+  if (VIEW_H * scale > maxCssHeight) scale = maxCssHeight / VIEW_H;
+  scale = Math.max(scale, 0.5);
+  return { k: scale * dpr, w, cssW: Math.floor(w * scale), cssH: Math.floor(VIEW_H * scale), dpr };
 }
 
 type Img = HTMLCanvasElement;
