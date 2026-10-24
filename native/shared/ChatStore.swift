@@ -283,7 +283,8 @@ final class ChatStore {
         rows = Self.reconcile(rows, with: m)
         if (m.isNotice || m.kind == "shogi"), !isVisible, !alreadyShown { onAnnouncement?(m) }
         // A quiet note (room comings and goings): in the list, but never unread or notified.
-        guard !m.isAuthor, !alreadyShown, !m.isNotice else { return }
+        // 🐶 Beagle's on-device answers are not unread (the server does not count them either).
+        guard !m.isAuthor, !alreadyShown, !m.isNotice, !m.isBeagleAI else { return }
         if isVisible {
             markReadSoon()
         } else {
@@ -399,6 +400,7 @@ final class ChatStore {
             var m = rows.last(where: { $0.message.clientId == clientId })!.message
             m.id = (rows.map(\.message.id).max() ?? 0) + 1
             rows = Self.reconcile(rows, with: m)
+            askBeagleIfCalled(m)
             return
         }
         #endif
@@ -424,6 +426,7 @@ final class ChatStore {
                 latestId = max(latestId, m.id)
                 rows = Self.reconcile(rows, with: m)
                 outgoingPhotos[clientId] = nil
+                askBeagleIfCalled(m)
             } catch let e as APIError where e.isPermanent && photos == nil {
                 rows.removeAll { $0.message.id < 0 && $0.message.clientId == clientId }
                 restore(body)
@@ -434,6 +437,50 @@ final class ChatStore {
                 setState(.failed, clientId: clientId)
             }
         }
+    }
+
+    /// The timeline's posts as loaded on this device (set by the app: the timeline is another store),
+    /// Beagle's knowledge with the chat.
+    @ObservationIgnored var beagleTimeline: (@MainActor () -> [BeagleOnDevice.Note])?
+
+    /// 🐶 Beagle is writing an answer on this device (shown under the chat).
+    private(set) var beagleThinking = false
+
+    /// The chat's 🐶 button and answers: the server takes them and this device has Apple Intelligence.
+    var canAskBeagle: Bool { (capabilities?.beagleOnDevice ?? false) && BeagleOnDevice.isAvailable }
+
+    /// My message just went out and calls @ビーグル: write the answer here and post it for everyone.
+    private func askBeagleIfCalled(_ m: ChatMessage) {
+        guard m.id > 0, canAskBeagle, BeagleOnDevice.asksBeagle(m.body) else { return }
+        let chat = rows.filter { !$0.message.isNotice && !$0.message.isShogiCard && $0.message.id != m.id && !$0.message.body.isEmpty }
+            .map { BeagleOnDevice.Note(name: $0.message.authorName ?? "?", text: $0.message.body) }
+        let posts = beagleTimeline?() ?? []
+        let asker = rows.last(where: { $0.message.id == m.id })?.message.authorName ?? "会員"
+        beagleThinking = true
+        Task {
+            defer { beagleThinking = false }
+            guard let answer = await BeagleOnDevice.answer(question: m.body, asker: asker, chat: chat, posts: posts) else { return }
+            #if DEBUG
+            if debugOffline {
+                received(ChatMessage(id: m.id + 1, authorId: "beagle", authorName: "ビーグル（\(asker)さんの端末）", avatar: nil, body: answer,
+                                     createdAt: ISO8601DateFormatter().string(from: Date()), edited: false, editedAt: nil,
+                                     isAuthor: false, mentionsMe: false, clientId: nil, reactions: nil, kind: "beagle_ai"))
+                return
+            }
+            #endif
+            if let posted = try? await api.postBeagleAnswer(questionId: m.id, body: answer, app: Self.appVersion) {
+                received(posted)
+            }
+        }
+    }
+
+    private static var appVersion: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        #if os(macOS)
+        return "Mac \(v)"
+        #else
+        return "iOS \(v)"
+        #endif
     }
 
     private func setState(_ s: SendState, clientId: String) {
@@ -571,7 +618,7 @@ final class ChatStore {
         // -demoNoEdit: a key from before the operations' mark (post, but edit false): 「編集するには一度ログインし直してください」.
         let noEdit = ProcessInfo.processInfo.arguments.contains("-demoNoEdit") || env["BGURU_DEMO_NO_EDIT"] == "1"
         let postOps = oldServer ? "" : #","edit":\#(!textOnly && !noEdit),"delete":\#(!noEdit),"edit_text_only":\#(textOnly && !noEdit),"whisper":true,"video":true,"audio":true,"max_media_mb":100,"poll":true,"poll_vote":true,"poll_edit":true,"pin":true,"pinned_list":true,"bookmarks":true,"bookmarks_set":true,"favorites":true,"custom_emoji_list":"/api/agent/emojis","club_select":true,"club_change":true,"mentions":"/api/agent/members","display":true,"include":["reactions","read","display"]"#
-        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5\#(postOps)},"jukebox":{"enabled":\#(ProcessInfo.processInfo.arguments.contains("-demoJukebox") || ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil),"path":"/api/agent/jukebox"}\#(shogiCaps)\#(minigameCaps),"mac_assistant":true}}"#
+        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4,"beagle_ondevice":true},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5\#(postOps)},"jukebox":{"enabled":\#(ProcessInfo.processInfo.arguments.contains("-demoJukebox") || ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil),"path":"/api/agent/jukebox"}\#(shogiCaps)\#(minigameCaps),"mac_assistant":true}}"#
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
         capabilities = try? dec.decode(Capabilities.self, from: Data(caps.utf8))

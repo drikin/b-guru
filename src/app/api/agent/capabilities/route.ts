@@ -13,6 +13,7 @@ import { shogiEnabledFor } from "@/lib/shogi";
 import { commentaryEnabledFor } from "@/lib/shogi-commentary-store";
 import { minigameEnabledFor } from "@/lib/minigame";
 import { macAssistantEnabledFor } from "@/lib/feature-flag";
+import { beagleOnDeviceEnabledFor } from "@/lib/beagle-ondevice";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,7 +21,7 @@ export const runtime = "nodejs";
 export async function GET(req: NextRequest) {
   const out = await withAgent(req, "GET /api/agent/capabilities", null, async (ctx) => ({
     status: 200,
-    body: agentCapabilities(ctx.scopes, { voice: voiceEnabledFor(ctx.email), voiceAdmin: isAdmin(ctx.email), room: roomEnabledFor(ctx.email), jukebox: jukeboxEnabledFor(ctx.email) && !jukeboxBrokenClient(req.headers.get("user-agent")), shogi: shogiEnabledFor(ctx.email), shogiCommentary: commentaryEnabledFor(ctx.email), minigame: minigameEnabledFor(ctx.email), appIssued: ctx.appIssued, macAssistant: macAssistantEnabledFor(ctx.email) }),
+    body: agentCapabilities(ctx.scopes, { voice: voiceEnabledFor(ctx.email), voiceAdmin: isAdmin(ctx.email), room: roomEnabledFor(ctx.email), jukebox: jukeboxEnabledFor(ctx.email) && !jukeboxBrokenClient(req.headers.get("user-agent")), shogi: shogiEnabledFor(ctx.email), shogiCommentary: commentaryEnabledFor(ctx.email), minigame: minigameEnabledFor(ctx.email), appIssued: ctx.appIssued, macAssistant: macAssistantEnabledFor(ctx.email), beagleOnDevice: beagleOnDeviceEnabledFor(ctx.email) }),
     headers: {},
   }));
   return agentJson(out);

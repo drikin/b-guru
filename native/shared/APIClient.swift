@@ -222,6 +222,12 @@ final class APIClient: Sendable {
         return r.message
     }
 
+    /// 🐶 Beagle's answer to my question `questionId`, written on this device.
+    func postBeagleAnswer(questionId: Int, body: String, app: String) async throws -> ChatMessage {
+        let r: ChatSendResponse = try await send(request("POST", "/api/agent/chat/beagle", json: ["question_id": questionId, "body": body, "app": app]))
+        return r.message
+    }
+
     func edit(id: Int, body: String) async throws -> ChatMessage {
         let r: ChatSendResponse = try await send(request("PATCH", "/api/agent/chat/\(id)", json: ["body": body]))
         return r.message

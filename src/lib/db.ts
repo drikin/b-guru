@@ -248,6 +248,23 @@ export async function initSchema() {
     -- 'notice' = a quiet line from B-guru (who came into / left the room): shown small,
     -- never counted as unread.
     ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS kind TEXT;
+    -- 🐶 端末内 AI のビーグル（kind 'beagle_ai'、lib/beagle-ondevice.ts）: 答えた質問と、答えを作った
+    -- 会員の端末（の持ち主）。1 つの質問に答えは 1 つ。
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS reply_to_id INTEGER;
+    ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS ai_by_email TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_beagle_ai_once ON chat_messages(reply_to_id) WHERE kind = 'beagle_ai';
+    -- 誰の端末が何を出したかの記録（チャットは 24 時間で消えるので別に 30 日。会員には見せない）。
+    CREATE TABLE IF NOT EXISTS beagle_ai_log (
+      id SERIAL PRIMARY KEY,
+      chat_message_id INTEGER,
+      question_id INTEGER NOT NULL,
+      question_body TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      ai_by_email TEXT NOT NULL,
+      app TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_beagle_ai_log_created ON beagle_ai_log(created_at);
 
     -- Per-user read cursor for the chat unread badge.
     CREATE TABLE IF NOT EXISTS chat_read_state (

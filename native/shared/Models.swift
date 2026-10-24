@@ -22,10 +22,14 @@ struct ChatMessage: Codable, Equatable, Sendable {
     var kind: String? = nil
     /// kind "shogi": the ☗ 将棋 game this card is about (docs/shogi-spec.md「チャットの対局中カード」).
     var shogiGameId: Int? = nil
+    /// kind "beagle_ai": 🐶 Beagle's answer written by a member's device (BeagleOnDevice); the question.
+    var replyToId: Int? = nil
 
     var isNotice: Bool { kind == "notice" }
     /// The game card: drawn as a small board when this app has ☗ 将棋 on (else the body as text).
     var isShogiCard: Bool { kind == "shogi" && shogiGameId != nil }
+    /// 🐶 Beagle's answer made on a member's device (the name says whose).
+    var isBeagleAI: Bool { kind == "beagle_ai" }
 
     /// The server gives a photo-only message the body "📷 写真" (for apps that predate
     /// photos and for notifications); this app shows the photos instead.
@@ -105,6 +109,8 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var imageUpload: String?
         var maxImages: Int?
         var imageMaxSide: Int?
+        /// 🐶 @ビーグル is answered by this device's AI (POST /api/agent/chat/beagle).
+        var beagleOndevice: Bool?
     }
     struct PostFeatures: Decodable, Sendable, Equatable {
         var read: Bool?
@@ -218,6 +224,8 @@ struct Capabilities: Decodable, Sendable, Equatable {
     var maxChatImages: Int { features?.chat?.maxImages ?? 4 }
     var chatImageMaxSide: Int { features?.chat?.imageMaxSide ?? 1280 }
     var canEdit: Bool { features?.chat?.editOwn ?? false }
+    /// The server takes Beagle's answers from this device (the device must also have Apple Intelligence).
+    var beagleOnDevice: Bool { features?.chat?.beagleOndevice ?? false }
     var canReact: Bool { features?.chat?.reactions ?? false }
     var canMarkRead: Bool { features?.chat?.markRead ?? false }
     var maxBody: Int { features?.chat?.maxBody ?? 1000 }

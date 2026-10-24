@@ -52,6 +52,15 @@ final class TimelineStore {
 
     var unreadCount: Int { posts.filter { $0.unread == true }.count }
 
+    /// The loaded posts as 🐶 Beagle's knowledge (BeagleOnDevice): who and what, the link's title too.
+    func beagleNotes() -> [BeagleOnDevice.Note] {
+        posts.compactMap { p in
+            let title = p.urlPreview?.title.map { "（リンク: \($0)）" } ?? ""
+            let text = (p.text + title).trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? nil : BeagleOnDevice.Note(name: p.authorName ?? "?", text: text)
+        }
+    }
+
     /// `full`: asked for (pull, ⟳) — the list starts again from the first page. Otherwise
     /// (every minute, on coming back) the pages read further down are kept.
     func refresh(full: Bool = false) async {

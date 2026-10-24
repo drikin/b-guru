@@ -38,7 +38,9 @@ export interface ChatMessage {
   /** "notice": a quiet one-line note from B-guru (room comings and goings).
    *  "shogi": the ☗ 将棋 game card (lib/shogi.ts) — `shogiGameId` says which game. Its body
    *  is plain text that reads fine on its own, so clients that do not know it show a line. */
-  kind?: "notice" | "shogi" | null;
+  kind?: "notice" | "shogi" | "beagle_ai" | null;
+  /** kind "beagle_ai": the question this answers (lib/beagle-ondevice.ts). */
+  replyToId?: number;
   shogiGameId?: number;
   /** Only on the create event / POST response of the sender's own message:
    *  the client-generated id of the optimistic bubble it replaces. */
@@ -61,6 +63,8 @@ export async function purgeExpiredChat(): Promise<number[]> {
      RETURNING id`,
     [CHAT_TTL]
   );
+  // The on-device Beagle's record of who posted what (lib/beagle-ondevice.ts) is kept 30 days.
+  await pool.query(`DELETE FROM beagle_ai_log WHERE created_at < now() - interval '30 days'`);
   return res.rows.map((r) => r.id);
 }
 
@@ -91,6 +95,7 @@ async function mapRow(
     author_name: string | null;
     body: string;
     edited: boolean;
+    reply_to_id?: number | null;
     edited_at: Date | string | null;
     created_at: Date | string;
     images?: string[] | null;
@@ -113,8 +118,12 @@ async function mapRow(
     images: r.images ?? [],
     ...(r.kind === "notice" ? { kind: "notice" as const } : {}),
     ...(r.kind === "shogi" && r.shogi_game_id ? { kind: "shogi" as const, shogiGameId: r.shogi_game_id } : {}),
+    ...(r.kind === "beagle_ai" ? { kind: "beagle_ai" as const, ...(r.reply_to_id ? { replyToId: r.reply_to_id } : {}) } : {}),
   };
 }
+
+/** mapRow for other chat writers (lib/beagle-ondevice.ts). */
+export const mapChatRow = mapRow;
 
 /** Recent chat history, oldest→newest for natural reading order. */
 export async function listChatMessages(opts: {
@@ -146,7 +155,8 @@ export async function listChatMessages(opts: {
         ids.get(r.author_email?.trim().toLowerCase()) ?? null
       );
       const resolved = names.get(r.author_email) ?? null;
-      if (resolved) m.authorName = resolved;
+      // The on-device Beagle's name says whose device made it: kept as written.
+      if (resolved && r.kind !== "beagle_ai") m.authorName = resolved;
       return m;
     })
   );
@@ -375,6 +385,8 @@ export async function editChatMessage(
      SET body = $1, edited = true, edited_at = now()
      WHERE id = $2 AND author_email = $3
        AND created_at >= now() - ($4::text)::interval
+       -- A question the on-device Beagle answered stays as it was asked (the answer would read wrong).
+       AND NOT EXISTS (SELECT 1 FROM chat_messages a WHERE a.reply_to_id = chat_messages.id AND a.kind = 'beagle_ai')
      RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind`,
     [body, id, email, CHAT_TTL]
   );
@@ -399,7 +411,7 @@ export async function editChatMessageAndBroadcast(
 /** One message (within the TTL), as seen by `viewerEmail`. */
 export async function getChatMessage(id: number, viewerEmail: string | null): Promise<ChatMessage | null> {
   const res = await pool.query(
-    `SELECT id, author_email, author_name, body, edited, edited_at, created_at, images, kind FROM chat_messages
+    `SELECT id, author_email, author_name, body, edited, edited_at, created_at, images, kind, reply_to_id FROM chat_messages
      WHERE id = $1 AND created_at >= now() - ($2::text)::interval`,
     [id, CHAT_TTL]
   );
@@ -408,7 +420,7 @@ export async function getChatMessage(id: number, viewerEmail: string | null): Pr
   const m = await mapRow(row, viewerEmail, await emailToUserId(row.author_email));
   const names = await resolveDisplayNames([row.author_email]);
   const name = names.get(row.author_email);
-  if (name) m.authorName = name;
+  if (name && row.kind !== "beagle_ai") m.authorName = name;
   return m;
 }
 
@@ -488,7 +500,7 @@ export async function getUnreadCount(email: string): Promise<number> {
   const cnt = await pool.query(
     `SELECT count(*)::int AS c FROM chat_messages
      WHERE id > $1 AND created_at >= now() - ($2::text)::interval
-       AND kind IS DISTINCT FROM 'notice' AND kind IS DISTINCT FROM 'shogi'`,
+       AND kind IS DISTINCT FROM 'notice' AND kind IS DISTINCT FROM 'shogi' AND kind IS DISTINCT FROM 'beagle_ai'`,
     [lastRead, CHAT_TTL]
   );
   return cnt.rows[0].c;

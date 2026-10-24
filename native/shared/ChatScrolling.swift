@@ -238,6 +238,15 @@ final class ChatComposerModel {
         focusRequest += 1
     }
 
+    /// 🐶 button: `@ビーグル ` at the start (once), so the question goes to Beagle (drikin 2026-10-24:
+    /// typing the mention every time was a chore).
+    func callBeagle() {
+        if !BeagleOnDevice.asksBeagle(draft) {
+            draft = "@\(BeagleOnDevice.name) " + draft.trimmingCharacters(in: .whitespaces)
+        }
+        requestFocus()
+    }
+
     /// Reply to someone: `@name ` at the start of the composer (keeps what was typed).
     func replyTo(_ name: String) {
         let token = Mention.token(name)
@@ -257,5 +266,37 @@ final class ChatComposerModel {
     func cancelEdit() {
         editingId = nil
         draft = ""
+    }
+}
+
+
+/// 🐶 next to the camera: puts @ビーグル in the message box (only where this device can answer).
+struct BeagleCallButton: View {
+    let composer: ChatComposerModel
+    var size: CGFloat
+    var height: CGFloat
+
+    var body: some View {
+        Button { composer.callBeagle() } label: {
+            Image(systemName: "dog").font(.app(size: size))
+                .frame(width: size + 10, height: height)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .help("ビーグルに聞く（この端末の AI が答えて、チャットの全員に見えます）")
+        .accessibilityLabel("ビーグルに聞く")
+    }
+}
+
+/// 🐶 Beagle is writing an answer on this device.
+struct BeagleThinkingLine: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.small)
+            Text("🐶 ビーグルが考え中…（この端末の AI）").font(.app(.caption)).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 4)
+        .transition(.opacity)
     }
 }

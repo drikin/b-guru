@@ -79,6 +79,7 @@ final class Session {
             let t = TimelineStore(api: APIClient(token: "demo"))
             t.debugLoadDemo()
             timeline = t
+            s.beagleTimeline = { [weak t] in t?.beagleNotes() ?? [] }
             // BGURU_DEMO_THREAD_CHECK=1: the long-thread check (scripts/thread-check.sh).
             ThreadCheck.runIfAsked(timeline: t)
             return
@@ -114,7 +115,9 @@ final class Session {
         let s = ChatStore(api: api)
         self.api = api
         store = s
-        timeline = TimelineStore(api: api)
+        let t = TimelineStore(api: api)
+        timeline = t
+        s.beagleTimeline = { [weak t] in t?.beagleNotes() ?? [] }
         MediaCache.shared.token = token
         s.start()
         observeSignOut(s)

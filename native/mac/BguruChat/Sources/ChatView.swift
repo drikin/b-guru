@@ -336,6 +336,7 @@ private struct ChatComposerBar: View {
                     Button("キャンセル  Esc") { composer.cancelEdit() }.buttonStyle(.borderless).font(.app(.caption))
                 }
             }
+            if store.beagleThinking { BeagleThinkingLine() }
             if composer.editingId == nil {
                 DraftImages(draft: photos)
                 if let e = photos.error { Text(e).font(.app(.caption)).foregroundStyle(.red) }
@@ -352,6 +353,9 @@ private struct ChatComposerBar: View {
                         .disabled(photos.images.count >= photos.maxImages)
                         .help("写真を付ける（ドラッグ＆ドロップ・⌘V でも）")
                         .accessibilityLabel("写真を付ける")
+                }
+                if composer.editingId == nil, store.canAskBeagle {
+                    BeagleCallButton(composer: composer, size: 15, height: Self.composerHeight)
                 }
                 TextField(composer.editingId == nil ? "メッセージ（Enter 送信・⇧Enter 改行）" : "編集内容（Enter 保存）",
                           text: $composer.draft, axis: .vertical)

@@ -131,6 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
             let timeline = TimelineStore(api: APIClient(token: "demo"))
             timeline.debugLoadDemo()
+            store.beagleTimeline = { [weak timeline] in timeline?.beagleNotes() ?? [] }
             self.store = store
             self.timeline = timeline
             panel = ChatPanel(store: store, timeline: timeline, onSignOut: {})
@@ -289,6 +290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let store = ChatStore(api: api)
         let timeline = TimelineStore(api: api)
         self.timeline = timeline
+        store.beagleTimeline = { [weak timeline] in timeline?.beagleNotes() ?? [] }
         wireAIPicks(timeline)
         MediaCache.shared.token = token
         store.onMention = { [weak self] m in self?.notifyMention(m) }

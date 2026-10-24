@@ -50,8 +50,11 @@ export type AgentChatMessageDto = {
   images: string[];
   /** "notice": a quiet line from B-guru (room comings and goings), not a message to answer.
    *  "shogi": the ☗ 将棋 game card — `shogi_game_id` is the game (body reads fine as text). */
-  kind?: "notice" | "shogi";
+  kind?: "notice" | "shogi" | "beagle_ai";
   shogi_game_id?: number;
+  /** kind "beagle_ai": 🐶 Beagle's answer written by a member's device (lib/beagle-ondevice.ts); the
+   *  question it answers. author_name already says whose device (「ビーグル（〇〇さんの端末）」). */
+  reply_to_id?: number;
 };
 
 /** The body apps get for a message that is photos only. */
@@ -84,6 +87,7 @@ export function toAgentChatDto(
     images,
     ...(m.kind === "notice" ? { kind: "notice" } : {}),
     ...(m.kind === "shogi" && m.shogiGameId ? { kind: "shogi", shogi_game_id: m.shogiGameId } : {}),
+    ...(m.kind === "beagle_ai" ? { kind: "beagle_ai" as const, ...(m.replyToId ? { reply_to_id: m.replyToId } : {}) } : {}),
     created_at: m.createdAt ?? "",
     edited: !!m.edited,
     edited_at: m.editedAt ?? null,
@@ -191,7 +195,7 @@ export function toAgentVoiceDto(s: VoiceState) {
  *  calling token's, so a client knows up front which actions will be refused. */
 export function agentCapabilities(
   scopes: AgentScope[],
-  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; shogiCommentary?: boolean; minigame?: boolean; appIssued?: boolean; macAssistant?: boolean } = {}
+  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; shogiCommentary?: boolean; minigame?: boolean; appIssued?: boolean; macAssistant?: boolean; beagleOnDevice?: boolean } = {}
 ) {
   const ttlHours = parseInt(CHAT_TTL, 10) || 24;
   const can = (s: AgentScope) => scopes.includes(s);
@@ -211,6 +215,9 @@ export function agentCapabilities(
         client_id: true,
         max_body: CHAT_MAX_BODY,
         ttl_hours: ttlHours,
+        // 🐶 @ビーグル への答えを端末内 AI（iOS 26 / macOS 26 の Foundation Models）で作って出す:
+        // POST beagle { question_id, body, app? } → 201 { message }（BEAGLE_ONDEVICE_ENABLED、アプリの鍵だけ）。
+        beagle_ondevice: !!opts.beagleOnDevice && !!opts.appIssued && can("chat"),
         reaction_events: true, // stream: event "chat", action "reactions" { id, reactions }
         // Photos: POST upload (multipart images[]) → urls, then send them as `images`.
         // Resize on the device to a long side of image_max_side px first.

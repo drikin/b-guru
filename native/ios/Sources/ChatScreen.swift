@@ -262,6 +262,7 @@ private struct ChatComposerBar: View {
                     Button("キャンセル") { composer.cancelEdit() }.font(.caption)
                 }
             }
+            if store.beagleThinking { BeagleThinkingLine() }
             if composer.editingId == nil {
                 DraftImages(draft: photos)
                 if let e = photos.error { Text(e).font(.caption).foregroundStyle(.red) }
@@ -278,6 +279,9 @@ private struct ChatComposerBar: View {
                         Image(systemName: "camera").font(.system(size: 21))
                             .frame(width: 30, height: 36)
                     }
+                }
+                if composer.editingId == nil, store.canAskBeagle {
+                    BeagleCallButton(composer: composer, size: 21, height: 36)
                 }
                 // Hardware keyboard (iPad): Return sends, Shift+Return is a newline, and the
                 // Return that confirms a Japanese conversion only confirms it (see

@@ -153,11 +153,19 @@ export interface ProfilePatch {
   links?: unknown;
 }
 
+/** B-guru's own names: a member called 「ビーグル…」 could pass for the bot (and for the on-device
+ *  Beagle's 「ビーグル（〇〇さんの端末）」), 「B-guru」 for the site's notices. */
+export function isReservedDisplayName(name: string): boolean {
+  const n = name.normalize("NFKC").replace(/\s+/g, "").toLowerCase();
+  return n.startsWith("ビーグル") || n.startsWith("beagle") || n === "b-guru" || n === "bguru";
+}
+
 /** Upsert a user's profile. The client sends the FULL desired profile state
  *  (empty fields = cleared). Throws with a human-readable message on invalid
  *  input. Returns the freshly resolved profile. */
 export async function updateProfile(email: string, patch: ProfilePatch): Promise<Profile> {
   const displayName = (patch.displayName ?? "").toString().trim();
+  if (isReservedDisplayName(displayName)) throw new Error("その名前は使えません（ビーグル・B-guru は B-guru の名前です）");
   const bio = (patch.bio ?? "").toString().trim();
   if (bio.length > MAX_BIO) throw new Error(`自己紹介は${MAX_BIO}文字以内で指定してください`);
 
