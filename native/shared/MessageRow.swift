@@ -90,8 +90,8 @@ struct MessageRow: View {
                 .fill(Color.accentGreen.opacity(highlighted ? 0.16 : 0))
                 .animation(.easeOut(duration: 0.6), value: highlighted)
         )
-        .opacity(row.state == .pending ? 0.6 : 1)
-        .animation(.easeOut(duration: 0.15), value: row.state)
+        // Only the fade is animated (not the row's layout inside the lazy list).
+        .modifier(PendingFade(pending: row.state == .pending))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .contextMenu { menu }
@@ -636,5 +636,13 @@ struct ChatPhotos: View {
         .onTapGesture { if !paths.isEmpty { onOpen?(i) } }
         .accessibilityLabel("写真 \(i + 1)")
         .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// A message still being sent is drawn faint; the change fades, and only the fade is animated.
+private struct PendingFade: ViewModifier {
+    let pending: Bool
+    func body(content: Content) -> some View {
+        content.animation(.easeOut(duration: 0.15)) { $0.opacity(pending ? 0.6 : 1) }
     }
 }

@@ -508,12 +508,19 @@ struct PostRow: View, Equatable {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         // Unread: a light green card with the web's green bar. Read after a second on
-        // screen, and the colour fades out — so you can see what you just read.
-        .background(Color.accentGreen.opacity(post.unread == true ? 0.08 : 0))
-        .overlay(alignment: .leading) {
-            Rectangle().fill(Color.accentGreen).frame(width: 3).opacity(post.unread == true ? 1 : 0)
+        // screen, and the colour fades out — so you can see what you just read. Only the colour
+        // is animated: on the whole row the change of `unread` animated the row's layout inside
+        // the lazy list, and the Mac (macOS 26) froze opening a thread of unread replies with link
+        // cards as each one turned read (hangs.log 2026-10-25, thread 9989: LazyVStack placements
+        // with motion in every sample).
+        .background {
+            Color.accentGreen
+                .animation(.easeOut(duration: 0.6)) { $0.opacity(post.unread == true ? 0.08 : 0) }
         }
-        .animation(.easeOut(duration: 0.6), value: post.unread)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(Color.accentGreen).frame(width: 3)
+                .animation(.easeOut(duration: 0.6)) { $0.opacity(post.unread == true ? 1 : 0) }
+        }
         .contentShape(Rectangle())
         #if os(macOS)
         // The web's card buttons at the top right while the pointer is over the post.
