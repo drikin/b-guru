@@ -29,6 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var collapser: StatusBarCollapser?
     /// メニューバーのティッカー（設定でオンにした人だけ）。
     private var ticker: StatusTicker?
+    /// 📺 the player's own window.
+    private var watchWindow: WatchWindow?
     /// 新着でビーグルが吠える（絵の差し替え）。
     private var barker: BeagleBarker?
     /// 負荷に合わせてビーグルが走る。
@@ -370,6 +372,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         store.shogi.onOffer = { [weak self] g in self?.notifyShogi(g, offer: true) }
         store.shogi.onMyTurn = { [weak self] g in self?.notifyShogi(g, offer: false) }
         store.dm.onIncoming = { [weak self] m, peer in self?.notifyDM(m, peer: peer) }
+        // 📺 the player's own window (⧉): follows the mode.
+        let watchWindow = WatchWindow(watch: store.watch)
+        self.watchWindow = watchWindow
+        store.watch.onModeChange = { [weak watchWindow] mode in watchWindow?.update(mode) }
         self.store = store
         store.start()
         Updater.shared.start(token: token)

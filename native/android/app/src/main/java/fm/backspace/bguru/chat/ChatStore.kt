@@ -54,6 +54,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     val minigame = MinigameStore(api)
     /** ✉️ 簡易 DM — only when the server turns it on for this member (capabilities.dm). */
     val dm = DMStore(api)
+    /** 📺 YouTube 共同鑑賞 — only when the server turns it on for this member (capabilities.watch). */
+    val watch = WatchStore(api)
     private val voiceApp = app.applicationContext
 
     /** True while the chat is on screen: drives read marking. */
@@ -228,6 +230,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             room.configure(caps)
             shogi.configure(caps)
             minigame.configure(caps)
+            watch.configure(caps)
             dm.configure(caps)
             // Voice is on for me but this token predates the "voice" scope: send the member
             // back to sign in once (a new sign-in gets the scope). Only once per install,
@@ -280,6 +283,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
                 if (voice.enabled) scope.launch { voice.loadState() } // resync after a reconnect
                 if (room.enabled) scope.launch { room.reload() }
                 if (shogi.enabled) shogi.load() // resync games missed while disconnected
+                if (watch.enabled) scope.launch { watch.reload() } // where the shared video is now
                 dm.onReady(ev.data)
                 reload()
             }
@@ -288,6 +292,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             "shogi_commentary" -> if (shogi.enabled) shogi.applyCommentary(ev.data) // ☗ ビーグルの実況 (the board's band)
             "dm" -> dm.apply(ev.data)
             "minigame" -> if (minigame.enabled) minigame.onStreamEvent(ev.data)
+            "watch" -> if (watch.enabled) watch.onStreamEvent(ev.data)
             "voice" -> runCatching { ApiJson.decodeFromString<VoiceRoomInfo>(ev.data) }.getOrNull()?.let(voice::apply)
             "chat" -> {
                 val e = runCatching { ApiJson.decodeFromString<ChatEvent>(ev.data) }.getOrNull() ?: return

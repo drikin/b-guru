@@ -369,7 +369,12 @@ fun PostRow(
                 }
                 if (post.images.isNotEmpty()) PostImages(post.images, plan.imageColumns, onOpenImage)
                 // Like the web: the link card under the photos too (only the server's one preview).
-                plan.linkCard?.let { (card, preview) -> LinkCard(preview, youtube = card.kind == "youtube") }
+                plan.linkCard?.let { (card, preview) ->
+                    LinkCard(preview, youtube = card.kind == "youtube")
+                    // 📺 a YouTube post: watch it with the chat (drikin 2026-10-25).
+                    val watch = LocalWatch.current
+                    if (card.kind == "youtube" && watch != null) WatchTogetherButton(watch, preview.url, floating = true)
+                }
                 // An episode of the jukebox (e.g. the daily "N 年前の今日"): play it here.
                 val session = if (post.audioUrl != null && post.videoUrl == null) App.session(context) else null
                 val jukebox = session?.jukebox?.takeIf { session.store?.capabilities?.jukeboxEnabled == true }

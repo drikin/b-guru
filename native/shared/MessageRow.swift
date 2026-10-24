@@ -23,6 +23,7 @@ struct MessageRow: View {
 
     /// ☗ 将棋 (nil when it is off): a kind "shogi" message is drawn as its game card.
     @Environment(\.shogi) private var shogi
+    @Environment(\.watch) private var watch
     @State private var hovering = false
     @State private var pickerOpen = false
     @State private var selecting = false
@@ -117,10 +118,21 @@ struct MessageRow: View {
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
                 ChatPhotos(paths: paths, local: paths.isEmpty ? localImages : [], onOpen: onOpenImage)
                 if !m.displayBody.isEmpty { textBubble }
+                watchButton
+            }
+        } else if let watch, let url = WatchStore.firstVideoURL(in: m.displayBody) {
+            // 📺 a YouTube link: 「みんなで見る」 under the bubble.
+            VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
+                textBubble
+                WatchTogetherButton(watch: watch, url: url)
             }
         } else {
             textBubble
         }
+    }
+
+    @ViewBuilder private var watchButton: some View {
+        if let watch, let url = WatchStore.firstVideoURL(in: m.displayBody) { WatchTogetherButton(watch: watch, url: url) }
     }
 
     private var textBubble: some View {

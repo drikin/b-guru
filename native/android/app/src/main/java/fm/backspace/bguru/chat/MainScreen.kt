@@ -67,6 +67,7 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
         }
     }
 
+    CompositionLocalProvider(LocalWatch provides store.watch.takeIf { it.enabled }) {
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
             if (wide) {
@@ -100,6 +101,9 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
         }
         // No mini player under the timeline and the chat (drikin 2026-10-20): the jukebox
         // tab and the playback notification play and pause.
+    }
+    // 📺 floating over every page (a 「みんなで見る」 on the timeline opens it here).
+    if (store.watch.open && store.watch.mode == WatchStore.Mode.FLOATING) WatchFloating(store.watch)
     }
 }
 

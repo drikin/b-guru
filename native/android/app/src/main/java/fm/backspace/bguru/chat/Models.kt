@@ -95,6 +95,15 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val shogi: ShogiFeatures? = null,
         val minigame: MinigameFeatures? = null,
         val dm: DMFeatures? = null,
+        val watch: WatchFeatures? = null,
+    )
+    /** 📺 YouTube 共同鑑賞 (src/lib/watch.ts), behind WATCH_ENABLED. `control` = may operate (chat scope). */
+    @Serializable data class WatchFeatures(
+        val enabled: Boolean? = null,
+        val path: String? = null,
+        val playerUrl: String? = null,
+        val bridgeVersion: Int? = null,
+        val control: Boolean? = null,
     )
     /** ✉️ 簡易 DM (1 対 1・テキストだけ・24 時間で消える), behind DM_ENABLED. `send` = this token may send (chat scope). */
     @Serializable data class DMFeatures(
@@ -246,6 +255,12 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val shogiEnabled get() = features?.shogi?.enabled == true && (features?.shogi?.bridgeVersion ?: 1) == 1
     /** May start, accept and play (the chat scope); otherwise watch only. */
     val canPlayShogi get() = shogiEnabled && (features?.shogi?.play ?: false)
+    /** 📺 is on for this member (and the player page speaks a bridge this app knows). */
+    val watchEnabled get() = features?.watch?.enabled == true && (features?.watch?.bridgeVersion ?: 1) == 1
+    val canControlWatch get() = watchEnabled && (features?.watch?.control ?: false)
+    val watchPath get() = features?.watch?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/watch"
+    /** The player page (no token): only under /watch/ on our own server. */
+    val watchPlayerUrl get() = features?.watch?.playerUrl?.takeIf { it.startsWith("/watch/") && !it.contains("..") } ?: "/watch/index.html"
     /** 🎮 is on for this member (and the game speaks a bridge this app knows). */
     val minigameEnabled get() = features?.minigame?.enabled == true && (features?.minigame?.bridgeVersion ?: 1) == 1
     val canPlayMinigame get() = minigameEnabled && (features?.minigame?.play ?: false)

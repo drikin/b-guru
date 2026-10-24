@@ -77,6 +77,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
@@ -285,11 +286,31 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             // The club room, when on for this member: テキスト｜ルーム, and in the text view its
             // banner in place of the voice bar. Otherwise the voice bar exactly as before.
             // ☗ 将棋 (when on): a third choice beside them, or テキスト｜☗ 将棋 above the voice bar.
+            // 📺 YouTube 共同鑑賞 sits beside the switch (the player stays open whatever the chat shows).
             if (store.room.enabled) {
-                RoomModeSwitch(store.room, store.voice, store.shogi, store.minigame)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { RoomModeSwitch(store.room, store.voice, store.shogi, store.minigame) }
+                    if (store.watch.enabled) WatchToggle(store.watch)
+                }
             } else {
-                if (store.shogi.enabled || store.minigame.enabled) ShogiModeSwitch(store.shogi, store.minigame)
+                if (store.shogi.enabled || store.minigame.enabled || store.watch.enabled) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f)) { if (store.shogi.enabled || store.minigame.enabled) ShogiModeSwitch(store.shogi, store.minigame) }
+                        if (store.watch.enabled) WatchToggle(store.watch)
+                    }
+                }
                 VoiceBar(store.voice)
+            }
+            if (store.watch.open && store.watch.mode == WatchStore.Mode.DOCKED) {
+                androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    WatchDock(store.watch, maxHeight = LocalConfiguration.current.screenHeightDp.dp)
+                }
+            }
+            // ☗ / 🎮 opening moves a docked 📺 to the floating window (two above the chat leave no room for it).
+            LaunchedEffect(store.shogi.open || store.minigame.open) {
+                if ((store.shogi.open || store.minigame.open) && store.watch.open && store.watch.mode == WatchStore.Mode.DOCKED) {
+                    store.watch.switchTo(WatchStore.Mode.FLOATING)
+                }
             }
             store.update?.let { u ->
                 // Downloads need the member's B-guru login, so the browser (where they
@@ -779,6 +800,10 @@ private fun MessageRow(
                                 )
                                 .padding(horizontal = if (emojiOnly) 4.dp else 10.dp, vertical = if (emojiOnly) 0.dp else 6.dp),
                         )
+                        // 📺 a YouTube link: 「みんなで見る」 under the bubble.
+                        val watch = LocalWatch.current
+                        val video = remember(body) { WatchLogic.firstVideoUrl(body) }
+                        if (watch != null && video != null) WatchTogetherButton(watch, video)
                     }
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {

@@ -174,6 +174,15 @@ struct Capabilities: Decodable, Sendable, Equatable {
         /// This token may play (has the "chat" scope).
         var play: Bool?
     }
+    /// 📺 YouTube 共同鑑賞 (lib/watch.ts). Absent or enabled:false → nothing of it shows.
+    struct WatchFeatures: Decodable, Sendable, Equatable {
+        var enabled: Bool?
+        var path: String?
+        var playerUrl: String?
+        var bridgeVersion: Int?
+        /// This token may operate (has the "chat" scope).
+        var control: Bool?
+    }
     /// ☗ 将棋 (docs/shogi-spec.md). Absent or enabled:false → nothing of it shows.
     struct ShogiFeatures: Decodable, Sendable, Equatable {
         struct TimeControl: Decodable, Sendable, Equatable {
@@ -223,6 +232,7 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var neta: NetaFeatures?
         var shogi: ShogiFeatures?
         var minigame: MinigameFeatures?
+        var watch: WatchFeatures?
     }
     var apiVersion: Int
     var scopes: [String]?
@@ -265,6 +275,11 @@ struct Capabilities: Decodable, Sendable, Equatable {
     var minigameEnabled: Bool {
         guard features?.minigame?.enabled == true else { return false }
         return (features?.minigame?.bridgeVersion ?? 1) == 1
+    }
+    /// 📺 is on for this member, and this app speaks the player page's bridge (version 1).
+    var watchEnabled: Bool {
+        guard features?.watch?.enabled == true else { return false }
+        return (features?.watch?.bridgeVersion ?? 1) == 1
     }
     var shogiEnabled: Bool {
         guard features?.shogi?.enabled == true else { return false }

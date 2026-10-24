@@ -42,6 +42,11 @@ struct MainView: View {
             // 「チャットに引用」 / 「ネタ帳に送る」 / a post's link in the chat: closures made
             // once (store.showChat, set on appear, shows the chat page).
             .environment(\.quoteToChat, store.quoteToChat)
+            .environment(\.watch, store.watch.enabled ? store.watch : nil)
+            // 📺 floating over every page (a 「みんなで見る」 on the timeline opens it here).
+            .overlay {
+                if store.watch.open && store.watch.mode == .floating { WatchFloatingView(watch: store.watch) }
+            }
             .environment(\.sendToNeta, store.sendToNeta)
             .sheet(item: Binding(get: { store.netaPost }, set: { store.netaPost = $0 })) { post in
                 NetaSheet(post: post, store: store) { store.netaPost = nil }

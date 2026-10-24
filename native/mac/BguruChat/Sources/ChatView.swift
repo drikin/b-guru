@@ -30,6 +30,11 @@ struct ChatView: View {
             ChatHeader(store: store, pin: pin, tabPicker: tabPicker, onSignOut: onSignOut)
             Divider()
             AssistantBannerRow()
+            if store.watch.open && store.watch.mode == .docked {
+                // 📺 above the chat (⧉ moves the same player into its own window and back).
+                WatchDockView(watch: store.watch)
+                Divider()
+            }
             if store.minigame.enabled && store.minigame.open {
                 // 🎮 (its choice sits in the header): the game above the chat, at its own height.
                 MinigameScreen(minigame: store.minigame)
@@ -69,10 +74,15 @@ struct ChatView: View {
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
             store.shogi.setAreaHeight($0)
             store.minigame.setAreaHeight($0)
+            store.watch.setAreaHeight($0)
         }
         // ☗ 将棋 takes up to half the chat (the board shrinks past that): a short panel grows
         // once, so the chat below stays readable.
         .onChange(of: store.shogi.open) { _, open in if open { pin.wantsHeight?(820) } }
+        // ☗ / 🎮 opening moves a docked 📺 into its own window (two above the chat leave no room for it).
+        .onChange(of: store.shogi.open || store.minigame.open) { _, busy in
+            if busy && store.watch.open && store.watch.mode == .docked { store.watch.setMode(.floating) }
+        }
         .imageViewer($viewing)
         #if DEBUG
         // The orientation tour opens a picture (debugOpenImageViewer, object: its URL).
@@ -117,6 +127,7 @@ private struct ChatHeader: View {
                 if store.room.enabled || store.shogi.enabled || store.minigame.enabled {
                     RoomModeIcons(room: store.room, shogi: store.shogi, minigame: store.minigame)
                 }
+                if store.watch.enabled { WatchToggleButton(watch: store.watch) }
             } else {
                 Image(systemName: store.unreadCount > 0 ? "dog.fill" : "dog")
                     .foregroundStyle(Color.accentGreen)

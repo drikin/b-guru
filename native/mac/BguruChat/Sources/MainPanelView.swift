@@ -65,6 +65,7 @@ struct MainPanelView: View {
         // 「チャットに引用」 / 「ネタ帳に送る」 / a post's link in the chat: closures made once
         // (store.showChat, set in init, shows the chat).
         .environment(\.quoteToChat, store.quoteToChat)
+        .environment(\.watch, store.watch.enabled ? store.watch : nil)
         .environment(\.sendToNeta, store.sendToNeta)
         .environment(\.openURL, timeline.postLinkAction)
         .environment(\.screenVisibility, visibility)

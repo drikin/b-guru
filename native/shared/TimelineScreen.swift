@@ -419,6 +419,7 @@ struct PostRow: View, Equatable {
     var showReplyCount = true
     @Environment(\.jukebox) private var jukebox
     @Environment(\.quoteToChat) private var quoteToChat
+    @Environment(\.watch) private var watch
     @Environment(\.sendToNeta) private var sendToNeta
     @Environment(\.postActions) private var actions
     @Environment(\.postClubs) private var clubs
@@ -483,6 +484,8 @@ struct PostRow: View, Equatable {
                 }
                 if let pv = TimelineRules.linkCard(post) {
                     LinkCard(preview: pv, youtube: TimelineRules.isYouTubeCard(post))
+                    // 📺 a YouTube post: watch it with the chat (drikin 2026-10-25「タイムラインに貼られた YouTube URL からも」).
+                    if TimelineRules.isYouTubeCard(post), let watch { WatchTogetherButton(watch: watch, url: pv.url, floating: true) }
                 }
                 if let poll = post.poll, !poll.options.isEmpty {
                     PollCard(post: post, poll: poll)

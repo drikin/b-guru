@@ -113,10 +113,13 @@ final class ChatStore {
     let minigame: MinigameStore
     /// ✉️ 簡易 DM (DMStore.swift), when the server has it on for this member.
     let dm: DMStore
+    /// 📺 YouTube 共同鑑賞 (Watch.swift), when the server has it on for this member.
+    let watch: WatchStore
 
     init(api: APIClient) {
         self.api = api
         self.dm = DMStore(api: api)
+        self.watch = WatchStore(api: api)
         self.voice = VoiceStore(api: api)
         let room = RoomStore(api: api, voice: voice)
         self.room = room
@@ -176,6 +179,7 @@ final class ChatStore {
             room.configure(enabled: capabilities?.roomEnabled ?? false)
             shogi.configure(capabilities?.features?.shogi, enabled: capabilities?.shogiEnabled ?? false)
             minigame.configure(capabilities?.features?.minigame, enabled: capabilities?.minigameEnabled ?? false)
+            watch.configure(capabilities?.features?.watch, enabled: capabilities?.watchEnabled ?? false)
             dm.configure(capabilities)
             // Voice is on for me but this token predates the "voice" scope: send the
             // member back to sign in once (a new sign-in gets the scope). Only once per
@@ -230,6 +234,7 @@ final class ChatStore {
             if voice.enabled { Task { await voice.loadState() } } // resync after a reconnect
             if room.enabled { Task { await room.load() } }
             if shogi.enabled { Task { await shogi.reload() } } // moves missed while away
+            if watch.enabled { Task { await watch.reload() } } // where the shared video is now
             dm.applyReady(ev.data)
             await reload()
         case "chat":
@@ -266,6 +271,8 @@ final class ChatStore {
             room.apply(ev.data)
         case "minigame":
             minigame.apply(ev.data)
+        case "watch":
+            watch.apply(ev.data)
         case "shogi":
             shogi.apply(ev.data)
         case "shogi_commentary":
