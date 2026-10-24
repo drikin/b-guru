@@ -144,13 +144,9 @@ struct DMThreadView: View {
     @Bindable var dm: DMStore
     let peer: DMPeer
     @State private var draft = ""
-    /// Bumped on every send: a fresh text field drops uncommitted Japanese IME / dictation text that
-    /// otherwise stayed in the box after sending now and then (drikin 2026-10-24; the chat's composer
-    /// had the same fix).
-    @State private var fieldGeneration = 0
     /// What was just sent, to swallow a late echo of it (dictation finalising after Send).
     @State private var justSent: (text: String, at: Date)?
-    @FocusState private var focused: Bool
+    @State private var focused = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -191,15 +187,13 @@ struct DMThreadView: View {
         if dm.canSend && dm.peerCanReceive {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .bottom, spacing: 8) {
-                    TextField("\(peer.displayName) さんへ", text: $draft, axis: .vertical)
+                    // The chat's text box (iOS: ComposerTextView): clearing it after a send drops leftover
+                    // IME / dictation text in place, without making a new field — a new field each send
+                    // made the keyboard go down and come back up (drikin 2026-10-24).
+                    PostTextInput(text: $draft, isFocused: $focused, placeholder: "\(peer.displayName) さんへ", onSubmit: send)
                         .font(.app(.body))
-                        .lineLimit(1...6)
-                        .textFieldStyle(.plain)
-                        .focused($focused)
                         .padding(.horizontal, 10).padding(.vertical, 7)
                         .background(RoundedRectangle(cornerRadius: 16).fill(Color.primary.opacity(0.06)))
-                        .onSubmit(send)
-                        .id(fieldGeneration)
                         .onChange(of: draft) { old, new in
                             if isLateEcho(old: old, new: new) { draft = "" }
                         }
@@ -238,10 +232,8 @@ struct DMThreadView: View {
         let text = draft
         dm.send(text)
         justSent = (text, Date())
-        draft = ""
-        fieldGeneration += 1 // new field: the old one's marked text / dictation goes away
+        draft = "" // the text box drops leftover marked text itself (see above)
         DispatchQueue.main.async {
-            focused = true // the keyboard stays up on the new field
             if draft == text { draft = "" }
         }
     }
