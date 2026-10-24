@@ -241,6 +241,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         }
                     }
                 }
+                // -demoSplit [W]: pinned and W wide (default 1000): the timeline and the chat side by side.
+                if let i = CommandLine.arguments.firstIndex(of: "-demoSplit") {
+                    let w = i + 1 < CommandLine.arguments.count ? Double(CommandLine.arguments[i + 1]) ?? 1000 : 1000
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        guard let panel = self.panel else { return }
+                        panel.pin.pinned = true
+                        panel.setContentSize(NSSize(width: w, height: 760))
+                    }
+                }
                 // -demoToggleEvery S: the panel closes and opens again every S seconds (the menu bar icon).
                 if let i = CommandLine.arguments.firstIndex(of: "-demoToggleEvery"), i + 1 < CommandLine.arguments.count,
                    let every = Double(CommandLine.arguments[i + 1]) {
@@ -1109,7 +1118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// ☗ 将棋: an offer to me, or my move in a slow game — like a mention (always; no sound in
     /// the quiet hours). Not while that game is on screen.
     private func notifyShogi(_ g: ShogiGame, offer: Bool) {
-        if let store, store.isVisible, panel?.pin.tab == .chat, store.shogi.open, store.shogi.selectedId == g.id { return }
+        if let store, store.isVisible, panel?.pin.chatShown == true, store.shogi.open, store.shogi.selectedId == g.id { return }
         let content = UNMutableNotificationContent()
         content.title = "☗ 将棋"
         if offer {
@@ -1154,7 +1163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             await timeline.refresh()
             self.newestPostSeen = max(before, timeline.posts.map(\.id).max() ?? 0)
             guard before > 0, !self.settings.isQuietNow() else { return }
-            if self.store?.isVisible == true, self.panel?.pin.tab == .timeline { return }
+            if self.store?.isVisible == true, self.panel?.pin.timelineShown == true { return }
             let fresh = timeline.posts.filter { $0.id > before && $0.isAuthor != true && $0.unread == true }
             for p in fresh.sorted(by: { $0.id < $1.id }).prefix(3) { self.notifyPost(p) }
         }

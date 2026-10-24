@@ -42,6 +42,7 @@ struct MainPanelView: View {
             TabSlot(pin: pin, tab: .timeline) {
                 TimelineTab(store: store, timeline: timeline, pin: pin, onSignOut: onSignOut).equatable()
             }
+            SplitDivider(pin: pin)
             if jukeboxOn {
                 JukeboxSlot(store: store, pin: pin)
             }
@@ -88,14 +89,43 @@ struct MainPanelView: View {
 
 }
 
-/// One tab of the panel: shown or kept hidden, from the tab it reads itself.
+/// One tab of the panel: shown or kept hidden, from the tab it reads itself. Side by side
+/// (PinState.split) the timeline takes the left and the chat the right; the same views move,
+/// they are not built again (each keeps its scroll place).
 private struct TabSlot<Content: View>: View {
     let pin: PinState
     let tab: MainTab
     @ViewBuilder let content: Content
 
     var body: some View {
-        content.shown(pin.tab == tab)
+        let side = pin.split && pin.tab != .jukebox
+        let on = tab == .chat ? pin.chatShown : tab == .timeline ? pin.timelineShown : pin.tab == tab
+        let width = !side ? nil : tab == .chat ? SplitLayout.chatWidth(pin.width) : pin.width - SplitLayout.chatWidth(pin.width) - 1
+        content
+            .frame(width: width)
+            .frame(maxWidth: .infinity, alignment: tab == .chat ? .trailing : .leading)
+            .shown(on)
+    }
+}
+
+/// How the panel is shared side by side.
+enum SplitLayout {
+    /// The chat's part: a little under half, between 360 and 520.
+    static func chatWidth(_ panel: CGFloat) -> CGFloat { min(520, max(360, (panel * 0.45).rounded())) }
+}
+
+/// The line between the timeline and the chat, side by side.
+private struct SplitDivider: View {
+    let pin: PinState
+    var body: some View {
+        if pin.split && pin.tab != .jukebox {
+            Rectangle().fill(Color(nsColor: .separatorColor))
+                .frame(width: 1)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, SplitLayout.chatWidth(pin.width))
+                .allowsHitTesting(false)
+                .zIndex(2)
+        }
     }
 }
 
@@ -128,8 +158,8 @@ private struct PanelTabWatcher: View {
     /// the room's map and the record's turning follow this.
     private func updateVisibility() {
         let seen = pin.windowVisible
-        visibility.set(timeline: seen && pin.tab == .timeline, chat: seen && pin.tab == .chat,
-                       jukebox: seen && pin.tab == .jukebox, room: seen && pin.tab == .chat)
+        visibility.set(timeline: seen && pin.timelineShown, chat: seen && pin.chatShown,
+                       jukebox: seen && pin.tab == .jukebox, room: seen && pin.chatShown)
         // Every minute only while the timeline can be seen (the tab stays built when hidden,
         // so appearing / disappearing said nothing about that).
         if visibility.timeline { timeline.startPolling() } else { timeline.stopPolling() }
@@ -160,6 +190,7 @@ private struct PanelTabWatcher: View {
         Color.clear
             .onAppear { updateVisibility() }
             .onChange(of: pin.windowVisible) { _, _ in updateVisibility() }
+            .onChange(of: pin.split) { _, _ in updateVisibility() }
             .onChange(of: jukeboxOn) { _, on in if !on && pin.tab == .jukebox { pin.tab = .chat } }
             .onChange(of: pin.tab) { _, t in
                 updateVisibility()
@@ -189,10 +220,25 @@ typealias MainTabPicker = PanelTabSwitch
 struct PanelTabSwitch: View {
     let store: ChatStore
     @Bindable var pin: PinState
+    /// The tab this switch sits on.
+    var pane: MainTab = .chat
 
     private var jukeboxOn: Bool { store.capabilities?.jukeboxEnabled ?? false }
 
     var body: some View {
+        if pin.split {
+            // Side by side: one switch (over the chat) — 📰💬 both, or 📻.
+            if pane != .timeline {
+                PanelTabs(selection: Binding(get: { pin.tab == .jukebox ? .jukebox : .chat }, set: { pin.tab = $0 }), items: [
+                    (.chat, store.unreadCount > 0 ? "📰💬●" : "📰💬", "タイムラインとチャット（⌘1 / ⌘2）"),
+                ] + (jukeboxOn ? [(.jukebox, "📻", "プレイヤー（⌘3）")] : []))
+            }
+        } else {
+            tabs
+        }
+    }
+
+    private var tabs: some View {
         // 📰 タイムライン ・ 💬 チャット ・ 📻 プレイヤー — the same order and marks in every app
         // (drikin 2026-10-20); segments sized to their marks (the system control made them
         // all as wide as the widest and widened the panel).
@@ -224,7 +270,7 @@ private struct TimelineTab: View, @MainActor Equatable {
     static func == (a: Self, b: Self) -> Bool { a.store === b.store && a.timeline === b.timeline && a.pin === b.pin }
     var body: some View {
         TimelineScreen(timeline: timeline, capabilities: store.capabilities,
-                       tabPicker: PanelTabSwitch(store: store, pin: pin), onReconnect: onSignOut)
+                       tabPicker: PanelTabSwitch(store: store, pin: pin, pane: .timeline), onReconnect: onSignOut)
             .background(.regularMaterial)
     }
 }
@@ -235,7 +281,7 @@ private struct JukeboxTab: View, @MainActor Equatable {
     static func == (a: Self, b: Self) -> Bool { a.store === b.store && a.pin === b.pin }
     var body: some View {
         JukeboxScreen(jukebox: store.jukebox, path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox",
-                      tabPicker: PanelTabSwitch(store: store, pin: pin))
+                      tabPicker: PanelTabSwitch(store: store, pin: pin, pane: .jukebox))
             .background(.regularMaterial)
     }
 }

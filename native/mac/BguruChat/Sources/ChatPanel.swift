@@ -156,17 +156,17 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         }
         // ⌘V with an image (and no text) on the pasteboard in the chat: attach it.
         if event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-           event.charactersIgnoringModifiers == "v", pin.tab == .chat, let data = Self.pastedImage() {
+           event.charactersIgnoringModifiers == "v", pin.chatShown, let data = Self.pastedImage() {
             NotificationCenter.default.post(name: .chatPasteImage, object: data)
             return
         }
         // Mouse back button (button 4 = number 3): thread → timeline.
-        if event.type == .otherMouseDown, event.buttonNumber == 3, pin.tab == .timeline {
+        if event.type == .otherMouseDown, event.buttonNumber == 3, pin.timelineShown {
             NotificationCenter.default.post(name: .timelineBack, object: nil)
             return
         }
         // ← in a DM: one step back (the conversation → the list → closed), as in a timeline thread.
-        if event.type == .keyDown, event.keyCode == 123, pin.tab == .chat, store.dm.route != nil, leftArrowAllowed(event) {
+        if event.type == .keyDown, event.keyCode == 123, pin.chatShown, store.dm.route != nil, leftArrowAllowed(event) {
             store.dm.back()
             return
         }
@@ -184,7 +184,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     /// to move through, so it leaves) nor with a picture open (← is the previous picture there).
     /// Without a thread open it does nothing.
     func leftArrowLeavesThread(_ event: NSEvent) -> Bool {
-        pin.tab == .timeline && leftArrowAllowed(event)
+        pin.timelineShown && leftArrowAllowed(event)
     }
 
     /// ← with no modifiers, no picture open, and no text being typed (← moves the caret there).
@@ -253,6 +253,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
             }
         }
         store.isVisible = true
+        if pin.width != frame.width { pin.width = frame.width }
         pin.windowVisible = true
         HangWatch.note("panel open (\(pin.tab), \(pin.pinned ? "pinned" : "peek"), \(Int(frame.width))×\(Int(frame.height)))")
         focusComposer()
@@ -265,7 +266,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     private func focusComposer() {
         // Only on the chat: the panel now opens on the tab it was left on, and the tabs stay
         // built, so the hidden chat's message box would take the typing.
-        guard pin.tab == .chat else { return }
+        guard pin.chatShown else { return }
         pin.focusRequest += 1
         DispatchQueue.main.async { [weak self] in
             guard let self, self.isKeyWindow else { return }
@@ -502,6 +503,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     /// A resize storm here is what a layout loop looks like (see HangWatch).
     func windowDidResize(_ notification: Notification) {
         HangWatch.note("panel size \(Int(frame.width))×\(Int(frame.height))")
+        if pin.width != frame.width { pin.width = frame.width }
         if placing == 0, isVisible, NSEvent.pressedMouseButtons != 0 {
             PanelMemory.saveSize(contentRect(forFrameRect: frame).size)
             if !pin.pinned, let screen { PanelMemory.saveFrame(frame, on: screen) }
@@ -553,6 +555,16 @@ final class PinState {
     @ObservationIgnored var onChange: ((Bool) -> Void)?
     /// Asks the panel to be at least this tall (set by the panel).
     @ObservationIgnored var wantsHeight: ((CGFloat) -> Void)?
+    /// The panel's width (set by the panel as it changes).
+    var width: CGFloat = 0
+    /// From this width a pinned panel shows the timeline and the chat side by side (drikin
+    /// 2026-10-24「ピン止めしてウインドウサイズ開いたらタイムラインとチャットの 2 画面表示」).
+    static let splitWidth: CGFloat = 780
+    /// The timeline (left) and the chat (right) side by side; 📻 still takes the whole panel.
+    var split: Bool { pinned && width >= Self.splitWidth }
+    /// The chat / the timeline is on the panel (its own tab, or both side by side).
+    var chatShown: Bool { tab == .chat || (split && tab == .timeline) }
+    var timelineShown: Bool { tab == .timeline || (split && tab == .chat) }
 }
 
 /// Two-finger horizontal swipe on the trackpad → switch chat ⇄ timeline, like
