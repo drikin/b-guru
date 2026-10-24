@@ -821,7 +821,9 @@ console.log("\n6f-3. iOS Chrome uses the native pull-to-refresh");
   // disabled for CriOS, this must NOT produce a feed request.
   const criosReqs = [];
   const onCriosReq = (r) => {
-    if (r.url().includes("/api/posts")) criosReqs.push(r.url());
+    // The feed only: the live stream (/api/posts/stream) reconnecting is not a pull (it counted as one, 2026-10-25).
+    const u = r.url();
+    if (u.includes("/api/posts") && !u.includes("/api/posts/stream")) criosReqs.push(u.replace(/^https?:\/\/[^/]+/, ""));
   };
   // ★ Let the page's own background fetches settle BEFORE counting.
   //   The feed revalidates on load (SSE / focus refresh), so a request can land
@@ -864,7 +866,7 @@ console.log("\n6f-3. iOS Chrome uses the native pull-to-refresh");
   check(
     "iOS Chrome does not run the custom pull gesture",
     criosReqs.length === 0,
-    `feed requests after pull = ${criosReqs.length} (must be 0 — the browser handles it)`
+    `feed requests after pull = ${criosReqs.length} (must be 0 — the browser handles it) ${JSON.stringify(criosReqs.slice(0, 3))}`
   );
   await crios.close();
 }
