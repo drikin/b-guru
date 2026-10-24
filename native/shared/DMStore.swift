@@ -178,6 +178,8 @@ final class DMStore {
     func openList() { route = .list }
     func open(_ peer: DMPeer) { route = .thread(peer) }
     func close() { route = nil }
+    /// One step back: a conversation → the list → closed (the Mac's ←, drikin 2026-10-24).
+    func back() { route = route == .list ? nil : (route == nil ? nil : .list) }
 
     func reload() async {
         guard enabled, !demo else { return }

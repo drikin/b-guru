@@ -165,6 +165,11 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
             NotificationCenter.default.post(name: .timelineBack, object: nil)
             return
         }
+        // ← in a DM: one step back (the conversation → the list → closed), as in a timeline thread.
+        if event.type == .keyDown, event.keyCode == 123, pin.tab == .chat, store.dm.route != nil, leftArrowAllowed(event) {
+            store.dm.back()
+            return
+        }
         if event.type == .keyDown, event.keyCode == 123, leftArrowLeavesThread(event) {
             NotificationCenter.default.post(name: .timelineBack, object: nil)
             // Used up here: passed on, nothing else took it and macOS beeped (drikin 2026-10-24
@@ -179,7 +184,12 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     /// to move through, so it leaves) nor with a picture open (← is the previous picture there).
     /// Without a thread open it does nothing.
     func leftArrowLeavesThread(_ event: NSEvent) -> Bool {
-        guard pin.tab == .timeline, ImageViewerOverlay.open == 0,
+        pin.tab == .timeline && leftArrowAllowed(event)
+    }
+
+    /// ← with no modifiers, no picture open, and no text being typed (← moves the caret there).
+    func leftArrowAllowed(_ event: NSEvent) -> Bool {
+        guard ImageViewerOverlay.open == 0,
               event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return false }
         if let text = firstResponder as? NSText, !text.string.isEmpty { return false }
         return true
