@@ -211,7 +211,9 @@ export function buildDmPayload(messageId: number, senderUserId: string) {
       "thread-id": `dm-${senderUserId}`,
     },
     kind: "dm" as const,
-    message_id: messageId,
+    // dm_id, not message_id: apps from before DMs would look up a CHAT message by message_id
+    // (another member's text under the DM's number). They show the generic line instead.
+    dm_id: messageId,
     peer_id: senderUserId,
   };
 }
