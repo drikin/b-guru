@@ -587,6 +587,9 @@ private fun Composer(
                         TextButton(onClick = onCancelEdit) { Text("キャンセル") }
                     }
                 }
+                if (store.beagleThinking) {
+                    Text("🐶 ビーグルが考え中…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 (store.sendError ?: photos.error)?.let {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
@@ -598,6 +601,16 @@ private fun Composer(
                             enabled = photos.remaining(maxPhotos) > 0,
                         ) { Text("🖼️", fontSize = 20.sp, modifier = Modifier.alpha(if (photos.remaining(maxPhotos) > 0) 1f else 0.4f)) }
                         CameraButton(onClick = camera, enabled = photos.remaining(maxPhotos) > 0)
+                    }
+                    if (!editing && store.capabilities?.canAskBeagle == true) {
+                        // 🐶 next to the camera: @ビーグル at the start of the message (once).
+                        IconButton(onClick = {
+                            if (!asksBeagle(field.text)) {
+                                val t = "@ビーグル " + field.text.trimStart()
+                                onField(TextFieldValue(t, TextRange(t.length)))
+                            }
+                            focus.requestFocus()
+                        }) { Text("🐶", fontSize = 20.sp) }
                     }
                     run {
                         // Setting the value from outside (clear after send) restarts the

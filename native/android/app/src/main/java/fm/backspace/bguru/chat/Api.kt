@@ -146,6 +146,11 @@ class ApiClient(val token: String) : PostOpsApi {
             if (images.isNotEmpty()) put("images", JsonArray(images.map { JsonPrimitive(it) }))
         }))).message
 
+    /** 🐶 Ask the server's Beagle to answer my @ビーグル question now (the answer comes on the stream). */
+    suspend fun askBeagle(questionId: Long) {
+        send(request("POST", "/api/agent/chat/beagle/ask", buildJsonObject { put("question_id", questionId) }))
+    }
+
     /** Chat photos (JPEGs, already resized). Returns /api/media/… URLs for [post]. */
     suspend fun uploadChatImages(jpegs: List<ByteArray>, path: String = "/api/agent/chat/upload"): List<String> =
         uploadImages(path, jpegs)

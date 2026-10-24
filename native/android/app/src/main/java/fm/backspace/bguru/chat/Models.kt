@@ -37,6 +37,8 @@ data class ChatMessage(
      *  "shogi": the ☗ 将棋 game card (`shogiGameId` is the game; the body reads fine as text). */
     val kind: String? = null,
     val shogiGameId: Long? = null,
+    /** kind "beagle_ai": 🐶 Beagle's answer; the question it answers. */
+    val replyToId: Long? = null,
 ) {
     val isNotice: Boolean get() = kind == "notice"
     /** The ☗ 将棋 game card (drawn as a small board when the server turns shogi on for me). */
@@ -180,7 +182,10 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val imageUpload: String? = null,
         val maxImages: Int? = null,
         val imageMaxSide: Int? = null,
+        /** 🐶 the server's Beagle (さくらの AI Engine) answers @ビーグル: POST beagle/ask. */
+        val beagleServer: Boolean? = null,
     )
+    val canAskBeagle get() = features?.chat?.beagleServer ?: false
     val canSend get() = features?.chat?.send ?: false
     val canEdit get() = features?.chat?.editOwn ?: false
     val canReact get() = features?.chat?.reactions ?: false

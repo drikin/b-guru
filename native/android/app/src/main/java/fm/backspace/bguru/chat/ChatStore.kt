@@ -39,6 +39,9 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     var signedOut by mutableStateOf(false); private set
     /** Why the last send was refused (e.g. a photo the server would not take). */
     var sendError by mutableStateOf<String?>(null)
+    /** 🐶 the server's Beagle is writing an answer to my question (shown above the message box). */
+    var beagleThinking by mutableStateOf(false); private set
+    private var beagleWaitingFor: Long? = null
 
     /** The voice room. Lives as long as the sign-in, so a call survives the chat
      *  leaving the screen (the stream pauses; LiveKit has its own connection). */
@@ -308,7 +311,25 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         }
     }
 
+    /** My message calls @ビーグル: ask the server's Beagle now (else it answers 10 s later anyway). */
+    private fun askBeagleIfCalled(m: ChatMessage) {
+        if (capabilities?.canAskBeagle != true || !asksBeagle(m.body)) return
+        beagleThinking = true
+        beagleWaitingFor = m.id
+        scope.launch {
+            try {
+                api.askBeagle(m.id)
+            } catch (_: Exception) {
+                beagleThinking = false
+                return@launch
+            }
+            delay(45_000)
+            if (beagleWaitingFor == m.id) { beagleWaitingFor = null; beagleThinking = false }
+        }
+    }
+
     private fun received(m: ChatMessage) {
+        if (m.kind == "beagle_ai" && m.replyToId != null && m.replyToId == beagleWaitingFor) { beagleWaitingFor = null; beagleThinking = false }
         latestId = maxOf(latestId, m.id)
         if (m.isAuthor) myUserId = m.authorId
         val alreadyShown = rows.any { it.message.id == m.id }
@@ -408,6 +429,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
                 val shown = rows.any { it.message.id == m.id }
                 rows = reconcile(rows, m)
                 if (!shown) room.onChat(m)
+                askBeagleIfCalled(m)
             } catch (e: ApiError) {
                 if (e.isPermanent) {
                     outbox.remove(clientId)
@@ -508,3 +530,6 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         }
     }
 }
+
+/** The message calls 🐶 Beagle (@ビーグル, not inside a longer word). */
+fun asksBeagle(body: String): Boolean = Regex("@ビーグル(?![\\p{L}\\p{N}])").containsMatchIn(body)

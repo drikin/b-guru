@@ -12322,6 +12322,29 @@ export default function Home() {
                         <circle cx="12" cy="13" r="4" />
                       </svg>
                     </ActionIcon>
+                    {/* 🐶 カメラの隣: 先頭に @ビーグル を入れる（1 回だけ）。サーバのビーグル（さくらの AI Engine）が答える
+                        （lib/beagle-server.ts、BEAGLE_SERVER_ENABLED。2026-10-24 全員に公開）。 */}
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      size="md"
+                      aria-label="ビーグルに聞く"
+                      title="ビーグルに聞く（AI が答えて、チャットの全員に見えます）"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setChatText((cur) => (/@ビーグル(?![\p{L}\p{N}])/u.test(cur) ? cur : `@ビーグル ${cur.trimStart()}`));
+                        requestAnimationFrame(() => {
+                          const ta = chatInputRef.current;
+                          if (ta) {
+                            ta.focus();
+                            ta.setSelectionRange(ta.value.length, ta.value.length);
+                          }
+                        });
+                      }}
+                      style={{ flexShrink: 0, marginBottom: 4, fontSize: 15 }}
+                    >
+                      🐶
+                    </ActionIcon>
                     <ChatDraftInput
                       draftRef={chatDraftRef}
                       sinkRef={chatDraftSinkRef}
