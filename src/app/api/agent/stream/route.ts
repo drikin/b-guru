@@ -31,6 +31,7 @@ import { clientIp } from "@/lib/client-ip";
 import { shogiEnabledFor } from "@/lib/shogi";
 import { commentaryEnabledFor } from "@/lib/shogi-commentary-store";
 import { minigameEnabledFor } from "@/lib/minigame";
+import { dmEnabledFor, ensureDmSweeper, getDmUnreadTotal } from "@/lib/dm";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -101,6 +102,8 @@ export async function GET(req: NextRequest) {
   const shogiOn = shogiEnabledFor(agent.email);
   const commentaryOn = commentaryEnabledFor(agent.email);
   const minigameOn = minigameEnabledFor(agent.email);
+  const dmOn = dmEnabledFor(agent.email);
+  if (dmOn) ensureDmSweeper();
   const onLive = (ev: LiveEvent) => {
     if (ev.type === "room" && !roomOn) return; // the club room: only for members who have it
     if (ev.type === "shogi" && !shogiOn) return; // ☗ 将棋: behind SHOGI_ENABLED
@@ -118,6 +121,9 @@ export async function GET(req: NextRequest) {
     } else if (ev.type === "minigame" && minigameOn) {
       // My own best changed (only to me).
       send({ event: "minigame", data: { action: ev.action, best: ev.best } });
+    } else if (ev.type === "dm" && dmOn) {
+      // ✉️ 簡易 DM: this member's view, built per recipient by lib/dm.ts (no email).
+      send({ event: "dm", data: ev.data });
     }
   };
 
@@ -143,11 +149,19 @@ export async function GET(req: NextRequest) {
       personalBus.on(key, onPersonal);
       void roomConnect(agent.email).catch((e) => console.error("[room] connect:", (e as Error)?.message));
 
-      void Promise.all([getUnreadCount(agent.email), getLatestChatId()]).then(
-        ([unread, latest]) =>
+      void Promise.all([
+        getUnreadCount(agent.email),
+        getLatestChatId(),
+        dmOn ? getDmUnreadTotal(agent.email).catch(() => null) : Promise.resolve(null),
+      ]).then(
+        ([unread, latest, dmUnread]) =>
           send({
             event: "ready",
-            data: { apiVersion: AGENT_API_VERSION, chat: { unread_count: unread, latest_id: latest } },
+            data: {
+              apiVersion: AGENT_API_VERSION,
+              chat: { unread_count: unread, latest_id: latest },
+              ...(dmUnread != null ? { dm: { unread_count: dmUnread } } : {}),
+            },
           }),
         () => send({ event: "ready", data: { apiVersion: AGENT_API_VERSION } })
       );

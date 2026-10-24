@@ -15,7 +15,7 @@ import { activePushDevices, markPushSent, pushDeviceOwners, removePushDevice, ty
 import { isMentionedIn, mentionNamesFor } from "./chat-mention";
 import { resolveDisplayNames } from "./display-name";
 
-export type PushKind = "chat_mention" | "chat_new" | "reply" | "timeline_new" | "shogi_offer" | "shogi_turn";
+export type PushKind = "chat_mention" | "chat_new" | "reply" | "timeline_new" | "shogi_offer" | "shogi_turn" | "dm";
 
 /** 0:00–7:00 JST — new-message pushes wait (mentions still go out). */
 export function isQuietHourJst(now = new Date()): boolean {
@@ -196,4 +196,38 @@ export async function pushShogi(recipientEmail: string, kind: "shogi_offer" | "s
   const devices = (await activePushDevices([recipientEmail])).filter((d) => d.notifyShogi && !(quiet && d.quietHours));
   if (devices.length === 0) return 0;
   return deliver(devices, buildShogiPayload(kind, gameId), `shogi-${gameId}`);
+}
+
+/** ✉️ 簡易 DM: ids と決まった文言だけ（ほかの通知と同じ。本文と送り主の名前は端末が自分の鍵で読む:
+ *  iPhone は NSE が GET /api/agent/dm/messages/{id}、Android はアプリが同じものを読む）。
+ *  読めなかったときは「B-guru DM／DM が届きました」のまま。会話ごとに 1 件にまとめる（collapse）。 */
+export function buildDmPayload(messageId: number, senderUserId: string) {
+  return {
+    aps: {
+      alert: { title: "B-guru DM", body: "DM が届きました" },
+      sound: "default",
+      "mutable-content": 1,
+      category: "dm",
+      "thread-id": `dm-${senderUserId}`,
+    },
+    kind: "dm" as const,
+    message_id: messageId,
+    peer_id: senderUserId,
+  };
+}
+
+/** DM の文言（通知の題と本文。端末が本文を読めたとき・Android と iPhone で同じ）。 */
+export function dmNotificationText(senderName: string | null, body: string): { title: string; body: string } {
+  const name = (senderName ?? "").trim() || "会員";
+  const clipped = body.length > 240 ? body.slice(0, 240) + "…" : body;
+  return { title: `${name}さんからの DM`, body: clipped };
+}
+
+/** DM が届いた: 相手の端末すべてへ（自分宛ての 1 通なので、静かな時間・回数でまとめない。
+ *  同じ人からの続きは collapse で最新の 1 件に置き換わる）。 */
+export async function pushDm(recipientEmail: string, messageId: number, senderUserId: string): Promise<number> {
+  if (!pushEnabled()) return 0;
+  const devices = await activePushDevices([recipientEmail]);
+  if (devices.length === 0) return 0;
+  return deliver(devices, buildDmPayload(messageId, senderUserId), `dm-${senderUserId}`);
 }

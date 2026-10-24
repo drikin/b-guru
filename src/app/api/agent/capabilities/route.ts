@@ -13,6 +13,7 @@ import { shogiEnabledFor } from "@/lib/shogi";
 import { commentaryEnabledFor } from "@/lib/shogi-commentary-store";
 import { minigameEnabledFor } from "@/lib/minigame";
 import { macAssistantEnabledFor } from "@/lib/feature-flag";
+import { dmCapability, dmEnabledFor } from "@/lib/dm";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,8 +21,22 @@ export const runtime = "nodejs";
 export async function GET(req: NextRequest) {
   const out = await withAgent(req, "GET /api/agent/capabilities", null, async (ctx) => ({
     status: 200,
-    body: agentCapabilities(ctx.scopes, { voice: voiceEnabledFor(ctx.email), voiceAdmin: isAdmin(ctx.email), room: roomEnabledFor(ctx.email), jukebox: jukeboxEnabledFor(ctx.email) && !jukeboxBrokenClient(req.headers.get("user-agent")), shogi: shogiEnabledFor(ctx.email), shogiCommentary: commentaryEnabledFor(ctx.email), minigame: minigameEnabledFor(ctx.email), appIssued: ctx.appIssued, macAssistant: macAssistantEnabledFor(ctx.email) }),
+    body: withDm(ctx.scopes, dmEnabledFor(ctx.email), agentCapabilities(ctx.scopes, { voice: voiceEnabledFor(ctx.email), voiceAdmin: isAdmin(ctx.email), room: roomEnabledFor(ctx.email), jukebox: jukeboxEnabledFor(ctx.email) && !jukeboxBrokenClient(req.headers.get("user-agent")), shogi: shogiEnabledFor(ctx.email), shogiCommentary: commentaryEnabledFor(ctx.email), minigame: minigameEnabledFor(ctx.email), appIssued: ctx.appIssued, macAssistant: macAssistantEnabledFor(ctx.email) })),
     headers: {},
   }));
   return agentJson(out);
+}
+
+/** ✉️ 簡易 DM（DM_ENABLED）: features.dm と stream の "dm"・通知の "dm" を足す（lib/dm.ts の dmCapability）。
+ *  対象でない人にも enabled:false を返す（アプリは隠す）。 */
+function withDm(scopes: string[], enabled: boolean, caps: ReturnType<typeof agentCapabilities>) {
+  return {
+    ...caps,
+    features: {
+      ...caps.features,
+      dm: dmCapability(enabled, scopes),
+      stream: { ...caps.features.stream, events: [...caps.features.stream.events, ...(enabled ? ["dm"] : [])] },
+      push: { ...caps.features.push, kinds: [...caps.features.push.kinds, ...(enabled ? ["dm"] : [])] },
+    },
+  };
 }

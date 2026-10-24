@@ -20,7 +20,10 @@ export type PersonalEvent =
       type: "minigame";
       action: "best";
       best: { mode: MinigameMode; score: number; distance: number; rank: number | null; period: MinigamePeriod };
-    };
+    }
+  /** ✉️ 簡易 DM（lib/dm.ts）: 受け取る人ごとに作った DTO（メールなし）。そのまま `event: dm` で流す。
+   *  { action: "create", message, peer, unread_count? } / { action: "read", peer_id, last_read_id, unread_count } */
+  | { type: "dm"; data: Record<string, unknown> };
 
 export const personalBus = new EventEmitter();
 personalBus.setMaxListeners(0);
