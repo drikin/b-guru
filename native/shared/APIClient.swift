@@ -244,7 +244,10 @@ final class APIClient: Sendable {
     }
 
     func markRead(upTo id: Int) async throws -> ReadResponse {
-        try await send(request("POST", "/api/agent/chat/read", json: ["last_read_id": id]))
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["BGURU_NO_READ"] != nil { throw URLError(.cancelled) } // dev runs on a real account
+        #endif
+        return try await send(request("POST", "/api/agent/chat/read", json: ["last_read_id": id]))
     }
 
     func summary() async throws -> SummaryResponse {
@@ -334,6 +337,7 @@ final class APIClient: Sendable {
     func markPostsRead(_ ids: [Int]) async {
         #if DEBUG
         if token == "demo" { return } // the offline demo never sends (it read posts as it scrolled)
+        if ProcessInfo.processInfo.environment["BGURU_NO_READ"] != nil { return }
         #endif
         _ = try? await session.data(for: request("POST", "/api/agent/read", json: ["post_ids": ids]))
     }

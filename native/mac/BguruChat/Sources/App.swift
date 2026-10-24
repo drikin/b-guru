@@ -375,6 +375,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         Updater.shared.start(token: token)
         panel = ChatPanel(store: store, timeline: timeline, onSignOut: { [weak self] in self?.signOut() })
         observeStore()
+        #if DEBUG
+        // Dev only, on the real account (with BGURU_NO_READ=1 nothing is marked read):
+        // BGURU_DEBUG_SPLIT_THREAD=ID[,W] pins the panel W wide (default 1168), side by side, and opens thread ID.
+        if let v = ProcessInfo.processInfo.environment["BGURU_DEBUG_SPLIT_THREAD"] {
+            let parts = v.split(separator: ",").compactMap { Double($0) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                guard let panel = self.panel, let id = parts.first else { return }
+                self.showPanel(toChat: true)
+                panel.pin.pinned = true
+                panel.setContentSize(NSSize(width: parts.count > 1 ? parts[1] : 1168, height: 906))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    HangWatch.note("debug open thread \(Int(id))")
+                    self.timeline?.openThread = Int(id)
+                }
+            }
+        }
+        #endif
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 

@@ -138,13 +138,19 @@ struct ChatScrolling: ViewModifier {
                 if bottom { newBelow = 0 }
             }
             .overlay(alignment: .bottomTrailing) {
-                if !atBottom {
-                    JumpButton(arrow: "↓", count: newBelow) {
-                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                // The fade is the button's own (as the timeline's): on the whole list it also
+                // animated the lazy list's layout each time `atBottom` flipped, and that layout
+                // moving could flip it again — a list that never settles (Mac side by side,
+                // macOS 26: hangs.log 2026-10-25, an animation running in every sample).
+                ZStack {
+                    if !atBottom {
+                        JumpButton(arrow: "↓", count: newBelow) {
+                            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                        }
                     }
                 }
+                .animation(.easeOut(duration: 0.15), value: atBottom)
             }
-            .animation(.easeOut(duration: 0.15), value: atBottom)
     }
 }
 
@@ -183,6 +189,17 @@ private struct BottomTracker: ViewModifier {
     /// ChatScrolling.anchorsSizeChanges).
     var grewAtBottom: () -> Void = {}
 
+    /// When `atBottom` last changed (a list flipping it many times a second is reported).
+    @State private var flips: [Date] = []
+    /// When the list was last sent back to the bottom by `grewAtBottom`: where that scroll lands
+    /// (short of the end while rows are still estimated) is not the member scrolling up.
+    @State private var followedAt = Date.distantPast
+
+    private func follow() {
+        followedAt = Date()
+        grewAtBottom()
+    }
+
     private struct Metrics: Equatable {
         /// Where the visible part starts (moves only when scrolled) and how tall it is.
         var top: CGFloat
@@ -197,14 +214,33 @@ private struct BottomTracker: ViewModifier {
                 Metrics(top: g.visibleRect.minY, height: g.visibleRect.height,
                         below: g.contentSize.height - g.visibleRect.maxY)
             } action: { old, new in
+                #if DEBUG
+                if ProcessInfo.processInfo.environment["BGURU_LOG_BOTTOM"] != nil {
+                    NSLog("[bottom] top %.0f→%.0f h %.0f→%.0f below %.0f→%.0f atBottom=%d", old.top, new.top, old.height, new.height, old.below, new.below, atBottom ? 1 : 0)
+                }
+                #endif
                 if new.top == old.top, new.height == old.height, new.below > old.below + 1, atBottom {
-                    grewAtBottom()
+                    follow()
+                }
+                // The panel / list changed size (resized, side by side): at the bottom it stays there.
+                if new.height != old.height, atBottom, !ChatScrolling.anchorsSizeChanges {
+                    follow()
+                    return
+                }
+                if atBottom, new.below >= 120, Date().timeIntervalSince(followedAt) < 0.6 {
+                    follow()
+                    return
                 }
                 guard new.top != old.top || new.height != old.height else { return }
                 // Near the end counts: a scroll to the bottom can land a little short while
-                // rows the lazy stack only estimated get their real height.
-                let bottom = new.below < 120
-                if bottom != atBottom { atBottom = bottom }
+                // rows the lazy stack only estimated get their real height. Leaving needs a
+                // little more than coming back (no flipping to and fro at the edge).
+                let bottom = atBottom ? new.below < 180 : new.below < 120
+                if bottom != atBottom {
+                    atBottom = bottom
+                    flips = flips.filter { Date().timeIntervalSince($0) < 2 } + [Date()]
+                    if flips.count == 20 { HangWatch.note("chat atBottom flipped 20 times in 2 s") }
+                }
             }
         } else {
             content
