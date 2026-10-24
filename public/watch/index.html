@@ -23,7 +23,8 @@
     font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
     -webkit-text-size-adjust: 100%; }
   body { display: flex; flex-direction: column; overflow: hidden; }
-  #stage { position: relative; background: #000; width: 100%; aspect-ratio: 16 / 9; flex: none; }
+  /* 絵は 16:9。ただし窓が低いときも下の帯（▶⏸・位置）は必ず見えるように、高さは「窓 − 帯」まで。 */
+  #stage { position: relative; background: #000; width: 100%; height: min(56.25vw, calc(100vh - 46px)); flex: none; }
   body.compact #stage { flex: 1 1 auto; aspect-ratio: auto; min-height: 0; }
   #yt, #yt iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
   #empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;

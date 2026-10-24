@@ -60,6 +60,19 @@ final class WatchStore {
         canControl = f?.control ?? true
         enabled = on
         if on { Task { await reload() } } else { close() }
+        #if DEBUG
+        // Dev only: BGURU_WATCH_FAKE_VIDEO=ID — this app alone shows that video playing (nothing is sent;
+        // the server's state is not changed, no chat line). For checking the player in the app.
+        if on, let id = ProcessInfo.processInfo.environment["BGURU_WATCH_FAKE_VIDEO"] {
+            canControl = false
+            let now = Date().timeIntervalSince1970 * 1000
+            take(["version": 999_999, "video": ["video_id": id, "title": "試し（この端末だけ）", "channel": NSNull(), "by": NSNull()],
+                  "playing": true, "position": 0, "updated_at": now, "server_now": now, "last": NSNull(), "queue": [],
+                  "youtube_host": "www.youtube.com"], force: true)
+            lastVersion = Int.max
+            show()
+        }
+        #endif
     }
 
     func show(_ m: Mode? = nil) {
@@ -105,6 +118,9 @@ final class WatchStore {
     /// GET state (on start, on the stream's reconnect).
     func reload() async {
         guard enabled else { return }
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["BGURU_WATCH_FAKE_VIDEO"] != nil { return }
+        #endif
         let r = await api.minigameRaw("GET", path: "\(path)/state")
         guard r.0 == 200, let obj = (try? JSONSerialization.jsonObject(with: r.1)) as? [String: Any],
               let s = obj["state"] as? [String: Any] else { return }
@@ -382,19 +398,22 @@ struct WatchPlayerHost: NSViewRepresentable {
 /// half the chat column, so the chat stays in view.
 struct WatchDockView: View {
     let watch: WatchStore
+    @State private var width: CGFloat = 400
 
     var body: some View {
-        GeometryReader { g in
-            WatchPlayerHost(watch: watch).frame(width: g.size.width, height: g.size.height)
-        }
-        .frame(height: height)
-        .frame(maxWidth: .infinity)
-        .accessibilityLabel("みんなで見る（YouTube）")
+        WatchPlayerHost(watch: watch)
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { if abs($0 - width) > 1 { width = $0 } }
+            .accessibilityLabel("みんなで見る（YouTube）")
     }
 
+    /// The picture (16:9 of the width), the page's bar and room for the URL box and a little of the list —
+    /// at most ~55 % of the chat column (the chat keeps the rest).
     private var height: CGFloat {
         let area = watch.areaHeight > 0 ? watch.areaHeight : 700
-        return min(max(220, area * 0.5), 560)
+        let wanted = width * 9 / 16 + 46 + 150
+        return max(220, min(wanted, area * 0.55))
     }
 }
 
@@ -414,6 +433,7 @@ struct WatchToggleButton: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(watch.open ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.08)))
         }
         .buttonStyle(.plain)
+        .fixedSize() // the header is tight: never squeezed to an empty pill
         .help(watch.title.map { "みんなで見ている: \($0)" } ?? "みんなで見る（YouTube）")
         .accessibilityLabel(watch.open ? "みんなで見る を閉じる" : "みんなで見る")
     }
