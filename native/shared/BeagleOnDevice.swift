@@ -24,6 +24,17 @@ enum BeagleOnDevice {
         return after.map { !($0.isLetter || $0.isNumber) } ?? true
     }
 
+    /// A greeting or a call (「こんばんは！」「おーい」): answered on this device, instantly. Anything that
+    /// asks something — a question word, a request, a lookup, translating, summing up — goes to the
+    /// server's Beagle (さくらの AI Engine), which is far smarter (drikin 2026-10-24, 併用).
+    static func isSmallTalk(_ body: String) -> Bool {
+        let q = body.replacingOccurrences(of: "@" + name, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.isEmpty { return true }
+        guard q.count <= 15 else { return false }
+        let asks = #"[?？]|何|なに|なん|誰|だれ|どう|どこ|いつ|なぜ|何で|教えて|まとめ|翻訳|訳し|調べ|計算|いくつ|何個|ください|して|天気|って"#
+        return q.range(of: asks, options: .regularExpression) == nil
+    }
+
     /// Whether this device can write the answer (Apple Intelligence on and ready).
     static var isAvailable: Bool {
         #if canImport(FoundationModels)

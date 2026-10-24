@@ -222,6 +222,12 @@ final class APIClient: Sendable {
         return r.message
     }
 
+    /// 🐶 Ask the server's Beagle to answer my question now (the answer comes on the stream).
+    func askBeagle(questionId: Int) async throws {
+        struct Accepted: Decodable { var accepted: Int? }
+        let _: Accepted = try await send(request("POST", "/api/agent/chat/beagle/ask", json: ["question_id": questionId]))
+    }
+
     /// 🐶 Beagle's answer to my question `questionId`, written on this device.
     func postBeagleAnswer(questionId: Int, body: String, app: String) async throws -> ChatMessage {
         let r: ChatSendResponse = try await send(request("POST", "/api/agent/chat/beagle", json: ["question_id": questionId, "body": body, "app": app]))

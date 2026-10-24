@@ -111,6 +111,8 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var imageMaxSide: Int?
         /// 🐶 @ビーグル is answered by this device's AI (POST /api/agent/chat/beagle).
         var beagleOndevice: Bool?
+        /// 🐶 the server's Beagle (さくらの AI Engine) answers: POST /api/agent/chat/beagle/ask.
+        var beagleServer: Bool?
     }
     struct PostFeatures: Decodable, Sendable, Equatable {
         var read: Bool?
@@ -236,6 +238,7 @@ struct Capabilities: Decodable, Sendable, Equatable {
     var canEdit: Bool { features?.chat?.editOwn ?? false }
     /// The server takes Beagle's answers from this device (the device must also have Apple Intelligence).
     var beagleOnDevice: Bool { features?.chat?.beagleOndevice ?? false }
+    var beagleServer: Bool { features?.chat?.beagleServer ?? false }
     var canReact: Bool { features?.chat?.reactions ?? false }
     var canMarkRead: Bool { features?.chat?.markRead ?? false }
     var maxBody: Int { features?.chat?.maxBody ?? 1000 }

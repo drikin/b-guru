@@ -4,6 +4,7 @@
  *          同じ lib（sendChatMessage）を通るので、検証・配信・既読の挙動が一致する。
  * DTO は lib/agent-chat.ts が正本（email を含めない）。 */
 import { NextRequest } from "next/server";
+import { scheduleBeagleAnswer } from "@/lib/beagle-server";
 import {
   getLatestChatId,
   getUnreadCount,
@@ -72,6 +73,9 @@ export async function POST(req: NextRequest) {
       return { status: 400, body: { error, code: "invalid_request" }, headers: {} };
     }
     const message = await sendChatMessage(ctx.email, checked.body, normalizeClientId(input?.client_id), checked.images);
+    // 🐶 @ビーグル: アプリは端末内 AI が答えるかもしれないので、10 秒待ってまだ答えがなければサーバのビーグル
+    // （新しい iPhone・Mac は雑談以外をすぐ POST beagle/ask で頼む）。lib/beagle-server.ts
+    scheduleBeagleAnswer(message, ctx.email, "app");
     // 送信者の DTO は is_author=true が確定しているので名前解決は不要（往復を増やさない）。
     const dto = toAgentChatDto(message, { userId: ctx.userId, mentionNames: new Set() });
     return { status: 201, body: { apiVersion: AGENT_API_VERSION, message: dto }, headers: {} };

@@ -96,6 +96,7 @@ jobs:
           src/lib/__tests__/minigame-db.test.ts
           src/lib/__tests__/operations-db.test.ts
           src/lib/__tests__/beagle-ondevice-db.test.ts
+          src/lib/__tests__/beagle-server-db.test.ts
           src/lib/__tests__/dm-db.test.ts
 
   # Android の単体テスト。タイムラインの例題（src/lib/__tests__/fixtures/timeline/）を

@@ -1,3 +1,4 @@
+import { scheduleBeagleAnswer } from "@/lib/beagle-server";
 import { NextRequest } from "next/server";
 import { getSessionEmail } from "@/lib/session";
 import {
@@ -84,6 +85,8 @@ export async function POST(req: NextRequest) {
   let message: ChatMessage;
   try {
     message = await sendChatMessage(email, checked.body, clientId, checked.images);
+    // 🐶 @ビーグル: Web には端末内 AI がないので、サーバのビーグルがすぐ答える（lib/beagle-server.ts）。
+    scheduleBeagleAnswer(message, email, "web");
   } catch (e) {
     console.error("chat create error:", (e as any)?.message);
     return new Response(JSON.stringify({ error: "db error" }), {

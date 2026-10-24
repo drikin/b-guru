@@ -287,6 +287,7 @@ final class ChatStore {
         latestId = max(latestId, m.id)
         if m.isAuthor { myUserId = m.authorId }
         let alreadyShown = rows.contains { $0.message.id == m.id }
+        if m.isBeagleAI, let q = beagleWaitingFor, m.replyToId == q { beagleWaitingFor = nil; beagleThinking = false }
         rows = Self.reconcile(rows, with: m)
         if (m.isNotice || m.kind == "shogi"), !isVisible, !alreadyShown { onAnnouncement?(m) }
         // A quiet note (room comings and goings): in the list, but never unread or notified.
@@ -454,11 +455,39 @@ final class ChatStore {
     private(set) var beagleThinking = false
 
     /// The chat's 🐶 button and answers: the server takes them and this device has Apple Intelligence.
-    var canAskBeagle: Bool { (capabilities?.beagleOnDevice ?? false) && BeagleOnDevice.isAvailable }
+    var canAskBeagle: Bool { onDeviceBeagle || serverBeagle }
+    /// This device writes Beagle's answer itself (Apple Intelligence, and the server takes them).
+    private var onDeviceBeagle: Bool { (capabilities?.beagleOnDevice ?? false) && BeagleOnDevice.isAvailable }
+    /// The server's Beagle (さくらの AI Engine) answers when asked (POST beagle/ask).
+    private var serverBeagle: Bool { capabilities?.beagleServer ?? false }
+    /// The question waiting for the server's answer (the 考え中 line stays until it comes).
+    @ObservationIgnored private var beagleWaitingFor: Int?
 
     /// My message just went out and calls @ビーグル: write the answer here and post it for everyone.
     private func askBeagleIfCalled(_ m: ChatMessage) {
         guard m.id > 0, canAskBeagle, BeagleOnDevice.asksBeagle(m.body) else { return }
+        // Small talk on this device (instant, private); everything else to the server's Beagle — much
+        // smarter (drikin 2026-10-24「流石にバカすぎるのでさくらの AI engine も使う」, 併用).
+        if serverBeagle, !(onDeviceBeagle && BeagleOnDevice.isSmallTalk(m.body)) {
+            beagleThinking = true
+            beagleWaitingFor = m.id
+            Task {
+                #if DEBUG
+                if debugOffline { beagleThinking = false; return }
+                #endif
+                do {
+                    try await api.askBeagle(questionId: m.id)
+                } catch {
+                    beagleThinking = false
+                    return
+                }
+                // The answer comes on the stream; stop waiting after a while either way.
+                try? await Task.sleep(for: .seconds(45))
+                if beagleWaitingFor == m.id { beagleWaitingFor = nil; beagleThinking = false }
+            }
+            return
+        }
+        guard onDeviceBeagle else { return }
         // Not Beagle's own earlier answers (it read them back and repeated them in every answer —
         // 「18Pro を使っているみたい」), not notices, not other @ビーグル questions.
         let chat = rows.filter { !$0.message.isNotice && !$0.message.isShogiCard && !$0.message.isBeagleAI && $0.message.id != m.id
