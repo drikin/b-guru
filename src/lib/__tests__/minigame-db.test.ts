@@ -256,7 +256,7 @@ d("🎮 散財ダッシュ（DB）", () => {
     expect(info.top_today?.user_id).toBeDefined();
     expect(info.best.today?.score).toBeGreaterThan(0);
     expect(info.plays_today).toBeGreaterThanOrEqual(4);
-  });
+  }, 60_000); // 何局も再生して確かめるので、CI の遅い機械では既定の 5 秒を超える（2026-10-24 に 5.3 秒で落ちた）
 
   it("今日 20 回を超えた最初の 1 回だけ rest_hint", async () => {
     for (let i = 0; i < 20; i++) {
