@@ -13,7 +13,7 @@
  * ページ → 置き場所:
  *   { type: "ready", bridge: 1 } / { type: "action", body: { action, ... } } / { type: "popout" }
  *   Web: parent.postMessage({ source: "bguru-watch", ... }, origin)、iPhone・Mac: webkit.messageHandlers.watch、
- *   Android: BguruWatchBridge.post(JSON)
+ *   Android: BguruWatchBridge.postMessage(JSON)（addWebMessageListener。いちばん外のフレームだけ）
  *
  * 合わせ方（architect の指摘 2026-10-25）:
  *   - 操作として送るのは、ここの部品を押したときだけ。YouTube の状態の変化（自分で合わせた結果も含む）は送らない
@@ -42,8 +42,8 @@
     try {
       if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.watch) {
         window.webkit.messageHandlers.watch.postMessage(msg);
-      } else if (window.BguruWatchBridge && window.BguruWatchBridge.post) {
-        window.BguruWatchBridge.post(JSON.stringify(msg));
+      } else if (window.BguruWatchBridge && window.BguruWatchBridge.postMessage) {
+        window.BguruWatchBridge.postMessage(JSON.stringify(msg)); // Android: addWebMessageListener (main frame only)
       } else if (window.parent && window.parent !== window) {
         msg.source = "bguru-watch";
         window.parent.postMessage(msg, location.origin);

@@ -7,7 +7,6 @@ import android.graphics.Color as AColor
 import android.net.Uri
 import android.view.ViewGroup
 import android.webkit.CookieManager
-import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
@@ -54,6 +53,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -149,7 +150,9 @@ class WatchStore(private val api: ApiClient) {
         web?.let { w ->
             (w.parent as? ViewGroup)?.removeView(w)
             w.stopLoading()
-            w.removeJavascriptInterface("BguruWatchBridge")
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+                runCatching { WebViewCompat.removeWebMessageListener(w, "BguruWatchBridge") }
+            }
             w.destroy()
         }
         web = null
@@ -220,7 +223,7 @@ class WatchStore(private val api: ApiClient) {
         act(buildJsonObject { put("action", if (busy) "queue_add" else "load"); put("url", url) })
     }
 
-    @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
+    @SuppressLint("SetJavaScriptEnabled")
     private fun makeWebView(ctx: Context): WebView {
         val base = Uri.parse(Net.BASE)
         val page = Uri.parse(Net.BASE + playerUrl)
@@ -256,7 +259,16 @@ class WatchStore(private val api: ApiClient) {
                     ready = false
                 }
             }
-            addJavascriptInterface(WatchBridgeJs(this@WatchStore, page), "BguruWatchBridge")
+            // Messages from the page: only its main frame on our origin (a JavascriptInterface would be open to
+            // the YouTube frame and anything it loads — security review 2026-10-25). Older WebViews without the
+            // listener get no bridge: the player then only shows.
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+                WebViewCompat.addWebMessageListener(this, "BguruWatchBridge", setOf("https://${base.host}")) { _, message, origin, isMainFrame, _ ->
+                    if (!isMainFrame || origin.scheme != "https" || origin.host != base.host) return@addWebMessageListener
+                    val m = message.data?.let { runCatching { ApiJson.parseToJsonElement(it) as? JsonObject }.getOrNull() } ?: return@addWebMessageListener
+                    receive(m)
+                }
+            }
             loadUrl(page.toString())
         }
     }
@@ -275,20 +287,6 @@ class WatchStore(private val api: ApiClient) {
             "action" -> (m["body"] as? JsonObject)?.let(::act)
             "popout" -> switchTo(if (mode == Mode.DOCKED) Mode.FLOATING else Mode.DOCKED)
             else -> Unit // a newer page's message
-        }
-    }
-}
-
-/** `BguruWatchBridge.post(json)` from the page. Called on a WebView thread; only from the player page. */
-private class WatchBridgeJs(private val store: WatchStore, private val page: Uri) {
-    @JavascriptInterface
-    fun post(json: String?) {
-        val w = store.web ?: return
-        w.post {
-            val cur = runCatching { Uri.parse(w.url) }.getOrNull()
-            if (cur?.host != page.host || cur?.path != page.path || json == null) return@post
-            val m = runCatching { ApiJson.parseToJsonElement(json) as? JsonObject }.getOrNull() ?: return@post
-            store.receive(m)
         }
     }
 }

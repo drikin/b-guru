@@ -141,6 +141,12 @@ export async function videoInfo(videoId: string): Promise<VideoInfo> {
         ? j.author_name.trim().slice(0, 100)
         : null,
   };
+  // 古いものを捨て、多くても 1000 本まで（連打よけの枠の中でも増え続けないように）。
+  if (infoCache.size >= 1000) {
+    const now = Date.now();
+    for (const [k, v] of infoCache) if (now - v.at >= INFO_CACHE_MS) infoCache.delete(k);
+    while (infoCache.size >= 1000) infoCache.delete(infoCache.keys().next().value as string);
+  }
   infoCache.set(videoId, { at: Date.now(), info });
   return info;
 }
@@ -160,6 +166,7 @@ type StateRow = {
   last_action: string | null;
   notice_msg_id: number | null;
   notice_at: Date | null;
+  notice_text: string | null;
 };
 type QueueRow = {
   id: number;
@@ -509,6 +516,7 @@ export async function act(
         after.s.notice_at &&
         now - new Date(after.s.notice_at).getTime() < NOTICE_MERGE_MS;
       notice.merge = recent ? after.s.notice_msg_id : null;
+      if (recent && after.s.notice_text === notice.text) notice = null; // 同じ文なら書き換えない（知らせ直さない）
     }
     await c.query("COMMIT");
     out = await toDto(after.s, after.q, now);
@@ -529,8 +537,8 @@ export async function act(
         (notice.merge ? await postChatNotice(notice.text) : null);
       if (msg)
         await pool.query(
-          `UPDATE watch_state SET notice_msg_id = $1, notice_at = $2 WHERE id = 1`,
-          [msg.id, new Date(now)],
+          `UPDATE watch_state SET notice_msg_id = $1, notice_at = $2, notice_text = $3 WHERE id = 1`,
+          [msg.id, new Date(now), notice.text],
         );
     } catch (e) {
       console.error("watch notice:", (e as Error)?.message);

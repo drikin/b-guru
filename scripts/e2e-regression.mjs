@@ -3382,6 +3382,67 @@ console.log("\nT. 🎮 散財ダッシュ（MINIGAME_ENABLED）");
   await page.waitForTimeout(400);
 }
 
+// ------------------------------------------------------------ 📺 YouTube 共同鑑賞（WATCH_ENABLED）
+// 2026-10-25: 部室で 1 本の動画をみんなで見る。WATCH_ENABLED で切り替える。プレイヤーのページ（アプリの WebView 用）は
+// フラグに関係なく配られる。無効の間は 📺 が出ず API は 404。有効なら 📺 で開くとチャットの上にプレイヤーの iframe、
+// チャットの入力欄は見えたまま。★ 本番でみんなが見ている動画は変えない（GET と開け閉めだけ。操作は送らない）。
+console.log("\nV. 📺 YouTube 共同鑑賞（WATCH_ENABLED）");
+{
+  const probe = await page
+    .evaluate(`(async () => {
+      const r = await fetch('/api/watch/state', { cache: 'no-store' }).catch(() => null);
+      const body = r && r.ok ? await r.json().catch(() => null) : null;
+      const h = await fetch('/watch/index.html', { cache: 'no-store' }).catch(() => null);
+      const js = await fetch('/watch/player.js', { cache: 'no-store' }).catch(() => null);
+      const src = js && js.ok ? await js.text() : '';
+      return { api: r ? r.status : 0, page: h ? h.status : 0, js: js ? js.status : 0, bridge: /BRIDGE_VERSION = 1/.test(src),
+               hasState: !!(body && body.state && typeof body.state.version === 'number'), noEmail: !(body && JSON.stringify(body).includes('@')) };
+    })()`)
+    .catch((e) => ({ error: String(e) }));
+  check("player page is served (/watch/index.html, player.js, bridge 1)", probe.page === 200 && probe.js === 200 && probe.bridge, JSON.stringify(probe));
+  await page.evaluate(clickTab("チャット"));
+  await page.waitForTimeout(1500);
+  const shown = await page.evaluate(`(() => {
+    const chat = document.querySelector('[class*="bguru-chat-view"]');
+    if (!chat) return null;
+    const b = chat.querySelector('[data-cx="watch-toggle"]');
+    return { toggle: !!b, text: b ? (b.textContent || '').trim() : null, panel: !!document.querySelector('[data-cx="watch-panel"]') };
+  })()`);
+  if (probe.api === 404) {
+    check("watch API answers 404 while disabled", true, "GET /api/watch/state → 404");
+    check("📺 is not shown in the chat while WATCH_ENABLED is off", !!shown && !shown.toggle && !shown.panel, JSON.stringify(shown));
+  } else if (probe.api === 200) {
+    check("GET /api/watch/state answers a state without emails", probe.hasState && probe.noEmail, JSON.stringify(probe));
+    check("📺 is shown in the chat (icon only)", !!shown && shown.toggle && shown.text === "📺", JSON.stringify(shown));
+    const wasOpen = shown && shown.panel;
+    if (!wasOpen) await page.click('[data-cx="watch-toggle"]').catch(() => {});
+    await page.waitForSelector('[data-cx="watch-panel"] iframe', { timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(800);
+    const lay = await page.evaluate(`(() => {
+      const panel = document.querySelector('[data-cx="watch-panel"]');
+      const input = document.querySelector('[class*="bguru-chat-view"] textarea');
+      if (!panel) return null;
+      const f = panel.querySelector('iframe');
+      const r = panel.getBoundingClientRect();
+      const ir = input ? input.getBoundingClientRect() : null;
+      return { scrollY: Math.round(window.scrollY), iframe: f ? new URL(f.src).pathname : null, mode: panel.getAttribute('data-mode'),
+               panelBottom: Math.round(r.bottom), inputBottom: ir ? Math.round(ir.bottom) : null, vh: innerHeight };
+    })()`);
+    check(
+      "📺 opens the player above the chat (no page scroll, the composer stays visible)",
+      !!lay && lay.iframe === "/watch/index.html" && lay.scrollY === 0 && lay.inputBottom !== null && lay.inputBottom <= lay.vh &&
+        (lay.mode === "floating" || lay.panelBottom < lay.inputBottom),
+      JSON.stringify(lay)
+    );
+    if (!wasOpen) await page.click('[data-cx="watch-toggle"]').catch(() => {}); // 閉じる（自分の画面だけ。みんなの動画は続く）
+    await page.waitForTimeout(400);
+  } else {
+    console.log(`  [skip] watch probe failed (GET /api/watch/state → ${probe.api})`);
+  }
+  await page.evaluate(clickTab("タイムライン"));
+  await page.waitForTimeout(400);
+}
+
 // ------------------------------------------------------------ cleanup
 // ★ 最後の安全網: この run が作ったテスト投稿を必ず消す。
 //

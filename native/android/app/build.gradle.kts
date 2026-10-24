@@ -117,6 +117,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
     // Installs the bundled baseline profile (src/main/baseline-prof.txt) on sideloaded installs too.
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
+    // 📺 the player's bridge: addWebMessageListener (only the player page's main frame, never the YouTube frames).
+    implementation("androidx.webkit:webkit:1.14.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.10.0")
     implementation("com.google.firebase:firebase-messaging:25.1.3")
     // Voice room (LiveKit, Apache-2.0, official SDK) — same server and rules as iOS/Mac.

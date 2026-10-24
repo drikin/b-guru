@@ -871,7 +871,8 @@ export async function initSchema() {
       last_actor TEXT,
       last_action TEXT,
       notice_msg_id INT,
-      notice_at TIMESTAMPTZ
+      notice_at TIMESTAMPTZ,
+      notice_text TEXT
     );
     CREATE TABLE IF NOT EXISTS watch_queue (
       id SERIAL PRIMARY KEY,

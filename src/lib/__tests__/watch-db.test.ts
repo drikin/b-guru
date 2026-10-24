@@ -191,6 +191,11 @@ d("📺 YouTube 共同鑑賞（DB）", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].body).toBe(`📺 みけさんが「動画 ${V2}」をみんなで見始めたわん`);
 
+    // 同じ人が同じ動画をもう一度: 同じ文なので書き換えない（チャットの知らせを出し直さない）。
+    live.length = 0;
+    await m.w.act(b, { action: "load", video_id: V2 }, t0 + 70_000);
+    expect(live.filter((e) => e.type === "chat")).toHaveLength(0);
+
     await m.w.act(a, { action: "load", video_id: V3 }, t0 + 60_000 + m.w.NOTICE_MERGE_MS + 1);
     rows = (await sql(`SELECT id FROM chat_messages WHERE kind = 'notice' AND body LIKE '📺%'`)).rows;
     expect(rows).toHaveLength(2);
