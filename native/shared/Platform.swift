@@ -314,3 +314,59 @@ struct MacPullToRefresh: ViewModifier {
     }
 }
 #endif
+
+#if os(macOS)
+/// Space / ⇧Space / J / K scroll the timeline or the open thread when no text is being typed
+/// (drikin 2026-10-24). The lists mark themselves (`keyScrollTarget()`); the panel sends the keys
+/// (ChatPanel.sendEvent). The latest marked list still in the window wins: an open thread over
+/// the timeline.
+@MainActor enum KeyScroll {
+    private final class Box { weak var view: NSScrollView?; init(_ v: NSScrollView) { view = v } }
+    private static var marked: [Box] = []
+
+    static func mark(_ v: NSScrollView) {
+        marked.removeAll { $0.view == nil || $0.view === v }
+        marked.append(Box(v))
+    }
+
+    static var current: NSScrollView? { marked.last { $0.view?.window != nil }?.view }
+
+    /// Scrolls by `pages` of the visible height (+ down, − up).
+    static func scroll(pages: CGFloat) -> Bool {
+        guard let sv = current, let doc = sv.documentView else { return false }
+        let clip = sv.contentView
+        let step = clip.bounds.height * pages * (doc.isFlipped ? 1 : -1)
+        let maxY = max(0, doc.frame.height - clip.bounds.height)
+        var o = clip.bounds.origin
+        o.y = min(max(0, o.y + step), maxY)
+        guard o.y != clip.bounds.origin.y else { return true }
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.16
+            clip.animator().setBoundsOrigin(o)
+        }, completionHandler: { MainActor.assumeIsolated { sv.reflectScrolledClipView(clip) } })
+        return true
+    }
+}
+
+private struct KeyScrollAnchor: NSViewRepresentable {
+    final class Marker: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window != nil, let sv = enclosingScrollView { KeyScroll.mark(sv) }
+        }
+    }
+    func makeNSView(context: Context) -> Marker { Marker() }
+    func updateNSView(_ nsView: Marker, context: Context) {}
+}
+#endif
+
+extension View {
+    /// This scrolling list takes Space / J / K on the Mac (KeyScroll). Put on the list's content.
+    @ViewBuilder func keyScrollTarget() -> some View {
+        #if os(macOS)
+        self.background(KeyScrollAnchor().allowsHitTesting(false))
+        #else
+        self
+        #endif
+    }
+}

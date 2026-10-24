@@ -170,10 +170,23 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
             store.dm.back()
             return
         }
+        // Space / ⇧Space / J / K on the timeline (or its open thread) while no text is being typed.
+        if event.type == .keyDown, let pages = timelineScrollPages(event), KeyScroll.scroll(pages: pages) {
+            return
+        }
         if event.type == .keyDown, event.keyCode == 123, leftArrowLeavesThread(event) {
             NotificationCenter.default.post(name: .timelineBack, object: nil)
             // Used up here: passed on, nothing else took it and macOS beeped (drikin 2026-10-24
             // 「←押すとポンと言う音が出る」). On the timeline ← has no other use outside text.
+            return
+        }
+        // Side by side, a click on the timeline (not into a field there) takes the caret out of the
+        // chat's message box, so Space / J / K then scroll the timeline.
+        if event.type == .leftMouseDown, pin.split, pin.tab != .jukebox,
+           event.locationInWindow.x < frame.width - SplitLayout.chatWidth(frame.width) {
+            let before = firstResponder
+            super.sendEvent(event)
+            if firstResponder === before, Self.isTyping(before) { makeFirstResponder(nil) }
             return
         }
         super.sendEvent(event)
@@ -185,6 +198,28 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     /// Without a thread open it does nothing.
     func leftArrowLeavesThread(_ event: NSEvent) -> Bool {
         pin.timelineShown && leftArrowAllowed(event)
+    }
+
+    /// How far Space (a page, less a little), ⇧Space (back) and J / K (a third of a page) scroll the
+    /// timeline; nil when the key is not for it (another tab alone, text being typed, a picture open,
+    /// a sheet in front, other modifiers).
+    func timelineScrollPages(_ event: NSEvent) -> CGFloat? {
+        guard pin.timelineShown, store.netaPost == nil, ImageViewerOverlay.open == 0, !Self.isTyping(firstResponder) else { return nil }
+        let mods = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        switch (event.keyCode, mods) {
+        case (49, []): return 0.85
+        case (49, [.shift]): return -0.85
+        case (38, []): return 1.0 / 3
+        case (40, []): return -1.0 / 3
+        default: return nil
+        }
+    }
+
+    /// Text is being typed: an editable field or text view has the keyboard.
+    private static func isTyping(_ r: NSResponder?) -> Bool {
+        if let tv = r as? NSTextView { return tv.isEditable }
+        if let tf = r as? NSTextField { return tf.isEditable }
+        return false
     }
 
     /// ← with no modifiers, no picture open, and no text being typed (← moves the caret there).

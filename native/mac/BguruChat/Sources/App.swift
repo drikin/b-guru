@@ -250,6 +250,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         panel.setContentSize(NSSize(width: w, height: 760))
                     }
                 }
+                // -demoKeyScroll: Space, Space, J, K, ⇧Space pressed on the panel; prints where the timeline is.
+                if CommandLine.arguments.contains("-demoKeyScroll") {
+                    // First a click on the timeline (left side): the message box lets go of the caret.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        guard let panel = self.panel else { return }
+                        NSLog("[keyscroll] before click: %@", panel.firstResponder.map { "\(type(of: $0)) editable=\(($0 as? NSTextView)?.isEditable ?? false)" } ?? "nil")
+                        for t in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                            if let e = NSEvent.mouseEvent(with: t, location: NSPoint(x: 200, y: 712), modifierFlags: [], timestamp: 0,
+                                                          windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                                panel.sendEvent(e)
+                            }
+                        }
+                        NSLog("[keyscroll] after click: %@", panel.firstResponder.map { "\(type(of: $0)) editable=\(($0 as? NSTextView)?.isEditable ?? false)" } ?? "nil")
+                    }
+                    let keys: [(UInt16, String, NSEvent.ModifierFlags)] = [(49, " ", []), (49, " ", []), (38, "j", []), (40, "k", []), (49, " ", .shift)]
+                    for (n, key) in keys.enumerated() {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5 + Double(n) * 0.6) {
+                            guard let panel = self.panel, let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: key.2,
+                                timestamp: 0, windowNumber: panel.windowNumber, context: nil, characters: key.1,
+                                charactersIgnoringModifiers: key.1, isARepeat: false, keyCode: key.0) else { return }
+                            panel.sendEvent(e)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                                NSLog("[keyscroll] %@ y=%d", key.1 == " " ? (key.2.isEmpty ? "space" : "shift-space") : key.1, Int(KeyScroll.current?.contentView.bounds.origin.y ?? -1))
+                            }
+                        }
+                    }
+                }
                 // -demoToggleEvery S: the panel closes and opens again every S seconds (the menu bar icon).
                 if let i = CommandLine.arguments.firstIndex(of: "-demoToggleEvery"), i + 1 < CommandLine.arguments.count,
                    let every = Double(CommandLine.arguments[i + 1]) {
@@ -1154,7 +1181,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var postCheckTask: Task<Void, Never>?
 
     private func timelinePostCreated() {
-        guard settings.notifyTimeline, let timeline else { return }
+        // Also without the notice option while the timeline can be seen: it updates by itself
+        // (drikin 2026-10-24「タイムラインの自動更新を有効にする」), not only every minute.
+        let seen = store?.isVisible == true && panel?.pin.timelineShown == true && panel?.pin.windowVisible == true
+        guard settings.notifyTimeline || seen, let timeline else { return }
         postCheckTask?.cancel()
         postCheckTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(2))
@@ -1162,7 +1192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             let before = self.newestPostSeen > 0 ? self.newestPostSeen : (timeline.posts.map(\.id).max() ?? 0)
             await timeline.refresh()
             self.newestPostSeen = max(before, timeline.posts.map(\.id).max() ?? 0)
-            guard before > 0, !self.settings.isQuietNow() else { return }
+            guard before > 0, self.settings.notifyTimeline, !self.settings.isQuietNow() else { return }
             if self.store?.isVisible == true, self.panel?.pin.timelineShown == true { return }
             let fresh = timeline.posts.filter { $0.id > before && $0.isAuthor != true && $0.unread == true }
             for p in fresh.sorted(by: { $0.id < $1.id }).prefix(3) { self.notifyPost(p) }

@@ -55,6 +55,7 @@ struct ThreadScreen: View {
                     }
                     .frame(maxWidth: 760)
                     .frame(maxWidth: .infinity)
+                    .keyScrollTarget()
                 }
                 .pullToRefresh { await load() }
                 .modifier(FitsTracker(fits: $fits))

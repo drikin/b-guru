@@ -273,6 +273,7 @@ private struct TimelinePostList: View {
             }
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
+            .keyScrollTarget()
             // GIFs and videos stand still under an open thread (the Mac keeps the list built).
             .environment(\.mediaActive, !threadOpen)
         }
