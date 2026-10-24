@@ -144,6 +144,12 @@ struct DMThreadView: View {
     @Bindable var dm: DMStore
     let peer: DMPeer
     @State private var draft = ""
+    /// Bumped on every send: a fresh text field drops uncommitted Japanese IME / dictation text that
+    /// otherwise stayed in the box after sending now and then (drikin 2026-10-24; the chat's composer
+    /// had the same fix).
+    @State private var fieldGeneration = 0
+    /// What was just sent, to swallow a late echo of it (dictation finalising after Send).
+    @State private var justSent: (text: String, at: Date)?
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -193,6 +199,10 @@ struct DMThreadView: View {
                         .padding(.horizontal, 10).padding(.vertical, 7)
                         .background(RoundedRectangle(cornerRadius: 16).fill(Color.primary.opacity(0.06)))
                         .onSubmit(send)
+                        .id(fieldGeneration)
+                        .onChange(of: draft) { old, new in
+                            if isLateEcho(old: old, new: new) { draft = "" }
+                        }
                         .accessibilityLabel("DM の本文")
                     Button(action: send) {
                         Image(systemName: "arrow.up.circle.fill").font(.app(size: 26))
@@ -225,8 +235,23 @@ struct DMThreadView: View {
 
     private func send() {
         guard canSendDraft else { return }
-        dm.send(draft)
+        let text = draft
+        dm.send(text)
+        justSent = (text, Date())
         draft = ""
+        fieldGeneration += 1 // new field: the old one's marked text / dictation goes away
+        DispatchQueue.main.async {
+            focused = true // the keyboard stays up on the new field
+            if draft == text { draft = "" }
+        }
+    }
+
+    /// Dictation can deliver its final text a moment after Send: the sent message (or part of it)
+    /// reappears in the empty box at once.
+    private func isLateEcho(old: String, new: String) -> Bool {
+        guard let s = justSent, Date().timeIntervalSince(s.at) < 2, old.isEmpty else { return false }
+        let v = new.trimmingCharacters(in: .whitespacesAndNewlines)
+        return v.count >= 2 && s.text.contains(v)
     }
 }
 
