@@ -27,7 +27,8 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
             messageId: (info["message_id"] as? NSNumber)?.intValue,
             postId: (info["post_id"] as? NSNumber)?.intValue,
             replyId: (info["reply_id"] as? NSNumber)?.intValue,
-            gameId: (info["game_id"] as? NSNumber)?.intValue
+            gameId: (info["game_id"] as? NSNumber)?.intValue,
+            dmId: (info["dm_id"] as? NSNumber)?.intValue
         )
         Task {
             if let text = await Self.lookup(ask, token: token) { self.apply(text) }
@@ -71,6 +72,7 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
         var postId: Int?
         var replyId: Int?
         var gameId: Int?
+        var dmId: Int?
     }
 
     /// The real (title, body) for a push, or nil to keep the generic text.
@@ -94,6 +96,14 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
                   let post = await get("/api/agent/posts/\(postId)", token: token)?["post"] as? [String: Any],
                   let text = post["text"] as? String else { return nil }
             return ("\((post["author_name"] as? String) ?? "誰か") が投稿しました", clip(text))
+        case "dm":
+            // ✉️ 簡易 DM: 「〇〇さんからの DM」 and the text (the same words as the server's dmNotificationText).
+            guard let id = q.dmId,
+                  let r = await get("/api/agent/dm/messages/\(id)", token: token),
+                  let m = r["message"] as? [String: Any],
+                  let body = m["body"] as? String else { return nil }
+            let raw = ((r["peer"] as? [String: Any])?["name"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            return ("\(raw.isEmpty ? "会員" : raw)さんからの DM", clip(body))
         case "shogi_offer", "shogi_turn":
             // ☗ 将棋: who asked (and how fast), or who just moved and what. The generic line
             // （「対局の申し込みが届きました」「あなたの番です」）stays when this cannot be read.

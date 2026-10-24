@@ -18,12 +18,15 @@ struct MessageRow: View {
     var localImages: [PlatformImage] = []
     /// Tap on a photo: open it full screen (index into `m.images`).
     var onOpenImage: ((Int) -> Void)? = nil
+    /// ✉️ 簡易 DM to this message's author (others' messages, DM on): offered on the name / avatar and in the menu.
+    var onDM: (() -> Void)? = nil
 
     /// ☗ 将棋 (nil when it is off): a kind "shogi" message is drawn as its game card.
     @Environment(\.shogi) private var shogi
     @State private var hovering = false
     @State private var pickerOpen = false
     @State private var selecting = false
+    @State private var askingDM = false
 
     static let quick = ["❤️", "👍", "😂", "🎉", "🙏", "👀"]
 
@@ -55,11 +58,16 @@ struct MessageRow: View {
                 AvatarView(url: m.avatar, name: m.authorName ?? "")
                     .opacity(showHeader ? 1 : 0)
                     .accessibilityHidden(true)
+                    .contentShape(Rectangle())
+                    .onTapGesture { if onDM != nil, showHeader { askingDM = true } }
             }
             VStack(alignment: mine ? .trailing : .leading, spacing: 2) {
                 if showHeader || row.state == .failed {
                     HStack(spacing: 6) {
-                        if !mine { Text(m.authorName ?? "").font(.app(.caption)).foregroundStyle(.secondary) }
+                        if !mine {
+                            Text(m.authorName ?? "").font(.app(.caption)).foregroundStyle(.secondary)
+                                .onTapGesture { if onDM != nil { askingDM = true } }
+                        }
                         if row.state == .failed {
                             Text("送信できませんでした").font(.app(.caption)).foregroundStyle(.red)
                             Button("再送", action: onRetry).linkButton().font(.app(.caption))
@@ -90,6 +98,12 @@ struct MessageRow: View {
         .sheet(isPresented: $selecting) {
             SelectableTextSheet(author: m.authorName ?? "メッセージ", text: m.body)
         }
+        // ✉️ The name / avatar: 「DM を送る」.
+        .confirmationDialog("\(m.authorName ?? "会員") さん", isPresented: $askingDM, titleVisibility: .visible) {
+            if let onDM { Button("DM を送る", action: onDM) }
+            Button("キャンセル", role: .cancel) {}
+        }
+        .accessibilityAction(named: "DM を送る") { if !mine { onDM?() } }
         .accessibilityElement(children: .combine)
         .accessibilityAction(named: "❤️ を付ける") { if canReact && m.id > 0 { onReact("❤️") } }
         .accessibilityAction(named: "編集") { if mine && canEdit && m.id > 0 { onEdit() } }
@@ -190,6 +204,9 @@ struct MessageRow: View {
         if let onReplyMention, !mine, m.id > 0 {
             Button("返信（@メンション）", systemImage: "arrowshape.turn.up.left", action: onReplyMention)
         }
+        if let onDM, !mine, m.id > 0 {
+            Button("DM を送る", systemImage: "envelope", action: onDM)
+        }
         if canReact && m.id > 0 {
             ForEach(Self.quick, id: \.self) { e in Button(e) { onReact(e) } }
             Divider()
@@ -286,6 +303,7 @@ extension MessageRow: @MainActor Equatable {
             && a.highlighted == b.highlighted && a.editing == b.editing
             && (a.onReplyMention == nil) == (b.onReplyMention == nil)
             && (a.onOpenImage == nil) == (b.onOpenImage == nil)
+            && (a.onDM == nil) == (b.onDM == nil)
             && a.localImages.count == b.localImages.count
             && zip(a.localImages, b.localImages).allSatisfy { $0 === $1 }
     }

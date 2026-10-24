@@ -301,6 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         store.shogi.onOffer = { [weak self] g in self?.notifyShogi(g, offer: true) }
         store.shogi.onMyTurn = { [weak self] g in self?.notifyShogi(g, offer: false) }
+        store.dm.onIncoming = { [weak self] m, peer in self?.notifyDM(m, peer: peer) }
         self.store = store
         store.start()
         Updater.shared.start(token: token)
@@ -1091,6 +1092,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "shogi-\(g.id)", content: content, trigger: nil))
     }
 
+    /// ✉️ 簡易 DM from someone (not while that conversation is on screen): 「〇〇さんからの DM」 and the text.
+    /// One notification per person (the next replaces it). DMs are to me, so quiet hours keep only the sound off.
+    private func notifyDM(_ m: DMMessage, peer: DMPeer) {
+        let t = DMLogic.notificationText(name: peer.name, body: m.body)
+        let content = UNMutableNotificationContent()
+        content.title = t.title
+        content.body = t.body
+        content.threadIdentifier = "dm-\(peer.userId)"
+        content.userInfo = ["dmPeerId": peer.userId, "dmPeerName": peer.name ?? ""]
+        if !settings.isQuietNow() { content.sound = .default }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "dm-\(peer.userId)", content: content, trigger: nil))
+    }
+
     /// 「タイムラインの新しい投稿も通知する」: the stream says a post or comment was made;
     /// a moment later the timeline is read again and posts newer than any seen before
     /// (not mine, still unread) become one notification each (at most 3 at a time).
@@ -1292,6 +1306,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let id = response.notification.request.content.userInfo["messageId"] as? Int
         let postId = response.notification.request.content.userInfo["postId"] as? Int
         let shogiGameId = response.notification.request.content.userInfo["shogiGameId"] as? Int
+        let dmPeerId = response.notification.request.content.userInfo["dmPeerId"] as? String
+        let dmPeerName = response.notification.request.content.userInfo["dmPeerName"] as? String
         let action = response.actionIdentifier
         let text = (response as? UNTextInputNotificationResponse)?.userText
         await MainActor.run {
@@ -1303,7 +1319,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             default:
                 // Click: open the chat at that message, or the post's thread in the timeline.
                 self.showPanel()
-                if let shogiGameId {
+                if let dmPeerId, let store = self.store {
+                    // ✉️ That person's DM conversation, over the chat.
+                    self.panel?.pin.tab = .chat
+                    store.dm.open(DMPeer(userId: dmPeerId, name: dmPeerName?.isEmpty == false ? dmPeerName : nil, avatar: nil))
+                } else if let shogiGameId {
                     self.panel?.pin.tab = .chat
                     self.store?.shogi.openGame(shogiGameId)
                 } else if let id { self.store?.reveal(id) }

@@ -56,6 +56,15 @@ struct ChatView: View {
             ChatComposerBar(store: store, pin: pin, composer: composer, onClose: onClose)
         }
         .background(.regularMaterial)
+        // ✉️ 簡易 DM: the list / a conversation over the chat (the header's ✉️, a name in the chat).
+        .overlay {
+            if store.dm.route != nil {
+                DMScreen(dm: store.dm)
+                    .transition(.move(edge: .trailing))
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: store.dm.route == nil)
+        .onChange(of: store.isVisible, initial: true) { _, v in store.dm.appVisible = v }
         // The column's height, for how big ☗ 将棋's board may get (half of it).
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
             store.shogi.setAreaHeight($0)
@@ -118,6 +127,7 @@ private struct ChatHeader: View {
                     .font(.app(.caption)).foregroundStyle(.secondary)
             }
             Spacer()
+            DMBadgeButton(dm: store.dm) // ✉️ 簡易 DM（未読の数つき）
             if store.onlineCount > 0 {
                 Label("\(store.onlineCount)", systemImage: "circle.fill")
                     .labelStyle(OnlineLabelStyle())
@@ -267,7 +277,8 @@ private struct ChatMessageList: View {
                             highlighted: store.highlightId == row.message.id,
                             editing: editingId == row.message.id,
                             localImages: row.message.clientId.flatMap { store.outgoingPhotos[$0]?.previews } ?? [],
-                            onOpenImage: { i in viewing = ImageViewerItem(images: row.message.images ?? [], index: i) }
+                            onOpenImage: { i in viewing = ImageViewerItem(images: row.message.images ?? [], index: i) },
+                            onDM: store.dm.enabled ? dmTarget(row.message).map { peer in { store.dm.open(peer) } } : nil
                         )
                         .equatable()
                         .id(row.id)
