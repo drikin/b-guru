@@ -20,6 +20,9 @@ struct ChatScrolling: ViewModifier {
     private var onScreen: Bool { visibility?.chat ?? true }
     /// The panel opened with unread messages while the chat was hidden: go to them once it shows.
     @State private var openPending = false
+    /// At the bottom when it went off screen: back to the newest when it shows (the messages that came
+    /// in meanwhile are below, so `atBottom` itself went false).
+    @State private var leftAtBottom = false
     /// When the list last went to the unread line: coming on screen in the same moment must
     /// not then send it to the bottom (that also zeroed 「↓ 新着 N」).
     @State private var wentToUnreadAt = Date.distantPast
@@ -88,15 +91,17 @@ struct ChatScrolling: ViewModifier {
                 }
             }
             .onChange(of: onScreen) { _, shown in
-                guard shown else { return }
+                guard shown else { leftAtBottom = atBottom; return }
                 // After the rows caught up (the list unfreezes in the same update) and after a
                 // jump the same update asked for (a notification's message, the unread line).
                 DispatchQueue.main.async {
                     if openPending {
                         openPending = false
                         scrollToUnread()
-                    } else if atBottom, store.scrollTarget == nil, store.highlightId == nil,
+                    } else if atBottom || leftAtBottom, store.scrollTarget == nil, store.highlightId == nil,
                               Date().timeIntervalSince(wentToUnreadAt) > 1 {
+                        atBottom = true
+                        newBelow = 0
                         proxy.scrollTo("bottom", anchor: .bottom)
                     }
                 }

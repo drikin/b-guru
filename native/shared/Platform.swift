@@ -42,6 +42,20 @@ extension Color {
 }
 
 extension View {
+    /// The chat opens at its bottom (the newest). Only where it first opens (macOS 15 / iOS 18+): a
+    /// plain `.defaultScrollAnchor(.bottom)` also anchored every change of the content's height to the
+    /// bottom — and it won over keepsBottomOnResize's "only while at the bottom" — so someone reading
+    /// further up was moved whenever the lazy list re-estimated its height (swiping the iPhone's chat
+    /// page off and back, a picture arriving): the list jumped to rows not drawn yet and looked blank
+    /// until scrolled (drikin 2026-10-24「チャットのログが消えてスクロールすると復活する」).
+    @ViewBuilder func opensAtBottom() -> some View {
+        if #available(macOS 15.0, iOS 18.0, *) {
+            self.defaultScrollAnchor(.bottom, for: .initialOffset)
+        } else {
+            self.defaultScrollAnchor(.bottom)
+        }
+    }
+
     /// When content height changes, keep the bottom edge fixed (chat reads
     /// bottom-up), so a row growing never pushes the latest messages out of view.
     /// Only while at the bottom: reading further up, new rows must not move the view.

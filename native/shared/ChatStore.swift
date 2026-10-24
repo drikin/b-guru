@@ -511,6 +511,30 @@ final class ChatStore {
                                      isAuthor: false, mentionsMe: false, clientId: nil, reactions: nil))
             }
         }
+        // BGURU_DEMO_CHAT_STRESS=1: a long backlog of mixed lengths, then for two minutes a message
+        // every 2 s (some long), a reaction on the last one every 5 s — the iPhone's chat went blank now
+        // and then and came back on scrolling (drikin 2026-10-24); this is what reproduces it.
+        if ProcessInfo.processInfo.environment["BGURU_DEMO_CHAT_STRESS"] != nil {
+            let who = ["mazzo", "takuto", "coban", "りとる", "NORIO TAKAHASHI"]
+            let bodies = ["了解です", "それな", "今日の配信おもしろかった！ あのカメラの話、もう少し詳しく聞きたいです。",
+                          "長めの話: レンズを替えてから撮るものが変わってきて、週末はずっと外にいます。重さは気になるけど、それ以上に楽しい。",
+                          "👍", "そういえば昨日のあれ、どうなりました？"]
+            // With BGURU_DEMO_PHOTOS (a slow local server): every fifth message has a photo that arrives late.
+            let photoBase = ProcessInfo.processInfo.environment["BGURU_DEMO_PHOTOS"]
+            func photo(_ i: Int) -> [String]? { photoBase.flatMap { i % 5 == 0 ? ["\($0)/photo\(i % 4 + 1).jpg?\(i)"] : nil } }
+            rows += (100..<220).map { i in
+                var r = msg(i, who[i % who.count], bodies[i % bodies.count] + (i % 7 == 0 ? "\n2 行目\n3 行目" : ""))
+                r.message.images = photo(i)
+                return r
+            }
+            Task {
+                for k in 0..<60 {
+                    try? await Task.sleep(for: .seconds(2))
+                    debugReceive(bodies[(k * 5) % bodies.count] + " (\(k))", id: 1000 + k, author: who[k % who.count], images: photo(k))
+                    if k % 3 == 2 { debugAddReactionToLast() }
+                }
+            }
+        }
         // ☗ 将棋 (on unless -demoShogiOff / BGURU_DEMO_SHOGI=0; =false sends enabled:false):
         // the games' cards in the chat, and sample games (no network).
         let env = ProcessInfo.processInfo.environment

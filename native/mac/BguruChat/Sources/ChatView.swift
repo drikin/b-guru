@@ -277,7 +277,7 @@ private struct ChatMessageList: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
             }
-            .defaultScrollAnchor(.bottom)
+            .opensAtBottom()
             .chatScrolling(store: store, proxy: proxy, atBottom: $atBottom, newBelow: $newBelow)
             // Reacting to / editing the LAST message makes its row taller (chips
             // appear under the bubble). Without this the new chips land below the

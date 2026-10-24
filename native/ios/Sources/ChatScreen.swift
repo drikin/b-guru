@@ -118,6 +118,8 @@ private struct ChatMessageList: View {
     @Binding var viewing: ImageViewerItem?
     @State private var atBottom = true
     @State private var newBelow = 0
+    /// iOS 17 only: flipped when the chat page comes back on screen (see KeepsPlaceAcrossPages).
+    @State private var relayout = false
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -155,13 +157,15 @@ private struct ChatMessageList: View {
                     ChatBottomSentinel(atBottom: $atBottom)
                 }
                 .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.vertical, relayout ? 8.25 : 8)
+                .scrollTargetLayout()
                 // Big iPad screens: keep a readable column, centred. In Split View /
                 // Slide Over the window is narrower than this and it simply fills it.
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
             }
-            .defaultScrollAnchor(.bottom)
+            .modifier(KeepsPlaceAcrossPages(proxy: proxy, atBottom: atBottom, relayout: $relayout))
+            .opensAtBottom()
             .chatScrolling(store: store, proxy: proxy, atBottom: $atBottom, newBelow: $newBelow)
             .scrollDismissesKeyboard(.interactively)
             .dismissesKeyboardOnTap()
@@ -188,6 +192,46 @@ private struct ChatMessageList: View {
                 if focused { proxy.scrollTo("bottom", anchor: .bottom) }
             }
             .refreshable { await store.reload() }
+        }
+    }
+}
+
+/// The iPhone's pages sit side by side in a horizontal scroll view. Swiped off to the timeline, the
+/// chat's lazy list drops its rows; swiped back, it estimates their heights again — a picture's row
+/// guessed wrong moved the place you were reading, often onto rows not drawn yet: the chat looked
+/// blank until you scrolled (drikin 2026-10-24「タイムラインとのスワイプ切り替えでよく出る」). So the
+/// top message on screen is remembered while the page shows, and the list goes back to it when the
+/// page comes back (that scroll also has it draw its rows). At the bottom, ChatScrolling follows the
+/// newest instead. iOS 17 (no visibility callbacks): an invisible quarter-point change of the padding
+/// when the page has settled makes the list lay out and draw again.
+private struct KeepsPlaceAcrossPages: ViewModifier {
+    let proxy: ScrollViewProxy
+    let atBottom: Bool
+    @Binding var relayout: Bool
+    @Environment(\.screenVisibility) private var visibility
+    @State private var shown = true
+    @State private var topRow: String?
+    /// Left at the bottom: back to the newest (what came in meanwhile is below, so `atBottom` went false).
+    @State private var leftAtBottom = false
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content
+                .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.05) { ids in
+                    guard shown, let first = ids.first(where: { $0 != "bottom" }) else { return }
+                    if topRow != first { topRow = first }
+                }
+                .onScrollVisibilityChange(threshold: 0.3) { visible in
+                    shown = visible
+                    if !visible { leftAtBottom = atBottom; return }
+                    if leftAtBottom || atBottom {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    } else if let topRow {
+                        proxy.scrollTo(topRow, anchor: .top)
+                    }
+                }
+        } else {
+            content.onChange(of: visibility?.chat ?? true) { _, on in if on { relayout.toggle() } }
         }
     }
 }
