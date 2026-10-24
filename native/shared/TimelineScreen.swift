@@ -162,7 +162,7 @@ struct TimelineScreen: View {
                     Button { HangWatch.note("back to timeline"); macThread = nil } label: { Image(systemName: "chevron.left") }
                         .buttonStyle(.borderless)
                         .keyboardShortcut("[", modifiers: .command)
-                        .help("タイムラインに戻る（⌘[）")
+                        .help("タイムラインに戻る（← ・⌘[）")
                 }
                 if let tabPicker { tabPicker }
                 Spacer()
@@ -198,7 +198,7 @@ struct TimelineScreen: View {
             }
         }
         // The mouse's back button (sent by the panel) also leaves the thread (Ryu 2026-10-17).
-        .onReceive(NotificationCenter.default.publisher(for: .timelineBack)) { _ in HangWatch.note("back to timeline (mouse)"); macThread = nil }
+        .onReceive(NotificationCenter.default.publisher(for: .timelineBack)) { _ in HangWatch.note("back to timeline (mouse / ←)"); macThread = nil }
         #endif
     }
 
