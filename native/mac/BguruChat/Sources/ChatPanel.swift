@@ -167,6 +167,9 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         }
         if event.type == .keyDown, event.keyCode == 123, leftArrowLeavesThread(event) {
             NotificationCenter.default.post(name: .timelineBack, object: nil)
+            // Used up here: passed on, nothing else took it and macOS beeped (drikin 2026-10-24
+            // 「←押すとポンと言う音が出る」). On the timeline ← has no other use outside text.
+            return
         }
         super.sendEvent(event)
     }
@@ -174,7 +177,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     /// ← (no modifiers) also leaves the thread, like the mouse's back button (drikin 2026-10-24).
     /// Not while there is text being typed (← moves the caret there; an empty field has nothing
     /// to move through, so it leaves) nor with a picture open (← is the previous picture there).
-    /// Without a thread open it does nothing, and the key still goes on as usual.
+    /// Without a thread open it does nothing.
     func leftArrowLeavesThread(_ event: NSEvent) -> Bool {
         guard pin.tab == .timeline, ImageViewerOverlay.open == 0,
               event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return false }
