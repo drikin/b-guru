@@ -58,7 +58,7 @@ struct JukeboxScreen: View {
 
     private var picks: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("きょうの 1 枚").font(.subheadline).foregroundStyle(.secondary)
+            Text("きょうの 1 枚").font(.app(.subheadline)).foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 PickCard(title: "🎲 シャッフル", subtitle: "\(jukebox.episodes.count) 枚からランダムに") { jukebox.playRandom() }
                 if let e = jukebox.todayEpisode, let n = jukebox.today?.yearsAgo {
@@ -87,7 +87,7 @@ struct JukeboxScreen: View {
 
     private var shelf: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("レコード棚").font(.subheadline).foregroundStyle(.secondary)
+            Text("レコード棚").font(.app(.subheadline)).foregroundStyle(.secondary)
             TextField("タイトルや内容で探す（例：WWDC、ゲスト名）", text: $query)
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: query) { _, q in if !q.isEmpty { year = nil }; shown = 80 }
@@ -96,9 +96,9 @@ struct JukeboxScreen: View {
             let list = filtered
             if jukebox.episodes.isEmpty {
                 Text(jukebox.loadFailed ? "読み込めませんでした。引っ張って再読み込み" : "読み込み中…")
-                    .font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 30)
+                    .font(.app(.callout)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 30)
             } else if list.isEmpty {
-                Text("見つかりませんでした").font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 30)
+                Text("見つかりませんでした").font(.app(.callout)).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 30)
             }
             LazyVStack(spacing: 0) {
                 ForEach(list.prefix(shown)) { e in
@@ -108,7 +108,7 @@ struct JukeboxScreen: View {
                 if list.count > shown {
                     Button("さらに表示（残り \(list.count - shown) 枚）") { shown += 200 }
                         .buttonStyle(.borderless)
-                        .font(.footnote)
+                        .font(.app(.footnote))
                         .padding(.vertical, 10)
                 }
             }
@@ -259,7 +259,7 @@ struct Turntable: View {
                         Circle().fill(jukebox.isPlaying ? Color.green : Color(red: 0.33, green: 0.25, blue: 0.18))
                             .frame(width: 7, height: 7)
                             .shadow(color: jukebox.isPlaying ? .green : .clear, radius: 4)
-                        Text("33⅓").font(.system(size: 10, design: .monospaced)).foregroundStyle(Color(white: 0.9).opacity(0.85))
+                        Text("33⅓").font(.app(size: 10, design: .monospaced)).foregroundStyle(Color(white: 0.9).opacity(0.85))
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     .padding(side * 0.05)
@@ -484,21 +484,21 @@ struct NowPlayingCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let e = jukebox.current {
-                Text(e.title).font(.headline).fixedSize(horizontal: false, vertical: true)
+                Text(e.title).font(.app(.headline)).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 10) {
                     Text(e.dateText).monospacedDigit()
                     if let d = e.durationSec { Text(JukeboxFormat.time(Double(d))).monospacedDigit() }
                     Text(e.series)
                 }
-                .font(.caption).foregroundStyle(.secondary)
+                .font(.app(.caption)).foregroundStyle(.secondary)
                 if !e.summary.isEmpty {
-                    Text(e.summary).font(.footnote).foregroundStyle(.secondary).lineLimit(3)
+                    Text(e.summary).font(.app(.footnote)).foregroundStyle(.secondary).lineLimit(3)
                 }
                 ProgressSlider(jukebox: jukebox, duration: Double(e.durationSec ?? 0))
                 controls
             } else {
-                Text("レコードを選んでください").font(.headline)
-                Text("下の棚から 1 枚選ぶか、🎲 シャッフルでどうぞ。").font(.footnote).foregroundStyle(.secondary)
+                Text("レコードを選んでください").font(.app(.headline))
+                Text("下の棚から 1 枚選ぶか、🎲 シャッフルでどうぞ。").font(.app(.footnote)).foregroundStyle(.secondary)
             }
         }
         .padding(14)
@@ -516,7 +516,7 @@ struct NowPlayingCard: View {
                     if jukebox.isBuffering && jukebox.isPlaying {
                         ProgressView().controlSize(.small).tint(.white)
                     } else {
-                        Image(systemName: jukebox.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 20, weight: .bold)).foregroundStyle(.white)
+                        Image(systemName: jukebox.isPlaying ? "pause.fill" : "play.fill").font(.app(size: 20, weight: .bold)).foregroundStyle(.white)
                     }
                 }
                 .frame(width: 54, height: 54)
@@ -569,7 +569,7 @@ private struct ProgressSlider: View {
                 Spacer()
                 Text(JukeboxFormat.time(duration))
             }
-            .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+            .font(.app(.caption2).monospacedDigit()).foregroundStyle(.secondary)
         }
     }
 }
@@ -580,7 +580,7 @@ private struct RoundButton: View {
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Text(text).font(.footnote.weight(.medium)).monospacedDigit()
+            Text(text).font(.app(.footnote, weight: .medium)).monospacedDigit()
                 .frame(minWidth: 40, minHeight: 40)
                 .padding(.horizontal, 4)
                 .background(Capsule().fill(Color.primary.opacity(0.07)))
@@ -597,8 +597,8 @@ private struct PickCard: View {
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(title).font(.subheadline.bold())
-                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(title).font(.app(.subheadline, weight: .bold))
+                Text(subtitle).font(.app(.caption)).foregroundStyle(.secondary).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
@@ -619,7 +619,7 @@ private struct Chips: View {
             HStack(spacing: 6) {
                 ForEach(items, id: \.self) { s in
                     Button { onPick(s) } label: {
-                        Text(s).font(.caption.weight(s == selected ? .bold : .regular))
+                        Text(s).font(.app(.caption, weight: s == selected ? .bold : .regular))
                             .padding(.horizontal, 11).padding(.vertical, 6)
                             .foregroundStyle(s == selected ? Color(white: 0.98) : Color.primary)
                             .background(Capsule().fill(s == selected ? Color.primary : Color.primary.opacity(0.07)))
@@ -644,7 +644,7 @@ private struct EpisodeRow: View {
             HStack(spacing: 10) {
                 MiniDisc(year: episode.year, size: 30)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(episode.title).font(.subheadline).lineLimit(2).multilineTextAlignment(.leading)
+                    Text(episode.title).font(.app(.subheadline)).lineLimit(2).multilineTextAlignment(.leading)
                     HStack(spacing: 8) {
                         Text(episode.dateText)
                         if let f = fraction, f >= 0.97 {
@@ -654,7 +654,7 @@ private struct EpisodeRow: View {
                         }
                         if episode.series != "本編" { Text(episode.series) }
                     }
-                    .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                    .font(.app(.caption2).monospacedDigit()).foregroundStyle(.secondary)
                     if let f = fraction, f > 0, f < 0.97 {
                         ProgressView(value: f).tint(.accentGreen).scaleEffect(x: 1, y: 0.6)
                     }
@@ -708,9 +708,9 @@ struct JukeboxMiniPlayer: View {
                                     ? tl.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.8) / 1.8 * 360 : 0))
                         }
                         VStack(alignment: .leading, spacing: 1) {
-                            Text(e.title).font(.caption).lineLimit(1)
+                            Text(e.title).font(.app(.caption)).lineLimit(1)
                             Text(jukebox.notice ?? (jukebox.pausedForVoice ? "ボイスに入ったので一時停止中" : "\(e.dateText) ・ \(JukeboxFormat.time(jukebox.position))"))
-                                .font(.caption2).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
+                                .font(.app(.caption2)).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
                         }
                         Spacer(minLength: 0)
                     }
@@ -719,12 +719,12 @@ struct JukeboxMiniPlayer: View {
                 .buttonStyle(.plain)
                 if jukebox.pausedForVoice && !jukebox.voiceBusy() {
                     Button("続きを再生") { jukebox.resume() }
-                        .font(.caption.weight(.semibold))
+                        .font(.app(.caption, weight: .semibold))
                         .buttonStyle(.borderless)
                 }
                 Button { jukebox.toggle() } label: {
                     Image(systemName: jukebox.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
+                        .font(.app(size: 14, weight: .bold)).foregroundStyle(.white)
                         .frame(width: 34, height: 34)
                         .background(Circle().fill(Color.accentGreen))
                 }

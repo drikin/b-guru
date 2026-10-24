@@ -249,7 +249,7 @@ private struct TimelinePostList: View {
                 TimelineTopSentinel(atTop: $atTop)
                 if posts.isEmpty {
                     Text(timeline.hasLoaded ? (timeline.failed ? "読み込めませんでした。引っ張って再読み込み" : "まだ投稿がありません") : "読み込み中…")
-                        .font(.callout).foregroundStyle(.secondary)
+                        .font(.app(.callout)).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity).padding(.top, 40)
                 }
                 let canReact = capabilities?.canReactPosts ?? false
@@ -350,9 +350,9 @@ struct ReconnectBanner: View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "key.fill").foregroundStyle(Color.accentGreen)
             VStack(alignment: .leading, spacing: 6) {
-                Text("投稿・返信・リアクションには再接続が必要です").font(.subheadline.bold())
+                Text("投稿・返信・リアクションには再接続が必要です").font(.app(.subheadline, weight: .bold))
                 Text("タイムラインに書き込む許可を追加するため、もう一度 B-guru にログインしてアプリを接続してください。")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.app(.caption)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("再接続する", action: onReconnect)
                     .buttonStyle(.borderedProminent)
@@ -361,7 +361,7 @@ struct ReconnectBanner: View {
             }
             Spacer(minLength: 0)
             if let onClose {
-                Button(action: onClose) { Image(systemName: "xmark").font(.caption) }
+                Button(action: onClose) { Image(systemName: "xmark").font(.app(.caption)) }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("閉じる")
             }
@@ -435,24 +435,24 @@ struct PostRow: View, Equatable {
             AvatarView(url: post.authorAvatar, name: post.authorName ?? "", size: 36)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Text(post.authorName ?? "").font(.subheadline.bold()).lineLimit(1)
+                    Text(post.authorName ?? "").font(.app(.subheadline, weight: .bold)).lineLimit(1)
                     if post.favoriteByMe == true {
-                        Image(systemName: "star.fill").font(.caption2).foregroundStyle(.yellow)
+                        Image(systemName: "star.fill").font(.app(.caption2)).foregroundStyle(.yellow)
                             .accessibilityLabel("お気に入り")
                     }
                     ClubTag(post: post, name: clubName)
                     Spacer(minLength: 4)
                     if PostActionsModel.isPinned(post) {
-                        Image(systemName: "pin.fill").font(.caption2).foregroundStyle(Color.accentGreen)
+                        Image(systemName: "pin.fill").font(.app(.caption2)).foregroundStyle(Color.accentGreen)
                             .accessibilityLabel("ピン留め中")
                     }
                     if post.bookmarkedByMe == true {
-                        Image(systemName: "bookmark.fill").font(.caption2).foregroundStyle(.blue)
+                        Image(systemName: "bookmark.fill").font(.app(.caption2)).foregroundStyle(.blue)
                             .accessibilityLabel("ブックマーク済み")
                     }
                     // Its own clock: the row is only redrawn when the post changes.
                     TimelineView(.periodic(from: .now, by: 60)) { ctx in
-                        Text(PostRow.relative(post.createdAt, now: ctx.date)).font(.caption).foregroundStyle(.tertiary).monospacedDigit()
+                        Text(PostRow.relative(post.createdAt, now: ctx.date)).font(.app(.caption)).foregroundStyle(.tertiary).monospacedDigit()
                     }
                 }
                 if !post.text.isEmpty && !post.isBareLink {
@@ -468,7 +468,7 @@ struct PostRow: View, Equatable {
                     Button { jb.play(ep) } label: {
                         Label(jb.current?.id == ep.id && jb.isPlaying ? "ジュークボックスで再生中" : "ジュークボックスで聴く",
                               systemImage: jb.current?.id == ep.id && jb.isPlaying ? "waveform" : "play.circle.fill")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.app(.subheadline, weight: .semibold))
                             .padding(.horizontal, 12).padding(.vertical, 7)
                             .foregroundStyle(.white)
                             .background(Capsule().fill(Color.accentGreen))
@@ -491,10 +491,10 @@ struct PostRow: View, Equatable {
                         ReactionChips(reactions: TimelineRules.sortedReactions(post), enabled: canReact, onTap: onReact)
                     }
                     if showReplyCount, let n = post.replyCount, n > 0 {
-                        Label("\(n)", systemImage: "bubble.left").font(.caption).foregroundStyle(.secondary)
+                        Label("\(n)", systemImage: "bubble.left").font(.app(.caption)).foregroundStyle(.secondary)
                         if let new = post.unreadReplies, new > 0 {
                             Text("新着 \(new)")
-                                .font(.caption2.bold())
+                                .font(.app(.caption2, weight: .bold))
                                 .padding(.horizontal, 6).padding(.vertical, 1)
                                 .background(Capsule().fill(Color.accentGreen))
                                 .foregroundStyle(.white)
@@ -618,13 +618,13 @@ struct ImageViewer: View {
             }
             if item.images.count > 1 {
                 HStack {
-                    Button { index = max(0, index - 1) } label: { Image(systemName: "chevron.left.circle.fill").font(.system(size: 28)) }
+                    Button { index = max(0, index - 1) } label: { Image(systemName: "chevron.left.circle.fill").font(.app(size: 28)) }
                         .keyboardShortcut(.leftArrow, modifiers: [])
                         .disabled(index == 0)
                     Spacer()
                     Text("\(index + 1) / \(item.images.count)").foregroundStyle(.white.opacity(0.8)).monospacedDigit()
                     Spacer()
-                    Button { index = min(item.images.count - 1, index + 1) } label: { Image(systemName: "chevron.right.circle.fill").font(.system(size: 28)) }
+                    Button { index = min(item.images.count - 1, index + 1) } label: { Image(systemName: "chevron.right.circle.fill").font(.app(size: 28)) }
                         .keyboardShortcut(.rightArrow, modifiers: [])
                         .disabled(index == item.images.count - 1)
                 }
@@ -638,9 +638,9 @@ struct ImageViewer: View {
             // Easy to find: a labelled button (the bare ✕ was easy to miss, Ryu 2026-10-18).
             Button { dismiss() } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "xmark").font(.system(size: 12, weight: .bold))
-                    Text("閉じる").font(.system(size: 13, weight: .semibold))
-                    Text("esc").font(.system(size: 10, weight: .medium)).foregroundStyle(.black.opacity(0.45))
+                    Image(systemName: "xmark").font(.app(size: 12, weight: .bold))
+                    Text("閉じる").font(.app(size: 13, weight: .semibold))
+                    Text("esc").font(.app(size: 10, weight: .medium)).foregroundStyle(.black.opacity(0.45))
                 }
                 .foregroundStyle(.black)
                 .padding(.horizontal, 12).padding(.vertical, 7)
@@ -653,7 +653,7 @@ struct ImageViewer: View {
             .accessibilityLabel("閉じる")
             #else
             Button { dismiss() } label: {
-                Image(systemName: "xmark.circle.fill").font(.system(size: 30)).symbolRenderingMode(.palette)
+                Image(systemName: "xmark.circle.fill").font(.app(size: 30)).symbolRenderingMode(.palette)
                     .foregroundStyle(.white, .white.opacity(0.25))
             }
             .padding()
@@ -866,7 +866,7 @@ struct LinkCard: View {
                                 .overlay { MediaImage(path: img, maxPixel: 900) }
                                 .clipped()
                                 .overlay {
-                                    Image(systemName: "play.fill").font(.system(size: 20)).foregroundStyle(.white)
+                                    Image(systemName: "play.fill").font(.app(size: 20)).foregroundStyle(.white)
                                         .frame(width: 52, height: 52).background(Circle().fill(.black.opacity(0.75)))
                                 }
                         }
@@ -890,13 +890,13 @@ struct LinkCard: View {
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     if let t = preview.title, !t.isEmpty {
-                        Text(t).font(.subheadline.bold()).foregroundStyle(.primary).lineLimit(2).multilineTextAlignment(.leading)
+                        Text(t).font(.app(.subheadline, weight: .bold)).foregroundStyle(.primary).lineLimit(2).multilineTextAlignment(.leading)
                     }
                     if let d = preview.description, !d.isEmpty {
-                        Text(d).font(.caption).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.leading)
+                        Text(d).font(.app(.caption)).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.leading)
                     }
                     Text(preview.siteName ?? URL(string: preview.url)?.host ?? preview.url)
-                        .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                        .font(.app(.caption2)).foregroundStyle(.tertiary).lineLimit(1)
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -942,7 +942,7 @@ struct PostBody: View {
                     PostExpansion.set(post.id, open: expanded)
                 } label: {
                     Text(expanded ? "閉じる" : "続きを読む")
-                        .font(.footnote.weight(.semibold))
+                        .font(.app(.footnote, weight: .semibold))
                         .foregroundStyle(Color.accentGreen)
                         .padding(.horizontal, 10).padding(.vertical, 4)
                         .contentShape(Rectangle())

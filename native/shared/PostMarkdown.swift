@@ -25,7 +25,7 @@ struct PostText: View {
 
     private func paragraph(_ a: AttributedString) -> some View {
         MentionText(a)
-            .font(.body)
+            .font(.app(.body))
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
     }
@@ -36,12 +36,12 @@ struct PostText: View {
             paragraph(a)
         case .heading(let level, let a):
             MentionText(a)
-                .font(level == 1 ? .title3.bold() : level == 2 ? .headline : .subheadline.bold())
+                .font(level == 1 ? .app(.title3, weight: .bold) : level == 2 ? .app(.headline) : .app(.subheadline, weight: .bold))
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 2)
         case .item(let indent, let marker, let a):
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(marker).font(.body).foregroundStyle(.secondary).monospacedDigit()
+                Text(marker).font(.app(.body)).foregroundStyle(.secondary).monospacedDigit()
                 paragraph(a)
             }
             .padding(.leading, CGFloat(indent) * 16 + 2)
@@ -54,7 +54,7 @@ struct PostText: View {
                 }
         case .code(let s):
             Text(s)
-                .font(.system(.callout, design: .monospaced))
+                .font(.app(.callout, design: .monospaced))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(8)

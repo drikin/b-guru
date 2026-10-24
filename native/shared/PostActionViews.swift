@@ -117,7 +117,7 @@ struct ClubTag: View {
     private func tag(_ text: String, dashed: Bool) -> some View {
         // 「未設定」 (the AI could not tell the club) is grey, as on the web.
         let tint = (post.display?.clubUnset == true || dashed) ? Color.secondary : Color.accentGreen
-        return Text(text).font(.caption2.bold())
+        return Text(text).font(.app(.caption2, weight: .bold))
             .padding(.horizontal, 6).padding(.vertical, 1)
             .background(Capsule().fill(tint.opacity(dashed ? 0 : 0.14)))
             .overlay(Capsule().strokeBorder(tint.opacity(dashed ? 0.5 : 0), style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
@@ -195,10 +195,10 @@ struct PollCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("📊 投票（\(total)票）").font(.caption.bold()).foregroundStyle(.secondary)
+                Text("📊 投票（\(total)票）").font(.app(.caption, weight: .bold)).foregroundStyle(.secondary)
                 Spacer()
                 if let actions, actions.canEditPoll(post) {
-                    Button { actions.pollEditing = post } label: { Image(systemName: "pencil").font(.caption) }
+                    Button { actions.pollEditing = post } label: { Image(systemName: "pencil").font(.app(.caption)) }
                         .buttonStyle(.borderless)
                         .help("回答を編集")
                         .accessibilityLabel("回答を編集")
@@ -208,17 +208,17 @@ struct PollCard: View {
                 let mine = poll.myVote == o.id
                 Button { actions?.vote(post, option: o.id) } label: {
                     HStack(spacing: 6) {
-                        Text(o.label).font(.subheadline.weight(mine ? .bold : .medium)).foregroundStyle(.primary)
+                        Text(o.label).font(.app(.subheadline, weight: mine ? .bold : .medium)).foregroundStyle(.primary)
                             .multilineTextAlignment(.leading)
                         Spacer(minLength: 4)
                         if mine && !closed {
-                            Text("あなたの投票").font(.caption2.bold())
+                            Text("あなたの投票").font(.app(.caption2, weight: .bold))
                                 .padding(.horizontal, 5).padding(.vertical, 1)
                                 .background(Capsule().fill(Color.accentGreen.opacity(0.18)))
                                 .foregroundStyle(Color.accentGreen)
                         }
                         if total > 0 {
-                            Text("\(o.votes ?? 0)票 (\(Int(o.pct ?? 0))%)").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                            Text("\(o.votes ?? 0)票 (\(Int(o.pct ?? 0))%)").font(.app(.caption)).foregroundStyle(.secondary).monospacedDigit()
                         }
                     }
                     .padding(.horizontal, 10).padding(.vertical, 8)
@@ -246,7 +246,7 @@ struct PollCard: View {
                 Spacer()
                 Text(closed ? "終了" : Self.timeLeft(poll.endsAt))
             }
-            .font(.caption).foregroundStyle(.secondary)
+            .font(.app(.caption)).foregroundStyle(.secondary)
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.04)))
@@ -328,7 +328,7 @@ struct FilledButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.callout.weight(fill == nil ? .regular : .semibold))
+            .font(.app(.callout, weight: fill == nil ? .regular : .semibold))
             .foregroundStyle(fill == nil ? Color.primary : Color.white)
             .padding(.horizontal, 14).padding(.vertical, 7)
             .background(Capsule().fill(fill ?? Color.primary.opacity(0.1)))
@@ -352,9 +352,9 @@ struct DialogFrame<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(title).font(.headline)
+                Text(title).font(.app(.headline))
                 Spacer()
-                Button(action: onCancel) { Image(systemName: "xmark").font(.callout) }
+                Button(action: onCancel) { Image(systemName: "xmark").font(.app(.callout)) }
                     .buttonStyle(.borderless)
                     .accessibilityLabel("閉じる")
             }
@@ -365,7 +365,7 @@ struct DialogFrame<Content: View>: View {
                     .scrollBounceBehavior(.basedOnSize)
             }
             if let error {
-                Text(error).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                Text(error).font(.app(.callout)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
             HStack {
                 Spacer()
@@ -400,7 +400,7 @@ struct DeletePostDialog: View {
     var body: some View {
         DialogFrame(title: "投稿を削除", confirm: "削除する", destructive: true, busy: busy, error: shownError,
                     onCancel: { actions.deleting = nil }, onConfirm: delete) {
-            Text("この投稿を削除しますか？この操作は取り消せません。").font(.callout)
+            Text("この投稿を削除しますか？この操作は取り消せません。").font(.app(.callout))
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -478,7 +478,7 @@ struct EditPostDialog: View {
                     if let name = audioName {
                         HStack(spacing: 8) {
                             Image(systemName: "waveform").foregroundStyle(Color.accentGreen)
-                            Text(name).font(.callout).lineLimit(1).truncationMode(.middle)
+                            Text(name).font(.app(.callout)).lineLimit(1).truncationMode(.middle)
                             Spacer()
                             Button { audio = nil; newAudio?.discard(); newAudio = nil } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.red) }
                                 .buttonStyle(.plain).accessibilityLabel("音声を外す")
@@ -501,11 +501,11 @@ struct EditPostDialog: View {
                                 .help(post.videoUrl != nil ? "動画と音声は同時に添付できません" : "音声を付ける")
                         }
                         if post.videoUrl != nil {
-                            Text("動画は変えられません").font(.caption).foregroundStyle(.secondary)
+                            Text("動画は変えられません").font(.app(.caption)).foregroundStyle(.secondary)
                         }
                     }
                     .buttonStyle(.borderless)
-                    .font(.callout)
+                    .font(.app(.callout))
                 }
             }
         }
@@ -589,7 +589,7 @@ struct EditPostDialog: View {
                                     .disabled(i == images.count - 1).accessibilityLabel("画像 \(i + 1) を後ろへ")
                             }
                             .buttonStyle(.borderless)
-                            .font(.caption)
+                            .font(.app(.caption))
                         }
                     }
                 }
@@ -664,7 +664,7 @@ struct PollEditDialog: View {
                     error: error, onCancel: { actions.pollEditing = nil }, onConfirm: save) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("回答の編集は投稿後1時間以内のみです。投票が付いた回答は削除できません。")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .font(.app(.caption)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 ForEach($rows) { $row in
                     let i = rows.firstIndex { $0.id == row.id } ?? 0
                     HStack(spacing: 6) {
@@ -678,7 +678,7 @@ struct PollEditDialog: View {
                     }
                 }
                 Button("＋ 回答を追加（\(rows.count)/\(PollDraft.maxOptions)）") { rows.append(Row(optionId: nil, label: "", votes: 0)) }
-                    .buttonStyle(.borderless).font(.caption).tint(Color.accentGreen)
+                    .buttonStyle(.borderless).font(.app(.caption)).tint(Color.accentGreen)
                     .disabled(rows.count >= PollDraft.maxOptions)
             }
         }
@@ -713,9 +713,9 @@ struct PostListDialog: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Label(kind.title, systemImage: kind.systemImage).font(.headline)
+                Label(kind.title, systemImage: kind.systemImage).font(.app(.headline))
                 Spacer()
-                Button { timeline.actions.list = nil } label: { Image(systemName: "xmark").font(.callout) }
+                Button { timeline.actions.list = nil } label: { Image(systemName: "xmark").font(.app(.callout)) }
                     .buttonStyle(.borderless)
                     .keyboardShortcut(.cancelAction)
                     .accessibilityLabel("閉じる")
@@ -726,7 +726,7 @@ struct PostListDialog: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     if posts.isEmpty {
                         Text(!loaded ? "読み込み中…" : failed ? "読み込めませんでした" : kind.empty)
-                            .font(.callout).foregroundStyle(.secondary)
+                            .font(.app(.callout)).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(24)
                             .frame(maxWidth: .infinity)
@@ -804,7 +804,7 @@ struct ActionToastView: View {
             HStack(spacing: 8) {
                 Image(systemName: toast.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                     .foregroundStyle(toast.isError ? Color.red : Color.accentGreen)
-                Text(toast.text).font(.callout).foregroundStyle(.primary)
+                Text(toast.text).font(.app(.callout)).foregroundStyle(.primary)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
             }

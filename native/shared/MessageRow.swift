@@ -38,7 +38,7 @@ struct MessageRow: View {
         } else if m.isNotice {
             // A quiet note from B-guru (who came into / left the room): one small grey line.
             Text(m.body)
-                .font(.caption2)
+                .font(.app(.caption2))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity)
                 .multilineTextAlignment(.center)
@@ -59,14 +59,14 @@ struct MessageRow: View {
             VStack(alignment: mine ? .trailing : .leading, spacing: 2) {
                 if showHeader || row.state == .failed {
                     HStack(spacing: 6) {
-                        if !mine { Text(m.authorName ?? "").font(.caption).foregroundStyle(.secondary) }
+                        if !mine { Text(m.authorName ?? "").font(.app(.caption)).foregroundStyle(.secondary) }
                         if row.state == .failed {
-                            Text("送信できませんでした").font(.caption).foregroundStyle(.red)
-                            Button("再送", action: onRetry).linkButton().font(.caption)
-                            Button("取り消す", action: onDiscard).linkButton().font(.caption).tint(.secondary)
+                            Text("送信できませんでした").font(.app(.caption)).foregroundStyle(.red)
+                            Button("再送", action: onRetry).linkButton().font(.app(.caption))
+                            Button("取り消す", action: onDiscard).linkButton().font(.app(.caption)).tint(.secondary)
                         }
-                        if m.edited { Text("編集済み").font(.caption2).foregroundStyle(Color.accentGreen) }
-                        Text(Self.time(m.createdAt)).font(.caption2).foregroundStyle(.tertiary).monospacedDigit()
+                        if m.edited { Text("編集済み").font(.app(.caption2)).foregroundStyle(Color.accentGreen) }
+                        Text(Self.time(m.createdAt)).font(.app(.caption2)).foregroundStyle(.tertiary).monospacedDigit()
                     }
                 }
                 bubble
@@ -112,7 +112,7 @@ struct MessageRow: View {
     private var textBubble: some View {
         let emojiOnly = Self.isEmojiOnly(m.displayBody)
         return Text(Self.attributed(m.displayBody))
-            .font(emojiOnly ? .system(size: 34) : .body)
+            .font(emojiOnly ? .app(size: 34) : .app(.body))
             #if os(macOS)
             // macOS: select part of a message with the mouse. On iOS a long press
             // must open the menu (reactions / edit / copy) instead.
@@ -302,8 +302,8 @@ struct ActionButton: View {
     var body: some View {
         Button(action: action) {
             Group {
-                if let systemImage { Image(systemName: systemImage).font(.system(size: 12, weight: .medium)) }
-                if let text { Text(text).font(.system(size: 13)) }
+                if let systemImage { Image(systemName: systemImage).font(.app(size: 12, weight: .medium)) }
+                if let text { Text(text).font(.app(size: 13)) }
             }
             .frame(width: 24, height: 22)
             .background(Circle().fill(Color.primary.opacity(over ? 0.10 : 0)))
@@ -338,13 +338,13 @@ struct ReactionPicker: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                Text("よく使う").font(.caption).foregroundStyle(.secondary)
+                Text("よく使う").font(.app(.caption)).foregroundStyle(.secondary)
                 grid(Self.unicode)
-                Text("すべて").font(.caption).foregroundStyle(.secondary)
+                Text("すべて").font(.app(.caption)).foregroundStyle(.secondary)
                 grid(Self.all)
                 let custom = EmojiCatalog.shared.names
                 if !custom.isEmpty {
-                    Text("カスタム絵文字").font(.caption).foregroundStyle(.secondary)
+                    Text("カスタム絵文字").font(.app(.caption)).foregroundStyle(.secondary)
                     LazyVGrid(columns: cols, spacing: 4) {
                         ForEach(custom, id: \.self) { name in
                             Button { onPick(":\(name):") } label: {
@@ -365,7 +365,7 @@ struct ReactionPicker: View {
     private func grid(_ emojis: [String]) -> some View {
         LazyVGrid(columns: cols, spacing: 4) {
             ForEach(Array(emojis.enumerated()), id: \.offset) { _, e in
-                Button { onPick(e) } label: { Text(e).font(.system(size: 20)).frame(width: 30, height: 30) }
+                Button { onPick(e) } label: { Text(e).font(.app(size: 20)).frame(width: 30, height: 30) }
                     .buttonStyle(.plain)
                     .accessibilityLabel(e)
             }
@@ -427,7 +427,7 @@ struct ReactionChips: View {
                 Button { onTap(r.emoji) } label: {
                     HStack(spacing: 2) {
                         ReactionGlyph(emoji: r.emoji)
-                        Text("\(r.count)").font(.caption2).monospacedDigit()
+                        Text("\(r.count)").font(.app(.caption2)).monospacedDigit()
                     }
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(Capsule().fill(r.mine ? Color.accentGreen.opacity(0.18) : Color.primary.opacity(0.06)))
@@ -479,13 +479,13 @@ struct ReactorsList: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 ReactionGlyph(emoji: reaction.emoji)
-                Text("\(reaction.count)人").font(.subheadline.bold())
+                Text("\(reaction.count)人").font(.app(.subheadline, weight: .bold))
             }
             if !reaction.reactors.isEmpty {
                 let shown = reaction.reactors
                 let hidden = TimelineRules.reactorsMore(reaction)
                 (Text(shown.joined(separator: "、")) + Text(hidden > 0 ? " 他\(hidden)人" : "").foregroundStyle(.secondary))
-                    .font(.subheadline)
+                    .font(.app(.subheadline))
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -506,7 +506,7 @@ struct ReactionGlyph: View {
             MediaImage(path: url.absoluteString, contentMode: .fit, maxPixel: 64)
                 .frame(width: size, height: size)
         } else {
-            Text(emoji).font(.caption)
+            Text(emoji).font(.app(.caption))
         }
     }
 }
@@ -556,7 +556,7 @@ struct AvatarView: View {
             if let image {
                 Image(platformImage: image).resizable().scaledToFill()
             } else {
-                Text(String(name.prefix(1))).font(.caption2.bold()).foregroundStyle(.secondary)
+                Text(String(name.prefix(1))).font(.app(.caption2, weight: .bold)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.primary.opacity(0.08))
             }

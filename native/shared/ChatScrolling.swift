@@ -125,7 +125,7 @@ struct JumpButton: View {
         let fresh = count > 0
         Button(action: action) {
             Text(fresh ? "\(arrow) 新着 \(count)" : "\(arrow) 最新へ")
-                .font(.caption.weight(.semibold))
+                .font(.app(.caption, weight: .semibold))
                 .monospacedDigit()
                 .padding(.horizontal, 10).padding(.vertical, 6)
                 .foregroundStyle(fresh ? Color.white : Color.primary)
@@ -193,7 +193,7 @@ struct UnreadDivider: View {
     var body: some View {
         HStack(spacing: 8) {
             Rectangle().fill(Color.accentGreen.opacity(0.5)).frame(height: 1)
-            Text("ここから未読").font(.caption2.weight(.semibold)).foregroundStyle(Color.accentGreen)
+            Text("ここから未読").font(.app(.caption2, weight: .semibold)).foregroundStyle(Color.accentGreen)
                 .fixedSize()
             Rectangle().fill(Color.accentGreen.opacity(0.5)).frame(height: 1)
         }

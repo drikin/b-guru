@@ -217,7 +217,7 @@ struct RoomView: View {
             #if os(iOS)
             .overlay(alignment: .bottomTrailing) { DPad(room: room).padding(6) }
             #endif
-            if let n = room.notice { Text(n).font(.caption).foregroundStyle(.secondary) }
+            if let n = room.notice { Text(n).font(.app(.caption)).foregroundStyle(.secondary) }
         }
         .focusable()
         .focused($focused)
@@ -240,7 +240,7 @@ struct RoomView: View {
                 Task { await room.setListening(!room.listening) }
             } label: {
                 Label(room.listening ? "聞いている" : "見るだけ", systemImage: room.listening ? "headphones" : "eye")
-                    .font(.subheadline)
+                    .font(.app(.subheadline))
             }
             .buttonStyle(.bordered)
             .tint(room.listening ? Color.accentGreen : .secondary)
@@ -249,14 +249,14 @@ struct RoomView: View {
                 Task { await room.setMic(!room.voice.micOn) }
             } label: {
                 Label(room.voice.micOn ? "マイク オン" : "マイク オフ", systemImage: room.voice.micOn ? "mic.fill" : "mic.slash")
-                    .font(.subheadline)
+                    .font(.app(.subheadline))
             }
             .buttonStyle(.bordered)
             .tint(room.voice.micOn ? Color.accentGreen : .secondary)
             .disabled(room.voice.micBusy)
             Spacer(minLength: 4)
             if let z = room.zoneName {
-                Text(z + "にいます").font(.caption.bold()).foregroundStyle(Color.accentGreen)
+                Text(z + "にいます").font(.app(.caption, weight: .bold)).foregroundStyle(Color.accentGreen)
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .overlay(Capsule().stroke(Color.accentGreen))
             }
@@ -267,7 +267,7 @@ struct RoomView: View {
         HStack(spacing: 4) {
             ForEach(Array(room.reactionChoices.enumerated()), id: \.offset) { i, e in
                 Button { room.sendReaction(e) } label: {
-                    Text(e).font(.system(size: 17)).frame(width: 32, height: 32)
+                    Text(e).font(.app(size: 17)).frame(width: 32, height: 32)
                         .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.55)))
                 }
                 .buttonStyle(.plain)
@@ -373,13 +373,13 @@ struct RoomView: View {
                 let k = r.age / 1.8
                 var gg = g
                 gg.opacity = 1 - k * k
-                gg.draw(Text(r.emoji).font(.system(size: 12)), at: CGPoint(x: p.x * 16 + 6 + Double(i) * 7, y: p.y * 16 - 8 - k * 18))
+                gg.draw(Text(r.emoji).font(.app(size: 12)), at: CGPoint(x: p.x * 16 + 6 + Double(i) * 7, y: p.y * 16 - 8 - k * 18))
             }
         }
     }
 
     private func label(_ g: inout GraphicsContext, _ s: String, x: CGFloat, y: CGFloat, fg: Color, bg: Color = col(0x120e14, 0.75), center: Bool = false) {
-        let t = g.resolve(Text(s).font(.system(size: 7, weight: .bold)).foregroundStyle(fg))
+        let t = g.resolve(Text(s).font(.app(size: 7, weight: .bold)).foregroundStyle(fg))
         let size = RoomArt.labelSize(s) { t.measure(in: CGSize(width: 400, height: 20)) }
         let lx = center ? x - size.width / 2 - 2 : x
         g.fill(Path(CGRect(x: lx, y: y, width: size.width + 4, height: 9)), with: .color(bg))
@@ -389,7 +389,7 @@ struct RoomView: View {
     private func bubble(_ g: inout GraphicsContext, _ s: String, x: Double, y: Double) {
         let chars = Array(s)
         let rows = stride(from: 0, to: chars.count, by: 12).map { String(chars[$0..<min($0 + 12, chars.count)]) }
-        let resolved = rows.map { g.resolve(Text($0).font(.system(size: 7)).foregroundStyle(col(0x1d1820))) }
+        let resolved = rows.map { g.resolve(Text($0).font(.app(size: 7)).foregroundStyle(col(0x1d1820))) }
         let w = (resolved.map { $0.measure(in: CGSize(width: 400, height: 20)).width }.max() ?? 0) + 8
         let h = Double(rows.count) * 9 + 5
         let bx = (x - w / 2).rounded(), by = (y - h - 4).rounded()
@@ -462,7 +462,7 @@ private struct DPad: View {
     }
 
     private func arrow(_ d: RoomGeometry.Dir, _ icon: String) -> some View {
-        Image(systemName: icon).font(.system(size: 16, weight: .bold))
+        Image(systemName: icon).font(.app(size: 16, weight: .bold))
             .frame(width: 40, height: 40)
             .background(RoundedRectangle(cornerRadius: 10).fill(Color.black.opacity(0.55)))
             .foregroundStyle(.white)
@@ -605,7 +605,7 @@ struct RoomModeIcons: View {
     private func segment<L: View>(selected: Bool, help: String, @ViewBuilder label: () -> L, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             label()
-                .font(.system(size: 12, weight: .medium))
+                .font(.app(size: 12, weight: .medium))
                 .foregroundStyle(selected ? Color.white : Color.primary)
                 .padding(.horizontal, 9)
                 .frame(height: 20)

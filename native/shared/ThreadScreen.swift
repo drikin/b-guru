@@ -39,7 +39,7 @@ struct ThreadScreen: View {
                                 .id("root")
                             Divider()
                             if replies.isEmpty {
-                                Text("まだ返信はありません").font(.callout).foregroundStyle(.secondary)
+                                Text("まだ返信はありません").font(.app(.callout)).foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity).padding(.vertical, 24)
                             }
                             ForEach(replies) { r in
@@ -49,7 +49,7 @@ struct ThreadScreen: View {
                                 Divider().padding(.leading, 20)
                             }
                         } else {
-                            Text(failed ? "読み込めませんでした" : "読み込み中…").font(.callout).foregroundStyle(.secondary)
+                            Text(failed ? "読み込めませんでした" : "読み込み中…").font(.app(.callout)).foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity).padding(.top, 40)
                         }
                     }
@@ -141,16 +141,16 @@ struct ThreadScreen: View {
                 MentionSuggestions(members: matches) { m in draft.text = Mention.complete(draft.text, with: m.name); replyFocused = true }
             }
             DraftImages(draft: draft)
-            if let e = draft.error { Text(e).font(.caption).foregroundStyle(.red) }
+            if let e = draft.error { Text(e).font(.app(.caption)).foregroundStyle(.red) }
             HStack(alignment: .bottom, spacing: 8) {
                 PhotosPicker(selection: $draft.picks, maxSelectionCount: max(1, draft.maxImages - draft.images.count), matching: .images) {
-                    Image(systemName: "photo.on.rectangle").font(.system(size: 20))
+                    Image(systemName: "photo.on.rectangle").font(.app(size: 20))
                 }
                 .disabled(draft.images.count >= draft.maxImages || capabilities?.canPublish != true)
                 .accessibilityLabel("写真を添付")
                 #if os(iOS)
                 if capabilities?.canPublish == true {
-                    CameraButton(draft: draft) { Image(systemName: "camera").font(.system(size: 20)) }
+                    CameraButton(draft: draft) { Image(systemName: "camera").font(.app(size: 20)) }
                 }
                 #endif
                 PostTextInput(text: $draft.text, isFocused: $replyFocused, placeholder: "返信", onSubmit: { sendReply() })
@@ -162,7 +162,7 @@ struct ThreadScreen: View {
                 if actions.canWhisper {
                     // The web's two buttons: うなる (light blue, does not lift the thread or notify), 吠える (blue).
                     Button { sendReply(whisper: true) } label: {
-                        Text("うなる").font(.subheadline.bold())
+                        Text("うなる").font(.app(.subheadline, weight: .bold))
                             .padding(.horizontal, 12).padding(.vertical, 7)
                             .background(Capsule().fill(Color.blue.opacity(0.14)))
                             .foregroundStyle(Color.blue)
@@ -173,7 +173,7 @@ struct ThreadScreen: View {
                     .help("スレッドを上げず、通知も出さずに返信する")
                     .accessibilityHint("スレッドを上げず、通知も出さずに返信します")
                     Button { sendReply() } label: {
-                        Text(draft.sending ? "…" : "吠える").font(.subheadline.bold())
+                        Text(draft.sending ? "…" : "吠える").font(.app(.subheadline, weight: .bold))
                             .padding(.horizontal, 12).padding(.vertical, 7)
                             .background(Capsule().fill(Color.blue))
                             .foregroundStyle(.white)
@@ -184,7 +184,7 @@ struct ThreadScreen: View {
                     .help("返信する（Return）")
                 } else {
                     Button { sendReply() } label: {
-                        Image(systemName: draft.sending ? "hourglass.circle.fill" : "arrow.up.circle.fill").font(.system(size: 30))
+                        Image(systemName: draft.sending ? "hourglass.circle.fill" : "arrow.up.circle.fill").font(.app(size: 30))
                     }
                     .disabled(!draft.canSend)
                     .accessibilityLabel("返信を送信")

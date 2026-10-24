@@ -111,11 +111,11 @@ private struct ChatHeader: View {
             } else {
                 Image(systemName: store.unreadCount > 0 ? "dog.fill" : "dog")
                     .foregroundStyle(Color.accentGreen)
-                Text("B-guru チャット").font(.headline)
+                Text("B-guru チャット").font(.app(.headline))
             }
             if store.connection != .live {
                 Text(store.connection == .offline ? "オフライン" : "接続中…")
-                    .font(.caption).foregroundStyle(.secondary)
+                    .font(.app(.caption)).foregroundStyle(.secondary)
             }
             Spacer()
             if store.onlineCount > 0 {
@@ -134,6 +134,17 @@ private struct ChatHeader: View {
             .help(pin.pinned ? "固定を解除（他をクリックすると隠れる）" : "最前面に固定（配信中に横に置いておく）")
             .accessibilityLabel(pin.pinned ? "固定を解除" : "最前面に固定")
             Menu {
+                // 老眼対策 (drikin 2026-10-24): the whole panel's text, also ⌘+ / ⌘− / ⌘0.
+                Menu("文字の大きさ（\(TextScale.shared.percent)%）") {
+                    Button("大きく（⌘＋）") { TextScale.shared.larger() }.disabled(!TextScale.shared.canGrow)
+                    Button("小さく（⌘−）") { TextScale.shared.smaller() }.disabled(!TextScale.shared.canShrink)
+                    Button("標準に戻す（⌘0）") { TextScale.shared.reset() }.disabled(TextScale.shared.scale == 1)
+                    Divider()
+                    ForEach(TextScale.steps, id: \.self) { s in
+                        Toggle("\(Int((s * 100).rounded()))%", isOn: Binding(get: { TextScale.shared.scale == s }, set: { if $0 { TextScale.shared.set(s) } }))
+                    }
+                }
+                Divider()
                 Picker("通知", selection: $settings.notifyMode) {
                     ForEach(AppSettings.NotifyMode.allCases) { Text($0.label).tag($0) }
                 }
@@ -233,7 +244,7 @@ private struct ChatMessageList: View {
                 LazyVStack(alignment: .leading, spacing: 6) {
                     if rows.isEmpty {
                         Text(store.hasLoaded ? "今日はまだ静かだわん" : "読み込み中…")
-                            .font(.callout).foregroundStyle(.secondary)
+                            .font(.app(.callout)).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity).padding(.top, 40)
                     }
                     let canReact = store.capabilities?.canReact ?? false
@@ -320,20 +331,20 @@ private struct ChatComposerBar: View {
             }
             if composer.editingId != nil {
                 HStack {
-                    Text("メッセージを編集中").font(.caption).foregroundStyle(Color.accentGreen)
+                    Text("メッセージを編集中").font(.app(.caption)).foregroundStyle(Color.accentGreen)
                     Spacer()
-                    Button("キャンセル  Esc") { composer.cancelEdit() }.buttonStyle(.borderless).font(.caption)
+                    Button("キャンセル  Esc") { composer.cancelEdit() }.buttonStyle(.borderless).font(.app(.caption))
                 }
             }
             if composer.editingId == nil {
                 DraftImages(draft: photos)
-                if let e = photos.error { Text(e).font(.caption).foregroundStyle(.red) }
+                if let e = photos.error { Text(e).font(.app(.caption)).foregroundStyle(.red) }
             }
             HStack(alignment: .bottom, spacing: 8) {
                 // [📷] [message … 😊] [send], one height, bottoms aligned (a long draft grows upwards).
                 if composer.editingId == nil, store.capabilities?.canSendChatImages == true {
                     Button { importing = true } label: {
-                        Image(systemName: "photo").font(.system(size: 15))
+                        Image(systemName: "photo").font(.app(size: 15))
                             .frame(width: 26, height: Self.composerHeight)
                             .contentShape(Rectangle())
                     }
@@ -378,7 +389,7 @@ private struct ChatComposerBar: View {
                             composerFocused = true
                             pin.openEmoji?()
                         } label: {
-                            Image(systemName: "face.smiling").font(.system(size: 14))
+                            Image(systemName: "face.smiling").font(.app(size: 14))
                                 .foregroundStyle(.secondary)
                                 .frame(width: 28, height: Self.composerHeight)
                                 .contentShape(Rectangle())
@@ -392,7 +403,7 @@ private struct ChatComposerBar: View {
                 let canSubmit = !((composer.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (composer.editingId != nil || photos.images.isEmpty)) || !(store.capabilities?.canSend ?? true))
                 Button(action: submit) {
                     Image(systemName: composer.editingId == nil ? "paperplane.fill" : "checkmark")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.app(size: 14, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(width: 40, height: Self.composerHeight)
                         .background(RoundedRectangle(cornerRadius: 9).fill(Color.accentGreen.opacity(canSubmit ? 1 : 0.4)))
@@ -472,8 +483,8 @@ private struct ChatComposerBar: View {
 private struct OnlineLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: 3) {
-            configuration.icon.font(.system(size: 6)).foregroundStyle(.green)
-            configuration.title.font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            configuration.icon.font(.app(size: 6)).foregroundStyle(.green)
+            configuration.title.font(.app(.caption)).foregroundStyle(.secondary).monospacedDigit()
         }
     }
 }
@@ -527,7 +538,7 @@ private struct AssistantBannerRow: View {
                     .buttonStyle(.borderless)
                     .help("閉じる")
             }
-            .font(.callout)
+            .font(.app(.callout))
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(Color.accentColor.opacity(0.12))

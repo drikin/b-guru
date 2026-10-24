@@ -327,7 +327,7 @@ struct ComposeSheet: View {
                 Button("キャンセル") { close() }.disabled(draft.sending).keyboardShortcut(.cancelAction)
                     .buttonStyle(FilledButtonStyle(fill: nil))
                 Spacer()
-                Text(parentId == nil ? "新しい投稿" : "返信").font(.headline)
+                Text(parentId == nil ? "新しい投稿" : "返信").font(.app(.headline))
                 Spacer()
                 Button(draft.sending ? "送信中…" : "投稿", action: post)
                     .buttonStyle(FilledButtonStyle(fill: Color.accentGreen))
@@ -364,7 +364,7 @@ struct ComposeSheet: View {
             if draft.poll != nil, parentId == nil {
                 PollDraftEditor(poll: Binding(get: { draft.poll ?? PollDraft() }, set: { draft.poll = $0 }), onRemove: { draft.poll = nil })
             }
-            if let e = draft.error { Text(e).font(.caption).foregroundStyle(.red) }
+            if let e = draft.error { Text(e).font(.app(.caption)).foregroundStyle(.red) }
             attachRow
             if parentId == nil, actions?.canPickClub == true, !clubs.isEmpty {
                 ClubPickMenu(clubs: clubs, selected: $draft.club)
@@ -404,7 +404,7 @@ struct ComposeSheet: View {
             }
         }
         .buttonStyle(.borderless)
-        .font(.callout)
+        .font(.app(.callout))
         .lineLimit(1)
         .fixedSize(horizontal: false, vertical: true)
     }
@@ -470,8 +470,8 @@ struct MediaChip: View {
         HStack(spacing: 8) {
             Image(systemName: media.kind == .video ? "film" : "waveform").foregroundStyle(Color.accentGreen)
             VStack(alignment: .leading, spacing: 1) {
-                Text(media.name).font(.callout).lineLimit(1).truncationMode(.middle)
-                Text("\(media.kind.label)・\(media.sizeText)").font(.caption).foregroundStyle(.secondary)
+                Text(media.name).font(.app(.callout)).lineLimit(1).truncationMode(.middle)
+                Text("\(media.kind.label)・\(media.sizeText)").font(.app(.caption)).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
             Button(action: onRemove) { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
@@ -491,12 +491,12 @@ struct PollDraftEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
-                Text("アンケート").font(.subheadline.bold())
+                Text("アンケート").font(.app(.subheadline, weight: .bold))
                 Spacer(minLength: 4)
-                Text("締切").font(.caption).foregroundStyle(.secondary)
+                Text("締切").font(.app(.caption)).foregroundStyle(.secondary)
                 ForEach(PollDraft.durations, id: \.self) { h in
                     Button("\(h)時間") { poll.hours = h }
-                        .font(.caption.weight(poll.hours == h ? .bold : .regular))
+                        .font(.app(.caption, weight: poll.hours == h ? .bold : .regular))
                         .padding(.horizontal, 6).padding(.vertical, 3)
                         .background(Capsule().fill(poll.hours == h ? Color.accentGreen : .clear))
                         .foregroundStyle(poll.hours == h ? Color.white : Color.accentGreen)
@@ -505,7 +505,7 @@ struct PollDraftEditor: View {
                 Button(action: onRemove) { Image(systemName: "xmark") }
                     .buttonStyle(.borderless).accessibilityLabel("アンケートをやめる")
             }
-            Text("質問は投稿の本文になります。本文に投票の質問を書いてね。").font(.caption).foregroundStyle(.secondary)
+            Text("質問は投稿の本文になります。本文に投票の質問を書いてね。").font(.app(.caption)).foregroundStyle(.secondary)
             ForEach(poll.options.indices, id: \.self) { i in
                 HStack(spacing: 6) {
                     TextField("回答 \(i + 1)", text: Binding(get: { poll.options[i] },
@@ -519,9 +519,9 @@ struct PollDraftEditor: View {
                 }
             }
             Button("＋ 回答を追加（\(poll.options.count)/\(PollDraft.maxOptions)）") { poll.options.append("") }
-                .buttonStyle(.borderless).font(.caption).tint(Color.accentGreen)
+                .buttonStyle(.borderless).font(.app(.caption)).tint(Color.accentGreen)
                 .disabled(poll.options.count >= PollDraft.maxOptions)
-            Text("投票は1人1回・締切まで回答を変更できます。").font(.caption).foregroundStyle(.secondary)
+            Text("投票は1人1回・締切まで回答を変更できます。").font(.app(.caption)).foregroundStyle(.secondary)
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.04)))
@@ -545,7 +545,7 @@ struct ClubPickMenu: View {
             }
         } label: {
             Label("部活：\(clubs.first { $0.key == selected }?.name ?? "自動で分類（AI）")", systemImage: "tag")
-                .font(.callout)
+                .font(.app(.callout))
         }
         .fixedSize()
         .accessibilityLabel("部活動を選択")

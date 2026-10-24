@@ -78,7 +78,7 @@ struct MentionSuggestions: View {
                         Text(m.name).lineLimit(1)
                         Spacer()
                         if idx == 0 {
-                            Text("⏎").font(.caption).foregroundStyle(.tertiary)
+                            Text("⏎").font(.app(.caption)).foregroundStyle(.tertiary)
                         }
                     }
                     .padding(.horizontal, 10)

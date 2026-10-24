@@ -177,7 +177,7 @@ struct AnimatedGIF: View {
             }
         }
         .overlay(alignment: .bottomLeading) {
-            Text("GIF").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+            Text("GIF").font(.app(size: 9, weight: .bold)).foregroundStyle(.white)
                 .padding(.horizontal, 4).padding(.vertical, 1)
                 .background(RoundedRectangle(cornerRadius: 3).fill(.black.opacity(0.55)))
                 .padding(5)
@@ -492,10 +492,10 @@ struct PostVideo: View {
                         ZStack {
                             Color.black.opacity(0.22)
                             VStack(spacing: 8) {
-                                Image(systemName: "play.fill").font(.system(size: 20)).foregroundStyle(.white)
+                                Image(systemName: "play.fill").font(.app(size: 20)).foregroundStyle(.white)
                                     .frame(width: 52, height: 52).background(Circle().fill(.black.opacity(0.7)))
                                 if poster?.image == nil {
-                                    Text("動画").font(.caption.weight(.semibold)).foregroundStyle(.white.opacity(0.85))
+                                    Text("動画").font(.app(.caption, weight: .semibold)).foregroundStyle(.white.opacity(0.85))
                                 }
                             }
                         }
@@ -599,7 +599,7 @@ struct PostAudio: View {
                 }
             } label: {
                 Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.app(size: 14, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(width: 32, height: 32)
                     .background(Circle().fill(Color.accentGreen))
@@ -636,7 +636,7 @@ private struct AudioProgress: View {
             }
             .frame(height: 4)
             Text("\(Self.time(model.position)) / \(model.duration > 0 ? Self.time(model.duration) : "--:--")")
-                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                .font(.app(.caption).monospacedDigit()).foregroundStyle(.secondary)
                 .fixedSize()
         }
         .accessibilityElement(children: .ignore)

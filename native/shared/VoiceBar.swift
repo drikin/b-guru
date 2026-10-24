@@ -20,7 +20,7 @@ struct VoiceBar: View {
                     outside
                 }
                 if let notice = voice.notice {
-                    Text(notice).font(.caption).foregroundStyle(.secondary)
+                    Text(notice).font(.app(.caption)).foregroundStyle(.secondary)
                 }
             }
             .padding(.horizontal, 12)
@@ -58,10 +58,10 @@ struct VoiceBar: View {
             Image(systemName: people.isEmpty ? "mic" : "waveform")
                 .foregroundStyle(Color.accentGreen)
             if people.isEmpty {
-                Text("ボイスルーム").font(.subheadline)
-                Text("誰もいません").font(.caption).foregroundStyle(.secondary)
+                Text("ボイスルーム").font(.app(.subheadline))
+                Text("誰もいません").font(.app(.caption)).foregroundStyle(.secondary)
             } else {
-                Text("\(people.count) 人が参加中").font(.subheadline).monospacedDigit()
+                Text("\(people.count) 人が参加中").font(.app(.subheadline)).monospacedDigit()
                 avatars(people.map { ($0.userId, $0.name ?? "?", $0.avatar, false, false) })
             }
             Spacer(minLength: 4)
@@ -70,14 +70,14 @@ struct VoiceBar: View {
                     Task { await voice.join() }
                 } label: {
                     Text(people.isEmpty ? "開く" : "参加")
-                        .font(.subheadline.bold())
+                        .font(.app(.subheadline, weight: .bold))
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.accentGreen)
                 .controlSize(.small)
                 .accessibilityLabel(people.isEmpty ? "ボイスルームを開く" : "ボイスルームに参加")
             } else {
-                Text("使うにはログインし直してください").font(.caption).foregroundStyle(.secondary)
+                Text("使うにはログインし直してください").font(.app(.caption)).foregroundStyle(.secondary)
             }
         }
     }
@@ -88,7 +88,7 @@ struct VoiceBar: View {
         HStack(spacing: 8) {
             if voice.phase == .connecting || voice.phase == .reconnecting {
                 ProgressView().controlSize(.small)
-                Text(voice.phase == .connecting ? "接続中…" : "再接続中…").font(.caption).foregroundStyle(.secondary)
+                Text(voice.phase == .connecting ? "接続中…" : "再接続中…").font(.app(.caption)).foregroundStyle(.secondary)
             }
             faces
             Spacer(minLength: 4)
@@ -99,7 +99,7 @@ struct VoiceBar: View {
             Button(role: .destructive) {
                 Task { await voice.leave() }
             } label: {
-                Text("退出").font(.subheadline)
+                Text("退出").font(.app(.subheadline))
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -129,7 +129,7 @@ struct VoiceBar: View {
                     showAll = true
                 } label: {
                     Text(rest > 0 ? "+\(rest)" : "一覧")
-                        .font(.caption.bold())
+                        .font(.app(.caption, weight: .bold))
                         .monospacedDigit()
                         .frame(minWidth: 30, minHeight: 30)
                         .padding(.horizontal, rest > 99 ? 4 : 0)
@@ -156,7 +156,7 @@ struct VoiceBar: View {
                     .overlay(alignment: .bottomTrailing) {
                         if menus && p.muted {
                             Image(systemName: "mic.slash.fill")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.app(size: 9, weight: .bold))
                                 .foregroundStyle(.white)
                                 .padding(2)
                                 .background(Circle().fill(Color.secondary))
@@ -190,7 +190,7 @@ private struct MicButton: View {
             Task { await voice.setMic(!voice.micOn) }
         } label: {
             Image(systemName: voice.micOn ? "mic.fill" : "mic.slash.fill")
-                .font(.system(size: 14, weight: active ? .heavy : .regular))
+                .font(.app(size: 14, weight: active ? .heavy : .regular))
                 .foregroundStyle(active ? Color.white : (voice.micOn ? Color.accentGreen : Color.secondary))
                 .frame(width: 34, height: 28)
                 .background(
@@ -260,8 +260,8 @@ private struct VoiceMemberList: View {
         let speakers = voice.members.filter { !$0.muted }.count
         VStack(spacing: 0) {
             HStack {
-                Text("参加者 \(voice.members.count) 人").font(.headline).monospacedDigit()
-                Text("話せる人 \(speakers)/\(voice.maxSpeakers)").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                Text("参加者 \(voice.members.count) 人").font(.app(.headline)).monospacedDigit()
+                Text("話せる人 \(speakers)/\(voice.maxSpeakers)").font(.app(.caption)).foregroundStyle(.secondary).monospacedDigit()
                 Spacer()
                 Button("閉じる") { dismiss() }
             }
@@ -274,7 +274,7 @@ private struct VoiceMemberList: View {
                     Text(m.name + (m.isMe ? "（自分）" : "")).lineLimit(1)
                     Spacer()
                     if m.speaking {
-                        Text("話しています").font(.caption).foregroundStyle(Color.accentGreen)
+                        Text("話しています").font(.app(.caption)).foregroundStyle(Color.accentGreen)
                     }
                     Image(systemName: m.muted ? "mic.slash" : "mic.fill")
                         .foregroundStyle(m.muted ? Color.secondary : Color.accentGreen)

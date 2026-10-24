@@ -30,7 +30,7 @@ struct LoginView: View {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(status ?? "B-guru にログインしてから「このアプリを接続」を押してください")
-                        .font(.callout)
+                        .font(.app(.callout))
                         .foregroundStyle(status == nil ? .secondary : .primary)
                         .fixedSize(horizontal: false, vertical: true)
                     if showDevices {
@@ -38,7 +38,7 @@ struct LoginView: View {
                             web.view.load(URLRequest(url: APIClient.baseURL.appendingPathComponent("/settings/agent")))
                         }
                         .linkButton()
-                        .font(.callout)
+                        .font(.app(.callout))
                     }
                 }
                 Spacer()

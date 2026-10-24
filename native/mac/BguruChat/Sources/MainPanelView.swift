@@ -73,7 +73,15 @@ struct MainPanelView: View {
             Button("") { tab = .timeline }.keyboardShortcut("1", modifiers: .command).hidden()
             Button("") { tab = .chat }.keyboardShortcut("2", modifiers: .command).hidden()
             if jukeboxOn { Button("") { tab = .jukebox }.keyboardShortcut("3", modifiers: .command).hidden() }
+            // The text size (老眼対策): ⌘+ (also ⌘= / ⌘; on a JIS keyboard, where + is ⇧;), ⌘−, ⌘0.
+            Button("") { TextScale.shared.larger() }.keyboardShortcut("+", modifiers: .command).hidden()
+            Button("") { TextScale.shared.larger() }.keyboardShortcut("=", modifiers: .command).hidden()
+            Button("") { TextScale.shared.larger() }.keyboardShortcut(";", modifiers: .command).hidden()
+            Button("") { TextScale.shared.smaller() }.keyboardShortcut("-", modifiers: .command).hidden()
+            Button("") { TextScale.shared.reset() }.keyboardShortcut("0", modifiers: .command).hidden()
         }
+        // Text without a style of its own (and the input fields) at the app's text size too.
+        .font(.app(.body))
     }
 
     private var jukeboxOn: Bool { store.capabilities?.jukeboxEnabled ?? false }
@@ -243,7 +251,7 @@ private struct PanelTabs: View {
                 let on = selection == tab
                 Button { selection = tab } label: {
                     Text(label)
-                        .font(.system(size: 12, weight: on ? .semibold : .regular))
+                        .font(.app(size: 12, weight: on ? .semibold : .regular))
                         .foregroundStyle(on ? Color.white : Color.primary)
                         .padding(.horizontal, 10)
                         .frame(height: 20)

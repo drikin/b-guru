@@ -17,9 +17,9 @@ struct ShogiScreen: View {
             // In a game the note takes the game's bar for its 3 s (no extra line).
             if let n = shogi.notice, shogi.selected == nil {
                 HStack(alignment: .top, spacing: 4) {
-                    Text(n).font(.caption).foregroundStyle(.orange)
+                    Text(n).font(.app(.caption)).foregroundStyle(.orange)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Button { shogi.notice = nil } label: { Image(systemName: "xmark").font(.caption2) }
+                    Button { shogi.notice = nil } label: { Image(systemName: "xmark").font(.app(.caption2)) }
                         .buttonStyle(.borderless)
                         .accessibilityLabel("お知らせを閉じる")
                 }
@@ -31,7 +31,7 @@ struct ShogiScreen: View {
                     ShogiGameView(shogi: shogi, game: g)
                 }
             } else if shogi.selectedId != nil {
-                Text("読み込み中…").font(.callout).foregroundStyle(.secondary)
+                Text("読み込み中…").font(.app(.callout)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity).padding(.vertical, 20)
             } else {
                 // As tall as it needs; it scrolls only if it would pass half the chat.
@@ -73,7 +73,7 @@ private struct ShogiLobby: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 6)
             } else {
-                Text("対局はありません").font(.caption).foregroundStyle(.secondary)
+                Text("対局はありません").font(.app(.caption)).foregroundStyle(.secondary)
             }
         }
         .controlSize(.small)
@@ -100,7 +100,7 @@ private struct ShogiCurrentGame: View {
                     Text("募集中 ").foregroundStyle(.secondary) + Text(mine ? "あなた" : "\(g.creator?.name ?? "?") さん")
                 }
             }
-            .font(.callout)
+            .font(.app(.callout))
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
             if g.isActive {
@@ -131,7 +131,7 @@ private struct ShogiOfferView: View {
     var body: some View {
         HStack(spacing: 6) {
             Button { shogi.select(nil) } label: {
-                Image(systemName: "chevron.backward").font(.system(size: 12, weight: .semibold))
+                Image(systemName: "chevron.backward").font(.app(size: 12, weight: .semibold))
             }
             .buttonStyle(.borderless)
             .accessibilityLabel("ロビーへ")
@@ -203,7 +203,7 @@ struct ShogiGameView: View {
     private var bar: some View {
         HStack(spacing: 6) {
             Button { shogi.select(nil) } label: {
-                Image(systemName: "chevron.backward").font(.system(size: 12, weight: .semibold))
+                Image(systemName: "chevron.backward").font(.app(size: 12, weight: .semibold))
                     .frame(width: 22, height: 22).contentShape(Rectangle())
             }
             .buttonStyle(.borderless)
@@ -215,18 +215,18 @@ struct ShogiGameView: View {
                 // (2026-10-19, the picture viewer): no sheets in the panel.
                 if Self.inlineResign && confirmResign {
                     HStack(spacing: 6) {
-                        Text("投了しますか？").font(.caption.weight(.semibold))
+                        Text("投了しますか？").font(.app(.caption, weight: .semibold))
                         Button("投了する", role: .destructive) { confirmResign = false; Task { await shogi.resign(g.id) } }
                             .buttonStyle(.borderedProminent).tint(.red).controlSize(.mini)
                         Button("やめる") { confirmResign = false }.buttonStyle(.bordered).controlSize(.mini)
                     }
                 } else if let n = shogi.notice {
                     // A note (3 s) in place of the status, so it adds no line.
-                    Text(n).font(.caption).foregroundStyle(.orange)
+                    Text(n).font(.app(.caption)).foregroundStyle(.orange)
                         .onTapGesture { shogi.notice = nil }
                 } else {
                     Text(status)
-                        .font(.caption.weight(g.isActive && my == g.turnSide ? .semibold : .regular))
+                        .font(.app(.caption, weight: g.isActive && my == g.turnSide ? .semibold : .regular))
                         .foregroundStyle(g.isActive && my == g.turnSide ? Color.accentGreen : Color.secondary)
                 }
             }
@@ -249,7 +249,7 @@ struct ShogiGameView: View {
                 }
                 Button("ロビーへ", systemImage: "list.bullet") { shogi.select(nil) }
             } label: {
-                Image(systemName: "ellipsis.circle").font(.system(size: 15))
+                Image(systemName: "ellipsis.circle").font(.app(size: 15))
             }
             .menuIndicator(.hidden)
             #if os(macOS)
@@ -363,7 +363,7 @@ struct ShogiGameView: View {
 
     private var endBanner: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(g.resultText).font(.caption.weight(.semibold)).lineLimit(1)
+            Text(g.resultText).font(.app(.caption, weight: .semibold)).lineLimit(1)
             HStack(spacing: 8) {
                 if my != nil, shogi.canPlay {
                     if g.isBeagleGame {
@@ -399,7 +399,7 @@ struct ShogiChatCard: View {
             // 「☗A vs ☖B 対局中 ⚡ 12手 [観戦]」 — one line, redrawn by the game's events.
             HStack(spacing: 8) {
                 Text("\(g.playersText) 対局中 \(g.ply)手\(g.lastMove.map { " \($0.label)" } ?? "")")
-                    .font(.caption)
+                    .font(.app(.caption))
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Button(shogi.myColor(in: g) != nil ? "盤を開く" : "観戦") { shogi.openGame(gameId) }
@@ -415,7 +415,7 @@ struct ShogiChatCard: View {
         } else {
             // Over (or not known here): the result only, one small line; a tap shows the board.
             Text(g.map { $0.isEnded ? "\($0.playersText) \($0.resultText)" : body_ } ?? body_)
-                .font(.caption2)
+                .font(.app(.caption2))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity)
@@ -471,9 +471,9 @@ struct ShogiFoldedBar: View {
     var body: some View {
         Button(action: onUnfold) {
             HStack(spacing: 6) {
-                Text(summary).font(.caption).lineLimit(1)
+                Text(summary).font(.app(.caption)).lineLimit(1)
                 Spacer(minLength: 0)
-                Text("盤を表示").font(.caption.weight(.semibold)).foregroundStyle(Color.accentGreen)
+                Text("盤を表示").font(.app(.caption, weight: .semibold)).foregroundStyle(Color.accentGreen)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)

@@ -36,7 +36,7 @@ struct NetaSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("ネタ帳に送る").font(.headline)
+            Text("ネタ帳に送る").font(.app(.headline))
             if let outcome { result(outcome) } else { form }
         }
         .padding(20)
@@ -45,7 +45,7 @@ struct NetaSheet: View {
 
     @ViewBuilder private var form: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("URL").font(.caption).foregroundStyle(.secondary)
+            Text("URL").font(.app(.caption)).foregroundStyle(.secondary)
             if urls.count > 1 {
                 Picker("URL", selection: $url) {
                     ForEach(urls, id: \.self) { Text($0).lineLimit(1).truncationMode(.middle).tag($0) }
@@ -56,25 +56,25 @@ struct NetaSheet: View {
                     if title == Self.defaultTitle(old, post) { title = Self.defaultTitle(new, post) }
                 }
             } else {
-                Text(url).font(.callout).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+                Text(url).font(.app(.callout)).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
             }
         }
         VStack(alignment: .leading, spacing: 4) {
-            Text("題名").font(.caption).foregroundStyle(.secondary)
+            Text("題名").font(.app(.caption)).foregroundStyle(.secondary)
             TextField("題名（必須）", text: $title, axis: .vertical)
                 .lineLimit(1...3)
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: title) { _, t in if t.count > 200 { title = String(t.prefix(200)) } }
         }
         VStack(alignment: .leading, spacing: 4) {
-            Text("説明（任意）").font(.caption).foregroundStyle(.secondary)
+            Text("説明（任意）").font(.app(.caption)).foregroundStyle(.secondary)
             TextField("説明", text: $note, axis: .vertical)
                 .lineLimit(2...5)
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: note) { _, t in if t.count > 1000 { note = String(t.prefix(1000)) } }
         }
         Text("ネタ帳は公開サイトです。B-guru の表示名で投稿されます。")
-            .font(.caption).foregroundStyle(.secondary)
+            .font(.app(.caption)).foregroundStyle(.secondary)
         HStack {
             Spacer()
             Button("キャンセル", role: .cancel, action: onClose)
