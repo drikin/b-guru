@@ -111,9 +111,12 @@ final class ChatStore {
     let shogi: ShogiStore
     /// 🎮 散財ダッシュ (docs/minigame-spec.md), when the server has it on for this member.
     let minigame: MinigameStore
+    /// ✉️ 簡易 DM (DMStore.swift), when the server has it on for this member.
+    let dm: DMStore
 
     init(api: APIClient) {
         self.api = api
+        self.dm = DMStore(api: api)
         self.voice = VoiceStore(api: api)
         let room = RoomStore(api: api, voice: voice)
         self.room = room
@@ -173,6 +176,7 @@ final class ChatStore {
             room.configure(enabled: capabilities?.roomEnabled ?? false)
             shogi.configure(capabilities?.features?.shogi, enabled: capabilities?.shogiEnabled ?? false)
             minigame.configure(capabilities?.features?.minigame, enabled: capabilities?.minigameEnabled ?? false)
+            dm.configure(capabilities)
             // Voice is on for me but this token predates the "voice" scope: send the
             // member back to sign in once (a new sign-in gets the scope). Only once per
             // install, so a server that still withholds it cannot loop us.
@@ -226,6 +230,7 @@ final class ChatStore {
             if voice.enabled { Task { await voice.loadState() } } // resync after a reconnect
             if room.enabled { Task { await room.load() } }
             if shogi.enabled { Task { await shogi.reload() } } // moves missed while away
+            dm.applyReady(ev.data)
             await reload()
         case "chat":
             struct ChatEvent: Decodable { var action: String; var message: ChatMessage?; var id: Int?; var reactions: [Reaction]? }
@@ -265,6 +270,8 @@ final class ChatStore {
             shogi.apply(ev.data)
         case "shogi_commentary":
             shogi.applyCommentary(ev.data)
+        case "dm":
+            dm.apply(ev.data)
         case "voice":
             if let v = try? dec.decode(VoiceRoomInfo.self, from: ev.data) { voice.apply(v) }
         case "revoked":
@@ -610,6 +617,8 @@ final class ChatStore {
         // 🎮 (on unless -demoMinigameOff / BGURU_DEMO_MINIGAME=0): answered here, nothing is sent.
         let minigameOn = !ProcessInfo.processInfo.arguments.contains("-demoMinigameOff") && env["BGURU_DEMO_MINIGAME"] != "0"
         if minigameOn { minigame.debugLoadDemo() }
+        // ✉️ 簡易 DM (on unless -demoDMOff): sample conversations, nothing is sent.
+        if !ProcessInfo.processInfo.arguments.contains("-demoDMOff") { dm.debugLoadDemo() }
         let minigameCaps = minigameOn ? #","minigame":{"enabled":true,"path":"/api/agent/minigame","game_url":"/minigame/index.html","bridge_version":1,"engine_version":1,"play":true}"# : ""
         // 段階 3 (the operations): on unless -demoOldServer / BGURU_DEMO_OLD_SERVER=1 (a server from
         // before them says nothing); -demoTextOnly: an external agent's write key (text-only edits).

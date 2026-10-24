@@ -34,7 +34,11 @@ class MainActivity : ComponentActivity() {
                 val timeline = session.timeline
                 if (store != null && timeline != null) {
                     LaunchedEffect(store) { Push.askPermissionIfNeeded(this@MainActivity) }
-                    MainScreen(store, timeline, session.jukebox, onSignOut = session::signOut)
+                    androidx.compose.foundation.layout.Box {
+                        MainScreen(store, timeline, session.jukebox, onSignOut = session::signOut)
+                        // ✉️ DM list / conversation over everything (back returns to the chat).
+                        DMOverlay(store.dm)
+                    }
                 } else {
                     LoginScreen(onToken = session::signIn)
                 }
@@ -68,6 +72,9 @@ class MainActivity : ComponentActivity() {
             "shogi" -> { store.shogi.open = true; store.shogi.liveGame?.let { store.shogi.select(it.id) } }
             "minigame" -> store.minigame.open = true
             "viewer" -> store.demoViewer = true
+            // ✉️ the DM list, or the conversation with mazzo (one unread).
+            "dm" -> store.dm.openList()
+            "dm_chat" -> store.dm.openConversation(DMPeer("mazzo", "mazzo"))
         }
     }
 
@@ -80,6 +87,11 @@ class MainActivity : ComponentActivity() {
         // ☗ 将棋 (shogi_offer / shogi_turn): the shogi screen at that game.
         val game = intent?.getLongExtra(Push.EXTRA_SHOGI_GAME_ID, 0L) ?: 0L
         if (game > 0) App.session(this).store?.openShogi(game)
+        // ✉️ DM: that conversation.
+        intent?.getStringExtra(Push.EXTRA_DM_PEER_ID)?.takeIf { it.isNotBlank() }?.let { peer ->
+            App.session(this).store?.dm?.openConversation(DMPeer(peer, intent.getStringExtra(Push.EXTRA_DM_PEER_NAME)))
+            intent.removeExtra(Push.EXTRA_DM_PEER_ID)
+        }
         // The jukebox's playback notification.
         if (intent?.getBooleanExtra(JukeboxService.EXTRA_OPEN_JUKEBOX, false) == true) App.session(this).jukebox?.showTab = true
     }

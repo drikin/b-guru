@@ -69,6 +69,8 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
             // ☗ 将棋: an offer to me / my move in a slow game (a tap opens the game).
             UNNotificationCategory(identifier: "shogioffer", actions: [open], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: "shogiturn", actions: [open], intentIdentifiers: [], options: []),
+            // ✉️ 簡易 DM (a tap opens that conversation).
+            UNNotificationCategory(identifier: "dm", actions: [open], intentIdentifiers: [], options: []),
         ])
     }
 
@@ -110,12 +112,15 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
                                             withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void) {
         let kind = notification.request.content.userInfo["kind"] as? String
         let gameId = (notification.request.content.userInfo["game_id"] as? NSNumber)?.intValue
+        let dmPeer = kind == "dm" ? notification.request.content.userInfo["peer_id"] as? String : nil
         // In the app, the chat and the timeline show what is new themselves.
         let options: UNNotificationPresentationOptions = kind == "chat_mention" || kind == "chat_new" || kind == "timeline_new" ? [] : [.banner, .sound]
         DispatchQueue.main.async {
             // ☗ 将棋: not while that very game is on screen.
             let watching = gameId.map { id in MainActor.assumeIsolated { PushCenter.shared.isShowingShogi(id) } } ?? false
-            completionHandler(watching ? [] : options)
+            // ✉️ Not while that DM conversation is on screen.
+            let readingDM = dmPeer.map { id in MainActor.assumeIsolated { PushCenter.shared.session?.store?.dm.isShowing(peerId: id) ?? false } } ?? false
+            completionHandler(watching || readingDM ? [] : options)
         }
     }
 
@@ -127,11 +132,18 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
         let postId = (info["post_id"] as? NSNumber)?.intValue
         let kind = info["kind"] as? String
         let gameId = kind?.hasPrefix("shogi_") == true ? (info["game_id"] as? NSNumber)?.intValue : nil
+        let dmPeer = kind == "dm" ? info["peer_id"] as? String : nil
         let action = response.actionIdentifier
         let text = (response as? UNTextInputNotificationResponse)?.userText
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
-                PushCenter.shared.handle(action: action, messageId: messageId, postId: postId, shogiGameId: gameId, text: text)
+                if let dmPeer, let store = PushCenter.shared.session?.store {
+                    // ✉️ 簡易 DM: the chat page with that conversation open (its name comes with the thread).
+                    store.showChat?()
+                    store.dm.open(DMPeer(userId: dmPeer, name: nil, avatar: nil))
+                } else {
+                    PushCenter.shared.handle(action: action, messageId: messageId, postId: postId, shogiGameId: gameId, text: text)
+                }
             }
             completionHandler()
         }

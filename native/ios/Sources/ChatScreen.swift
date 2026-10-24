@@ -62,8 +62,19 @@ struct ChatScreen: View {
             .toolbar {
                 if let tabPicker { ToolbarItem(placement: .principal) { tabPicker } }
                 ToolbarItem(placement: .topBarLeading) { ChatStatus(store: store) }
-                ToolbarItem(placement: .topBarTrailing) { menu }
+                ToolbarItem(placement: .topBarTrailing) {
+                    HStack(spacing: 14) {
+                        DMBadgeButton(dm: store.dm) // ✉️ 簡易 DM（未読の数つき）
+                        menu
+                    }
+                }
             }
+        }
+        // ✉️ 簡易 DM: the list / a conversation over the chat.
+        .sheet(isPresented: Binding(get: { store.dm.route != nil }, set: { if !$0 { store.dm.close() } })) {
+            DMScreen(dm: store.dm)
+                .presentationDetents([.large])
+                .modifier(DMSceneVisibility(dm: store.dm))
         }
     }
 
@@ -149,7 +160,8 @@ private struct ChatMessageList: View {
                             highlighted: store.highlightId == row.message.id,
                             editing: editingId == row.message.id,
                             localImages: row.message.clientId.flatMap { store.outgoingPhotos[$0]?.previews } ?? [],
-                            onOpenImage: { i in viewing = ImageViewerItem(images: row.message.images ?? [], index: i) }
+                            onOpenImage: { i in viewing = ImageViewerItem(images: row.message.images ?? [], index: i) },
+                            onDM: store.dm.enabled ? dmTarget(row.message).map { peer in { store.dm.open(peer) } } : nil
                         )
                         .equatable()
                         .id(row.id)
@@ -401,5 +413,14 @@ private struct ShogiArea: View {
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
         }
+    }
+}
+
+/// Read marks only while the app is in front.
+private struct DMSceneVisibility: ViewModifier {
+    let dm: DMStore
+    @Environment(\.scenePhase) private var phase
+    func body(content: Content) -> some View {
+        content.onChange(of: phase, initial: true) { _, p in dm.appVisible = p == .active }
     }
 }

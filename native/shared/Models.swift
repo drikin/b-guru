@@ -201,7 +201,17 @@ struct Capabilities: Decodable, Sendable, Equatable {
             enabled = (try? Obj(from: decoder))?.enabled ?? false
         }
     }
+    /// ✉️ 簡易 DM (features.dm, DM_ENABLED on the server). Absent or enabled:false → nothing of it shows.
+    struct DMFeatures: Decodable, Sendable, Equatable {
+        var enabled: Bool?
+        var path: String?
+        /// This token may send (has the "chat" scope).
+        var send: Bool?
+        var maxBody: Int?
+        var ttlHours: Int?
+    }
     struct Features: Decodable, Sendable, Equatable {
+        var dm: DMFeatures?
         var chat: ChatFeatures?
         var macAssistant: FlagFeature?
         var posts: PostFeatures?

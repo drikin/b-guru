@@ -246,6 +246,23 @@ class ApiClient(val token: String) : PostOpsApi {
         }
     }
 
+    // MARK: ✉️ 簡易 DM (src/lib/dm.ts) — `base` is capabilities' dm path
+
+    suspend fun dmConversations(base: String = "/api/agent/dm"): DMListResponse = get(base)
+    suspend fun dmThread(userId: String, base: String = "/api/agent/dm", limit: Int = 200): DMThreadResponse =
+        get("$base/${userId.encodedPath()}", mapOf("limit" to "$limit"))
+    suspend fun dmSend(userId: String, body: String, clientId: String, base: String = "/api/agent/dm"): DMMessage =
+        decode<DMSendResponse>(send(request("POST", "$base/${userId.encodedPath()}", buildJsonObject {
+            put("body", body); put("client_id", clientId)
+        }))).message
+    /** Returns the total unread across all conversations. */
+    suspend fun dmMarkRead(userId: String, lastReadId: Long, base: String = "/api/agent/dm"): Int =
+        decode<DMReadResponse>(send(request("POST", "$base/${userId.encodedPath()}/read", buildJsonObject { put("last_read_id", lastReadId) }))).unreadCount
+    /** One DM (for a notification): the message and the other person. */
+    suspend fun dmMessage(id: Long, base: String = "/api/agent/dm"): DMMessageResponse = get("$base/messages/$id")
+
+    private fun String.encodedPath(): String = java.net.URLEncoder.encode(this, "UTF-8").replace("+", "%20")
+
     // MARK: jukebox
 
     /** The whole catalogue as text (it is cached on disk as is). */

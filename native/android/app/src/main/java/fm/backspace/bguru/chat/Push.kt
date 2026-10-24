@@ -36,6 +36,9 @@ object Push {
     const val EXTRA_MESSAGE_ID = "message_id"
     const val EXTRA_POST_ID = "post_id"
     const val EXTRA_SHOGI_GAME_ID = "shogi_game_id"
+    const val EXTRA_DM_PEER_ID = "dm_peer_id"
+    const val EXTRA_DM_PEER_NAME = "dm_peer_name"
+    private const val CH_DM = "dm"
     private const val CH_MENTION = "mention"
     private const val CH_CHAT = "chat"
     private const val CH_REPLY = "reply"
@@ -70,6 +73,7 @@ object Push {
             NotificationChannel(CH_REPLY, "投稿への返信", NotificationManager.IMPORTANCE_DEFAULT),
             NotificationChannel(CH_TIMELINE, "タイムラインの新着", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "タイムラインの新しい投稿（コメントは除く）" },
             NotificationChannel(CH_SHOGI, "将棋", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "対局の申し込みと、あなたの番になったとき" },
+            NotificationChannel(CH_DM, "DM", NotificationManager.IMPORTANCE_HIGH).apply { description = "あなた宛ての DM（1 対 1）" },
         ))
     }
 
@@ -133,11 +137,17 @@ object Push {
         NotificationManagerCompat.from(context).cancel(NEW_MESSAGES_ID)
     }
 
+    /** That person's DM conversation is on screen: their notification is stale. */
+    fun clearDMNotification(context: Context, peerId: String) {
+        NotificationManagerCompat.from(context).cancel(DMLogic.notificationId(peerId))
+    }
+
     // MARK: showing
 
     fun show(context: Context, data: Map<String, String>) {
         val kind = data["kind"] ?: return
         if (PushContent.isShogi(kind)) { showShogi(context, kind, data["game_id"]?.toLongOrNull() ?: return); return }
+        if (kind == PushContent.DM) { showDM(context, data["dm_id"]?.toLongOrNull(), data["peer_id"]); return }
         val messageId = data["message_id"]?.toLongOrNull()
         val postId = data["post_id"]?.toLongOrNull()
         val session = App.session(context)
@@ -259,6 +269,52 @@ object Push {
         }
     }
 
+    /** ✉️ DM: only ids come through FCM; the text and the sender's name are read with this device's
+     *  token (GET dm/messages/{id}). One notification per person; a tap opens that conversation. */
+    private fun showDM(context: Context, messageId: Long?, peerIdHint: String?) {
+        val session = App.session(context)
+        val store = session.store
+        // Already looking at that conversation.
+        if (peerIdHint != null && store?.dm?.visiblePeerId == peerIdHint) return
+        val api = session.api ?: session.savedToken()?.let(::ApiClient) ?: return
+        val base = store?.capabilities?.dmPath ?: "/api/agent/dm"
+        val r = if (messageId == null || messageId <= 0) null
+            else runBlocking { withTimeoutOrNull(8000) { runCatching { api.dmMessage(messageId, base) }.getOrNull() } }
+        val peerId = r?.message?.peerId?.ifEmpty { null } ?: r?.peer?.userId ?: peerIdHint ?: return
+        if (store?.dm?.visiblePeerId == peerId) return
+        val (title, text) = PushContent.dmContent(r?.peer?.name, r?.message?.body)
+        val open = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_DM_PEER_ID, peerId)
+            r?.peer?.name?.let { putExtra(EXTRA_DM_PEER_NAME, it) }
+        }
+        val notifId = DMLogic.notificationId(peerId)
+        val tap = PendingIntent.getActivity(context, notifId, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val b = NotificationCompat.Builder(context, CH_DM)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(0xFF16A34A.toInt())
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(tap)
+            .setAutoCancel(true)
+            .setGroup("dm")
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            // Lock screen: the generic text only.
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(context, CH_DM)
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setColor(0xFF16A34A.toInt())
+                    .setContentTitle(PushContent.defaultTitle(PushContent.DM))
+                    .setContentText(PushContent.publicText(PushContent.DM))
+                    .build()
+            )
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < 33) {
+            NotificationManagerCompat.from(context).notify(notifId, b.build())
+        }
+    }
+
     // Someone holding a locked phone must not be able to post or react as its
     // owner: both actions require unlocking first.
     private fun replyAction(context: Context, messageId: Long, notifId: Int): NotificationCompat.Action {
@@ -290,10 +346,20 @@ object PushContent {
 
     fun isShogi(kind: String) = kind == SHOGI_OFFER || kind == SHOGI_TURN
 
+    /** ✉️ 簡易 DM (`dm_id`, `peer_id` — not message_id: older apps would read a chat message by it). */
+    const val DM = "dm"
+
+    /** Title and text of a DM notification: the sender and the text when they could be read,
+     *  else 「B-guru DM」「DM が届きました」. */
+    fun dmContent(name: String?, body: String?): Pair<String, String> =
+        if (body == null) DMLogic.FALLBACK_TITLE to DMLogic.FALLBACK_TEXT
+        else DMLogic.notificationTitle(name) to DMLogic.notificationText(body)
+
     fun defaultTitle(kind: String) = when (kind) {
         "reply" -> "B-guru"
         SHOGI_OFFER, SHOGI_TURN -> "☗ 将棋"
         TIMELINE_NEW -> "B-guru タイムライン"
+        DM -> DMLogic.FALLBACK_TITLE
         else -> "B-guru チャット"
     }
 
@@ -303,6 +369,7 @@ object PushContent {
         TIMELINE_NEW -> "新しい投稿があります"
         SHOGI_OFFER -> "対局の申し込みが届きました"
         SHOGI_TURN -> "あなたの番です"
+        DM -> DMLogic.FALLBACK_TEXT
         else -> "あなたの投稿に返信がありました"
     }
 
@@ -320,6 +387,7 @@ object PushContent {
         "chat_mention" -> "あなたへのメンションがあります"
         TIMELINE_NEW -> "新しい投稿があります"
         SHOGI_OFFER, SHOGI_TURN -> "将棋の通知があります"
+        DM -> DMLogic.FALLBACK_TEXT
         else -> "新着があります"
     }
 

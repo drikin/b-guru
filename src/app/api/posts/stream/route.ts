@@ -15,6 +15,7 @@ import { personalBus, personalKey, type PersonalEvent } from "@/lib/personal-liv
 import { shogiEnabledFor } from "@/lib/shogi";
 import { commentaryEnabledFor } from "@/lib/shogi-commentary-store";
 import { minigameEnabledFor } from "@/lib/minigame";
+import { dmEnabledFor, ensureDmSweeper } from "@/lib/dm";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -39,7 +40,10 @@ export async function GET(req: NextRequest) {
   const commentaryOn = commentaryEnabledFor(email);
   // 🎮 散財ダッシュ (MINIGAME_ENABLED): today's top 10 over the broadcast bus, my own best over the personal bus.
   const minigameOn = minigameEnabledFor(email);
-  const shogiKey = email && (shogiOn || minigameOn) ? personalKey(email) : null;
+  // ✉️ 簡易 DM (DM_ENABLED): my DMs and read marks over the personal bus (`event: dm`, per-recipient DTO).
+  const dmOn = dmEnabledFor(email);
+  if (dmOn) ensureDmSweeper();
+  const shogiKey = email && (shogiOn || minigameOn || dmOn) ? personalKey(email) : null;
   let onPersonal: ((ev: PersonalEvent) => void) | null = null;
 
   let send: (event: LiveEvent | { type: "ping" }) => void = () => {};
@@ -120,9 +124,10 @@ export async function GET(req: NextRequest) {
       liveBus.on("change", send);
       if (shogiKey) {
         onPersonal = (ev) => {
-          if (ev.type === "shogi" ? !shogiOn : ev.type === "minigame" ? !minigameOn : true) return;
+          if (ev.type === "shogi" ? !shogiOn : ev.type === "minigame" ? !minigameOn : ev.type === "dm" ? !dmOn : true) return;
           try {
-            controller.enqueue(encoder.encode(`event: ${ev.type}\ndata: ${JSON.stringify(ev)}\n\n`));
+            const data = ev.type === "dm" ? ev.data : ev;
+            controller.enqueue(encoder.encode(`event: ${ev.type}\ndata: ${JSON.stringify(data)}\n\n`));
           } catch {
             // stream closed
           }

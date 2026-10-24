@@ -116,6 +116,8 @@ import java.time.format.DateTimeFormatter
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable () -> Unit)? = null, visible: Boolean = true) {
+    // ✉️ A DM screen over the chat: the chat is not on screen (read marking, 🎮 pauses).
+    @Suppress("NAME_SHADOWING") val visible = visible && store.dm.route == null
     val context = LocalContext.current
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -274,7 +276,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             TopAppBar(
                 title = { if (tabSwitch != null) tabSwitch() else Text("B-guru チャット", maxLines = 1) },
                 navigationIcon = { StatusBadge(store) },
-                actions = { ChatMenu(onSignOut) },
+                actions = { DMHeaderButton(store.dm); ChatMenu(onSignOut) },
             )
         },
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0),
@@ -350,6 +352,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                                     onReact = { store.toggleReaction(row.message.id, it) },
                                     onEdit = { beginEdit(row.message) },
                                     onReply = row.message.authorName?.let { n -> { replyTo(n) } },
+                                    onDM = row.message.dmPeer(store.dm.enabled)?.let { p -> { store.dm.openConversation(p) } },
                                     onRetry = { store.retry(row) },
                                     onDiscard = { store.discard(row) },
                                     onSelect = { selecting = row.message },
@@ -674,6 +677,7 @@ private fun MessageRow(
     onReact: (String) -> Unit,
     onEdit: () -> Unit,
     onReply: (() -> Unit)?,
+    onDM: (() -> Unit)? = null,
     onRetry: () -> Unit,
     onDiscard: () -> Unit,
     onSelect: () -> Unit,
@@ -707,7 +711,7 @@ private fun MessageRow(
         verticalAlignment = Alignment.Top,
     ) {
         if (!mine) {
-            Box(Modifier.size(28.dp)) { if (showHeader) Avatar(m.avatar, m.authorName ?: "") }
+            Box(Modifier.size(28.dp)) { if (showHeader) DMOffer(onDM) { Avatar(m.avatar, m.authorName ?: "") } }
             Spacer(Modifier.size(6.dp))
         }
         Column(
@@ -716,7 +720,7 @@ private fun MessageRow(
         ) {
             if (showHeader || row.state == SendState.FAILED) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (!mine) Text(m.authorName ?: "", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (!mine) DMOffer(onDM) { Text(m.authorName ?: "", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     if (row.state == SendState.FAILED) {
                         Text("送信できませんでした", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
                         Text("再送", style = MaterialTheme.typography.labelMedium, color = AccentGreen, modifier = Modifier.clickable(onClick = onRetry))
@@ -783,6 +787,9 @@ private fun MessageRow(
                     }
                     if (mine && canEdit && stored) {
                         DropdownMenuItem(text = { Text("編集") }, onClick = { menu = false; onEdit() })
+                    }
+                    if (onDM != null && !mine && stored) {
+                        DropdownMenuItem(text = { Text("DM を送る") }, onClick = { menu = false; onDM() })
                     }
                     if (body.isNotEmpty()) {
                         DropdownMenuItem(text = { Text("テキストをコピー") }, onClick = {
@@ -946,6 +953,14 @@ internal fun JumpToLatest(count: Int, modifier: Modifier, arrow: String = "↓",
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
         )
     }
+}
+
+/** ✉️ Whom 「DM を送る」 on this message would write to: another member's real message only
+ *  (not mine, not a notice / ☗ card, not still sending). `author_id` is the DM user id. */
+internal fun ChatMessage.dmPeer(dmEnabled: Boolean): DMPeer? {
+    if (!dmEnabled || isAuthor || isNotice || kind == "shogi" || id <= 0) return null
+    val uid = authorId?.takeIf { it.isNotBlank() } ?: return null
+    return DMPeer(uid, authorName, avatar)
 }
 
 /** ☗ 将棋 or 🎮 is the mode chosen above the chat (and the room is not in its own view). */

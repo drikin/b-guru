@@ -67,6 +67,7 @@ jobs:
       MINIGAME_TEST_DATABASE_URL: postgres://postgres:ci-only@localhost:5432/minigame
       TIMELINE_TEST_DATABASE_URL: postgres://postgres:ci-only@localhost:5432/timeline
       BEAGLE_AI_TEST_DATABASE_URL: postgres://postgres:ci-only@localhost:5432/beagleai
+      DM_TEST_DATABASE_URL: postgres://postgres:ci-only@localhost:5432/dm
     steps:
       - uses: actions/checkout@v4
 
@@ -83,7 +84,7 @@ jobs:
         env:
           PGPASSWORD: ci-only
         run: |
-          for d in shogi minigame timeline beagleai; do
+          for d in shogi minigame timeline beagleai dm; do
             psql -h localhost -U postgres -c "CREATE DATABASE $d"
           done
 
@@ -95,6 +96,7 @@ jobs:
           src/lib/__tests__/minigame-db.test.ts
           src/lib/__tests__/operations-db.test.ts
           src/lib/__tests__/beagle-ondevice-db.test.ts
+          src/lib/__tests__/dm-db.test.ts
 
   # Android の単体テスト。タイムラインの例題（src/lib/__tests__/fixtures/timeline/）を
   # アプリの自前計算にも読ませ、Web・サーバとずれたら落とす（docs/timeline-spec.md §9）。

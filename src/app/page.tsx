@@ -86,6 +86,8 @@ import RoomPanel from "@/components/RoomView";
 import { applyRoomEvent, reloadRoomIfOn, roomChatBubble } from "@/lib/room-client";
 import { ShogiChatCard, ShogiPanel } from "@/components/shogi/ShogiPanel";
 import { GameToggles, MinigamePanel } from "@/components/minigame/MinigamePanel";
+import { DmDrawer, DmNameMenu } from "@/components/dm/DMPanel";
+import { applyDmEvent } from "@/lib/dm-client";
 import { applyMinigameEvent, reloadMinigame } from "@/lib/minigame-client";
 import { applyShogiCommentaryEvent, applyShogiEvent, openShogiGame, reloadShogi } from "@/lib/shogi-client";
 import { bubbleText } from "@/lib/room-logic";
@@ -7105,6 +7107,14 @@ export default function Home() {
         /* ignore a malformed event */
       }
     });
+    // ✉️ 簡易 DM: a DM to me (or sent from my other device), or my read mark elsewhere.
+    es.addEventListener("dm", (e: MessageEvent) => {
+      try {
+        applyDmEvent(JSON.parse(e.data));
+      } catch {
+        /* ignore a malformed event */
+      }
+    });
     // Club room (ルーム): members joining / moving / leaving and reactions.
     es.addEventListener("room", (e: MessageEvent) => {
       try {
@@ -11990,6 +12000,7 @@ export default function Home() {
                   <RoomPanel fallback={<VoiceBar />} extra={(row) => <GameToggles row={row} />} />
                   <ShogiPanel />
                   <MinigamePanel />
+                  <DmDrawer />
                   {/* Message list */}
                   <ScrollArea.Autosize
                     type="auto"
@@ -12115,8 +12126,13 @@ export default function Home() {
                               <div style={{ maxWidth: "82%", display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start" }}>
                                 {!mine && (
                                   <Group gap={5} align="center" wrap="nowrap" mb={2}>
-                                    <SafeAvatar src={m.avatar} initial={name} size="xs" />
-                                    <Text size="xs" c="dimmed">{name}</Text>
+                                    {/* ✉️ 名前・アイコンを押すと「DM を送る」（DM が使える人だけ） */}
+                                    <DmNameMenu peer={m.authorId && m.id > 0 ? { user_id: m.authorId, name: name || null, avatar: m.avatar } : null}>
+                                      <Group gap={5} align="center" wrap="nowrap">
+                                        <SafeAvatar src={m.avatar} initial={name} size="xs" />
+                                        <Text size="xs" c="dimmed">{name}</Text>
+                                      </Group>
+                                    </DmNameMenu>
                                     <Text size="xs" c="dimmed" style={{ opacity: 0.7 }}>{chatTimeStr(m.createdAt)}</Text>
                                     {m.edited && <Text size="xs" c="green.7">編集済み</Text>}
                                   </Group>

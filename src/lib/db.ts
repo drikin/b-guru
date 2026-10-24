@@ -707,6 +707,26 @@ export async function initSchema() {
       reason TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    -- ✉️ 簡易 DM（lib/dm.ts）。1 対 1・テキストだけ・24 時間で消える（掃除は ensureDmSweeper）。
+    -- チャット（chat_messages）とは別の表。メールは中だけ（応答・配信には users.user_id を出す）。
+    CREATE TABLE IF NOT EXISTS dm_messages (
+      id SERIAL PRIMARY KEY,
+      sender_email TEXT NOT NULL,
+      recipient_email TEXT NOT NULL,
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_dm_pair ON dm_messages (LEAST(sender_email, recipient_email), GREATEST(sender_email, recipient_email), id DESC);
+    CREATE INDEX IF NOT EXISTS idx_dm_recipient ON dm_messages (recipient_email, id);
+    CREATE INDEX IF NOT EXISTS idx_dm_created ON dm_messages (created_at);
+    -- 相手ごとの既読（自分 email × 相手 email）。DM と一緒に古いものは消す。
+    CREATE TABLE IF NOT EXISTS dm_read_state (
+      email TEXT NOT NULL,
+      peer_email TEXT NOT NULL,
+      last_read_id INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (email, peer_email)
+    );
     -- ☗ 将棋（lib/shogi.ts、docs/shogi-spec.md）。対局者は users.user_id（メールは持たない）。
     -- 正本はここ: 局面（SFEN）・指し手（USI）・持ち時間。残り時間は turn_started_at からその都度出す。
     CREATE TABLE IF NOT EXISTS shogi_games (

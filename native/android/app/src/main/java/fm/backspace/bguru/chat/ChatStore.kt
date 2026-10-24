@@ -49,6 +49,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     val shogi = ShogiStore(api, app)
     /** 🎮 散財ダッシュ — only when the server turns it on for this member (capabilities.minigame). */
     val minigame = MinigameStore(api)
+    /** ✉️ 簡易 DM — only when the server turns it on for this member (capabilities.dm). */
+    val dm = DMStore(api)
     private val voiceApp = app.applicationContext
 
     /** True while the chat is on screen: drives read marking. */
@@ -150,7 +152,9 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             neta = Capabilities.NetaFeatures(enabled = true, path = "/api/agent/neta", site = "https://neta.backspace.fm"),
             shogi = if (!withShogi) null else Capabilities.ShogiFeatures(enabled = true, path = "/api/agent/shogi", boardUrl = "/shogi-board/index.html", bridgeVersion = 1, play = true, beagle = true, commentary = true),
             minigame = if (!withMinigame) null else Capabilities.MinigameFeatures(enabled = true, path = "/api/agent/minigame", gameUrl = "/minigame/index.html", bridgeVersion = 1, play = true),
+            dm = Capabilities.DMFeatures(enabled = true, path = "/api/agent/dm", send = true, maxBody = 1000, ttlHours = 24, rateLimitPerHour = 60, streamEvent = "dm"),
         ))
+        dm.loadDemo()
         // ☗ 将棋: sample games (one in progress against me, one to watch) and the chat's game card.
         if (withShogi) shogi.loadDemo("me", "ドリキン", shogiScenario)
         if (withMinigame) minigame.loadDemo()
@@ -207,6 +211,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
 
     fun stop() {
         shogi.close()
+        dm.close()
         room.close()
         voice.close()
         scope.cancel()
@@ -220,6 +225,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             room.configure(caps)
             shogi.configure(caps)
             minigame.configure(caps)
+            dm.configure(caps)
             // Voice is on for me but this token predates the "voice" scope: send the member
             // back to sign in once (a new sign-in gets the scope). Only once per install,
             // so a server that still withholds it cannot loop us.
@@ -271,11 +277,13 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
                 if (voice.enabled) scope.launch { voice.loadState() } // resync after a reconnect
                 if (room.enabled) scope.launch { room.reload() }
                 if (shogi.enabled) shogi.load() // resync games missed while disconnected
+                dm.onReady(ev.data)
                 reload()
             }
             "room" -> room.apply(ev.data)
             "shogi" -> if (shogi.enabled) shogi.apply(ev.data)
             "shogi_commentary" -> if (shogi.enabled) shogi.applyCommentary(ev.data) // ☗ ビーグルの実況 (the board's band)
+            "dm" -> dm.apply(ev.data)
             "minigame" -> if (minigame.enabled) minigame.onStreamEvent(ev.data)
             "voice" -> runCatching { ApiJson.decodeFromString<VoiceRoomInfo>(ev.data) }.getOrNull()?.let(voice::apply)
             "chat" -> {

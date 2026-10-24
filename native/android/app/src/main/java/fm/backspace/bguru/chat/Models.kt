@@ -92,6 +92,17 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val neta: NetaFeatures? = null,
         val shogi: ShogiFeatures? = null,
         val minigame: MinigameFeatures? = null,
+        val dm: DMFeatures? = null,
+    )
+    /** ✉️ 簡易 DM (1 対 1・テキストだけ・24 時間で消える), behind DM_ENABLED. `send` = this token may send (chat scope). */
+    @Serializable data class DMFeatures(
+        val enabled: Boolean? = null,
+        val path: String? = null,
+        val send: Boolean? = null,
+        val maxBody: Int? = null,
+        val ttlHours: Int? = null,
+        val rateLimitPerHour: Int? = null,
+        val streamEvent: String? = null,
     )
     /** 🎮 散財ダッシュ (docs/minigame-spec.md), behind MINIGAME_ENABLED. `play` = may play (chat scope). */
     @Serializable data class MinigameFeatures(
@@ -245,6 +256,13 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val shogiPath get() = features?.shogi?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/shogi"
     /** The board page (no token, no cookies): only under /shogi-board/ on our own server. */
     val shogiBoardUrl get() = features?.shogi?.boardUrl?.takeIf { it.startsWith("/shogi-board/") && !it.contains("..") } ?: "/shogi-board/index.html"
+    /** ✉️ DM is on for this member (absent or enabled false: nothing DM is shown). */
+    val dmEnabled get() = features?.dm?.enabled ?: false
+    val canSendDM get() = dmEnabled && (features?.dm?.send ?: false)
+    val dmMaxBody get() = features?.dm?.maxBody?.takeIf { it > 0 } ?: 1000
+    val dmTtlHours get() = features?.dm?.ttlHours?.takeIf { it > 0 } ?: 24
+    /** Only paths on our own server (the request carries the token). */
+    val dmPath get() = features?.dm?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/dm"
     /** 「ネタ帳に送る」 is on for this token. */
     val netaEnabled get() = features?.neta?.enabled ?: false
     /** Only paths on our own server (the request carries the token). */

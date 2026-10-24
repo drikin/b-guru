@@ -18,6 +18,7 @@ import {
   type MinigameSnapshot,
 } from "@/lib/minigame-client";
 import { ShogiToggle } from "@/components/shogi/ShogiPanel";
+import { DmToggle, useDm } from "@/components/dm/DMPanel";
 import {
   getServerSnapshot as getShogiServerSnapshot,
   getSnapshot as getShogiSnapshot,
@@ -58,6 +59,7 @@ export function MinigameToggle() {
 export function GameToggles({ row = false }: { row?: boolean }) {
   const mg = useMinigame();
   const shogi = useSyncExternalStore(subscribeShogi, getShogiSnapshot, getShogiServerSnapshot);
+  const dm = useDm();
   useEffect(() => {
     if (mg.status === "unknown") void loadMinigame();
   }, [mg.status]);
@@ -65,10 +67,12 @@ export function GameToggles({ row = false }: { row?: boolean }) {
     <>
       <ShogiToggle />
       <MinigameToggle />
+      {/* ✉️ 簡易 DM（DM_ENABLED の人だけ。未読の数つき） */}
+      <DmToggle />
     </>
   );
   if (!row) return <div style={{ display: "flex", gap: 6, alignItems: "center" }}>{items}</div>;
-  if (mg.status !== "enabled" && shogi.status !== "enabled") {
+  if (mg.status !== "enabled" && shogi.status !== "enabled" && dm.status !== "enabled") {
     // 読み込み中・どちらも無い: 行を取らない（ただしボタンの読み込みは走らせる）
     return <div style={{ display: "none" }}>{items}</div>;
   }
