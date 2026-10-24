@@ -388,13 +388,15 @@ export const RATE_RULES: Record<AgentScope, RateRule> = {
 
 /** Buckets for features with their own pace (not a scope). ☗ 将棋: moves and the
  *  30-second watch ping would eat the chat bucket (120/h) in one blitz game. */
-export type RateBucket = "shogi" | "minigame" | "post_light";
+export type RateBucket = "shogi" | "minigame" | "post_light" | "watch";
 export const BUCKET_RATE_RULES: Record<RateBucket, RateRule> = {
   shogi: { limit: 900, window: "1 hour" }, // 指し手（1 局 100 手前後）＋観戦の合図（30 秒ごと = 120/時）＋募集・受ける
   minigame: { limit: 900, window: "1 hour" }, // 🎮 1 回 = 発行＋提出（＋次の回の先取り）。短い回を続けて遊んでも詰まらない水準
   // アプリの軽い操作（リアクション・投票・ブックマーク・お気に入り・ピン・部活の付け替え）。投稿・編集・削除・
   // アップロードは post の枠（1 時間 60）のまま（オーナー決定 2026-10-22）。write の鍵には使わない。
   post_light: { limit: 300, window: "1 hour" },
+  // 📺 共同鑑賞の操作（再生・一時停止・シーク・リスト）。みんなで見ながら触っても詰まらない水準。
+  watch: { limit: 600, window: "1 hour" },
 };
 
 export interface RateResult {

@@ -7,6 +7,7 @@ import type { RoomMember } from "./room";
 import type { PresenceMember } from "./presence";
 import type { ShogiCommentaryDto, ShogiGameDto, ShogiLiveAction } from "./shogi-types";
 import type { LeaderEntry } from "./minigame/types";
+import type { WatchStateDto } from "./watch";
 
 // Chat delete events only carry the message id; create events carry the full
 // message. A chat event's `message` always has at least `id`.
@@ -60,7 +61,9 @@ export type LiveEvent =
   | { type: "shogi_commentary"; gameId: number; commentary: ShogiCommentaryDto }
   /** 🎮 散財ダッシュ: 今日のチャレンジの上位 10 が変わった（5 秒まとめ）。MINIGAME_ENABLED の人だけ
    *  （配信の側で落とす）。本人のベストは personal-live.ts で本人だけ。 */
-  | { type: "minigame"; action: "leaderboard"; period: "today"; key: string; top: LeaderEntry[] };
+  | { type: "minigame"; action: "leaderboard"; period: "today"; key: string; top: LeaderEntry[] }
+  // 📺 YouTube 共同鑑賞: 変わった後の状態（表示名だけ、メールなし）。
+  | { type: "watch"; state: WatchStateDto };
 
 export type ChatReactionLive = { emoji: string; count: number; reactors: string[]; userIds: string[] };
 

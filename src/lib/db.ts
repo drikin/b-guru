@@ -857,5 +857,29 @@ export async function initSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (week_start, game)
     );
+    -- 📺 YouTube 共同鑑賞（lib/watch.ts）: 部室で 1 本。状態は 1 行、見たいものリストは 30 本まで。
+    CREATE TABLE IF NOT EXISTS watch_state (
+      id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+      video_id TEXT,
+      title TEXT,
+      channel TEXT,
+      started_by TEXT,
+      playing BOOLEAN NOT NULL DEFAULT false,
+      position_s DOUBLE PRECISION NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      version INT NOT NULL DEFAULT 0,
+      last_actor TEXT,
+      last_action TEXT,
+      notice_msg_id INT,
+      notice_at TIMESTAMPTZ
+    );
+    CREATE TABLE IF NOT EXISTS watch_queue (
+      id SERIAL PRIMARY KEY,
+      video_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      channel TEXT,
+      added_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 }

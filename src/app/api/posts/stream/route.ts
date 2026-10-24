@@ -15,6 +15,7 @@ import { personalBus, personalKey, type PersonalEvent } from "@/lib/personal-liv
 import { shogiEnabledFor } from "@/lib/shogi";
 import { commentaryEnabledFor } from "@/lib/shogi-commentary-store";
 import { minigameEnabledFor } from "@/lib/minigame";
+import { watchEnabledFor } from "@/lib/watch";
 import { dmEnabledFor, ensureDmSweeper } from "@/lib/dm";
 
 export const dynamic = "force-dynamic";
@@ -40,6 +41,8 @@ export async function GET(req: NextRequest) {
   const commentaryOn = commentaryEnabledFor(email);
   // 🎮 散財ダッシュ (MINIGAME_ENABLED): today's top 10 over the broadcast bus, my own best over the personal bus.
   const minigameOn = minigameEnabledFor(email);
+  // 📺 共同鑑賞 (WATCH_ENABLED): signed-in members with the feature only.
+  const watchOn = !!email && watchEnabledFor(email);
   // ✉️ 簡易 DM (DM_ENABLED): my DMs and read marks over the personal bus (`event: dm`, per-recipient DTO).
   const dmOn = dmEnabledFor(email);
   if (dmOn) ensureDmSweeper();
@@ -75,6 +78,7 @@ export async function GET(req: NextRequest) {
         if (event.type === "shogi" && !shogiOn) return;
         if (event.type === "shogi_commentary" && !commentaryOn) return;
         if (event.type === "minigame" && !minigameOn) return;
+        if (event.type === "watch" && !watchOn) return;
         // Names / avatars of who is online: signed-in members only (same as
         // GET /api/presence, which returns [] to visitors).
         if (event.type === "presence" && !email && event.members) {

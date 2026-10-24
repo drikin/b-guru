@@ -89,6 +89,8 @@ import { GameToggles, MinigamePanel } from "@/components/minigame/MinigamePanel"
 import { DmDrawer, DmNameMenu } from "@/components/dm/DMPanel";
 import { applyDmEvent } from "@/lib/dm-client";
 import { applyMinigameEvent, reloadMinigame } from "@/lib/minigame-client";
+import { applyWatchEvent, isYoutubeVideoUrl, reloadWatch } from "@/lib/watch-client";
+import { WatchPanel, WatchTogetherButton } from "@/components/watch/WatchPanel";
 import { applyShogiCommentaryEvent, applyShogiEvent, openShogiGame, reloadShogi } from "@/lib/shogi-client";
 import { bubbleText } from "@/lib/room-logic";
 import { EDIT_HINT, SAVE_HINT, SEND_HINT, handleComposerKeyDown, useEnterSends } from "@/lib/composer-keys";
@@ -331,15 +333,23 @@ function renderChatBody(
   if (urlParts.some((p) => p.url)) {
     return urlParts.map((p, i) =>
       p.url ? (
-        <a
-          key={`u${i}`}
-          href={p.text}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ color: "var(--mantine-color-anchor)", textDecoration: "underline", overflowWrap: "anywhere" }}
-        >
-          {p.text}
-        </a>
+        <Fragment key={`u${i}`}>
+          <a
+            href={p.text}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "var(--mantine-color-anchor)", textDecoration: "underline", overflowWrap: "anywhere" }}
+          >
+            {p.text}
+          </a>
+          {/* 📺 YouTube の動画はチャットのみんなと同時に見られる（WATCH_ENABLED の人だけ出る） */}
+          {isYoutubeVideoUrl(p.text) && (
+            <>
+              {" "}
+              <WatchTogetherButton url={p.text} compact />
+            </>
+          )}
+        </Fragment>
       ) : (
         <Fragment key={`ut${i}`}>{renderChatBody(p.text, members, myUserId)}</Fragment>
       )
@@ -2240,6 +2250,8 @@ function PostCard({
           </Text>
         </Paper>
       )}
+      {/* 📺 YouTube はチャットのみんなと同時に見られる（カードの <a> の外に置く。WATCH_ENABLED の人だけ）。 */}
+      {post.urlPreview?.videoId && linkCard && linkCard.kind !== "spotify" && <WatchTogetherButton url={post.urlPreview.url} />}
 
       {/* Spotify 埋め込みプレイヤー。
           ⚠️ 上のリンクカード(<a>)の「外」に置く。iframe はインタラクティブな
@@ -7107,6 +7119,14 @@ export default function Home() {
         /* ignore a malformed event */
       }
     });
+    // 📺 YouTube 共同鑑賞: the shared player's state after each change.
+    es.addEventListener("watch", (e: MessageEvent) => {
+      try {
+        applyWatchEvent(JSON.parse(e.data));
+      } catch {
+        /* ignore a malformed event */
+      }
+    });
     // ✉️ 簡易 DM: a DM to me (or sent from my other device), or my read mark elsewhere.
     es.addEventListener("dm", (e: MessageEvent) => {
       try {
@@ -7150,6 +7170,7 @@ export default function Home() {
       reloadRoomIfOn(); // and the club room
       reloadShogi(); // and ☗ 将棋 (missed moves while disconnected)
       reloadMinigame(); // and 🎮 (today's top while disconnected)
+      reloadWatch(); // and 📺 (where the shared video is now)
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) L.silentRefreshFeed();
     };
     es.onerror = () => {
@@ -12000,6 +12021,7 @@ export default function Home() {
                   <RoomPanel fallback={<VoiceBar />} extra={(row) => <GameToggles row={row} />} />
                   <ShogiPanel />
                   <MinigamePanel />
+                  <WatchPanel />
                   <DmDrawer />
                   {/* Message list */}
                   <ScrollArea.Autosize

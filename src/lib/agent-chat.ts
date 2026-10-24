@@ -25,6 +25,8 @@ import { resolveDisplayName } from "./display-name";
 import { TIME_CONTROLS } from "./shogi-clock";
 import { CHARACTERS, ENGINE_VERSION as MINIGAME_ENGINE_VERSION } from "./minigame/sim";
 
+/** 📺 The watch-together player page's contract (public/watch/: receive / postMessage). */
+export const WATCH_BRIDGE_VERSION = 1;
 /** The game page's postMessage contract (docs/minigame-spec.md「橋渡し」). */
 export const MINIGAME_BRIDGE_VERSION = 1;
 
@@ -173,6 +175,10 @@ export function liveToStreamEvent(ev: LiveEvent, viewer: ChatViewer): StreamEven
   if (ev.type === "minigame") {
     return { event: "minigame", data: { action: ev.action, period: ev.period, key: ev.key, top: ev.top } };
   }
+  // 📺 共同鑑賞: the whole state after each change (the stream route drops it for members without the feature).
+  if (ev.type === "watch") {
+    return { event: "watch", data: { state: ev.state } };
+  }
   return null;
 }
 
@@ -195,7 +201,7 @@ export function toAgentVoiceDto(s: VoiceState) {
  *  calling token's, so a client knows up front which actions will be refused. */
 export function agentCapabilities(
   scopes: AgentScope[],
-  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; shogiCommentary?: boolean; minigame?: boolean; appIssued?: boolean; macAssistant?: boolean; beagleOnDevice?: boolean; beagleServer?: boolean } = {}
+  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; shogiCommentary?: boolean; minigame?: boolean; watch?: boolean; appIssued?: boolean; macAssistant?: boolean; beagleOnDevice?: boolean; beagleServer?: boolean } = {}
 ) {
   const ttlHours = parseInt(CHAT_TTL, 10) || 24;
   const can = (s: AgentScope) => scopes.includes(s);
@@ -277,6 +283,7 @@ export function agentCapabilities(
           ...(opts.shogi ? ["shogi"] : []),
           ...(opts.shogi && opts.shogiCommentary ? ["shogi_commentary"] : []),
           ...(opts.minigame ? ["minigame"] : []),
+          ...(opts.watch ? ["watch"] : []),
         ],
         affects_presence: false,
       },
@@ -304,6 +311,9 @@ export function agentCapabilities(
       // 🎮 散財ダッシュ (docs/minigame-spec.md), behind MINIGAME_ENABLED. The game is a web page the app
       // shows in a WebView (bridge_version 1); the app keeps the token and relays the API.
       minigame: minigameCapability(!!opts.minigame, scopes),
+      // 📺 YouTube 共同鑑賞, behind WATCH_ENABLED. The player is a web page the app shows in a WebView
+      // (bridge_version 1); the app relays the page's actions to the API and the stream's `watch` to the page.
+      watch: watchCapability(!!opts.watch, scopes),
       // Mac のアシスタント機能（MAC_ASSISTANT_ENABLED・最初はオーナーだけ）。false なら Mac アプリは出さない。
       mac_assistant: !!opts.macAssistant,
       voice: {
@@ -332,6 +342,16 @@ export function shogiCapability(enabled: boolean, scopes: AgentScope[], commenta
      *  { type: "commentary", text, eval_cp, mate, ply, move_label } を渡すと下に帯が出る（docs/shogi-spec.md）。 */
     commentary,
     time_controls: TIME_CONTROLS,
+  };
+}
+
+export function watchCapability(enabled: boolean, scopes: AgentScope[]) {
+  return {
+    enabled,
+    path: "/api/agent/watch",
+    player_url: "/watch/index.html",
+    bridge_version: WATCH_BRIDGE_VERSION,
+    control: enabled && scopes.includes("chat"),
   };
 }
 

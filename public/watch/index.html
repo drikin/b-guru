@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>📺 みんなで見る</title>
+<style>
+  :root {
+    --bg: #f4f5f2; --fg: #1d211c; --muted: #6b7068; --line: #d9ddd5; --card: #ffffff;
+    --accent: #16a34a; --accent-fg: #ffffff; --chip: #e8ebe5; --danger: #c2410c;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161815; --fg: #e9ece6; --muted: #9aa095; --line: #30342e; --card: #1f221e;
+            --accent: #22c55e; --accent-fg: #06210f; --chip: #2a2e28; --danger: #fb923c; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+    -webkit-text-size-adjust: 100%; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  #stage { position: relative; background: #000; width: 100%; aspect-ratio: 16 / 9; flex: none; }
+  body.compact #stage { flex: 1 1 auto; aspect-ratio: auto; min-height: 0; }
+  #yt, #yt iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  #empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px; color: #cfd3cb; text-align: center; padding: 16px; }
+  #empty b { font-size: 28px; }
+  #unmute { position: absolute; left: 10px; bottom: 10px; z-index: 3; border: 0; border-radius: 999px; padding: 6px 12px;
+    background: rgba(0,0,0,.72); color: #fff; font-weight: 600; cursor: pointer; }
+  #bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: var(--card); border-bottom: 1px solid var(--line); flex: none; }
+  #bar button { flex: none; border: 0; background: var(--chip); color: var(--fg); border-radius: 8px; min-width: 34px; height: 30px;
+    font-size: 15px; cursor: pointer; padding: 0 8px; }
+  #bar button:disabled { opacity: .4; cursor: default; }
+  #bar button.primary { background: var(--accent); color: var(--accent-fg); }
+  #seek { flex: 1 1 auto; min-width: 60px; accent-color: var(--accent); }
+  #time { flex: none; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; min-width: 76px; text-align: center; }
+  #more { flex: 1 1 auto; overflow-y: auto; padding: 8px 10px 16px; display: flex; flex-direction: column; gap: 10px; }
+  body.compact #more { display: none; }
+  #now { display: flex; flex-direction: column; gap: 2px; }
+  #now .t { font-weight: 700; font-size: 15px; overflow-wrap: anywhere; }
+  #now .s { color: var(--muted); font-size: 12px; }
+  #add { display: flex; gap: 6px; flex-wrap: wrap; }
+  #url { flex: 1 1 200px; min-width: 0; height: 34px; border-radius: 8px; border: 1px solid var(--line); background: var(--card);
+    color: var(--fg); padding: 0 10px; font-size: 14px; }
+  #add button { height: 34px; border-radius: 8px; border: 0; padding: 0 12px; font-weight: 600; cursor: pointer;
+    background: var(--chip); color: var(--fg); }
+  #add button.primary { background: var(--accent); color: var(--accent-fg); }
+  #msg { color: var(--danger); font-size: 12px; min-height: 0; }
+  #msg:empty { display: none; }
+  h2 { margin: 4px 0 0; font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: .04em; }
+  #queue { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  #queue li { display: flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px; }
+  #queue img { width: 72px; height: 40px; object-fit: cover; border-radius: 6px; flex: none; background: #000; }
+  #queue .info { flex: 1 1 auto; min-width: 0; }
+  #queue .info .t { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #queue .info .s { font-size: 11px; color: var(--muted); }
+  #queue button { flex: none; border: 0; background: var(--chip); color: var(--fg); border-radius: 8px; width: 32px; height: 30px; cursor: pointer; }
+  #queue .none { color: var(--muted); font-size: 12px; border: 0; background: none; padding: 0; }
+  .ro #bar button:not(.local), .ro #add, .ro #queue button { display: none; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div id="yt"></div>
+    <div id="empty"><b>📺</b><div>YouTube の URL を貼って「いま見る」<br>流した動画はチャットのみんなと同時に再生されます</div></div>
+    <button id="unmute" hidden>🔊 音を出す</button>
+  </div>
+  <div id="bar">
+    <button id="toggle" class="primary" title="再生 / 一時停止（みんな）" aria-label="再生">▶</button>
+    <input id="seek" type="range" min="0" max="0" step="1" value="0" aria-label="再生位置（みんな）">
+    <span id="time">0:00 / 0:00</span>
+    <button id="next" title="次の動画へ（みんな）" aria-label="次の動画へ">⏭</button>
+    <button id="mute" class="local" title="この端末の音" aria-label="消音">🔊</button>
+    <button id="pop" class="local" title="別の窓で見る / 戻す" aria-label="別の窓で見る">⧉</button>
+  </div>
+  <div id="more">
+    <div id="now"><div class="t" id="title">なにも流れていません</div><div class="s" id="sub"></div></div>
+    <form id="add" autocomplete="off">
+      <input id="url" type="url" inputmode="url" placeholder="YouTube の URL を貼る" aria-label="YouTube の URL">
+      <button type="submit" class="primary" id="playNow">いま見る</button>
+      <button type="button" id="enqueue">リストへ</button>
+    </form>
+    <div id="msg" role="status"></div>
+    <h2>見たいものリスト</h2>
+    <ul id="queue"></ul>
+  </div>
+  <script src="player.js"></script>
+</body>
+</html>
