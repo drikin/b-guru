@@ -56,9 +56,13 @@ const CHAT_DIST = `(() => {
   };
 })()`;
 
-/** Click the タイムライン / チャット segmented control. */
+/** Click the タイムライン / チャット segmented control. Only its own labels: any button
+ *  whose text contained the word used to match too — on 2026-10-25 a poll answer
+ *  「ビーグルチャットで参加（笑）」 was clicked instead, which voted as the guard's member
+ *  and left the chat closed. */
 const clickTab = (label) => `(() => {
-  const btns = [...document.querySelectorAll('label, button, [role="radio"]')];
+  const tabs = document.querySelectorAll('[data-cx="navtabs"] .mantine-SegmentedControl-root label');
+  const btns = [...(tabs.length ? tabs : document.querySelectorAll('.mantine-SegmentedControl-root label'))];
   const b = btns.find(x => x.textContent && x.textContent.includes(${JSON.stringify(label)}));
   if (!b) return false;
   b.click();
