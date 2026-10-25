@@ -276,6 +276,8 @@ export function WatchPanel() {
           width: rect.w,
           height: rect.h,
           zIndex: 400,
+          // チャットの上に重ねる形では、親の層が pointer-events: none（下のチャットを押せるように）。窓は押せるように戻す。
+          pointerEvents: "auto",
           borderRadius: 12,
           overflow: "hidden",
           boxShadow: "0 12px 32px rgba(0,0,0,.28)",

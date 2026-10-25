@@ -3243,12 +3243,15 @@ console.log("\nS. ☗ 将棋: 無効の間は出ない（SHOGI_ENABLED）");
     await page.evaluate(clickTab("チャット"));
     await page.waitForTimeout(1500);
     const t = await page.evaluate(`(() => {
+      const ov = document.querySelector('[data-cx="overlay-switch-shogi"]');
+      if (ov) return { overlay: true, text: (ov.textContent || '').trim(), aria: ov.getAttribute('aria-label') };
       const b = document.querySelector('[data-cx="shogi-toggle"]');
       return b ? { text: (b.textContent || '').trim(), aria: b.getAttribute('aria-label'), title: b.getAttribute('title') } : null;
     })()`);
+    // 2026-10-25: チャットの上に重ねる形（CHAT_OVERLAY_ENABLED）では 2 段目のスイッチ（☗ と、広い画面では「将棋」の名前も）。
     check(
       "☗ toggle is the icon only (aria-label / title stay 「将棋」)",
-      !!t && t.text.startsWith("☗") && !t.text.includes("将棋") && t.aria === "将棋" && (t.title || "").startsWith("将棋"),
+      !!t && (t.overlay ? t.text.startsWith("☗") && t.aria === "将棋" : t.text.startsWith("☗") && !t.text.includes("将棋") && t.aria === "将棋" && (t.title || "").startsWith("将棋")),
       JSON.stringify(t)
     );
     await page.evaluate(clickTab("タイムライン"));
@@ -3355,15 +3358,22 @@ console.log("\nT. 🎮 散財ダッシュ（MINIGAME_ENABLED）");
   const shown = await page.evaluate(`(() => {
     const chat = document.querySelector('[class*="bguru-chat-view"]');
     if (!chat) return null;
-    const b = chat.querySelector('[data-cx="minigame-toggle"]') || [...chat.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === 'ゲーム');
-    return { toggle: !!b, text: b ? (b.textContent || '').trim() : null, aria: b ? b.getAttribute('aria-label') : null, panel: !!chat.querySelector('[data-cx="minigame-panel"]') };
+    const ov = chat.querySelector('[data-cx="overlay-switch-game"]');
+    const b = ov || chat.querySelector('[data-cx="minigame-toggle"]') || [...chat.querySelectorAll('button')].find((x) => x.getAttribute('aria-label') === 'ゲーム');
+    return { overlay: !!ov, toggle: !!b, text: b ? (b.textContent || '').trim() : null, aria: b ? b.getAttribute('aria-label') : null, panel: !!chat.querySelector('[data-cx="minigame-panel"]') };
   })()`);
   if (probe.api === 404) {
     check("minigame API answers 404 while disabled", true, "GET /api/minigame/me → 404");
     check("🎮 is not shown in the chat while MINIGAME_ENABLED is off", !!shown && !shown.toggle && !shown.panel, JSON.stringify(shown));
   } else if (probe.api === 200) {
-    check("🎮 is the icon only (aria-label 「ゲーム」)", !!shown && shown.toggle && shown.text === "🎮" && shown.aria === "ゲーム", JSON.stringify(shown));
-    await page.click('[data-cx="minigame-toggle"]').catch(() => {});
+    // 重ねる形では 2 段目のスイッチ（広い画面では「🎮ゲーム」と名前も出る）。
+    const mgToggle = shown && shown.overlay ? '[data-cx="overlay-switch-game"]' : '[data-cx="minigame-toggle"]';
+    check(
+      "🎮 is the icon only (aria-label 「ゲーム」)",
+      !!shown && shown.toggle && (shown.overlay ? (shown.text || "").startsWith("🎮") : shown.text === "🎮") && shown.aria === "ゲーム",
+      JSON.stringify(shown)
+    );
+    await page.click(mgToggle).catch(() => {});
     await page.waitForSelector('[data-cx="minigame-panel"] canvas', { timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(800);
     const lay = await page.evaluate(`(() => {
@@ -3379,7 +3389,7 @@ console.log("\nT. 🎮 散財ダッシュ（MINIGAME_ENABLED）");
       !!lay && lay.canvas && lay.scrollY === 0 && lay.inputBottom !== null && lay.inputBottom <= lay.vh && lay.panelBottom < lay.inputBottom,
       JSON.stringify(lay)
     );
-    await page.click('[data-cx="minigame-toggle"]').catch(() => {}); // 閉じる（開いている間だけ作り、閉じたら捨てる）
+    await page.click(mgToggle).catch(() => {}); // 閉じる（開いている間だけ作り、閉じたら捨てる）
     await page.waitForTimeout(400);
   } else {
     console.log(`  [skip] minigame probe failed (GET /api/minigame/me → ${probe.api})`);
@@ -3411,17 +3421,23 @@ console.log("\nV. 📺 YouTube 共同鑑賞（WATCH_ENABLED）");
   const shown = await page.evaluate(`(() => {
     const chat = document.querySelector('[class*="bguru-chat-view"]');
     if (!chat) return null;
-    const b = chat.querySelector('[data-cx="watch-toggle"]');
-    return { toggle: !!b, text: b ? (b.textContent || '').trim() : null, panel: !!document.querySelector('[data-cx="watch-panel"]') };
+    const ov = chat.querySelector('[data-cx="overlay-switch-watch"]');
+    const b = ov || chat.querySelector('[data-cx="watch-toggle"]');
+    return { overlay: !!ov, toggle: !!b, text: b ? (b.textContent || '').trim() : null, panel: !!document.querySelector('[data-cx="watch-panel"]') };
   })()`);
   if (probe.api === 404) {
     check("watch API answers 404 while disabled", true, "GET /api/watch/state → 404");
     check("📺 is not shown in the chat while WATCH_ENABLED is off", !!shown && !shown.toggle && !shown.panel, JSON.stringify(shown));
   } else if (probe.api === 200) {
     check("GET /api/watch/state answers a state without emails", probe.hasState && probe.noEmail, JSON.stringify(probe));
-    check("📺 is shown in the chat (icon only)", !!shown && shown.toggle && shown.text === "📺", JSON.stringify(shown));
+    check(
+      "📺 is shown in the chat (icon only)",
+      !!shown && shown.toggle && (shown.overlay ? (shown.text || "").startsWith("📺") : shown.text === "📺"),
+      JSON.stringify(shown)
+    );
+    const watchToggle = shown && shown.overlay ? '[data-cx="overlay-switch-watch"]' : '[data-cx="watch-toggle"]';
     const wasOpen = shown && shown.panel;
-    if (!wasOpen) await page.click('[data-cx="watch-toggle"]').catch(() => {});
+    if (!wasOpen) await page.click(watchToggle).catch(() => {});
     await page.waitForSelector('[data-cx="watch-panel"] iframe', { timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(800);
     const lay = await page.evaluate(`(() => {
@@ -3440,7 +3456,7 @@ console.log("\nV. 📺 YouTube 共同鑑賞（WATCH_ENABLED）");
         (lay.mode === "floating" || lay.panelBottom < lay.inputBottom),
       JSON.stringify(lay)
     );
-    if (!wasOpen) await page.click('[data-cx="watch-toggle"]').catch(() => {}); // 閉じる（自分の画面だけ。みんなの動画は続く）
+    if (!wasOpen) await page.click(watchToggle).catch(() => {}); // 閉じる（自分の画面だけ。みんなの動画は続く）
     await page.waitForTimeout(400);
   } else {
     console.log(`  [skip] watch probe failed (GET /api/watch/state → ${probe.api})`);
