@@ -99,6 +99,7 @@ sealed interface PostDialog {
     data class Delete(val post: Post) : PostDialog
     data class Picker(val post: Post) : PostDialog
     data class PollEdit(val post: Post) : PostDialog
+    data class PollVoters(val post: Post) : PostDialog
     data class Club(val post: Post) : PostDialog
     /** "pinned" | "bm" | "fav". */
     data class List(val filter: String) : PostDialog
@@ -122,6 +123,7 @@ fun PostDialogHost(timeline: TimelineStore, capabilities: Capabilities?, onOpenT
         is PostDialog.Delete -> DeleteDialog(timeline, d.post)
         is PostDialog.Picker -> EmojiPickerSheet(onDismiss = { timeline.dialog = null }) { e -> timeline.dialog = null; timeline.react(d.post, e) }
         is PostDialog.PollEdit -> PollEditDialog(timeline, d.post)
+        is PostDialog.PollVoters -> PollVotersDialog(timeline, d.post)
         is PostDialog.Club -> ClubDialog(timeline, d.post)
         is PostDialog.List -> PostListSheet(timeline, d.filter, onOpenThread)
     }
@@ -216,7 +218,8 @@ private fun ClubDialog(timeline: TimelineStore, post: Post) {
 /** The poll under a post: 「📊 投票（N票）」, the answers (tap = vote / change), the result bars,
  *  time left; 「回答を編集」 for the author within an hour (PollCard in src/app/page.tsx). */
 @Composable
-fun PollCard(post: Post, poll: PostPoll, canVote: Boolean, canEdit: Boolean, onVote: (Long) -> Unit, onEdit: () -> Unit) {
+fun PollCard(post: Post, poll: PostPoll, canVote: Boolean, canEdit: Boolean, onVote: (Long) -> Unit, onEdit: () -> Unit,
+             onVoters: (() -> Unit)? = null) {
     val closed = PollRules.isClosed(poll)
     val shape = RoundedCornerShape(12.dp)
     Column(
@@ -259,10 +262,61 @@ fun PollCard(post: Post, poll: PostPoll, canVote: Boolean, canEdit: Boolean, onV
             }
         }
         Row {
-            Text(PollRules.footer(poll, closed), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+            Text(PollRules.footer(poll, closed), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // My own poll: who voted for what (only the author sees it — drikin 2026-10-24).
+            if (onVoters != null && post.isAuthor && post.id > 0 && poll.totalVotes > 0) {
+                Text(" · ", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("投票した人", style = MaterialTheme.typography.labelSmall, color = AccentGreen, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable(onClick = onVoters))
+            }
+            Spacer(Modifier.weight(1f))
             Text(if (closed) "終了" else PollRules.timeLeft(poll.endsAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+/** 「投票した人」 — who chose each answer of my own poll (read fresh each time it opens). */
+@Composable
+private fun PollVotersDialog(timeline: TimelineStore, post: Post) {
+    var groups by remember(post.id) { mutableStateOf<List<PollVoterGroup>?>(null) }
+    var error by remember(post.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(post.id) {
+        try { groups = timeline.pollVoters(post) } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            error = PostActions.errorText(e, "読み込めませんでした")
+        }
+    }
+    AlertDialog(
+        onDismissRequest = { timeline.dialog = null },
+        title = { Text("投票した人") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                post.poll?.question?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                val g = groups
+                when {
+                    error != null -> Text(error!!, color = MaterialTheme.colorScheme.error)
+                    g == null -> CircularProgressIndicator(Modifier.size(24.dp))
+                    else -> g.forEach { o ->
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("${o.label}（${o.voters.size}票）", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                            if (o.voters.isEmpty()) {
+                                Text("まだいません", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            o.voters.forEach { v ->
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Avatar(v.avatar?.let { ApiClient.absolute(it) ?: it }, v.name ?: "?", 24.dp)
+                                    Text(v.name ?: "（名前なし）", style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { timeline.dialog = null }) { Text("閉じる") } },
+    )
 }
 
 /** 「アンケートの回答を編集」: answers only (the question is the post's text, edited with ✏️). */

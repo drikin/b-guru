@@ -294,6 +294,45 @@ d("段階 3 の操作（DB）", () => {
       expect((await late.json()).error).toBe("投票は終了しました");
     });
 
+    it("投票した人: 投稿者だけ（Web・アプリの鍵）が選択肢ごとに見られる・他人と外部の鍵は 403・メールは返さない", async () => {
+      const { POST: vote } = await import("@/app/api/agent/posts/[id]/poll/vote/route");
+      const { GET: voters } = await import("@/app/api/agent/posts/[id]/poll/voters/route");
+      const webPoll = await import("@/app/api/poll/[postId]/route");
+      const p = await m.posts.createPost({ authorEmail: ME, authorName: "わたし", text: "誰が", noPreview: true, poll: { question: "誰が", options: ["A", "B", "C"], durationHours: 1 } });
+      const [o1, o2, o3] = p.poll!.options.map((o) => o.id);
+      const otherTok = (await m.auth.issueAgentToken({ email: OTHER, deviceName: "Android", scopes: ["read", "post"], appIssued: true })).token;
+      const v = (opt: number, t: string) => vote(req("http://x", t, { method: "POST", body: JSON.stringify({ option_id: opt }) }), P(p.id));
+      expect((await v(o1, otherTok)).status).toBe(200);
+      expect((await v(o2, appToken)).status).toBe(200);
+      const get = (t: string) => voters(req("http://x", t), P(p.id));
+
+      const ok = await get(appToken);
+      expect(ok.status).toBe(200);
+      const text = await ok.text();
+      expect(text).not.toContain("@test.local");
+      const body = JSON.parse(text) as { options: { id: number; voters: { user_id: string; avatar: string }[] }[] };
+      expect(body.options.map((o) => [o.id, o.voters.length])).toEqual([[o1, 1], [o2, 1], [o3, 0]]);
+      expect(body.options[0].voters[0].user_id).toBe(await m.user.ensureUserId(OTHER));
+      expect(body.options[0].voters[0].avatar).toMatch(/^\/api\/avatar\//);
+
+      for (const [name, t] of [["他人", otherTok], ["外部の鍵", extPostToken]] as const) {
+        const r = await get(t);
+        expect(r.status, name).toBe(403);
+        expect((await r.json()).code, name).toBe("forbidden");
+      }
+      expect((await voters(req("http://x", appToken), P(99999999))).status).toBe(404);
+
+      const wp = { params: Promise.resolve({ postId: String(p.id) }) };
+      web.email = OTHER;
+      expect((await webPoll.GET(new NextRequest("http://x"), wp)).status).toBe(403);
+      web.email = ME;
+      const w = await webPoll.GET(new NextRequest("http://x"), wp);
+      expect(w.status).toBe(200);
+      expect((await w.json()).options[1].voters).toHaveLength(1);
+      web.email = null;
+      expect((await webPoll.GET(new NextRequest("http://x"), wp)).status).toBe(401);
+    });
+
     it("お気に入りとブックマーク: アプリの鍵（write なし）で付け外しでき、投稿に状態が載る", async () => {
       const fav = await import("@/app/api/agent/favorites/route");
       const bm = await import("@/app/api/agent/bookmarks/route");

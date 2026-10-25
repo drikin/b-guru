@@ -144,6 +144,12 @@ extension APIClient {
         return try await perform(request("POST", "/api/agent/posts/\(postId)/poll/vote", json: ["option_id": optionId]), as: R.self).poll
     }
 
+    /// Who voted for what (only the poll's author may ask; others get 403).
+    func pollVoters(postId: Int) async throws -> [PollVoterGroup] {
+        struct R: Decodable { var options: [PollVoterGroup] }
+        return try await perform(request("GET", "/api/agent/posts/\(postId)/poll/voters"), as: R.self).options
+    }
+
     /// The answers in this order; id nil = a new one.
     func editPoll(postId: Int, options: [(id: Int?, label: String)]) async throws -> PostPoll {
         struct R: Decodable { var poll: PostPoll }
@@ -408,6 +414,8 @@ final class PostActionsModel {
     var editing: Post?
     var deleting: Post?
     var pollEditing: Post?
+    /// 「投票した人」 (my own poll).
+    var pollVoters: Post?
     var picker: ReactionPickRequest?
     var list: PostListKind?
     var composing = false
@@ -757,6 +765,19 @@ final class DemoPostServer {
             return json(["clubs": Self.clubs.map { ["key": $0.0, "name": $0.1, "category": $0.2] }])
         case ("GET", "emojis"):
             return json(["emojis": Self.emojis.enumerated().map { ["id": $0.offset + 1, "name": $0.element, "image_url": TimelineDemoMedia.picture("emoji-\($0.element)", 96, 96, hue: CGFloat($0.offset) * 0.3)] }])
+        case ("GET", "posts") where parts.count > 5 && parts[5] == "voters": // …/posts/7/poll/voters
+            let id = Int(parts[3]) ?? 0
+            guard let poll = polls[id] ?? post(id)?.poll else { return json(["error": "投票が見つかりません", "code": "not_found"], 404) }
+            let names = ["mazzo", "takuto", "coban", "りとる", "NORIO TAKAHASHI"]
+            var n = 0
+            let options: [[String: Any]] = poll.options.map { o in
+                let voters: [[String: Any]] = (0..<(o.votes ?? 0)).map { _ in
+                    defer { n += 1 }
+                    return ["user_id": "demo\(n)", "name": names[n % names.count], "avatar": ""]
+                }
+                return ["id": o.id, "label": o.label, "voters": voters]
+            }
+            return json(["ok": true, "options": options])
         case ("GET", "posts"):
             let all = timeline?.posts ?? []
             let list: [Post]

@@ -6,9 +6,10 @@
  * 書いてあったので、そのままここへ移した。返す形 { status, body } は Web のルートの返事と同じ。
  * Web は body をそのまま返し、アプリ用 API は { error, code } に直して返す。 */
 import { pool } from "./db";
-import { deletePost, getPostPoll, setPostClub, togglePin, updatePost } from "./posts";
+import { deletePost, getPostPoll, gravatarUrl, setPostClub, togglePin, updatePost } from "./posts";
 import { emitLive } from "./live";
-import { ensureUserId } from "./user";
+import { emailToUserIds, ensureUserId } from "./user";
+import { resolveDisplayNames } from "./display-name";
 import { validatePollInput, POLL_EDIT_WINDOW_MS, POLL_MAX_OPTIONS, POLL_MIN_OPTIONS } from "./poll";
 import { addFavorite, favoriteAuthorEmailFromUserId, removeFavorite } from "./favorites";
 import { LOCAL_IMAGE_RE } from "./publish";
@@ -289,6 +290,36 @@ export async function editPoll(
     /* ignore */
   }
   return { status: 200, body: { ok: true, poll } };
+}
+
+/** 投票した人（選択肢ごと、先に入れた順）。見られるのは投稿者だけ — 匿名のつもりで入れた票が
+ *  あるので、ほかの人には出さない（drikin 2026-10-24「作った人だけ見える」）。メールは返さない。
+ *  → { ok, options: [{ id, label, voters: [{ user_id, name, avatar }] }] } */
+export async function pollVoters(email: string, postId: number): Promise<ActionResult> {
+  const postRow = await pool.query(`SELECT author_email FROM posts WHERE id = $1`, [postId]);
+  if (postRow.rows.length === 0) return { status: 404, body: { error: "投稿が見つかりません" } };
+  if (postRow.rows[0].author_email !== email) {
+    return { status: 403, body: { error: "投票した人を見られるのは投稿者だけです" } };
+  }
+  const [opts, votes] = await Promise.all([
+    pool.query(`SELECT id, label FROM post_poll_options WHERE post_id = $1 ORDER BY sort_order, id`, [postId]),
+    pool.query(`SELECT option_id, email FROM post_poll_votes WHERE post_id = $1 ORDER BY updated_at, id`, [postId]),
+  ]);
+  if (opts.rows.length === 0) return { status: 404, body: { error: "投票が見つかりません" } };
+  const emails = (votes.rows as { email: string }[]).map((v) => v.email);
+  const [ids, names] = await Promise.all([emailToUserIds(emails), resolveDisplayNames(emails)]);
+  const options = (opts.rows as { id: number; label: string }[]).map((o) => ({
+    id: o.id,
+    label: o.label,
+    voters: (votes.rows as { option_id: number; email: string }[])
+      .filter((v) => v.option_id === o.id)
+      .map((v) => ({
+        user_id: ids.get(v.email.trim().toLowerCase()) ?? "",
+        name: names.get(v.email) ?? null,
+        avatar: gravatarUrl(v.email),
+      })),
+  }));
+  return { status: 200, body: { ok: true, options } };
 }
 
 /** お気に入り（人）の付け外し。冪等で、最後の状態を返す。自分自身は不可。通知は出さない。 */

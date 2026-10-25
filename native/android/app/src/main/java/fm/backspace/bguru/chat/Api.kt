@@ -331,6 +331,10 @@ class ApiClient(val token: String) : PostOpsApi {
     override suspend fun vote(id: Long, optionId: Long): PostPoll? =
         decode<PollResponse>(send(request("POST", "/api/agent/posts/$id/poll/vote", buildJsonObject { put("option_id", optionId) }))).poll
 
+    /** Who voted for what (only the poll's author may ask; others get 403). */
+    suspend fun pollVoters(id: Long): List<PollVoterGroup> =
+        decode<PollVotersResponse>(send(request("GET", "/api/agent/posts/$id/poll/voters", null))).options
+
     /** The answers in order: id = an existing option, null = a new one. */
     suspend fun editPoll(id: Long, options: List<Pair<Long?, String>>): PostPoll? =
         decode<PollResponse>(send(request("PUT", "/api/agent/posts/$id/poll", pollEditBody(options)))).poll

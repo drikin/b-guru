@@ -321,6 +321,17 @@ class TimelineStore(
         }
     }
 
+    /** 「投票した人」 of my own poll. The demo makes names up from the counts. */
+    suspend fun pollVoters(post: Post): List<PollVoterGroup> {
+        val poll = post.poll ?: return emptyList()
+        if (!demo) return api.pollVoters(post.id)
+        val names = listOf("mazzo", "takuto", "coban", "りとる", "NORIO TAKAHASHI")
+        var n = 0
+        return poll.options.map { o ->
+            PollVoterGroup(o.id, o.label, List(o.votes) { PollVoterGroup.Voter("demo$n", names[n++ % names.size]) })
+        }
+    }
+
     /** 「回答を編集」: null when saved, or the words to show in the dialog. */
     suspend fun editPoll(post: Post, options: List<PollRules.EditOption>): String? {
         val poll = post.poll ?: return "投稿が見つかりません"
@@ -489,6 +500,7 @@ class TimelineStore(
             "delete" -> dialog = PostDialog.Delete(mine)
             "picker" -> dialog = PostDialog.Picker(voted)
             "poll_edit" -> dialog = PostDialog.PollEdit(myPoll)
+            "poll_voters" -> dialog = PostDialog.PollVoters(myPoll)
             "club" -> dialog = PostDialog.Club(mine)
             "pins" -> dialog = PostDialog.List("pinned")
             "pins_empty" -> { posts = posts.map { it.copy(pinnedAt = null) }; pinned = emptyList(); dialog = PostDialog.List("pinned") }

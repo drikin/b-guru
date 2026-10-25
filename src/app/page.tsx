@@ -1427,14 +1427,18 @@ function PollCard({
   poll,
   onVote,
   onEdit,
+  votersOf,
   compact = false,
 }: {
   poll: PostPoll;
   onVote: (optionId: number) => void;
   onEdit?: () => void;
+  /** 自分の投稿の投票: その投稿の id（「投票した人」を出す。見られるのは投稿者だけ）。 */
+  votersOf?: number;
   compact?: boolean;
 }) {
   const closed = poll.closed;
+  const [votersOpen, setVotersOpen] = useState(false);
   return (
     <Box
       mt={10}
@@ -1527,6 +1531,22 @@ function PollCard({
               ? `${poll.totalVotes}人が投票`
               : "まだ投票はありません"}
           {" · "}全{poll.totalVotes}票
+          {votersOf != null && poll.totalVotes > 0 && (
+            <>
+              {" · "}
+              <Text
+                component="button"
+                type="button"
+                size="xs"
+                c="green.7"
+                fw={600}
+                onClick={(e: React.MouseEvent) => { e.stopPropagation(); setVotersOpen(true); }}
+                style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
+              >
+                投票した人
+              </Text>
+            </>
+          )}
         </Text>
         {compact ? (
           <PollCountdown endsAt={poll.endsAt} />
@@ -1534,7 +1554,62 @@ function PollCard({
           <Text size="xs" c="dimmed">{closed ? "終了" : pollTimeLeft(poll.endsAt)}</Text>
         )}
       </Group>
+      {votersOf != null && (
+        <PollVotersModal postId={votersOf} question={poll.question} opened={votersOpen} onClose={() => setVotersOpen(false)} />
+      )}
     </Box>
+  );
+}
+
+type PollVoter = { user_id: string; name: string | null; avatar: string };
+
+/** 自分の投票に誰が入れたか（選択肢ごと）。開くたびに読み直す。ほかの人には出さない（API も投稿者だけ）。 */
+function PollVotersModal({ postId, question, opened, onClose }: { postId: number; question: string; opened: boolean; onClose: () => void }) {
+  const [data, setData] = useState<{ id: number; label: string; voters: PollVoter[] }[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!opened) return;
+    let gone = false;
+    setData(null);
+    setError(null);
+    fetch(`/api/poll/${postId}`, { cache: "no-store" })
+      .then(async (r) => {
+        const j = await r.json().catch(() => ({}));
+        if (gone) return;
+        if (!r.ok) setError(typeof j.error === "string" ? j.error : "読み込めませんでした");
+        else setData(Array.isArray(j.options) ? j.options : []);
+      })
+      .catch(() => { if (!gone) setError("読み込めませんでした"); });
+    return () => { gone = true; };
+  }, [opened, postId]);
+  return (
+    <Modal opened={opened} onClose={onClose} title={`投票した人 — ${question}`} centered size="md" onClick={(e) => e.stopPropagation()}>
+      {error ? (
+        <Text size="sm" c="red">{error}</Text>
+      ) : !data ? (
+        <Group justify="center" p="md"><Loader size="sm" /></Group>
+      ) : (
+        <Stack gap="md">
+          {data.map((o) => (
+            <Box key={o.id}>
+              <Text size="sm" fw={700} mb={4}>{o.label}（{o.voters.length}票）</Text>
+              {o.voters.length === 0 ? (
+                <Text size="xs" c="dimmed">まだいません</Text>
+              ) : (
+                <Stack gap={4}>
+                  {o.voters.map((v, i) => (
+                    <Group key={`${v.user_id}-${i}`} gap={8} wrap="nowrap">
+                      <Avatar src={v.avatar} size={22} radius="xl">{(v.name ?? "?").slice(0, 1)}</Avatar>
+                      <Text size="sm">{v.name ?? "（名前なし）"}</Text>
+                    </Group>
+                  ))}
+                </Stack>
+              )}
+            </Box>
+          ))}
+        </Stack>
+      )}
+    </Modal>
   );
 }
 
@@ -2288,6 +2363,7 @@ function PostCard({
           poll={post.poll}
           onVote={(oid) => onVotePoll && onVotePoll(post, oid)}
           onEdit={onEditPoll ? () => onEditPoll && onEditPoll(post) : undefined}
+          votersOf={post.isAuthor && post.id > 0 ? post.id : undefined}
         />
       )}
 

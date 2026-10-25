@@ -111,7 +111,7 @@ struct TimelineScreen: View {
     }
 
     #if DEBUG
-    /// Dev only: `-demoAction edit|delete|pollEdit|picker|pins|bookmarks|compose|composePoll|toast`
+    /// Dev only: `-demoAction edit|delete|pollEdit|pollVoters|picker|pins|bookmarks|compose|composePoll|toast`
     /// (BGURU_DEMO_ACTION on iPhone) opens that screen of the offline demo at once.
     private func debugOpenAction() async {
         let a = CommandLine.arguments
@@ -122,6 +122,7 @@ struct TimelineScreen: View {
         switch what {
         case "edit": actions.editing = timeline.posts.first { $0.id == 122 }
         case "editPoll", "pollEdit": actions.pollEditing = mine
+        case "pollVoters": actions.pollVoters = mine
         case "delete": actions.deleting = mine
         case "picker": actions.loadEmojis(); try? await Task.sleep(for: .milliseconds(400))
             actions.picker = ReactionPickRequest(postId: 3, onPick: { timeline.toggleReaction(3, emoji: $0) })

@@ -243,6 +243,13 @@ struct PollCard: View {
             }
             HStack {
                 Text((closed ? "締め切りました" : total > 0 ? "\(total)人が投票" : "まだ投票はありません") + " · 全\(total)票")
+                // My own poll: who voted for what (only the author sees it — drikin 2026-10-24).
+                if let actions, post.isAuthor == true, post.id > 0, total > 0 {
+                    Button("投票した人") { actions.pollVoters = post }
+                        .buttonStyle(.borderless)
+                        .font(.app(.caption, weight: .semibold))
+                        .tint(Color.accentGreen)
+                }
                 Spacer()
                 Text(closed ? "終了" : Self.timeLeft(poll.endsAt))
             }
@@ -697,6 +704,62 @@ struct PollEditDialog: View {
     }
 }
 
+/// 「投票した人」 — who chose each answer of my own poll (read fresh each time it opens).
+struct PollVotersDialog: View {
+    let post: Post
+    let actions: PostActionsModel
+    @State private var groups: [PollVoterGroup]?
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("投票した人").font(.app(.headline))
+                Spacer()
+                Button { actions.pollVoters = nil } label: { Image(systemName: "xmark").font(.app(.callout)) }
+                    .buttonStyle(.borderless)
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityLabel("閉じる")
+            }
+            if let q = post.poll?.question, !q.isEmpty {
+                Text(q).font(.app(.subheadline)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            if let error {
+                Text(error).font(.app(.callout)).foregroundStyle(.red)
+            } else if let groups {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(groups) { g in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("\(g.label)（\(g.voters.count)票）").font(.app(.subheadline, weight: .bold))
+                                if g.voters.isEmpty {
+                                    Text("まだいません").font(.app(.caption)).foregroundStyle(.secondary)
+                                }
+                                ForEach(Array(g.voters.enumerated()), id: \.offset) { _, v in
+                                    HStack(spacing: 8) {
+                                        AvatarView(url: v.avatar, name: v.name ?? "?")
+                                        Text(v.name ?? "（名前なし）").font(.app(.callout))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+            } else {
+                ProgressView().frame(maxWidth: .infinity).padding()
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: 520)
+        .task {
+            do { groups = try await actions.api.pollVoters(postId: post.id) }
+            catch { self.error = PostActionsModel.message(error, fallback: "読み込めませんでした") }
+        }
+    }
+}
+
 // MARK: - The pinned posts, bookmarks, favourites' posts
 
 /// A simple list of posts (ピン留め・ブックマーク・お気に入りの人). Tap opens the thread.
@@ -832,6 +895,7 @@ struct PostActionPresenter: ViewModifier {
             .panelDialog($actions.editing) { p in EditPostDialog(post: p, actions: actions).id(p.id) }
             .panelDialog($actions.deleting, detents: [.height(250)]) { p in DeletePostDialog(post: p, actions: actions).id(p.id) }
             .panelDialog($actions.pollEditing) { p in PollEditDialog(post: p, actions: actions).id(p.id) }
+            .panelDialog($actions.pollVoters) { p in PollVotersDialog(post: p, actions: actions).id(p.id) }
             .panelDialog($actions.list) { k in
                 PostListDialog(kind: k, timeline: timeline, capabilities: capabilities)
                     .environment(\.postActions, actions)

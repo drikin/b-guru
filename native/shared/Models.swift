@@ -417,6 +417,18 @@ struct PostPoll: Codable, Equatable, Sendable {
     var options: [Option]
 }
 
+/// 「投票した人」: one answer and who chose it (GET …/poll/voters, the poll's author only).
+struct PollVoterGroup: Decodable, Equatable, Sendable, Identifiable {
+    struct Voter: Decodable, Equatable, Sendable {
+        var userId: String
+        var name: String?
+        var avatar: String?
+    }
+    var id: Int
+    var label: String
+    var voters: [Voter]
+}
+
 /// A `poll` the app cannot read is dropped (the post still shows), like `display`.
 @propertyWrapper
 struct LenientPoll: Codable, Equatable, Sendable {

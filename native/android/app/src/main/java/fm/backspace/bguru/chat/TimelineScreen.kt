@@ -392,7 +392,8 @@ fun PostRow(
                 post.videoUrl?.let { PostVideo(it) }
                 post.poll?.let { poll ->
                     PollCard(post, poll, canVote = ops != null && caps?.canVote == true, canEdit = ops != null && caps?.canEditPoll == true && post.isAuthor,
-                        onVote = { ops?.vote(post, it) }, onEdit = { ops?.dialog = PostDialog.PollEdit(post) })
+                        onVote = { ops?.vote(post, it) }, onEdit = { ops?.dialog = PostDialog.PollEdit(post) },
+                        onVoters = ops?.let { o -> { o.dialog = PostDialog.PollVoters(post) } })
                 }
                 val rs = plan.reactions
                 if (rs.isNotEmpty() || (showReplyCount && post.replyCount > 0)) {

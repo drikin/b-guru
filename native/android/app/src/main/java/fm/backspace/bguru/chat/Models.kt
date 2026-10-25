@@ -460,6 +460,11 @@ data class PostPoll(
 }
 
 @Serializable data class PollResponse(val ok: Boolean = false, val poll: PostPoll? = null)
+/** 「投票した人」: one answer and who chose it (GET …/poll/voters, the poll's author only). */
+@Serializable data class PollVoterGroup(val id: Long, val label: String = "", val voters: List<Voter> = emptyList()) {
+    @Serializable data class Voter(val userId: String = "", val name: String? = null, val avatar: String? = null)
+}
+@Serializable data class PollVotersResponse(val ok: Boolean = false, val options: List<PollVoterGroup> = emptyList())
 @Serializable data class PinResponse(val ok: Boolean = false, val pinned: Boolean = false)
 @Serializable data class ClubChangeResponse(val ok: Boolean = false, val club: String? = null)
 @Serializable data class BookmarkResponse(val bookmarked: Boolean = false)

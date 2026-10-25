@@ -1,4 +1,5 @@
-/* PUT /api/agent/posts/:id/poll — 投票のお題（回答）の編集（スコープ post）。
+/* GET /api/agent/posts/:id/poll/voters は voters/route.ts。
+ * PUT /api/agent/posts/:id/poll — 投票のお題（回答）の編集（スコープ post）。
  *   body: { question?, options: [{ id: number|null, label }] }（id=null は新しい選択肢。並びはこの順）
  * Web と同じ lib/post-actions.ts: 投稿者だけ・投稿後 1 時間以内・票の付いた選択肢は消せない・lib/poll.ts の検査。
  *   → { apiVersion, ok: true, poll } */
