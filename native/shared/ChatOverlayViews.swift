@@ -158,7 +158,8 @@ struct ChatOverlayLayer: View {
         GeometryReader { g in
             ZStack(alignment: .topLeading) {
                 Color.clear.allowsHitTesting(false)
-                let minis = overlay.miniIDs.filter { !(watchHasOwnWindow && $0 == .watch) }
+                // 📺 elsewhere: the iPhone's floating player, or the Mac's own window (⧉).
+                let minis = overlay.miniIDs.filter { !($0 == .watch && (watchHasOwnWindow || overlay.watchInOwnWindow)) }
                 ForEach(Array(minis.enumerated()), id: \.element) { i, id in
                     let p = place(id, slot: i, in: g.size, all: minis)
                     OverlayMiniWindow(overlay: overlay, id: id)
@@ -177,7 +178,7 @@ struct ChatOverlayLayer: View {
                         )
                         .transition(.scale(scale: 0.85, anchor: .top).combined(with: .opacity))
                 }
-                if let e = overlay.expandedNow, !overlay.typing {
+                if let e = overlay.expandedNow, !overlay.typing, !(e == .watch && overlay.watchInOwnWindow) {
                     OverlayExpandedWindow(store: store, id: e, onChip: onChip)
                         .frame(width: g.size.width)
                         .frame(maxHeight: g.size.height * 0.8, alignment: .top)
@@ -222,7 +223,10 @@ struct ChatOverlayLayer: View {
         let column = { (k: Int) in oneColumn ? 0 : k % 2 }
         let above = all.prefix(slot).enumerated().filter { column($0.offset) == column(slot) }
             .reduce(CGFloat(0)) { $0 + (sizes[$1.element]?.height ?? 120) + 10 }
-        let base = overlay.positions[id] ?? CGPoint(x: column(slot) == 0 ? size.width - w - 10 : 10, y: 10 + above)
+        // …and below the floating 📺 when the two would not fit side by side.
+        let belowWatch = oneColumn && OverlayModel.floatingWatchWidth + 8 + w + 16 > size.width
+            ? OverlayModel.floatingWatchHeight + 8 : 0
+        let base = overlay.positions[id] ?? CGPoint(x: column(slot) == 0 ? size.width - w - 10 : 10, y: 10 + belowWatch + above)
         var p = base
         if !ignoringDrag, let d = dragging, d.id == id { p.x += d.by.width; p.y += d.by.height }
         return clamp(p, id, in: size)

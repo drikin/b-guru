@@ -277,10 +277,45 @@ final class OverlayModel {
         #endif
     }
 
-    /// iPhone: may the floating player show now (a small window, nothing expanded, not typing).
+    /// iPhone: the chat page is the one on screen (iPad: always). Off it, a floating 📺 shows whatever the chat
+    /// has expanded or the composer had (opened from the timeline, it must be seen there).
+    var chatPageShown = true
+
+    /// iPhone: may the floating player show now (a small window, nothing expanded, not typing — or another page).
     var watchFloats: Bool {
         guard enabled else { return true }
-        return !typing && !watchHidden && expandedNow == nil
+        if watchHidden { return false }
+        if !chatPageShown { return true }
+        return !typing && expandedNow == nil
+    }
+
+    /// iPhone: the small floating 📺's width — wide enough for the page's bar (seek, time, 🔊, ⧉: at 180 the ⧉
+    /// fell off the edge) — and its height with the title bar, for placing the other windows below it.
+    static let floatingWatchWidth: CGFloat = 236
+    static var floatingWatchHeight: CGFloat { floatingWatchWidth * 9 / 16 + 44 + 26 }
+
+    /// Mac: 📺 is in its own window (⧉): the overlay draws no player of its own (one web view, one place).
+    var watchInOwnWindow: Bool {
+        #if os(macOS)
+        return watch.mode == .floating
+        #else
+        return false
+        #endif
+    }
+
+    /// The player page's ⧉. iPhone: expand it over the chat (or back to small when it is the expanded one) —
+    /// docking above the chat does not exist here. Mac: into its own window and back, the overlay steps aside.
+    func watchPopout() -> Bool {
+        guard enabled else { return false }
+        #if os(iOS)
+        if expandedNow == .watch { collapse() } else { expand(.watch) }
+        #else
+        let toWindow = watch.mode == .docked
+        if toWindow && expanded == .watch { expanded = nil }
+        watch.setMode(toWindow ? .floating : .docked)
+        syncWatch()
+        #endif
+        return true
     }
 
     // MARK: Positions

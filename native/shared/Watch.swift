@@ -131,11 +131,17 @@ final class WatchStore {
     }
 
     /// The page's ⧉: chat column ⇄ floating / own window.
-    func togglePopout() { setMode(mode == .docked ? .floating : .docked) }
+    func togglePopout() {
+        // Chat overlay: ⧉ is decided there (iPhone: expand / back to small; Mac: its own window, the overlay's
+        // players step aside) — true when it handled it.
+        if popoutOverride?() == true { return }
+        setMode(mode == .docked ? .floating : .docked)
+    }
+    @ObservationIgnored var popoutOverride: (@MainActor () -> Bool)?
 
     /// The page is small (floating on a phone): only the picture and the bar.
     var compact: Bool {
-        if let compactOverride { return compactOverride }
+        if let compactOverride, mode == .docked { return compactOverride } // Mac: not in its own window
         #if os(iOS)
         return mode == .floating
         #else
@@ -387,19 +393,51 @@ struct WatchPlayerHost: UIViewRepresentable {
     let watch: WatchStore
 
     func makeUIView(context: Context) -> UIView {
-        let v = UIView()
+        let v = WatchHostView()
         v.backgroundColor = .black
         v.clipsToBounds = true
+        v.watch = watch
         return v
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
-        guard let web = watch.controller?.webView else { return }
-        if web.superview !== uiView {
-            web.removeFromSuperview()
-            web.frame = uiView.bounds
-            web.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            uiView.addSubview(web)
+        guard let web = watch.controller?.webView, web.superview !== uiView else { return }
+        // Not from a place still on screen: when one place replaces another (the chat overlay's small ⇄ big
+        // windows), the old one can update once more on its way out and took the player back into a view that
+        // was going away — the new place stayed black. The newest place on screen keeps it (WatchHostView).
+        if let holder = web.superview, holder.window != nil, uiView.window != nil,
+           let h = holder as? WatchHostView, let me = uiView as? WatchHostView, h.attachedAt > me.attachedAt { return }
+        WatchHostView.place(web, in: uiView)
+    }
+}
+
+/// A place for the player. The one that came on screen last holds it; when the holder leaves the screen,
+/// the player goes back to the newest place still on screen.
+final class WatchHostView: UIView {
+    weak var watch: WatchStore?
+    private(set) var attachedAt: TimeInterval = 0
+    private static let hosts = NSHashTable<WatchHostView>.weakObjects()
+
+    static func place(_ web: UIView, in v: UIView) {
+        web.removeFromSuperview()
+        web.frame = v.bounds
+        web.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        v.addSubview(web)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard let web = MainActor.assumeIsolated({ watch?.controller?.webView }) else { return }
+        if window != nil {
+            attachedAt = ProcessInfo.processInfo.systemUptime
+            Self.hosts.add(self)
+            if web.superview !== self { Self.place(web, in: self) }
+        } else {
+            Self.hosts.remove(self)
+            guard web.superview === self else { return }
+            if let next = Self.hosts.allObjects.filter({ $0.window != nil }).max(by: { $0.attachedAt < $1.attachedAt }) {
+                Self.place(web, in: next)
+            }
         }
     }
 }

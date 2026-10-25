@@ -51,7 +51,7 @@ struct MainView: View {
                         // then); ⤢ expands it over the chat; kept off the switch row and the message box.
                         if store.overlay.watchFloats {
                             WatchFloatingView(watch: store.watch, onDock: { [overlay = store.overlay] in overlay.expand(.watch) },
-                                              insets: EdgeInsets(top: 96, leading: 0, bottom: 64, trailing: 0), remember: true, smallWidth: 180)
+                                              insets: EdgeInsets(top: 96, leading: 0, bottom: 64, trailing: 0), remember: true, smallWidth: OverlayModel.floatingWatchWidth)
                         }
                     } else {
                         WatchFloatingView(watch: store.watch)
@@ -197,6 +197,8 @@ private struct PagerWatcher: View {
                 if phase == .active { store.scenePhaseChanged(background: false); store.watch.setBackground(false) }
             }
             .onChange(of: paged) { _, _ in updateVisibility() }
+            // チャットの上に重ねる形: off the chat page a floating 📺 shows whatever the chat has expanded.
+            .onChange(of: paged ? pager.tab == .chat : true, initial: true) { _, on in store.overlay.chatPageShown = on }
             .onChange(of: jukeboxOn) { _, on in
                 if !on { if pager.tab == .jukebox { pager.tab = .chat }; pager.leftTab = .timeline }
             }

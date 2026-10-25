@@ -146,6 +146,13 @@ final class ChatStore {
         // The overlay: several over the chat at once, nobody leaves the room; an open from outside the switch
         // row (a push, a chat card, a link) switches it on and expands it.
         watch.willShow = { [weak overlay] floating in overlay?.watchWillShow(floating: floating) }
+        watch.popoutOverride = { [weak overlay] in
+            guard let overlay, overlay.enabled else { return false }
+            // After the page's tap has finished: moving the web view while it is still handling its own touch
+            // left the player black (seen on the iPhone).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { _ = overlay.watchPopout() }
+            return true
+        }
         // One thing above the chat (テキスト｜ルーム｜☗｜🎮｜🍻): opening one leaves the club room
         // and closes the others.
         shogi.willOpen = { [weak room, weak minigame, weak offkai, weak overlay] in
