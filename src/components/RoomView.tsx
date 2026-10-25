@@ -84,6 +84,45 @@ export default function RoomPanel({ fallback, extra }: { fallback: ReactNode; ex
   return <RoomChrome s={s} extra={extra?.(false)} />;
 }
 
+/** チャットの上に重ねる形（docs/chat-overlay-spec.md）の 🏠 部室: 「テキスト｜ルーム」は無く、操作と地図だけ。
+ *  部室に入る・出るは 🏠 のスイッチ（setRoomView）。 */
+export function RoomOverlayContent() {
+  const s = useRoom();
+  const v = useVoice();
+  const speaking = useMemo(() => speakingIds(v, s.me), [v, s.me]);
+  const me = myMember(s);
+  if (s.status !== "enabled" || !s.map || s.view !== "room") return null;
+  const notice = s.notice ?? v.notice;
+  return (
+    <>
+      <div style={{ padding: "6px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
+        <RoomControls s={s} v={v} me={me} speaking={speaking} />
+        {v.needsAudioUnlock && (
+          <Button size="compact-xs" variant="light" color="green" onClick={() => void unlockAudio()}>
+            🔈 クリックして音を出す
+          </Button>
+        )}
+        {notice && (
+          <Group gap={4} wrap="nowrap" align="flex-start">
+            <Text size="xs" c="red" style={{ flex: 1 }} role="status">
+              {notice}
+            </Text>
+            <CloseButton
+              size="xs"
+              aria-label="閉じる"
+              onClick={() => {
+                clearRoomNotice();
+                setVoiceNotice(null);
+              }}
+            />
+          </Group>
+        )}
+      </div>
+      <RoomMap s={s} speaking={speaking} />
+    </>
+  );
+}
+
 function RoomChrome({ s, extra }: { s: RoomSnapshot; extra?: ReactNode }) {
   const v = useVoice();
   const speaking = useMemo(() => speakingIds(v, s.me), [v, s.me]);

@@ -83,6 +83,7 @@ import { DuplicateWarning } from "@/components/DuplicateWarning";
 import VoiceBar, { VoiceMini } from "@/components/VoiceBar";
 import { applyVoiceEvent, loadVoice, type VoiceRoomInfo } from "@/lib/voice-client";
 import RoomPanel from "@/components/RoomView";
+import { OverlayLayer, OverlaySwitches, OverlayVoiceFallback } from "@/components/overlay/ChatOverlay";
 import { applyRoomEvent, reloadRoomIfOn, roomChatBubble } from "@/lib/room-client";
 import { ShogiChatCard, ShogiPanel } from "@/components/shogi/ShogiPanel";
 import { GameToggles, MinigamePanel } from "@/components/minigame/MinigamePanel";
@@ -4957,6 +4958,8 @@ export default function Home() {
   // 🍻 オフ会: 「話す人・始めた人が自分か」（終了ボタン・後勝ちで替わられたか）を決めるのに使う。
   useEffect(() => setOffkaiUserId(auth?.userId ?? null), [auth?.userId]);
   const [checking, setChecking] = useState(true);
+  // チャットの上に機能を重ねる新しい形（docs/chat-overlay-spec.md、CHAT_OVERLAY_ENABLED）。false = 今までの段。
+  const [chatOverlay, setChatOverlay] = useState(false);
 
   const [email, setEmail] = useState("");
   // Sign-in is two steps: mail a code + link (/api/auth/request), then the code
@@ -5319,7 +5322,7 @@ export default function Home() {
     earlyOrFetch("/api/auth/me")
       .then((r) => r.json())
       .then((d) => {
-        if (d.authenticated)
+        if (d.authenticated) {
           setAuth({
             userId: d.userId ?? undefined,
             email: d.email,
@@ -5327,6 +5330,8 @@ export default function Home() {
             name: d.name,
             avatar: d.avatar,
           });
+          setChatOverlay(d.chatOverlay === true);
+        }
       })
       .finally(() => setChecking(false));
   }, []);
@@ -12111,13 +12116,25 @@ export default function Home() {
                   {/* Club room on: テキスト｜ルーム switch + map; off: the voice bar as before.
                       ☗ 将棋 and 🎮 散財ダッシュ (icons only) sit next to the switch (their own line
                       without the room); open = the board / the game above the chat log (one at a time). */}
-                  <RoomPanel fallback={<VoiceBar />} extra={(row) => <GameToggles row={row} />} />
-                  <ShogiPanel />
-                  <MinigamePanel />
-                  <WatchPanel />
-                  <OffkaiPanel />
+                  {chatOverlay ? (
+                    <>
+                      {/* 新しい形: 2 段目はスイッチだけ、機能はログの上に重ねる（下の OverlayLayer）。 */}
+                      <OverlayVoiceFallback fallback={<VoiceBar />} />
+                      <OverlaySwitches />
+                    </>
+                  ) : (
+                    <>
+                      <RoomPanel fallback={<VoiceBar />} extra={(row) => <GameToggles row={row} />} />
+                      <ShogiPanel />
+                      <MinigamePanel />
+                      <WatchPanel />
+                      <OffkaiPanel />
+                    </>
+                  )}
                   <DmDrawer />
-                  {/* Message list */}
+                  {/* Message list (the overlay's layer sits on top of it) */}
+                  <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                  {chatOverlay && <OverlayLayer />}
                   <ScrollArea.Autosize
                     type="auto"
                     scrollbarSize={8}
@@ -12351,6 +12368,7 @@ export default function Home() {
                       )}
                     </div>
                   </ScrollArea.Autosize>
+                  </div>
                   {/* Composer */}
                   <div
                     style={{
