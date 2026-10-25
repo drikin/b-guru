@@ -11,6 +11,8 @@ struct ChatScrolling: ViewModifier {
     let proxy: ScrollViewProxy
     @Binding var atBottom: Bool
     @Binding var newBelow: Int
+    /// The list's scroll view (its content carries `listScrollHandle(list)`).
+    let list: ListScrollHandle
     /// Whether the chat is the tab / page on screen. The Mac keeps the chat built under the
     /// timeline: scrolling its hidden lazy list each time a message arrived (three scrollTo,
     /// animated, while the member read the timeline) is the shape of the hang that froze the
@@ -145,7 +147,7 @@ struct ChatScrolling: ViewModifier {
                 ZStack {
                     if !atBottom {
                         JumpButton(arrow: "↓", count: newBelow) {
-                            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                            JumpButton.jump(proxy, to: "bottom", anchor: .bottom, list: list, duration: 0.2)
                         }
                     }
                 }
@@ -176,6 +178,15 @@ struct JumpButton: View {
         .padding(10)
         .transition(.opacity)
         .accessibilityLabel(fresh ? "新着 \(count) 件、最新へ移動" : "最新へ移動")
+    }
+
+    /// Goes to the newest end. A flick's coasting first stops (`list`): while the list still coasted,
+    /// the scroll lost to it and the button did nothing (drikin 2026-10-24
+    /// 「スクロール中に最新へを押しても反応しない」).
+    @MainActor
+    static func jump(_ proxy: ScrollViewProxy, to id: String, anchor: UnitPoint, list: ListScrollHandle, duration: Double) {
+        list.stopCoasting()
+        withAnimation(.easeOut(duration: duration)) { proxy.scrollTo(id, anchor: anchor) }
     }
 }
 
@@ -263,6 +274,49 @@ struct ChatBottomSentinel: View {
     }
 }
 
+/// The list's own scroll view, so 「最新へ」 can stop a flick's coasting before it jumps: SwiftUI's
+/// scrollTo (animated or not) lost to the coasting on the iPhone. The Mac's momentum comes from the
+/// trackpad, with nothing to stop here.
+@MainActor
+final class ListScrollHandle {
+    #if os(iOS)
+    weak var view: UIScrollView?
+    #endif
+
+    func stopCoasting() {
+        #if os(iOS)
+        // Setting the offset it already has, unanimated, ends the deceleration.
+        guard let v = view, v.isDecelerating else { return }
+        v.setContentOffset(v.contentOffset, animated: false)
+        #endif
+    }
+}
+
+#if os(iOS)
+private struct ListScrollAnchor: UIViewRepresentable {
+    let list: ListScrollHandle
+
+    final class Marker: UIView {
+        var list: ListScrollHandle?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard window != nil else { return }
+            var v = superview
+            while let s = v, !(s is UIScrollView) { v = s.superview }
+            if let s = v as? UIScrollView { list?.view = s }
+        }
+    }
+
+    func makeUIView(context: Context) -> Marker {
+        let m = Marker()
+        m.list = list
+        return m
+    }
+
+    func updateUIView(_ m: Marker, context: Context) { m.list = list }
+}
+#endif
+
 /// "ここから未読" — drawn above the first message that was unread on opening.
 struct UnreadDivider: View {
     var body: some View {
@@ -278,8 +332,18 @@ struct UnreadDivider: View {
 }
 
 extension View {
-    func chatScrolling(store: ChatStore, proxy: ScrollViewProxy, atBottom: Binding<Bool>, newBelow: Binding<Int>) -> some View {
-        modifier(ChatScrolling(store: store, proxy: proxy, atBottom: atBottom, newBelow: newBelow))
+    func chatScrolling(store: ChatStore, proxy: ScrollViewProxy, atBottom: Binding<Bool>, newBelow: Binding<Int>,
+                       list: ListScrollHandle) -> some View {
+        modifier(ChatScrolling(store: store, proxy: proxy, atBottom: atBottom, newBelow: newBelow, list: list))
+    }
+
+    /// Lets `list` reach this list's own scroll view. Put on the list's content.
+    @ViewBuilder func listScrollHandle(_ list: ListScrollHandle) -> some View {
+        #if os(iOS)
+        self.background(alignment: .top) { ListScrollAnchor(list: list).frame(width: 0, height: 0).allowsHitTesting(false) }
+        #else
+        self
+        #endif
     }
 }
 

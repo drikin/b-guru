@@ -248,6 +248,7 @@ private struct ChatMessageList: View {
     @Binding var viewing: ImageViewerItem?
     @State private var atBottom = true
     @State private var newBelow = 0
+    @State private var list = ListScrollHandle()
     /// While the chat is not on screen (the timeline or the jukebox shows, or the panel is
     /// closed): the rows as they were. The list stays built under the other tabs, and a hidden
     /// lazy list that keeps changing is what froze the panel (see ChatScrolling). What came
@@ -296,11 +297,12 @@ private struct ChatMessageList: View {
                     }
                     ChatBottomSentinel(atBottom: $atBottom)
                 }
+                .listScrollHandle(list)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
             }
             .opensAtBottom()
-            .chatScrolling(store: store, proxy: proxy, atBottom: $atBottom, newBelow: $newBelow)
+            .chatScrolling(store: store, proxy: proxy, atBottom: $atBottom, newBelow: $newBelow, list: list)
             // Reacting to / editing the LAST message makes its row taller (chips
             // appear under the bubble). Without this the new chips land below the
             // viewport and the list looks like it jumped (drikin 2026-10-15).

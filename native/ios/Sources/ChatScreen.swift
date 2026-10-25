@@ -145,6 +145,7 @@ private struct ChatMessageList: View {
     @Binding var viewing: ImageViewerItem?
     @State private var atBottom = true
     @State private var newBelow = 0
+    @State private var list = ListScrollHandle()
     /// iOS 17 only: flipped when the chat page comes back on screen (see KeepsPlaceAcrossPages).
     @State private var relayout = false
 
@@ -184,6 +185,7 @@ private struct ChatMessageList: View {
                     }
                     ChatBottomSentinel(atBottom: $atBottom)
                 }
+                .listScrollHandle(list)
                 .padding(.horizontal, 12)
                 .padding(.vertical, relayout ? 8.25 : 8)
                 .scrollTargetLayout()
@@ -194,7 +196,7 @@ private struct ChatMessageList: View {
             }
             .modifier(KeepsPlaceAcrossPages(proxy: proxy, atBottom: atBottom, relayout: $relayout))
             .opensAtBottom()
-            .chatScrolling(store: store, proxy: proxy, atBottom: $atBottom, newBelow: $newBelow)
+            .chatScrolling(store: store, proxy: proxy, atBottom: $atBottom, newBelow: $newBelow, list: list)
             .scrollDismissesKeyboard(.interactively)
             .dismissesKeyboardOnTap()
             // A LazyVStack only estimates the height of rows it hasn't drawn, so the

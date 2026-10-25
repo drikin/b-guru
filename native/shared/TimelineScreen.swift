@@ -238,6 +238,7 @@ private struct TimelinePostList: View {
     /// the panel is closed): refreshes still come in then (a new post's notice, the AI's picks,
     /// the app coming back) and reordered the hidden list just the same (drikin 2026-10-23).
     @State private var frozen: [Post]?
+    @State private var list = ListScrollHandle()
     private var posts: [Post] { frozen ?? timeline.posts }
     @Environment(\.screenVisibility) private var visibility
     private var onScreen: Bool { visibility?.timeline ?? true }
@@ -274,6 +275,7 @@ private struct TimelinePostList: View {
             .frame(maxWidth: 760)
             .frame(maxWidth: .infinity)
             .keyScrollTarget()
+            .listScrollHandle(list)
             // GIFs and videos stand still under an open thread (the Mac keeps the list built).
             .environment(\.mediaActive, !threadOpen)
         }
@@ -296,7 +298,7 @@ private struct TimelinePostList: View {
             ZStack {
                 if !atTop {
                     JumpButton(arrow: "↑", count: newAbove) {
-                        withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("top", anchor: .top) }
+                        JumpButton.jump(proxy, to: "top", anchor: .top, list: list, duration: 0.25)
                     }
                 }
             }
