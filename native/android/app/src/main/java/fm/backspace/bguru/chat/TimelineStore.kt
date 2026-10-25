@@ -422,6 +422,15 @@ class TimelineStore(
     internal fun testPosts(list: List<Post>) { posts = list; hasLoaded = true }
 
     /** Debug only: sample timeline for offline UI checks. */
+    /** Demo only (`--ez demo_overlay true`): a post with a YouTube card on top, for 「📺 みんなで見る」 from the timeline. */
+    fun demoAddYouTube() {
+        if (!demo) return
+        posts = listOf(Post(9003, authorName = "coban", club = "chat", createdAt = java.time.Instant.now().minusSeconds(10).toString(),
+            text = "この動画みんなで見たい https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+            urlPreview = UrlPreview("https://www.youtube.com/watch?v=aqz-KE-bpKQ", title = "（デモ）YouTube の動画", videoId = "aqz-KE-bpKQ",
+                siteName = "YouTube"))) + posts
+    }
+
     fun loadDemo(images: String? = null, jukeboxAudio: String? = null, media: String? = null) {
         demo = true
         val now = java.time.Instant.now()

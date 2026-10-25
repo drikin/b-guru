@@ -75,6 +75,7 @@ class MainActivity : ComponentActivity() {
         if (intent.getBooleanExtra("demo_overlay", false)) {
             store.demoOverlay = true
             store.watch.loadDemo()
+            session.timeline?.demoAddYouTube()
             ActivityId.list(intent.getStringExtra("demo_overlay_show")).forEach { store.overlayShow(it, this) }
             ActivityId.list(intent.getStringExtra("demo_overlay_expand")).lastOrNull()?.let { store.overlayShow(it, this, expand = true) }
         }

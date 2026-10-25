@@ -116,6 +116,8 @@ class WatchStore(private val api: ApiClient) {
     var open by mutableStateOf(false); private set
     var mode by mutableStateOf(Mode.DOCKED); private set
     var title by mutableStateOf<String?>(null); private set
+    /** Bumped by 「みんなで見る」 (chat or timeline): over the chat (chat_overlay) the chat page comes up with 📺 expanded. */
+    var revealTick by mutableIntStateOf(0); private set
     var basePath = "/api/agent/watch"; private set
     var playerUrl = "/watch/index.html"; private set
 
@@ -251,6 +253,7 @@ class WatchStore(private val api: ApiClient) {
         // From the timeline: float over it (the docked player is on the chat page).
         if (floating && !open) mode = Mode.FLOATING
         show(context)
+        revealTick++
         val busy = lastState?.get("video") is JsonObject
         act(buildJsonObject { put("action", if (busy) "queue_add" else "load"); put("url", url) })
     }

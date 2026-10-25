@@ -56,6 +56,8 @@ class OverlayState(private val positions: OverlayPositions = OverlayPositions.No
     /** The member is typing (composer focused with the keyboard up): every window is a chip. */
     var typing by mutableStateOf(false)
 
+    /** The last 📺 「みんなで見る」 (WatchStore.revealTick) already expanded. */
+    var watchRevealSeen = 0
     private val moved = mutableStateMapOf<ActivityId, Pair<Float, Float>>()
     /** The stores' own `open` as last seen (see [storeOpened]). */
     private val storeOpen = HashMap<ActivityId, Boolean>()

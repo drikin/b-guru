@@ -176,6 +176,12 @@ fun ChatOverlaySync(store: ChatStore) {
             o.storeOpened(ActivityId.WATCH, v[3])
         }
     }
+    // 「みんなで見る」 (the timeline too): 📺 switched on and expanded, also when it was already playing as a chip.
+    // Each press once (the chat page coming back later does not expand it again).
+    LaunchedEffect(store.watch.revealTick) {
+        val t = store.watch.revealTick
+        if (t > o.watchRevealSeen) { o.watchRevealSeen = t; if (store.watch.open) o.show(ActivityId.WATCH, expand = true) }
+    }
     // A feature turned off for this member: its window goes.
     val available by remember(store) { derivedStateOf { store.overlayActivities().map { it.id }.toSet() } }
     LaunchedEffect(available) { o.shown.filter { it !in available }.forEach(o::hide) }
@@ -322,6 +328,8 @@ private fun MiniWindow(store: ChatStore, a: OverlayActivity, areaW: Dp, areaH: D
     var size by remember { mutableStateOf(w.value to 120f) } // dp, measured below
     var pos by remember { mutableStateOf(o.position(id) ?: defaultPosition(id, w.value, areaW.value)) }
     val shown = OverlayState.clamp(pos.first, pos.second, size.first, size.second, areaW.value, areaH.value)
+    // The drag reads the area as it is now (it changes on rotation / a split screen), not as it was at the first drag.
+    val area by androidx.compose.runtime.rememberUpdatedState(areaW.value to areaH.value)
     val expand = { store.overlayShow(id, ctx, expand = true) }
     val dark = id == ActivityId.WATCH
     Surface(
@@ -335,12 +343,13 @@ private fun MiniWindow(store: ChatStore, a: OverlayActivity, areaW: Dp, areaH: D
             .onSizeChanged { s -> with(density) { size = s.width.toDp().value to s.height.toDp().value } }
             .pointerInput(id) {
                 detectDragGestures(
-                    onDragStart = { pos = shown },
+                    // From where it is drawn now (clamped into today's area), read at the start of each drag.
+                    onDragStart = { pos = OverlayState.clamp(pos.first, pos.second, size.first, size.second, area.first, area.second) },
                     onDrag = { change, amount ->
                         change.consume()
                         val p = pos
                         pos = OverlayState.clamp(p.first + amount.x / density.density, p.second + amount.y / density.density,
-                            size.first, size.second, areaW.value, areaH.value)
+                            size.first, size.second, area.first, area.second)
                     },
                     onDragEnd = { o.moveTo(id, pos.first, pos.second) },
                 )
