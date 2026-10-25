@@ -18,6 +18,16 @@ struct ChatScreen: View {
     @State private var composer = ChatComposerModel()
     @State private var viewing: ImageViewerItem?
 
+    /// テキスト｜ルーム｜☗｜🎮｜🍻 and 📺 beside it.
+    private func modeRow(compact: Bool) -> some View {
+        HStack(spacing: 8) {
+            if store.room.enabled || store.shogi.enabled || store.minigame.enabled || store.offkai.enabled {
+                RoomModePicker(room: store.room, shogi: store.shogi, minigame: store.minigame, offkai: store.offkai, compact: compact)
+            }
+            if store.watch.enabled { WatchToggleButton(watch: store.watch) }
+        }
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -25,11 +35,12 @@ struct ChatScreen: View {
                     // The club room: テキスト｜ルーム (the ルーム tab shows who is in the voice) replaces the voice bar.
                     // ☗ 将棋 is a third choice (テキスト｜☗ 将棋 without the room). Centred under the
                     // timeline｜chat switch. 📺 sits beside it (the player stays open whatever the chat shows).
-                    HStack(spacing: 8) {
-                        if store.room.enabled || store.shogi.enabled || store.minigame.enabled || store.offkai.enabled {
-                            RoomModePicker(room: store.room, shogi: store.shogi, minigame: store.minigame, offkai: store.offkai)
-                        }
-                        if store.watch.enabled { WatchToggleButton(watch: store.watch) }
+                    // Never wider than the screen: the full labels, else the short ones (💬 / 🏠), else it scrolls
+                    // sideways (a fixed-size row wider than the iPhone pushed the whole chat wider — 2026-10-25).
+                    ViewThatFits(in: .horizontal) {
+                        modeRow(compact: false)
+                        modeRow(compact: true)
+                        ScrollView(.horizontal, showsIndicators: false) { modeRow(compact: true) }
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 12).padding(.vertical, store.shogi.open || store.minigame.open || store.offkai.open ? 3 : 6)

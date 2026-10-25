@@ -483,14 +483,18 @@ struct RoomModePicker: View {
     var minigame: MinigameStore? = nil
     /// 🍻 オフ会: one more segment (a dot while one is going on).
     var offkai: OffkaiStore? = nil
+    /// Short labels (💬 / 🏠) when the full row is wider than the screen: with the room, ☗, 🎮, 🍻 and 📺
+    /// all on, the fixed-size control pushed the whole chat wider than the iPhone (drikin 2026-10-25).
+    var compact = false
 
     enum Choice: Hashable { case text, room, shogi, game, offkai }
 
     private var roomLabel: String {
         let n = room.inVoice.count
-        guard n > 0 else { return "ルーム" }
+        let name = compact ? "🏠" : "ルーム"
+        guard n > 0 else { return name }
         let talking = room.voice.members.contains { $0.speaking }
-        return "ルーム 🎧\(n)" + (talking ? " 🟢" : "")
+        return "\(name) 🎧\(n)" + (talking ? " 🟢" : "")
     }
 
     private var shogiOn: Bool { shogi?.enabled == true }
@@ -502,7 +506,7 @@ struct RoomModePicker: View {
             get: { RoomModePicker.current(room: room, shogi: shogi, minigame: minigame, offkai: offkai) },
             set: { RoomModePicker.choose($0, room: room, shogi: shogi, minigame: minigame, offkai: offkai) }
         )) {
-            Text("テキスト").tag(Choice.text)
+            Text(compact ? "💬" : "テキスト").tag(Choice.text).accessibilityLabel("テキスト")
             if room.enabled { Text(roomLabel).tag(Choice.room) }
             if shogiOn {
                 Text(shogi?.attention ?? 0 > 0 ? "☗●" : "☗").tag(Choice.shogi).accessibilityLabel("将棋")
