@@ -634,7 +634,9 @@ final class OffkaiStore {
         for d in jpegs {
             demoSeq += 1
             let path = "selftest-media/offkai-mine-\(demoSeq).jpg"
+            #if DEBUG
             if let cg = MediaCache.decode(d, maxPixel: 1280) { MediaCache.shared.debugInsert(PlatformImage.decoded(cg), for: path) }
+            #endif
             photos.append(OffkaiPhoto(id: demoSeq, url: path, uploader: Self.demoMe, caption: caption,
                                       createdAt: ISO8601DateFormatter().string(from: Date()), mine: true))
         }
