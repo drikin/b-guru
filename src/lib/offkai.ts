@@ -496,7 +496,8 @@ async function finalize(id: number): Promise<void> {
   if (g.__offkaiRoom?.eventId === id) g.__offkaiRoom = undefined;
   const count = Number(ev.photo_count ?? 0);
   if (announce()) {
-    const name = ev.title ? `${ev.title}オフ会` : "オフ会";
+    // 題は「渋谷で飲んでます」のような文のこともあるので、括弧に入れる。
+    const name = ev.title ? `オフ会（${ev.title}）` : "オフ会";
     await postChatNotice(`🍻 ${name}が終わりました（写真 ${count} 枚）。🍻 のアーカイブから見返せます`).catch(() => null);
     if (count > 0 && !ev.summary_post_id) {
       const covers = await pool.query(`SELECT path FROM offkai_photos WHERE event_id = $1 ORDER BY id LIMIT 4`, [id]);

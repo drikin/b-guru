@@ -91,6 +91,8 @@ import { applyDmEvent } from "@/lib/dm-client";
 import { applyMinigameEvent, reloadMinigame } from "@/lib/minigame-client";
 import { applyWatchEvent, isYoutubeVideoUrl, reloadWatch } from "@/lib/watch-client";
 import { WatchPanel, WatchTogetherButton } from "@/components/watch/WatchPanel";
+import { OffkaiPanel } from "@/components/offkai/OffkaiPanel";
+import { applyOffkaiEvent, reloadOffkai, setMyUserId as setOffkaiUserId } from "@/lib/offkai-client";
 import { applyShogiCommentaryEvent, applyShogiEvent, openShogiGame, reloadShogi } from "@/lib/shogi-client";
 import { bubbleText } from "@/lib/room-logic";
 import { EDIT_HINT, SAVE_HINT, SEND_HINT, handleComposerKeyDown, useEnterSends } from "@/lib/composer-keys";
@@ -4952,6 +4954,8 @@ export default function Home() {
   // recreate the EventSource and re-fire every panel reload).
   const authRef = useRef<null | { userId: string; email: string; isAdmin?: boolean; name?: string | null; avatar?: string | null }>(null);
   authRef.current = auth;
+  // 🍻 オフ会: 「話す人・始めた人が自分か」（終了ボタン・後勝ちで替わられたか）を決めるのに使う。
+  useEffect(() => setOffkaiUserId(auth?.userId ?? null), [auth?.userId]);
   const [checking, setChecking] = useState(true);
 
   const [email, setEmail] = useState("");
@@ -7207,6 +7211,14 @@ export default function Home() {
         /* ignore a malformed event */
       }
     });
+    // 🍻 オフ会: start / change / end / photos / how many are listening.
+    es.addEventListener("offkai", (e: MessageEvent) => {
+      try {
+        applyOffkaiEvent(JSON.parse(e.data));
+      } catch {
+        /* ignore a malformed event */
+      }
+    });
     // ✉️ 簡易 DM: a DM to me (or sent from my other device), or my read mark elsewhere.
     es.addEventListener("dm", (e: MessageEvent) => {
       try {
@@ -7251,6 +7263,7 @@ export default function Home() {
       reloadShogi(); // and ☗ 将棋 (missed moves while disconnected)
       reloadMinigame(); // and 🎮 (today's top while disconnected)
       reloadWatch(); // and 📺 (where the shared video is now)
+      reloadOffkai(); // and 🍻 (whether a meetup is on, who speaks, new photos)
       if (ENABLE_PUSH_TIMELINE_REFRESH && !threadPostRef.current) L.silentRefreshFeed();
     };
     es.onerror = () => {
@@ -12102,6 +12115,7 @@ export default function Home() {
                   <ShogiPanel />
                   <MinigamePanel />
                   <WatchPanel />
+                  <OffkaiPanel />
                   <DmDrawer />
                   {/* Message list */}
                   <ScrollArea.Autosize

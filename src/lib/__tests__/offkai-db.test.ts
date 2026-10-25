@@ -219,7 +219,7 @@ d("🍻 オフ会（DB）", () => {
     const postId = row.rows[0].summary_post_id;
     expect(postId).not.toBeNull();
     const post = await sql(`SELECT text FROM posts WHERE id = $1`, [postId]);
-    expect(post.rows[0].text).toContain("上野オフ会のアルバム（写真 1 枚）");
+    expect(post.rows[0].text).toContain("オフ会（上野）のアルバム（写真 1 枚）");
     const imgs = await sql(`SELECT url FROM post_images WHERE post_id = $1`, [postId]);
     expect(imgs.rows.map((x) => x.url)).toEqual([photos[1].url]);
     // 終わったあとのアルバムも見られる。終わった会には上げられない。
