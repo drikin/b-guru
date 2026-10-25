@@ -36,8 +36,11 @@ final class VoiceStore {
     /// What the mic is sending right now, 0…1 (after echo cancellation / noise
     /// suppression), measured on this device so it reacts instantly.
     private(set) var micLevel: Float = 0
+    /// Above the noise floor. Its own value, set only when it flips: the room map and the
+    /// mic button's colour read this, so the 15-a-second level redraws only the ring.
+    private(set) var micTalking = false
     /// My voice is going out (mic on and above the noise floor).
-    var micActive: Bool { micOn && micLevel > 0.12 }
+    var micActive: Bool { micOn && micTalking }
     /// Shown under the bar until the next action.
     private(set) var notice: String?
     private(set) var enabled = false
@@ -322,7 +325,13 @@ final class VoiceStore {
                 Task { @MainActor in
                     guard let self, self.meter != nil else { return }
                     // Rise fast, fall slowly, so the indicator does not flicker between words.
-                    self.micLevel = level > self.micLevel ? level : max(level, self.micLevel * 0.7)
+                    let next = level > self.micLevel ? level : max(level, self.micLevel * 0.7)
+                    // Silence (and changes too small to see) writes nothing.
+                    if abs(next - self.micLevel) >= 0.01 || (next < 0.01) != (self.micLevel < 0.01) {
+                        self.micLevel = next < 0.01 ? 0 : next
+                    }
+                    let talking = self.micLevel > 0.12
+                    if talking != self.micTalking { self.micTalking = talking }
                 }
             }
             AudioManager.shared.add(localAudioRenderer: m)
@@ -331,6 +340,7 @@ final class VoiceStore {
             AudioManager.shared.remove(localAudioRenderer: m)
             meter = nil
             micLevel = 0
+            micTalking = false
         }
     }
 
@@ -415,7 +425,7 @@ final class VoiceStore {
                 if $0.muted != $1.muted { return !$0.muted }
                 return $0.name.localizedStandardCompare($1.name) == .orderedAscending
             }
-        members = out
+        if out != members { members = out }
         #if DEBUG
         let line = out.map { "\($0.name)\($0.isMe ? "*" : "")[\($0.muted ? "muted" : "mic")\($0.speaking ? ",speaking" : "")]" }.joined(separator: " ")
         FileHandle.standardError.write(Data("[voice] \(phase) \(line)\n".utf8))

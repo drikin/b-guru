@@ -29,6 +29,7 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +42,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 /** Phone: timeline and chat (and the jukebox, when the server turns it on) as pages —
  *  swipe left/right or use the switch at the top (like the iPhone app). Tablet / wide
@@ -140,12 +142,15 @@ private fun Pages(
     val switch: @Composable () -> Unit = {
         segments(labels, pager.currentPage) { i -> scope.launch { pager.animateScrollToPage(i) } }
     }
+    // The chat page is at least partly on screen (swiping to or from it counts): its room and
+    // ☗ clock run only then — they are drawn live as the page slides in.
+    val chatOnScreen by remember(pager) { derivedStateOf { abs(pager.currentPage + pager.currentPageOffsetFraction - 1f) < 1f } }
     // The neighbours stay composed from the start: deferring them saved ~30 ms of the first
     // frame but added one 150–220 ms frame right after launch (measured 2026-10-20).
     HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
         when (page) {
             0 -> TimelineScreen(timeline, store.capabilities, tabSwitch = switch, onReconnect = onSignOut, visible = pager.currentPage == 0)
-            1 -> PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch, visible = pager.currentPage == 1) }
+            1 -> PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch, visible = pager.currentPage == 1, onScreen = chatOnScreen) }
             else -> if (jb != null) JukeboxScreen(jb, store.capabilities, switch, visible = { pager.currentPage == 2 },
                 onOpenThread = { timeline.openThread = it })
         }

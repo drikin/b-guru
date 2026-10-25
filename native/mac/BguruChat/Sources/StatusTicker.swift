@@ -302,6 +302,8 @@ final class TickerOverlay: NSView {
 
     func run(text: NSAttributedString, textWidth: CGFloat, scroll: Bool, duration: Double, scale: CGFloat) {
         guard let root = layer else { return }
+        // 画面が消えているあいだは流さず、止めて置く（60 Hz の刻みを誰も見ていない）。
+        let scroll = scroll && CGDisplayIsAsleep(CGMainDisplayID()) == 0
         let h = ceil(text.size().height)
         CATransaction.begin()
         CATransaction.setDisableActions(true)

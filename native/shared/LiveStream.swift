@@ -9,19 +9,26 @@ struct ServerEvent: Sendable {
 /// connection drops; the caller reconnects with backoff. The server sends a
 /// comment line every 25 s, so a 70 s read timeout means "dead connection".
 enum LiveStream {
+    /// One session for every (re)connect: a reconnect can reuse its TLS session instead of
+    /// a full handshake each time.
+    private static let session: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.timeoutIntervalForRequest = 70
+        cfg.timeoutIntervalForResource = .infinity
+        cfg.httpAdditionalHeaders = ["User-Agent": APIClient.userAgent]
+        cfg.urlCache = nil
+        return URLSession(configuration: cfg)
+    }()
+
     static func connect(token: String) -> AsyncThrowingStream<ServerEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
-                let cfg = URLSessionConfiguration.default
-                cfg.timeoutIntervalForRequest = 70
-                cfg.timeoutIntervalForResource = .infinity
-                cfg.httpAdditionalHeaders = ["User-Agent": APIClient.userAgent]
-                let session = URLSession(configuration: cfg)
                 var req = URLRequest(url: APIClient.baseURL.appendingPathComponent("/api/agent/stream"))
                 req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                 do {
                     let (bytes, resp) = try await session.bytes(for: req)
+                    defer { bytes.task.cancel() } // the shared session outlives this request
                     let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
                     if status == 401 { throw APIError.unauthorized(code: nil) }
                     guard status == 200 else { throw APIError.http(status: status, code: nil, message: nil) }
@@ -55,7 +62,6 @@ enum LiveStream {
                 } catch {
                     continuation.finish(throwing: error)
                 }
-                session.invalidateAndCancel()
             }
             continuation.onTermination = { _ in task.cancel() }
         }

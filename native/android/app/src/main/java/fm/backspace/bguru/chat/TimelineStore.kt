@@ -122,16 +122,31 @@ class TimelineStore(
     private var lastRefreshAt = 0L
     private val POLL_MS = 60_000L
 
+    private var onScreen = false
+
     /** While the timeline is on screen (and the app in front): refresh every minute — at
-     *  once when [now], or when the last refresh is already a minute old. Cancel to stop. */
+     *  once when [now] (unless it was just fetched), or when the last refresh is already a
+     *  minute old. Cancel to stop. */
     suspend fun pollWhileOnScreen(now: Boolean) {
-        if (now && hasLoaded) refresh()
-        while (true) {
-            val wait = POLL_MS - (android.os.SystemClock.elapsedRealtime() - lastRefreshAt)
-            if (wait > 0) delay(wait)
-            refresh()
-            if (demo) return
+        onScreen = true
+        try {
+            if (now && hasLoaded && android.os.SystemClock.elapsedRealtime() - lastRefreshAt > 15_000L) refresh()
+            while (true) {
+                val wait = POLL_MS - (android.os.SystemClock.elapsedRealtime() - lastRefreshAt)
+                if (wait > 0) delay(wait)
+                refresh()
+                if (demo) return
+            }
+        } finally {
+            onScreen = false
         }
+    }
+
+    /** The live stream's "post" event: someone published. On screen, show it now;
+     *  off screen, the next time the timeline appears fetches at once. */
+    fun postCreated() {
+        if (demo) return
+        if (onScreen) refreshAsync() else lastRefreshAt = 0L
     }
 
     /** A post was on screen for a second: read (per post, debounced, batched — like the web). */

@@ -85,6 +85,9 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
 
     val myMember: RoomMember? get() = me?.let { members.firstOrNull { m -> m.userId == it } }
     val myActor: Actor? get() = me?.let(actors::get)
+    /** I am walking (or about to): the view steps me to the end even while it is off screen,
+     *  so the others (and the proximity voice) see the whole walk. */
+    val iAmWalking: Boolean get() = held.isNotEmpty() || entering != null || myActor?.let { it.moveT != null || it.path.isNotEmpty() } == true
 
     // MARK: setup
 

@@ -11,6 +11,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ProcessLifecycleOwner
 import io.livekit.android.AudioOptions
 import io.livekit.android.LiveKit
 import io.livekit.android.LiveKitOverrides
@@ -71,10 +73,14 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
     var micOn by mutableStateOf(false); private set
     /** Turning the mic on/off is in progress. */
     var micBusy by mutableStateOf(false); private set
-    /** What the mic picks up right now, 0…1, measured on this phone so it reacts instantly. */
+    /** What the mic picks up right now, 0…1, measured on this phone so it reacts instantly.
+     *  Changes ~15 times a second: read it only in a draw / layer lambda (the ring), never
+     *  in composition — [micActive] is the one to recompose on. */
     var micLevel by mutableFloatStateOf(0f); private set
+    /** Above the noise floor: set only when it flips (on above 0.12, off below 0.10). */
+    private var talking by mutableStateOf(false)
     /** My voice is going out (mic on and above the noise floor). */
-    val micActive get() = micOn && micLevel > 0.12f
+    val micActive get() = micOn && talking
     /** Shown under the bar until the next action. */
     var notice by mutableStateOf<String?>(null)
     var enabled by mutableStateOf(false); private set
@@ -370,6 +376,7 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
         meter = null
         meterTrack = null
         micLevel = 0f
+        talking = false
         if (r != null) {
             r.disconnect()
             r.release()
@@ -392,8 +399,12 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
             val m = MicMeter { level ->
                 scope.launch {
                     if (meter == null) return@launch
+                    // Nobody sees it in the background: no state writes (the first one back shows the level).
+                    if (!ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@launch
                     // Rise fast, fall slowly, so the indicator does not flicker between words.
-                    micLevel = if (level > micLevel) level else max(level, micLevel * 0.7f)
+                    val next = if (level > micLevel) level else max(level, micLevel * 0.7f)
+                    micLevel = next
+                    if (talking) { if (next < 0.10f) talking = false } else if (next > 0.12f) talking = true
                 }
             }
             track.addSink(m)
@@ -404,6 +415,7 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
             meter = null
             meterTrack = null
             micLevel = 0f
+            talking = false
         }
     }
 

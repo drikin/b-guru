@@ -8,8 +8,9 @@ import AppKit
 
 /// Finds out what the app was doing when it stops responding (drikin 2026-10-20: the Mac
 /// app froze while browsing the timeline and had to be force-quit). The app is sandboxed,
-/// so it cannot run `sample` on itself; instead a watcher thread pings the main thread
-/// every half second, and when the main thread has not answered for 3 s it writes down:
+/// so it cannot run `sample` on itself; instead a watcher thread looks once a second at
+/// when the main run loop last stepped (the run loop observer below notes it — the main
+/// thread is never woken for this), and when it has been busy for 3 s it writes down:
 /// - what the main thread is doing: busy (a layout loop, CPU ≈ 100 %) or waiting (a lock),
 ///   and its call stack (the thread is paused for a moment and its frames are read);
 /// - the last things the app did (tab, thread, refresh, window size …).
@@ -58,8 +59,13 @@ final class HangWatch: NSObject, @unchecked Sendable {
     private let frames = UnsafeMutablePointer<UInt>.allocate(capacity: 128)
 
     // Watcher state (only touched on `queue`).
-    private var pingSentAt: UInt64?
     private var reportedStage = 0
+    private var stallStart: UInt64 = 0
+    private var timerSuspended = false
+    /// When the main run loop last took a step (0: it is asleep, waiting for work). Written
+    /// by the run loop observer on every step, read by the watcher: no step for 3 s while
+    /// not asleep = not responding.
+    private let busyLock = OSAllocatedUnfairLock<UInt64>(initialState: 0)
 
     // Short stalls (≥ 250 ms), timed on the main thread; the totals are read under `lock`.
     private static let slowThreshold = 0.25
@@ -85,8 +91,19 @@ final class HangWatch: NSObject, @unchecked Sendable {
         add("launch \(info?["CFBundleShortVersionString"] ?? "?") (\(info?["CFBundleVersion"] ?? "?")) "
             + ProcessInfo.processInfo.operatingSystemVersionString)
         add(imageLine)
+        busyLock.withLock { $0 = DispatchTime.now().uptimeNanoseconds } // a stall before the first step counts too
         startTimer()
         startRunLoopObserver()
+        #if os(macOS)
+        // Nothing to watch while the displays sleep (and the Mac often stays awake then).
+        let ws = NSWorkspace.shared.notificationCenter
+        ws.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: nil) { [weak self] _ in
+            self?.queue.async { self?.setTimer(running: false) }
+        }
+        ws.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: nil) { [weak self] _ in
+            self?.queue.async { self?.setTimer(running: true) }
+        }
+        #endif
     }
 
     /// Times every step of the main run loop (in every mode, so also while scrolling or
@@ -109,6 +126,8 @@ final class HangWatch: NSObject, @unchecked Sendable {
         }
         lastActivityAt = now
         lastActivityWasSleep = activity == .beforeWaiting
+        let mark = lastActivityWasSleep ? 0 : now
+        busyLock.withLock { $0 = mark }
     }
 
     private func slow(_ seconds: Double, now: UInt64) {
@@ -141,10 +160,19 @@ final class HangWatch: NSObject, @unchecked Sendable {
     /// at launch this way).
     private func startTimer() {
         let t = DispatchSource.makeTimerSource(queue: queue)
-        t.schedule(deadline: .now() + 1, repeating: .milliseconds(500), leeway: .milliseconds(100))
+        // Once a second, loosely: the stages are 3 / 8 / 20 s, and a loose timer lets the
+        // system batch this wakeup with others.
+        t.schedule(deadline: .now() + 1, repeating: .seconds(1), leeway: .milliseconds(500))
         t.setEventHandler { [weak self] in self?.tick() }
         t.resume()
         timer = t
+    }
+
+    /// On `queue`.
+    private func setTimer(running: Bool) {
+        guard let timer, running == timerSuspended else { return }
+        timerSuspended = !running
+        if running { timer.resume() } else { timer.suspend() }
     }
 
     private func add(_ s: String) {
@@ -164,29 +192,24 @@ final class HangWatch: NSObject, @unchecked Sendable {
 
     private func tick() {
         let now = DispatchTime.now().uptimeNanoseconds // stops while the Mac sleeps
-        guard let sent = pingSentAt else {
-            pingSentAt = now
-            DispatchQueue.main.async { [weak self] in self?.pong() }
-            return
+        let busySince = busyLock.withLock { $0 }
+        if busySince == 0 || busySince != stallStart && reportedStage > 0 {
+            // Asleep in its run loop again, or it took a step after a reported stall.
+            if reportedStage > 0 {
+                let s = Double((busySince == 0 ? now : busySince) &- stallStart) / 1e9
+                write("RECOVERED after \(String(format: "%.1f", s)) s\n\n")
+                logger.error("main thread recovered after \(s, format: .fixed(precision: 1)) s")
+            }
+            reportedStage = 0
+            stallStart = busySince
+            if busySince == 0 { return }
         }
-        let stalled = Double(now - sent) / 1e9
+        stallStart = busySince
+        let stalled = Double(now &- busySince) / 1e9
         let stages: [Double] = [3, 8, 20]
         guard reportedStage < stages.count, stalled >= stages[reportedStage] else { return }
         reportedStage += 1
         report(stalled: stalled, first: reportedStage == 1)
-    }
-
-    private func pong() {
-        queue.async { [weak self] in
-            guard let self, let sent = self.pingSentAt else { return }
-            if self.reportedStage > 0 {
-                let s = Double(DispatchTime.now().uptimeNanoseconds - sent) / 1e9
-                self.write("RECOVERED after \(String(format: "%.1f", s)) s\n\n")
-                self.logger.error("main thread recovered after \(s, format: .fixed(precision: 1)) s")
-            }
-            self.pingSentAt = nil
-            self.reportedStage = 0
-        }
     }
 
     private func report(stalled: Double, first: Bool) {

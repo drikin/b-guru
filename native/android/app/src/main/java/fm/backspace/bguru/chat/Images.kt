@@ -206,11 +206,16 @@ object EmojiCatalog {
         set(LinkedHashMap(list.emojis.mapNotNull { e -> ApiClient.absolute(e.imageUrl)?.let { e.name to it } }.toMap()))
     }
 
-    /** The agent API's list (with the token); falls back to [load] when it fails. */
+    private var loadedAt = 0L
+
+    /** The agent API's list (with the token); falls back to [load] when it fails.
+     *  Fetched again at most hourly: every return to the app used to refetch it. */
     suspend fun load(api: ApiClient, path: String?) {
         if (path == null) return load()
+        if (urls.isNotEmpty() && System.currentTimeMillis() - loadedAt < 60 * 60_000L) return
         val list = runCatching { api.customEmojis(path) }.getOrNull() ?: return load()
         set(LinkedHashMap(list.mapNotNull { e -> ApiClient.absolute(e.imageUrl)?.let { e.name to it } }.toMap()))
+        loadedAt = System.currentTimeMillis()
     }
 
     /** Demo only: pictures served from this Mac. */

@@ -158,6 +158,28 @@ class WatchStore(private val api: ApiClient) {
         web = null
     }
 
+    /** The app went to the background (ON_STOP) or came back. A WebView keeps playing
+     *  and decoding when the app is not on screen: pause it on this phone only (nothing
+     *  is sent to the others) and line up with the shared state again on return. */
+    fun background(on: Boolean) {
+        inBackground = on
+        val w = web ?: return
+        w.removeCallbacks(pauseWebView) // back within half a second: the WebView never pauses
+        if (on) {
+            send(suspendMessage(true))
+            w.postDelayed(pauseWebView, 500) // after the page has paused the video
+        } else {
+            w.onResume()
+            // The shared state first (where the video is now), then play: resuming at once
+            // would play the old place for a moment.
+            scope.launch { reload(); send(suspendMessage(false)) }
+        }
+    }
+
+    private var inBackground = false
+    private val pauseWebView = Runnable { if (inBackground) web?.onPause() }
+    private fun suspendMessage(on: Boolean) = buildJsonObject { put("type", "suspend"); put("on", on) }
+
     fun switchTo(m: Mode) {
         if (m == mode) return
         mode = m
@@ -282,6 +304,7 @@ class WatchStore(private val api: ApiClient) {
                     put("type", "hello"); put("bridge", 1); put("platform", "android")
                     put("can_control", canControl); put("compact", compact)
                 })
+                if (inBackground) send(suspendMessage(true)) // the page (re)loaded while away
                 lastState?.let(::sendState)
             }
             "action" -> (m["body"] as? JsonObject)?.let(::act)

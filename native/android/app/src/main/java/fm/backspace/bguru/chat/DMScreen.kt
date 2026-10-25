@@ -61,6 +61,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import java.time.Instant
@@ -103,8 +104,12 @@ fun DMOffer(onDM: (() -> Unit)?, content: @Composable () -> Unit) {
 fun DMOverlay(dm: DMStore) {
     val route = dm.route ?: return
     BackHandler { dm.back() }
-    // Hide what passes the 24 hours while it stays open.
-    LaunchedEffect(dm) { while (true) { delay(60_000); dm.prune() } }
+    // Hide what passes the 24 hours while it stays open (and on screen: back from the
+    // background it prunes at once).
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(dm) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { dm.prune(); delay(60_000) } }
+    }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when (route) {
             DMStore.Route.Inbox -> DMInbox(dm)

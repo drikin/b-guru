@@ -60,7 +60,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleStartEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -441,10 +444,17 @@ private fun MediaControls(url: String, dark: Boolean, modifier: Modifier = Modif
     val context = LocalContext.current
     var pos by remember { mutableLongStateOf(0L) }
     var dragging by remember { mutableStateOf<Float?>(null) }
-    LaunchedEffect(url) {
-        while (true) {
-            if (dragging == null) pos = InlineMedia.positionMs()
-            delay(if (InlineMedia.playing) 250 else 600)
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    // The position: read once on every change (pause, the end, buffering), then 4 times a
+    // second only while playing and on screen — nothing moves while paused.
+    LaunchedEffect(url, InlineMedia.playing, InlineMedia.buffering) {
+        if (dragging == null) pos = InlineMedia.positionMs()
+        if (!InlineMedia.playing) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                if (dragging == null) pos = InlineMedia.positionMs()
+                delay(250)
+            }
         }
     }
     val dur = InlineMedia.durationMs

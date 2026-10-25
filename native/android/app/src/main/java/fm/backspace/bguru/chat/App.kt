@@ -110,7 +110,9 @@ class Session(private val app: Context) {
     private fun start(token: String) {
         val api = ApiClient(token)
         val s = ChatStore(api, app)
-        timeline = TimelineStore(api)
+        val t = TimelineStore(api)
+        timeline = t
+        s.onPostCreated = { t.postCreated() }
         jukebox = JukeboxStore(app, api)
         ImageCache.token = token
         store = s // the stream connects when the chat comes on screen (ChatScreen)

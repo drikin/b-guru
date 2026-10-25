@@ -42,6 +42,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         HangWatch.shared.start()
+        #if DEBUG
+        // Dev only: BGURU_HANG_TEST=秒 — 3 秒後にメインスレッドをその秒数ふさぐ（HangWatch の確かめ）。
+        if let v = ProcessInfo.processInfo.environment["BGURU_HANG_TEST"], let secs = Double(v) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { Thread.sleep(forTimeInterval: secs) }
+        }
+        #endif
         TextComposition.watchReturnKey()
         #if DEBUG
         // Dev only: -assistantSelfTest runs the assistant's filter / addressee tests and exits (1 on failure).
@@ -785,6 +791,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 if self.settings.assistant, !Assistant.shared.enabled { self.applyAssistant() }
             }
         }
+        assistantHoldTimer?.tolerance = 10 // 静かな時間の明けが数秒ずれてよい（起きる回数を寄せられる）
         applyAssistant()
     }
 

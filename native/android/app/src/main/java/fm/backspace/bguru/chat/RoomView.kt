@@ -76,6 +76,10 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.currentStateAsState
+import kotlinx.coroutines.awaitCancellation
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -169,7 +173,7 @@ private class Camera { var zoom = 3f; var camX = 0f; var camY = 0f }
 
 /** The room view: controls, the map, the reactions. */
 @Composable
-fun RoomPanel(room: RoomStore, voice: VoiceStore, modifier: Modifier = Modifier) {
+fun RoomPanel(room: RoomStore, voice: VoiceStore, visible: Boolean, modifier: Modifier = Modifier) {
     val actions = rememberRoomActions(room, voice)
     val me = room.myMember
     val zone = me?.let { room.zoneAt(it.x, it.y) }
@@ -210,7 +214,7 @@ fun RoomPanel(room: RoomStore, voice: VoiceStore, modifier: Modifier = Modifier)
                 .focusable()
                 .onKeyEvent { e -> roomKey(room, e.key, e.type == KeyEventType.KeyDown, e.type == KeyEventType.KeyUp) },
         ) {
-            RoomCanvas(room, voice, focus = focus)
+            RoomCanvas(room, voice, visible, focus = focus)
             if (room.hint) {
                 Text(
                     "タップした場所へ歩きます。人をタップすると手を振れます",
@@ -298,26 +302,33 @@ private fun DPad(room: RoomStore, modifier: Modifier) {
 }
 
 @Composable
-private fun RoomCanvas(room: RoomStore, voice: VoiceStore, focus: FocusRequester) {
+private fun RoomCanvas(room: RoomStore, voice: VoiceStore, visible: Boolean, focus: FocusRequester) {
     var frame by remember { mutableLongStateOf(0L) }
     val cam = remember { Camera() }
     val painter = remember { RoomPainter() }
     var menu by remember { mutableStateOf<Pair<String, Offset>?>(null) }
     val density = LocalDensity.current
+    // On screen: not another pager page or a DM over the chat, and the app in the foreground.
+    val started = LocalLifecycleOwner.current.lifecycle.currentStateAsState().value.isAtLeast(Lifecycle.State.STARTED)
+    val shown = visible && started
     // Every frame while something moves; asleep (no frames at all) while the room is
     // still, until RoomStore.wake() or the next timed change (a bubble ending, the beagle).
-    LaunchedEffect(room) {
+    // Off screen: no frames, except to finish my own walk (nothing drawn); back on screen
+    // this starts again and draws at once.
+    LaunchedEffect(room, shown) {
         var last = 0L
         var slept = false
         while (true) {
+            if (!shown && !room.iAmWalking) awaitCancellation()
             withFrameMillis { t ->
                 // After a sleep nothing was walking: pass the real gap (the beagle's clock).
                 val dt = if (last == 0L) 16L else min(if (slept) 2_000L else 100L, t - last)
                 last = t
                 slept = false
                 room.update(dt)
-                frame = t
+                if (shown) frame = t
             }
+            if (!shown) continue
             val idle = room.idleMillis()
             if (idle > 0) { room.awaitWake(idle); slept = true }
         }

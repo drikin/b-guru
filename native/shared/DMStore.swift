@@ -333,7 +333,9 @@ final class DMStore {
         pruneTask?.cancel()
         pruneTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(60))
+                // Loose: a message leaving a minute or so late is fine, and lets the
+                // system fold this wakeup in with others.
+                try? await Task.sleep(for: .seconds(60), tolerance: .seconds(30))
                 guard let self else { return }
                 let t = DMLogic.pruned(self.thread)
                 if t.count != self.thread.count { self.thread = t }

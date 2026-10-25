@@ -186,7 +186,7 @@ fun MinigamePanel(store: ChatStore, active: Boolean, maxHeight: Dp, modifier: Mo
                             val rest = (u.path ?: "").removePrefix("/minigame/")
                             if (rest.isEmpty()) return BoardFiles.forbidden()
                             return if (mg.demo && BuildConfig.DEMO) BoardFiles.fromAssets(ctx.assets, "minigame/$rest")
-                            else BoardFiles.fromServer(Uri.parse(Net.BASE + u.path).toString(), rest)
+                            else BoardFiles.fromServer(ctx, Uri.parse(Net.BASE + u.path).toString(), rest)
                         }
                     }
                     addJavascriptInterface(MinigameBridgeJs(host), "MinigameBridge")

@@ -8,7 +8,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -49,13 +49,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -66,6 +68,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.flow.collectLatest
 
 /** The voice room strip above the chat messages — same as native/shared/VoiceBar.swift.
  *
@@ -230,12 +233,16 @@ private fun Face(voice: VoiceStore, m: VoiceStore.Member) {
 @Composable
 private fun MicButton(voice: VoiceStore, onClick: () -> Unit) {
     val active = voice.micActive
-    val ring by animateFloatAsState(if (active) 1f + voice.micLevel * 0.18f else 1f, label = "micRing")
+    // The ring follows the level (~15 Hz) off composition: only its layer redraws.
+    val ring = remember { Animatable(1f) }
+    LaunchedEffect(voice) {
+        snapshotFlow { if (voice.micActive) 1f + voice.micLevel * 0.18f else 1f }.collectLatest { ring.animateTo(it) }
+    }
     val shape = RoundedCornerShape(8.dp)
     val enabled = voice.phase == VoiceStore.Phase.CONNECTED
     Box(contentAlignment = Alignment.Center) {
         if (active) {
-            Box(Modifier.size(width = 46.dp, height = 38.dp).scale(ring).border(3.dp, AccentGreen.copy(alpha = 0.45f), RoundedCornerShape(10.dp)))
+            Box(Modifier.size(width = 46.dp, height = 38.dp).graphicsLayer { scaleX = ring.value; scaleY = ring.value }.border(3.dp, AccentGreen.copy(alpha = 0.45f), RoundedCornerShape(10.dp)))
         }
         Box(
             Modifier

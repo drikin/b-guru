@@ -156,6 +156,40 @@ final class BeagleRunner {
     init(item: NSStatusItem, barker: BeagleBarker?) {
         self.item = item
         self.barker = barker
+        // 画面が消えている・ロック中は負荷を測らず、走らせない（誰も見ていない絵を 16 コマ/秒で描いていた）。
+        let ws = NSWorkspace.shared.notificationCenter
+        // 画面の消灯・ユーザの切り替え・ロックは別々に覚える（ロック中に画面が点いても走り出さない）。
+        for (n, flag, on) in [(NSWorkspace.screensDidSleepNotification, 0, true), (NSWorkspace.screensDidWakeNotification, 0, false),
+                              (NSWorkspace.sessionDidResignActiveNotification, 1, true), (NSWorkspace.sessionDidBecomeActiveNotification, 1, false)] {
+            observers.append(ws.addObserver(forName: n, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.setAway(flag, on) }
+            })
+        }
+        let dnc = DistributedNotificationCenter.default()
+        for (n, on) in [("com.apple.screenIsLocked", true), ("com.apple.screenIsUnlocked", false)] {
+            observers.append(dnc.addObserver(forName: Notification.Name(n), object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.setAway(2, on) }
+            })
+        }
+    }
+
+    private var observers: [NSObjectProtocol] = []
+    /// 画面が消えている・別のユーザ・ロック中（どれか 1 つでも）。
+    private var away: [Bool] = [false, false, false]
+    private var screensAsleep: Bool { away.contains(true) }
+
+    private func setAway(_ which: Int, _ on: Bool) {
+        let was = screensAsleep
+        away[which] = on
+        let asleep = screensAsleep
+        guard asleep != was, enabled else { return }
+        if asleep {
+            sampleTimer?.invalidate()
+            sampleTimer = nil
+            setPace(.still)
+        } else if sampleTimer == nil {
+            start()
+        }
     }
 
     var isRunning: Bool { frameTimer != nil }
@@ -169,6 +203,7 @@ final class BeagleRunner {
     var drawsIcon: Bool { enabled }
 
     private func start() {
+        guard !screensAsleep else { return } // 画面が戻ったときに始める
         lastTicks = nil
         history = []
         _ = Self.cpuTicks() // 最初の差分の基準

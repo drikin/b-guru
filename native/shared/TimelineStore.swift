@@ -61,9 +61,39 @@ final class TimelineStore {
         }
     }
 
+    /// A non-`full` refresh in flight: a second caller (coming back fires the screen's
+    /// refresh and the poll's at once) waits for it instead of fetching the same page again.
+    @ObservationIgnored private var refreshing: Task<Void, Never>?
+
     /// `full`: asked for (pull, ⟳) — the list starts again from the first page. Otherwise
     /// (every minute, on coming back) the pages read further down are kept.
     func refresh(full: Bool = false) async {
+        if full { return await fetch(full: true) }
+        if let refreshing {
+            // Asked for during a fetch that may have started before what we want to see
+            // (a "post" event): once it ends, one more.
+            refetch = true
+            return await refreshing.value
+        }
+        let t = Task {
+            repeat {
+                refetch = false
+                await fetch(full: false)
+            } while refetch
+        }
+        refreshing = t
+        await t.value
+        refreshing = nil
+    }
+    @ObservationIgnored private var refetch = false
+
+    /// The live stream's "post" event (someone published): on screen, show it now;
+    /// off screen, the next time the timeline can be seen fetches at once.
+    func postCreated() {
+        if pollTask != nil { Task { await refresh() } } else if lastRefresh != nil { lastRefresh = .distantPast }
+    }
+
+    private func fetch(full: Bool) async {
         #if DEBUG
         if api.token == "demo" { return }
         #endif

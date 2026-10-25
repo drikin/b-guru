@@ -690,54 +690,6 @@ extension EnvironmentValues {
     @Entry var jukebox: JukeboxStore? = nil
 }
 
-// MARK: - Mini player (under every tab)
-
-struct JukeboxMiniPlayer: View {
-    let jukebox: JukeboxStore
-    let onOpen: () -> Void
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        if let e = jukebox.current {
-            HStack(spacing: 10) {
-                Button(action: onOpen) {
-                    HStack(spacing: 10) {
-                        TimelineView(.animation(paused: !jukebox.isPlaying || reduceMotion)) { tl in
-                            MiniDisc(year: e.year, size: 34)
-                                .rotationEffect(.degrees(jukebox.isPlaying && !reduceMotion
-                                    ? tl.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.8) / 1.8 * 360 : 0))
-                        }
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(e.title).font(.app(.caption)).lineLimit(1)
-                            Text(jukebox.notice ?? (jukebox.pausedForVoice ? "ボイスに入ったので一時停止中" : "\(e.dateText) ・ \(JukeboxFormat.time(jukebox.position))"))
-                                .font(.app(.caption2)).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                if jukebox.pausedForVoice && !jukebox.voiceBusy() {
-                    Button("続きを再生") { jukebox.resume() }
-                        .font(.app(.caption, weight: .semibold))
-                        .buttonStyle(.borderless)
-                }
-                Button { jukebox.toggle() } label: {
-                    Image(systemName: jukebox.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.app(size: 14, weight: .bold)).foregroundStyle(.white)
-                        .frame(width: 34, height: 34)
-                        .background(Circle().fill(Color.accentGreen))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(jukebox.isPlaying ? "一時停止" : "再生")
-            }
-            .padding(.horizontal, 12).padding(.vertical, 7)
-            .background(.bar)
-            .overlay(alignment: .top) { Divider() }
-        }
-    }
-}
-
 // MARK: - Formatting, artwork
 
 enum JukeboxFormat {

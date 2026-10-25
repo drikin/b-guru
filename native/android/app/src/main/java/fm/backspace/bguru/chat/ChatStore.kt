@@ -99,6 +99,16 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var streamJob: Job? = null
+    private var pauseJob: Job? = null
+    /** A new timeline post (the stream's "post" event). */
+    var onPostCreated: (() -> Unit)? = null
+    private var releaseCheckedAt = 0L
+    /** Wakes the reconnect wait at once (the network came back). */
+    private val reconnectNow = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+    private val networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: android.net.Network) { reconnectNow.trySend(Unit) }
+    }
+    private var networkWatched = false
     private var readJob: Job? = null
     private var tempSeq = 0L
     private var latestId = 0L
@@ -193,11 +203,16 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
      *  cover the background, and an idle socket would only drain the battery. */
     fun start() {
         shogi.foreground = true
-        if (demo || streamJob?.isActive == true) return
+        watch.background(false)
+        pauseJob?.cancel(); pauseJob = null
+        if (demo) return
+        watchNetwork(true)
+        if (streamJob?.isActive == true) return
         streamJob = scope.launch {
             if (capabilities == null) loadCapabilities()
             if (members.isEmpty()) launch { runCatching { members = api.members() } }
-            if (update == null) launch {
+            if (update == null && System.currentTimeMillis() - releaseCheckedAt > 6 * 3600_000L) launch {
+                releaseCheckedAt = System.currentTimeMillis()
                 runCatching { api.androidRelease() }.getOrNull()
                     ?.takeIf { it.available && it.versionCode > BuildConfig.VERSION_CODE }
                     ?.let { update = it }
@@ -207,14 +222,33 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         }
     }
 
+    /** ON_STOP. The stream stays up for a short while: the camera, the photo picker, the
+     *  share sheet or a glance at another app come back to a live stream with nothing to
+     *  resync. Only a real stay in the background closes it. */
     fun pause() {
         shogi.foreground = false
-        streamJob?.cancel()
-        streamJob = null
-        connection = Connection.CONNECTING
+        watch.background(true)
+        watchNetwork(false)
+        if (pauseJob?.isActive == true) return
+        pauseJob = scope.launch {
+            delay(PAUSE_GRACE_MS)
+            streamJob?.cancel()
+            streamJob = null
+            connection = Connection.CONNECTING
+        }
+    }
+
+    private fun watchNetwork(on: Boolean) {
+        if (on == networkWatched) return
+        val cm = voiceApp.getSystemService(android.net.ConnectivityManager::class.java) ?: return
+        runCatching {
+            if (on) cm.registerDefaultNetworkCallback(networkCallback) else cm.unregisterNetworkCallback(networkCallback)
+            networkWatched = on
+        }
     }
 
     fun stop() {
+        watchNetwork(false)
         shogi.close()
         dm.close()
         room.close()
@@ -248,16 +282,17 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     }
 
     /** Reconnect forever with capped backoff. Every (re)connect resyncs the list
-     *  on the `ready` event, so nothing sent while disconnected is missed. */
+     *  on the `ready` event, so nothing sent while disconnected is missed. The backoff
+     *  starts over only after a connection that held 10 s (a server that accepts and drops
+     *  at once would otherwise be redialled — and resynced — every second), and a
+     *  returning network skips the wait. */
     private suspend fun runStream() {
         var backoff = 1000L
         while (scope.isActive && !signedOut) {
             connection = Connection.CONNECTING
+            val openedAt = System.currentTimeMillis()
             try {
-                LiveStream.connect(api.token).collect { ev ->
-                    backoff = 1000L
-                    handle(ev)
-                }
+                LiveStream.connect(api.token).collect { ev -> handle(ev) }
             } catch (e: ApiError.Unauthorized) {
                 signedOut = true
                 break
@@ -268,7 +303,10 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             }
             if (signedOut) break
             connection = Connection.OFFLINE
-            delay(backoff)
+            if (System.currentTimeMillis() - openedAt > 10_000L) backoff = 1000L
+            reconnectNow.tryReceive() // a stale wake from before this drop
+            val wait = (backoff * (0.8 + Math.random() * 0.4)).toLong()
+            kotlinx.coroutines.withTimeoutOrNull(wait) { reconnectNow.receive() }
             backoff = (backoff * 2).coerceAtMost(30_000L)
         }
     }
@@ -293,6 +331,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             "dm" -> dm.apply(ev.data)
             "minigame" -> if (minigame.enabled) minigame.onStreamEvent(ev.data)
             "watch" -> if (watch.enabled) watch.onStreamEvent(ev.data)
+            "post" -> onPostCreated?.invoke()
             "voice" -> runCatching { ApiJson.decodeFromString<VoiceRoomInfo>(ev.data) }.getOrNull()?.let(voice::apply)
             "chat" -> {
                 val e = runCatching { ApiJson.decodeFromString<ChatEvent>(ev.data) }.getOrNull() ?: return
@@ -512,6 +551,9 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     }
 
     companion object {
+        /** How long the stream outlives ON_STOP (see [pause]). */
+        const val PAUSE_GRACE_MS = 45_000L
+
         /** Same rule as reconcileChat in src/lib/chat-optimistic.ts: a pending row is
          *  replaced only by the same author's stored message with its clientId. */
         fun reconcile(rows: List<ChatRow>, m: ChatMessage): List<ChatRow> {

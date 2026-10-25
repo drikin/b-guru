@@ -17,6 +17,18 @@ final class MediaCache {
 
     init() { cache.totalCostLimit = 64 * 1024 * 1024 }
 
+    /// Photos, avatars and emoji are served `immutable` for a year, but the shared session's
+    /// small default cache keeps few of them (nothing over ~5 % of its size): each launch,
+    /// and each photo opened at another size, downloaded them again. Their own disk cache.
+    nonisolated static let session: URLSession = {
+        let cfg = URLSessionConfiguration.default
+        cfg.urlCache = URLCache(memoryCapacity: 16 * 1024 * 1024, diskCapacity: 300 * 1024 * 1024,
+                                directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+                                    .appendingPathComponent("MediaCache", isDirectory: true))
+        cfg.requestCachePolicy = .useProtocolCachePolicy
+        return URLSession(configuration: cfg)
+    }()
+
     nonisolated static func url(_ raw: String) -> URL? {
         raw.hasPrefix("http") ? URL(string: raw) : URL(string: raw, relativeTo: APIClient.baseURL)?.absoluteURL
     }
@@ -48,7 +60,7 @@ final class MediaCache {
         if let t = dataInFlight[raw] { return await t.value }
         let req = Self.request(raw, token: token)
         let t = Task<Data?, Never> {
-            guard let req, let (data, resp) = try? await URLSession.shared.data(for: req),
+            guard let req, let (data, resp) = try? await Self.session.data(for: req),
                   (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
             return data
         }
@@ -90,7 +102,7 @@ final class MediaCache {
             if let token, url.scheme == base.scheme, url.host == base.host, url.port == base.port {
                 req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             }
-            guard let (data, resp) = try? await URLSession.shared.data(for: req),
+            guard let (data, resp) = try? await Self.session.data(for: req),
                   (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
             guard let cg = await Task.detached(priority: .userInitiated, operation: { Self.decode(data, maxPixel: maxPixel) }).value
             else { return nil }

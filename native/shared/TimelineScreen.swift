@@ -453,7 +453,7 @@ struct PostRow: View, Equatable {
                             .accessibilityLabel("ブックマーク済み")
                     }
                     // Its own clock: the row is only redrawn when the post changes.
-                    TimelineView(.periodic(from: .now, by: 60)) { ctx in
+                    TimelineView(.everyMinute) { ctx in
                         Text(PostRow.relative(post.createdAt, now: ctx.date)).font(.app(.caption)).foregroundStyle(.tertiary).monospacedDigit()
                     }
                 }

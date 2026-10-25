@@ -180,6 +180,23 @@ struct VoiceBar: View {
 ///   muted          → grey, slashed mic
 ///   on, quiet      → green outline, mic
 ///   on, talking    → solid green, bold mic, ring that swells with the level
+/// Level ring: grows with how loud I am while talking. Its own view, so only it follows
+/// the level (15 times a second), not the whole button.
+private struct MicLevelRing: View {
+    let voice: VoiceStore
+    let active: Bool
+    let reduceMotion: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .stroke(Color.accentGreen.opacity(0.45), lineWidth: 3)
+            .padding(-3)
+            .scaleEffect(active && !reduceMotion ? 1 + CGFloat(voice.micLevel) * 0.18 : 1)
+            .opacity(active ? 1 : 0)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: voice.micLevel)
+    }
+}
+
 private struct MicButton: View {
     @Bindable var voice: VoiceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -201,20 +218,13 @@ private struct MicButton: View {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(Color.accentGreen, lineWidth: voice.micOn ? 1.5 : 0)
                 )
-                .overlay(
-                    // Level ring: grows with how loud I am while talking.
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.accentGreen.opacity(0.45), lineWidth: 3)
-                        .padding(-3)
-                        .scaleEffect(active && !reduceMotion ? 1 + CGFloat(voice.micLevel) * 0.18 : 1)
-                        .opacity(active ? 1 : 0)
-                )
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: active)
+                .overlay(MicLevelRing(voice: voice, active: active, reduceMotion: reduceMotion))
                 .overlay(alignment: .bottomTrailing) {
                     if voice.micBusy {
                         ProgressView().controlSize(.mini).padding(1)
                     }
                 }
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: voice.micLevel)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

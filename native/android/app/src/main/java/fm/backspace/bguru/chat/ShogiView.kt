@@ -1,6 +1,7 @@
 package fm.backspace.bguru.chat
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.res.AssetManager
 import android.graphics.Color as AColor
 import android.net.Uri
@@ -82,10 +83,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.JsonObject
+import okhttp3.Cache
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /** ☗ 将棋 UI (docs/shogi-spec.md): the mode switch without the room, the panel above the chat
@@ -157,7 +164,7 @@ fun ShogiBackHandler(shogi: ShogiStore) {
 /** The shogi screen above the chat. As tall as it needs (one band + the board), never more than
  *  [maxHeight] (the board shrinks itself into it): the chat below keeps most of the screen. */
 @Composable
-fun ShogiPanel(store: ChatStore, visible: Boolean, maxHeight: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
+fun ShogiPanel(store: ChatStore, visible: Boolean, maxHeight: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier, onScreen: Boolean = visible) {
     val shogi = store.shogi
     Surface(modifier, color = MaterialTheme.colorScheme.surfaceContainerLow) {
         Box {
@@ -171,7 +178,7 @@ fun ShogiPanel(store: ChatStore, visible: Boolean, maxHeight: androidx.compose.u
                     g == null -> { GameTabs(shogi); Text("読み込み中…", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     g.status == "open" || g.status == "offered" -> { GameTabs(shogi); PendingGame(shogi, g) }
                     // A board (and its WebView) per game: switching games starts a fresh page.
-                    else -> androidx.compose.runtime.key(g.id) { GameView(store, g, visible, boardMax = (maxHeight - GAME_BAND).coerceAtLeast(160.dp)) }
+                    else -> androidx.compose.runtime.key(g.id) { GameView(store, g, visible, onScreen, boardMax = (maxHeight - GAME_BAND).coerceAtLeast(160.dp)) }
                 }
             }
             // Notices float over the top and go by themselves (no extra row).
@@ -342,7 +349,7 @@ private fun PendingGame(shogi: ShogiStore, g: ShogiGame) {
 // MARK: a game (play / watch / result)
 
 @Composable
-private fun GameView(store: ChatStore, g: ShogiGame, visible: Boolean, boardMax: androidx.compose.ui.unit.Dp) {
+private fun GameView(store: ChatStore, g: ShogiGame, visible: Boolean, onScreen: Boolean, boardMax: androidx.compose.ui.unit.Dp) {
     val shogi = store.shogi
     val my = shogi.myColorIn(g)
     val dark = isSystemInDarkTheme()
@@ -350,13 +357,8 @@ private fun GameView(store: ChatStore, g: ShogiGame, visible: Boolean, boardMax:
     var menu by remember { mutableStateOf(false) }
     var confirmResign by remember { mutableStateOf(false) }
     val focus = androidx.compose.ui.platform.LocalFocusManager.current
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val board = remember(g.id) { BoardHost() }
 
-    // The clock (blitz, in play): once a second.
-    LaunchedEffect(g.id, g.isActive, g.mode) {
-        while (g.isActive && g.mode == "blitz") { now = System.currentTimeMillis(); delay(1000) }
-    }
     // 観戦中の合図 every 30 s (players do not send it), only while the chat is on screen.
     LaunchedEffect(g.id, g.isActive, my, visible) {
         if (!g.isActive || my != null || !visible) return@LaunchedEffect
@@ -365,9 +367,6 @@ private fun GameView(store: ChatStore, g: ShogiGame, visible: Boolean, boardMax:
 
     val orientation = flip ?: my ?: "black"
     val top = if (orientation == "black") "white" else "black"
-    val clock = ShogiLogic.clockNow(g, shogi.skew, now)
-    val topLabel = ShogiLogic.playerLabel(g, top, clock)
-    val bottomLabel = ShogiLogic.playerLabel(g, orientation, clock)
     val canMove = g.isActive && my != null && g.turn == my && shogi.canPlay
     val compact = my == null || !g.isActive
 
@@ -431,24 +430,26 @@ private fun GameView(store: ChatStore, g: ShogiGame, visible: Boolean, boardMax:
     // into max_height (the page's body has 6 px of padding above and below). The WebView is as tall
     // as the board says (its `size`): no blank around the name rows, no scrolling.
     val room = boardMax.value.toInt()
-    ShogiBoardWeb(
-        host = board,
-        maxHeight = (room - BOARD_BODY_PADDING).coerceAtLeast(120),
-        available = room,
-        boardUrl = shogi.boardUrl,
-        demo = shogi.demo,
-        theme = theme,
-        compact = compact,
-        state = state,
-        stateEpoch = shogi.boardEpoch,
-        topLabel = topLabel,
-        bottomLabel = bottomLabel,
-        // ビーグルの実況: the band under the board (inside max_height: the chat keeps its room).
-        commentary = shogi.commentaryFor(g.id),
-        onMove = { usi, label -> if (canMove) shogi.move(g.id, usi, label, g.ply) },
-        onFlip = { flip = it },
-        modifier = Modifier.fillMaxWidth(),
-    )
+    ClockedBoard(g, shogi.skew, top, orientation, onScreen) { topLabel, bottomLabel ->
+        ShogiBoardWeb(
+            host = board,
+            maxHeight = (room - BOARD_BODY_PADDING).coerceAtLeast(120),
+            available = room,
+            boardUrl = shogi.boardUrl,
+            demo = shogi.demo,
+            theme = theme,
+            compact = compact,
+            state = state,
+            stateEpoch = shogi.boardEpoch,
+            topLabel = topLabel,
+            bottomLabel = bottomLabel,
+            // ビーグルの実況: the band under the board (inside max_height: the chat keeps its room).
+            commentary = shogi.commentaryFor(g.id),
+            onMove = { usi, label -> if (canMove) shogi.move(g.id, usi, label, g.ply) },
+            onFlip = { flip = it },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 
     if (confirmResign) {
         AlertDialog(
@@ -459,6 +460,27 @@ private fun GameView(store: ChatStore, g: ShogiGame, visible: Boolean, boardMax:
             dismissButton = { TextButton(onClick = { confirmResign = false }) { Text("やめる") } },
         )
     }
+}
+
+/** The players' labels with the clock (blitz, in play: once a second), for [content]. Its own
+ *  scope, so the tick redraws only the board's labels, not the whole game. It ticks only while
+ *  the chat is (even partly) on screen and the app is in the foreground; back on screen it
+ *  reads the time at once. */
+@Composable
+private fun ClockedBoard(
+    g: ShogiGame, skew: Long, top: String, bottom: String, onScreen: Boolean,
+    content: @Composable (topLabel: String, bottomLabel: String) -> Unit,
+) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(g.id, g.isActive, g.mode, onScreen) {
+        if (!onScreen) return@LaunchedEffect
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (g.isActive && g.mode == "blitz") { now = System.currentTimeMillis(); delay(1000) }
+        }
+    }
+    val clock = ShogiLogic.clockNow(g, skew, now)
+    content(ShogiLogic.playerLabel(g, top, clock), ShogiLogic.playerLabel(g, bottom, clock))
 }
 
 // MARK: the board (WebView, bridge_version 1)
@@ -514,11 +536,25 @@ internal object BoardFiles {
     fun fromAssets(assets: AssetManager, rest: String): WebResourceResponse =
         runCatching { assets.open(rest).use { it.readBytes() } }.getOrNull()?.let { response(mimeOf(rest), it) } ?: forbidden()
 
+    /** A disk copy of every file, always asked again (If-None-Match): an update shows at once,
+     *  an unchanged file (the 🎮 BGM is 1 MB) comes back as a bodiless 304. The server's own
+     *  headers are not kept — board.js / game.js say a year (immutable) under a fixed name. */
+    @Volatile private var disk: OkHttpClient? = null
+    private fun client(context: Context): OkHttpClient = disk ?: synchronized(this) {
+        disk ?: Net.http.newBuilder()
+            .cache(Cache(File(context.applicationContext.cacheDir, "board-files"), 8L * 1024 * 1024))
+            .addNetworkInterceptor { chain ->
+                chain.proceed(chain.request()).newBuilder()
+                    .header("Cache-Control", "no-cache").removeHeader("Expires").removeHeader("Pragma").build()
+            }
+            .build().also { disk = it }
+    }
+
     /** Fetched by the app (OkHttp, no cookie jar, no Authorization), so the page never carries either. */
-    fun fromServer(url: String, rest: String): WebResourceResponse {
+    fun fromServer(context: Context, url: String, rest: String): WebResourceResponse {
         cache[url]?.takeIf { System.currentTimeMillis() - it.at < TTL_MS }?.let { return response(it.mime, it.bytes) }
         return runCatching {
-            Net.http.newCall(Request.Builder().url(url).get().build()).execute().use { r ->
+            client(context).newCall(Request.Builder().url(url).get().build()).execute().use { r ->
                 if (!r.isSuccessful) return@use null
                 val bytes = r.body.bytes()
                 val mime = mimeOf(rest)
@@ -647,7 +683,7 @@ private fun ShogiBoardWeb(
                         val rest = (u.path ?: "").removePrefix("/shogi-board/")
                         if (rest.isEmpty()) return BoardFiles.forbidden()
                         return if (demo && BuildConfig.DEMO) BoardFiles.fromAssets(ctx.assets, "shogi-board/$rest")
-                        else BoardFiles.fromServer(Uri.parse(Net.BASE + u.path).toString(), rest)
+                        else BoardFiles.fromServer(ctx, Uri.parse(Net.BASE + u.path).toString(), rest)
                     }
                 }
                 addJavascriptInterface(ShogiBridgeJs(host), "ShogiBridge")

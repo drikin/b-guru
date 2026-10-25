@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Observation
 import SwiftUI
 
@@ -95,6 +96,11 @@ final class ChatStore {
 
     private let api: APIClient
     private var streamTask: Task<Void, Never>?
+    /// The reconnect wait (cancelled to reconnect at once when the network comes back).
+    @ObservationIgnored private var backoffWait: Task<Void, Never>?
+    @ObservationIgnored private var pathMonitor: NWPathMonitor?
+    /// iOS: the stream is closed a little after the app goes to the background.
+    @ObservationIgnored private var backgroundClose: Task<Void, Never>?
     private var readTask: Task<Void, Never>?
     private var tempSeq = 0
     private var latestId = 0
@@ -153,19 +159,62 @@ final class ChatStore {
 
     func start() {
         guard streamTask == nil else { return }
+        watchNetwork()
+        // A return from the background only reconnects: these are loaded once (again only
+        // when the first try failed).
+        let first = capabilities == nil, noMembers = members.isEmpty
         streamTask = Task { [weak self] in
-            await self?.loadCapabilities()
+            if first { await self?.loadCapabilities() }
             await EmojiCatalog.shared.load()
-            await self?.loadMembers()
+            if noMembers { await self?.loadMembers() }
             await self?.runStream()
         }
     }
 
     func stop() {
         jukebox.shutdown()
+        backgroundClose?.cancel()
         streamTask?.cancel()
         streamTask = nil
+        pathMonitor?.cancel()
+        pathMonitor = nil
         Task { await voice.leave() }
+    }
+
+    #if os(iOS)
+    /// iOS scene phase. In the background the app lives on only while audio plays (the
+    /// jukebox, a voice room); an open stream then wakes the cellular radio every 25 s
+    /// for events nobody sees, and pushes already cover notifications. So it closes
+    /// after a short grace (a glance at another app comes back to a live stream), except
+    /// in a voice room — the room's proximity volumes come over the stream. Back in
+    /// front it reconnects at once; the rows stay on screen and `ready` resyncs them.
+    func scenePhaseChanged(background: Bool) {
+        backgroundClose?.cancel()
+        backgroundClose = nil
+        if background {
+            backgroundClose = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(30))
+                guard let self, !Task.isCancelled, self.voice.phase == .idle else { return }
+                self.streamTask?.cancel()
+                self.streamTask = nil
+                self.connection = .connecting
+            }
+        } else if !signedOut {
+            start()
+        }
+    }
+    #endif
+
+    /// A returning network skips the reconnect wait.
+    private func watchNetwork() {
+        guard pathMonitor == nil else { return }
+        let m = NWPathMonitor()
+        m.pathUpdateHandler = { [weak self] path in
+            guard path.status == .satisfied else { return }
+            Task { @MainActor in self?.backoffWait?.cancel() }
+        }
+        m.start(queue: .global(qos: .utility))
+        pathMonitor = m
     }
 
     private func loadMembers() async {
@@ -200,14 +249,16 @@ final class ChatStore {
 
     /// Reconnect forever with capped backoff. Every (re)connect resyncs the
     /// list from GET /api/agent/chat on the `ready` event, so nothing sent while
-    /// we were disconnected is missed.
+    /// we were disconnected is missed. The backoff starts over only after a connection
+    /// that held 10 s (a server that accepts and drops at once would otherwise be redialled —
+    /// and resynced — every second), and a returning network skips the wait.
     private func runStream() async {
         var delay: Double = 1
         while !Task.isCancelled && !signedOut {
             connection = .connecting
+            let openedAt = Date()
             do {
                 for try await ev in LiveStream.connect(token: api.token) {
-                    delay = 1
                     await handle(ev)
                 }
             } catch APIError.unauthorized {
@@ -218,7 +269,11 @@ final class ChatStore {
             }
             if Task.isCancelled || signedOut { break }
             connection = .offline
-            try? await Task.sleep(for: .seconds(delay))
+            if Date().timeIntervalSince(openedAt) > 10 { delay = 1 }
+            let wait = Task { _ = try? await Task.sleep(for: .seconds(delay * Double.random(in: 0.8...1.2))) }
+            backoffWait = wait
+            await withTaskCancellationHandler { await wait.value } onCancel: { wait.cancel() }
+            backoffWait = nil
             delay = min(delay * 2, 30)
         }
     }
@@ -324,17 +379,18 @@ final class ChatStore {
             // Keep rows still sending / failed; reconcile cleans up any that
             // the server list already contains.
             let local = rows.filter { $0.message.id < 0 }
+            let keys = Dictionary(rows.map { ($0.message.id, $0.key) }, uniquingKeysWith: { a, _ in a })
             var next = r.messages.map { m -> ChatRow in
                 // Preserve the stable key of messages we sent this session.
-                if let existing = rows.first(where: { $0.message.id == m.id }) {
+                if let key = keys[m.id] {
                     var row = ChatRow(m)
-                    row.key = existing.key
+                    row.key = key
                     return row
                 }
                 return ChatRow(m)
             }
             next.append(contentsOf: local)
-            rows = next
+            if next != rows { rows = next } // a resync that changed nothing re-renders nothing
             hasLoaded = true
             if isVisible {
                 findUnreadMarker()

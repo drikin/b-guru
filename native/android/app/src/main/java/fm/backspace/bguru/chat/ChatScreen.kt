@@ -116,9 +116,11 @@ import java.time.format.DateTimeFormatter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable () -> Unit)? = null, visible: Boolean = true) {
+fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable () -> Unit)? = null, visible: Boolean = true, onScreen: Boolean = visible) {
     // ✉️ A DM screen over the chat: the chat is not on screen (read marking, 🎮 pauses).
     @Suppress("NAME_SHADOWING") val visible = visible && store.dm.route == null
+    // At least partly on screen (the pager sliding to / from it too): the room and the ☗ clock run.
+    @Suppress("NAME_SHADOWING") val onScreen = onScreen && store.dm.route == null
     val context = LocalContext.current
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -266,7 +268,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
     val chatWidth = SidePanelLayout.chatWidth(maxWidth)
     Row(Modifier.fillMaxSize()) {
     if (beside) {
-        SidePanel(store, visible, composerFocused, Modifier.weight(1f).fillMaxHeight())
+        SidePanel(store, visible, onScreen, composerFocused, Modifier.weight(1f).fillMaxHeight())
         androidx.compose.material3.VerticalDivider()
     }
     // The chat keeps its place (and its state) whether the panel is beside it or not.
@@ -444,7 +446,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                     val columnHeight = maxHeight
                     if (maxWidth >= 700.dp && maxWidth > maxHeight) {
                         Row(Modifier.fillMaxSize()) {
-                            ShogiPanel(store, visible, columnHeight, Modifier.weight(1f).fillMaxSize())
+                            ShogiPanel(store, visible, columnHeight, Modifier.weight(1f).fillMaxSize(), onScreen = onScreen)
                             chatPane(Modifier.width(400.dp).fillMaxSize())
                         }
                     } else {
@@ -456,7 +458,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                         // under it shows a few messages, 60 % on a taller column — the same as the iPhone / Mac.
                         val cap = maxHeight * (if (maxHeight < 760.dp) 0.52f else 0.6f)
                         Column(Modifier.fillMaxSize()) {
-                            ShogiPanel(store, visible, cap, Modifier.fillMaxWidth().heightIn(max = cap))
+                            ShogiPanel(store, visible, cap, Modifier.fillMaxWidth().heightIn(max = cap), onScreen = onScreen)
                             chatPane(Modifier.weight(1f).fillMaxWidth())
                         }
                     }
@@ -465,12 +467,12 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                     if (maxWidth >= 700.dp && maxWidth > maxHeight) {
                         Row(Modifier.fillMaxSize()) {
-                            RoomPanel(room, store.voice, Modifier.weight(1f).fillMaxSize())
+                            RoomPanel(room, store.voice, onScreen, Modifier.weight(1f).fillMaxSize())
                             chatPane(Modifier.width(400.dp).fillMaxSize())
                         }
                     } else {
                         Column(Modifier.fillMaxSize()) {
-                            RoomPanel(room, store.voice, Modifier.weight(1f).fillMaxWidth())
+                            RoomPanel(room, store.voice, onScreen, Modifier.weight(1f).fillMaxWidth())
                             chatPane(Modifier.weight(1f).fillMaxWidth())
                         }
                     }
@@ -1019,7 +1021,7 @@ object SidePanelLayout {
 
 /** ☗ / 🎮 beside the chat, as tall as the screen (inside the status and navigation bars). */
 @Composable
-private fun SidePanel(store: ChatStore, visible: Boolean, composerFocused: Boolean, modifier: Modifier) {
+private fun SidePanel(store: ChatStore, visible: Boolean, onScreen: Boolean, composerFocused: Boolean, modifier: Modifier) {
     androidx.compose.material3.Surface(modifier, color = MaterialTheme.colorScheme.surfaceContainerLow) {
         val insets = androidx.compose.foundation.layout.WindowInsets.systemBars
             .union(androidx.compose.foundation.layout.WindowInsets.displayCutout)
@@ -1031,7 +1033,7 @@ private fun SidePanel(store: ChatStore, visible: Boolean, composerFocused: Boole
                     MinigamePanel(store, active = visible && !composerFocused, maxHeight = h, modifier = Modifier.fillMaxWidth())
                 }
             } else {
-                ShogiPanel(store, visible, h, Modifier.fillMaxSize())
+                ShogiPanel(store, visible, h, Modifier.fillMaxSize(), onScreen = onScreen)
             }
         }
     }

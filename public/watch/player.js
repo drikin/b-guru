@@ -50,6 +50,7 @@
       }
     } catch (e) { /* 置き場所がない（単体で開いた） */ }
   }
+  var suspended = false;
   function send(body) { if (hello.can_control) post({ type: "action", body: body }); }
 
   function receive(msg) {
@@ -70,6 +71,13 @@
         break;
       case "error":
         showMsg(String(msg.message || "うまくいきませんでした"));
+        break;
+      case "suspend":
+        // アプリが裏に回った（Android は WebView が裏でも流し続ける）: この端末だけ止める。
+        // みんなには送らない。戻ったら今の状態に合わせ直す。
+        suspended = !!msg.on;
+        if (suspended) { try { if (playerReady) player.pauseVideo(); } catch (e) {} }
+        else sync(true);
         break;
       default:
         break; // 知らない知らせは無視
@@ -226,7 +234,7 @@
 
   /** 状態に合わせる。`now` はすぐ（状態が届いたとき）。そうでなければ 1 秒ごとの見回り。 */
   function sync(now) {
-    if (!playerReady || !state) return;
+    if (!playerReady || !state || suspended) return;
     var v = state.video;
     if (!v) {
       if (loadedId) { try { player.stopVideo(); } catch (e) {} loadedId = null; }
@@ -276,6 +284,7 @@
   // ───────────────────────── 帯（1 秒ごとに描き直す）
 
   function tick() {
+    if (suspended) return;
     var v = state && state.video;
     var d = playerReady && player.getDuration ? player.getDuration() : 0;
     var t = targetPosition();

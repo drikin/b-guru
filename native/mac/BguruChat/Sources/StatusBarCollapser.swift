@@ -97,6 +97,7 @@ final class StatusBarCollapser {
         checkTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.lightCheck() }
         }
+        checkTimer?.tolerance = 5
         log("区切りを置いた")
         if collapse {
             wantCollapsed = true
@@ -160,6 +161,7 @@ final class StatusBarCollapser {
         autoTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.autoTick() }
         }
+        autoTimer?.tolerance = 0.1
         log("出した")
         // 区切りが最小のときの位置を基準（anchor）として測り直す。
         let gen = generation

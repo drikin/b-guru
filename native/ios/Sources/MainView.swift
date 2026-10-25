@@ -180,7 +180,11 @@ private struct PagerWatcher: View {
             .onAppear { updateVisibility() }
             .onChange(of: pager.settledTab) { _, _ in updateVisibility() }
             .onChange(of: pager.leftTab) { _, _ in updateVisibility() }
-            .onChange(of: scenePhase) { _, _ in updateVisibility() }
+            .onChange(of: scenePhase) { _, phase in
+                updateVisibility()
+                if phase == .background { store.scenePhaseChanged(background: true); store.watch.setBackground(true) }
+                if phase == .active { store.scenePhaseChanged(background: false); store.watch.setBackground(false) }
+            }
             .onChange(of: paged) { _, _ in updateVisibility() }
             .onChange(of: jukeboxOn) { _, on in
                 if !on { if pager.tab == .jukebox { pager.tab = .chat }; pager.leftTab = .timeline }

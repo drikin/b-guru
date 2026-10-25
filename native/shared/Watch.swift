@@ -94,6 +94,19 @@ final class WatchStore {
         HangWatch.note("watch closed")
     }
 
+    /// iOS: the app went to the background or came back. Pauses the video on this phone only
+    /// (nothing is sent to the others: it would stop it for everyone) and lines up with the
+    /// shared state again on return — decoding a video nobody sees cost battery.
+    func setBackground(_ on: Bool) {
+        inBackground = on
+        if on { controller?.sendSuspend(true); return }
+        // The shared state first (where the video is now), then play: resuming at once would
+        // play the old place for a moment.
+        Task { await reload(); controller?.sendSuspend(false) }
+    }
+    /// Sent again when the page (re)loads while the app is away.
+    @ObservationIgnored private(set) var inBackground = false
+
     func setMode(_ m: Mode) {
         guard m != mode else { return }
         mode = m
@@ -268,6 +281,7 @@ final class WatchController: NSObject, WKNavigationDelegate, WKUIDelegate {
     func sendState(_ s: [String: Any]) { send(["type": "state", "state": s]) }
     func sendError(_ message: String) { send(["type": "error", "message": message]) }
     func sendLayout() { send(["type": "layout", "compact": store?.compact ?? false]) }
+    func sendSuspend(_ on: Bool) { send(["type": "suspend", "on": on]) }
 
     fileprivate func receive(_ body: Any) {
         guard !torn, let m = body as? [String: Any], let type = m["type"] as? String, let store else { return }
@@ -280,6 +294,7 @@ final class WatchController: NSObject, WKNavigationDelegate, WKUIDelegate {
             let platform = "mac"
             #endif
             send(["type": "hello", "bridge": 1, "platform": platform, "can_control": store.canControl, "compact": store.compact])
+            if store.inBackground { sendSuspend(true) } // the page (re)loaded while away
             if let s = store.currentState { sendState(s) }
         case "action":
             guard let b = m["body"] as? [String: Any], let action = b["action"] as? String else { return }

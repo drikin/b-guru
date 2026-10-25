@@ -442,8 +442,11 @@ private fun Pill(text: String, c: JbColors, label: String, onClick: () -> Unit) 
 private fun SleepRow(jukebox: JukeboxStore, c: JbColors) {
     var open by remember { mutableStateOf(false) }
     val minutes = jukebox.sleepMinutes
-    // Remaining time, refreshed every 15 s.
-    val now by produceState(System.currentTimeMillis(), minutes) { while (true) { value = System.currentTimeMillis(); kotlinx.coroutines.delay(15_000) } }
+    // Remaining time, refreshed every 15 s while on screen (at once when back).
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val now by produceState(System.currentTimeMillis(), minutes) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { while (true) { value = System.currentTimeMillis(); kotlinx.coroutines.delay(15_000) } }
+    }
     val text = when (minutes) {
         null -> "スリープタイマー：オフ"
         JukeboxStore.SLEEP_END_OF_EPISODE -> "スリープ：この回の終わりまで"

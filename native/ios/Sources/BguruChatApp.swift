@@ -118,6 +118,7 @@ final class Session {
         let t = TimelineStore(api: api)
         timeline = t
         s.beagleTimeline = { [weak t] in t?.beagleNotes() ?? [] }
+        s.onPostCreated = { [weak t] in t?.postCreated() }
         MediaCache.shared.token = token
         s.start()
         observeSignOut(s)
