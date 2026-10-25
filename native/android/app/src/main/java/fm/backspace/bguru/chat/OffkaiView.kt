@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -270,7 +271,7 @@ private fun RunningView(offkai: OffkaiStore, onOpen: (OffkaiPhoto) -> Unit) {
 
 /** 📷: take one or pick up to 4; then a caption and 送る. Resized to 1280 px, EXIF dropped (ChatAttachments). */
 @Composable
-private fun PhotoButton(offkai: OffkaiStore) {
+internal fun PhotoButton(offkai: OffkaiStore, compact: Boolean = false) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val staged = remember { ChatAttachments() }
@@ -281,7 +282,9 @@ private fun PhotoButton(offkai: OffkaiStore) {
     }
     val camera = rememberCameraCapture { ctx, uri -> staged.add(ctx, listOf(uri), OffkaiLogic.MAX_PHOTOS, OffkaiLogic.PHOTO_MAX_SIDE) }
     Box {
-        OutlinedButton(onClick = { menu = true }, modifier = Modifier.height(36.dp)) { Text("📷 写真", fontSize = 13.sp) }
+        if (compact) OutlinedButton(onClick = { menu = true }, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+            modifier = Modifier.height(30.dp).width(40.dp).semantics { contentDescription = "写真" }) { Text("📷", fontSize = 13.sp) }
+        else OutlinedButton(onClick = { menu = true }, modifier = Modifier.height(36.dp)) { Text("📷 写真", fontSize = 13.sp) }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("カメラで撮る") }, onClick = { menu = false; camera() }, enabled = staged.remaining(OffkaiLogic.MAX_PHOTOS) > 0)
             DropdownMenuItem(text = { Text("写真を選ぶ（4 枚まで）") }, enabled = staged.remaining(OffkaiLogic.MAX_PHOTOS) > 0,

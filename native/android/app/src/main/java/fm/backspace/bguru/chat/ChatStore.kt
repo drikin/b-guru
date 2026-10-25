@@ -59,6 +59,12 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     /** 🍻 オフ会 — only when the server turns it on for this member (capabilities.offkai). */
     val offkai = OffkaiStore(api, app.applicationContext).also { it.fallbackMe = { myUserId } }
     private val voiceApp = app.applicationContext
+    /** The windows over the chat (docs/chat-overlay-spec.md; only used while [chatOverlay]). */
+    val overlay = OverlayState(OverlayPositions.Prefs(app))
+    /** Demo only (`--ez demo_overlay true`): the overlay form whatever the capabilities say. */
+    var demoOverlay by mutableStateOf(false)
+    /** The new form: switches in the second row, the features over the chat. False: the old row, exactly as before. */
+    val chatOverlay: Boolean get() = demoOverlay || capabilities?.chatOverlayEnabled == true
 
     /** True while the chat is on screen: drives read marking. */
     var isVisible = false
@@ -532,6 +538,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
 
     /** ☗ 将棋 at that game (chat card, notification): out of the room view first. */
     fun openShogi(id: Long) {
+        // Over the chat: switched on and expanded; the others stay (the room's voice too).
+        if (chatOverlay) { overlay.show(ActivityId.SHOGI, expand = true); shogi.openGame(id); return }
         room.toText()
         minigame.open = false
         offkai.open = false
@@ -540,10 +548,27 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
 
     /** 🍻 オフ会 (notification tap): the chat on the 🍻 tab, out of the room view and ☗ / 🎮. */
     fun openOffkai() {
+        if (chatOverlay) { if (offkai.enabled) overlay.show(ActivityId.OFFKAI, expand = true); offkai.reveal(); return }
         room.toText()
         shogi.open = false
         minigame.open = false
         offkai.reveal()
+    }
+
+    /** ☗ (the lobby, or the game on), 🎮 or 🍻 from outside (the demo): over the chat switched on and expanded;
+     *  in the old row the one tab, the others closed (they never open together there). */
+    fun openPanel(id: ActivityId) {
+        when (id) {
+            ActivityId.SHOGI -> {
+                val live = shogi.liveGame
+                if (live != null) openShogi(live.id) else if (chatOverlay) { overlay.show(id, expand = true); shogi.open = true }
+                else { room.toText(); minigame.open = false; offkai.open = false; shogi.open = true }
+            }
+            ActivityId.GAME -> if (chatOverlay) { overlay.show(id, expand = true); minigame.open = true }
+                else { room.toText(); shogi.open = false; offkai.open = false; minigame.open = true }
+            ActivityId.OFFKAI -> openOffkai()
+            else -> if (chatOverlay) overlay.show(id, expand = true)
+        }
     }
 
     /** Jump to a message (from a notification tap) and highlight it briefly. */

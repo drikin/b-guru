@@ -99,10 +99,10 @@ private val VoiceGreen = Color(0xFF3CCF74)
 
 /** Enter (with the Bluetooth permission ask the voice bar does) and the mic toggle (with the
  *  RECORD_AUDIO ask) — shared by the banner and the room panel. */
-private class RoomActions(val enter: () -> Unit, val toggleMic: () -> Unit)
+internal class RoomActions(val enter: () -> Unit, val toggleMic: () -> Unit)
 
 @Composable
-private fun rememberRoomActions(room: RoomStore, voice: VoiceStore): RoomActions {
+internal fun rememberRoomActions(room: RoomStore, voice: VoiceStore): RoomActions {
     val context = LocalContext.current
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) room.setMic(true) else room.notice = "マイクを使えません（設定でマイクを許可してください）"

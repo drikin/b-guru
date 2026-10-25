@@ -69,9 +69,20 @@ class MainActivity : ComponentActivity() {
             store.demoPage = 0
             session.timeline?.demoOps(what)
         }
+        // `--ez demo_overlay true`: the chat-overlay form (docs/chat-overlay-spec.md) whatever the capabilities say,
+        // with 📺 on as if a video were playing (nothing is sent); `--es demo_overlay_show watch,offkai` starts with
+        // those small windows, `--es demo_overlay_expand shogi` with that one expanded (keys: room shogi game watch offkai).
+        if (intent.getBooleanExtra("demo_overlay", false)) {
+            store.demoOverlay = true
+            store.watch.loadDemo()
+            ActivityId.list(intent.getStringExtra("demo_overlay_show")).forEach { store.overlayShow(it, this) }
+            ActivityId.list(intent.getStringExtra("demo_overlay_expand")).lastOrNull()?.let { store.overlayShow(it, this, expand = true) }
+        }
         when (intent.getStringExtra("demo_open")) {
-            "shogi" -> { store.shogi.open = true; store.shogi.liveGame?.let { store.shogi.select(it.id) } }
-            "minigame" -> store.minigame.open = true
+            // Through the store, like a push: the others close in the old row (they never open together there);
+            // over the chat it is switched on and expanded.
+            "shogi" -> store.openPanel(ActivityId.SHOGI)
+            "minigame" -> store.openPanel(ActivityId.GAME)
             // 🍻 オフ会: the running one, an ended one's album, or none on.
             "offkai" -> store.openOffkai()
             "offkai_album" -> { store.openOffkai(); store.offkai.archive.firstOrNull()?.let(store.offkai::openAlbum) }

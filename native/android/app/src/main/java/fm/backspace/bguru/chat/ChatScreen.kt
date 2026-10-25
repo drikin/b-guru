@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.union
@@ -135,6 +136,24 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
     var composerFocused by remember { mutableStateOf(false) }
     // What was just sent, to swallow a late echo of it (voice input finalising after Send).
     var justSent by remember { mutableStateOf<Pair<String, Long>?>(null) }
+    // Over the chat (docs/chat-overlay-spec.md): typing shrinks the windows to chips; sending brings them back
+    // until the next keystroke, the keyboard going down too.
+    val overlayOn = store.chatOverlay
+    var typingPaused by remember { mutableStateOf(false) }
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+    val imeVisible = androidx.compose.foundation.layout.WindowInsets.isImeVisible
+    val typing = overlayOn && composerFocused && imeVisible && !typingPaused
+    LaunchedEffect(typing) { store.overlay.typing = typing }
+    LaunchedEffect(d.text) { if (d.text.isNotEmpty()) typingPaused = false }
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    // Back: the expanded window back to small first, then the top window off (the DM screen has its own).
+    androidx.activity.compose.BackHandler(enabled = overlayOn && visible && store.overlay.backTarget() != null) {
+        when (val step = store.overlay.backTarget()) {
+            OverlayState.BackStep.Collapse -> store.overlay.collapse()
+            is OverlayState.BackStep.Hide -> store.overlayHide(step.id)
+            null -> Unit
+        }
+    }
 
     // The page itself may be off screen (phone pager): only then is it "visible" for read marking.
     val visibleNow by androidx.compose.runtime.rememberUpdatedState(visible)
@@ -221,6 +240,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             if (text.isBlank()) return
         } else if (photos.loading > 0 || (text.isBlank() && photos.photos.isEmpty())) return
         d.text = ""
+        typingPaused = true
         justSent = text to System.currentTimeMillis()
         if (id != null) {
             editingId = null
@@ -289,7 +309,12 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             // banner in place of the voice bar. Otherwise the voice bar exactly as before.
             // ☗ 将棋 (when on): a third choice beside them, or テキスト｜☗ 将棋 above the voice bar.
             // 📺 YouTube 共同鑑賞 sits beside the switch (the player stays open whatever the chat shows).
-            if (store.room.enabled) {
+            if (overlayOn) {
+                // The new form: switches only (🏠 ・ ☗ ・ 🎮 ・ 📺 ・ 🍻); the features sit over the messages.
+                ChatOverlaySync(store)
+                OverlaySwitchRow(store, onChipWhileTyping = { focusManager.clearFocus() })
+                if (!store.room.enabled) VoiceBar(store.voice)
+            } else if (store.room.enabled) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f)) { RoomModeSwitch(store.room, store.voice, store.shogi, store.minigame, store.offkai) }
                     if (store.watch.enabled) WatchToggle(store.watch)
@@ -305,7 +330,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                 }
                 VoiceBar(store.voice)
             }
-            if (store.watch.open && store.watch.mode == WatchStore.Mode.DOCKED) {
+            if (!overlayOn && store.watch.open && store.watch.mode == WatchStore.Mode.DOCKED) {
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth()) {
                     WatchDock(store.watch, maxHeight = LocalConfiguration.current.screenHeightDp.dp)
                 }
@@ -313,7 +338,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             // ☗ / 🎮 / 🍻 opening moves a docked 📺 to the floating window (two above the chat leave no room for it).
             val panelAbove = store.shogi.open || store.minigame.open || (store.offkai.enabled && store.offkai.open)
             LaunchedEffect(panelAbove) {
-                if (panelAbove && store.watch.open && store.watch.mode == WatchStore.Mode.DOCKED) {
+                if (!overlayOn && panelAbove && store.watch.open && store.watch.mode == WatchStore.Mode.DOCKED) {
                     store.watch.switchTo(WatchStore.Mode.FLOATING)
                 }
             }
@@ -335,10 +360,12 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             // Everything below the bars: the messages and the composer (beside or under the room).
             val chatPane: @Composable (Modifier) -> Unit = { paneModifier ->
                 Column(paneModifier) {
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                    if (overlayOn) WatchHiddenHost(store)
                     PullToRefreshBox(
                         isRefreshing = refreshing,
                         onRefresh = { scope.launch { refreshing = true; store.reload(); refreshing = false } },
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        modifier = Modifier.fillMaxSize(),
                     ) {
                         LazyColumn(
                             state = listState,
@@ -398,6 +425,9 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                             }
                         }
                     }
+                    // The windows over the messages (not over the composer).
+                    if (overlayOn) ChatOverlayLayer(store, visible, onScreen)
+                    }
                     HorizontalDivider()
                     Composer(
                         store = store,
@@ -417,7 +447,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                         editing = editingId != null,
                         photos = photos,
                         focus = focus,
-                        onFocus = { composerFocused = it },
+                        onFocus = { composerFocused = it; if (!it) typingPaused = false },
                         onSubmit = ::submit,
                         onCancelEdit = { editingId = null; d.text = "" },
                         onEditLast = {
@@ -432,7 +462,10 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             val shogi = store.shogi
             val minigame = store.minigame
             val offkai = store.offkai
-            if (!beside && offkai.enabled && offkai.open && !(room.enabled && room.roomView)) {
+            if (overlayOn) {
+                // The chat keeps the whole height; the features are drawn over its messages.
+                chatPane(Modifier.weight(1f).fillMaxWidth())
+            } else if (!beside && offkai.enabled && offkai.open && !(room.enabled && room.roomView)) {
                 // 🍻 オフ会: the panel above, the chat below (beside it on a wide window) — the chat stays usable.
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                     if (maxWidth >= 700.dp && maxWidth > maxHeight) {
@@ -1026,7 +1059,7 @@ internal fun ChatMessage.dmPeer(dmEnabled: Boolean): DMPeer? {
 
 /** ☗ 将棋, 🎮 or 🍻 is the mode chosen above the chat (and the room is not in its own view). */
 val ChatStore.panelOpen: Boolean
-    get() = !(room.enabled && room.roomView) && ((minigame.enabled && minigame.open) || (shogi.enabled && shogi.open) || (offkai.enabled && offkai.open))
+    get() = !chatOverlay && !(room.enabled && room.roomView) && ((minigame.enabled && minigame.open) || (shogi.enabled && shogi.open) || (offkai.enabled && offkai.open))
 
 /** When the board / the game goes beside the chat instead of above it: a window wider than tall and too
  *  short for the board above the chat (a phone on its side, 411 dp). The board needs about 260 dp of height

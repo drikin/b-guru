@@ -97,7 +97,10 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val dm: DMFeatures? = null,
         val watch: WatchFeatures? = null,
         val offkai: OffkaiFeatures? = null,
+        /** チャットの上に機能を重ねる形 (docs/chat-overlay-spec.md), behind CHAT_OVERLAY_ENABLED. */
+        val chatOverlay: ChatOverlayFeatures? = null,
     )
+    @Serializable data class ChatOverlayFeatures(val enabled: Boolean? = null)
     /** 🍻 オフ会 (docs/offkai-spec.md), behind OFFKAI_ENABLED. `control` = may start, speak, upload (chat scope). */
     @Serializable data class OffkaiFeatures(
         val enabled: Boolean? = null,
@@ -268,6 +271,8 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val watchPath get() = features?.watch?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/watch"
     /** The player page (no token): only under /watch/ on our own server. */
     val watchPlayerUrl get() = features?.watch?.playerUrl?.takeIf { it.startsWith("/watch/") && !it.contains("..") } ?: "/watch/index.html"
+    /** The chat's second row is switches and the features sit over the chat (false: the old row as before). */
+    val chatOverlayEnabled get() = features?.chatOverlay?.enabled ?: false
     /** 🍻 オフ会 is on for this member. */
     val offkaiEnabled get() = features?.offkai?.enabled ?: false
     /** May start, speak, upload and end (the chat scope); otherwise look and listen only. */

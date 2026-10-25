@@ -135,6 +135,16 @@ class WatchStore(private val api: ApiClient) {
 
     val compact get() = mode == Mode.FLOATING
 
+    /** Debug only (`--ez demo_overlay true`): on, a title as if a video were on; nothing is sent (the shared
+     *  video is never changed from a demo) — the player page itself still loads from the server. */
+    var demo = false; private set
+    fun loadDemo() {
+        demo = true
+        enabled = true
+        canControl = true
+        title = "（デモ）みんなで見ている動画"
+    }
+
     fun show(context: Context) {
         if (!enabled) return
         if (web == null) web = makeWebView(context.applicationContext)
@@ -195,7 +205,7 @@ class WatchStore(private val api: ApiClient) {
     private fun sendState(s: JsonObject) = send(buildJsonObject { put("type", "state"); put("state", s) })
 
     suspend fun reload() {
-        if (!enabled) return
+        if (!enabled || demo) return
         try {
             val (status, body) = api.minigame("GET", "state", base = basePath)
             if (status == 200) (body?.get("state") as? JsonObject)?.let { take(it, force = true) }
@@ -220,7 +230,7 @@ class WatchStore(private val api: ApiClient) {
 
     /** An action from the page (or 「みんなで見る」) → the API; the answer's state back to the page. */
     fun act(body: JsonObject) {
-        if (!enabled || !canControl) return
+        if (!enabled || !canControl || demo) return
         scope.launch {
             try {
                 val (status, out) = api.minigame("POST", "action", body, basePath)

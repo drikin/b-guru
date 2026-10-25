@@ -107,7 +107,8 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
         // tab and the playback notification play and pause.
     }
     // 📺 floating over every page (a 「みんなで見る」 on the timeline opens it here).
-    if (store.watch.open && store.watch.mode == WatchStore.Mode.FLOATING) WatchFloating(store.watch)
+    // (Over the chat — docs/chat-overlay-spec.md — the player is one of the chat's windows instead.)
+    if (!store.chatOverlay && store.watch.open && store.watch.mode == WatchStore.Mode.FLOATING) WatchFloating(store.watch)
     }
 }
 
