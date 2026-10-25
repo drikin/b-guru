@@ -16,6 +16,7 @@ import { shogiEnabledFor } from "@/lib/shogi";
 import { commentaryEnabledFor } from "@/lib/shogi-commentary-store";
 import { minigameEnabledFor } from "@/lib/minigame";
 import { watchEnabledFor } from "@/lib/watch";
+import { offkaiEnabledFor } from "@/lib/offkai";
 import { dmEnabledFor, ensureDmSweeper } from "@/lib/dm";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +44,8 @@ export async function GET(req: NextRequest) {
   const minigameOn = minigameEnabledFor(email);
   // 📺 共同鑑賞 (WATCH_ENABLED): signed-in members with the feature only.
   const watchOn = !!email && watchEnabledFor(email);
+  // 🍻 オフ会 (OFFKAI_ENABLED): signed-in members with the feature only.
+  const offkaiOn = !!email && offkaiEnabledFor(email);
   // ✉️ 簡易 DM (DM_ENABLED): my DMs and read marks over the personal bus (`event: dm`, per-recipient DTO).
   const dmOn = dmEnabledFor(email);
   if (dmOn) ensureDmSweeper();
@@ -79,6 +82,7 @@ export async function GET(req: NextRequest) {
         if (event.type === "shogi_commentary" && !commentaryOn) return;
         if (event.type === "minigame" && !minigameOn) return;
         if (event.type === "watch" && !watchOn) return;
+        if (event.type === "offkai" && !offkaiOn) return;
         // Names / avatars of who is online: signed-in members only (same as
         // GET /api/presence, which returns [] to visitors).
         if (event.type === "presence" && !email && event.members) {

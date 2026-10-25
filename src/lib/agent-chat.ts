@@ -179,6 +179,21 @@ export function liveToStreamEvent(ev: LiveEvent, viewer: ChatViewer): StreamEven
   if (ev.type === "watch") {
     return { event: "watch", data: { state: ev.state } };
   }
+  // 🍻 オフ会: 始まり・変化・終わり・写真・聞いている人数（the stream route drops it for members without the feature）。
+  // event の can_end は常に false（見る人で変わる）。端末は始めた人・話す人が自分かで決める（管理者は GET の can_end）。
+  if (ev.type === "offkai") {
+    return {
+      event: "offkai",
+      data: {
+        action: ev.action,
+        ...(ev.event ? { event: ev.event } : {}),
+        ...(ev.eventId != null ? { event_id: ev.eventId } : {}),
+        ...(ev.photo ? { photo: ev.photo } : {}),
+        ...(ev.photoId != null ? { photo_id: ev.photoId } : {}),
+        ...(ev.listeners != null ? { listeners: ev.listeners } : {}),
+      },
+    };
+  }
   return null;
 }
 
@@ -201,7 +216,7 @@ export function toAgentVoiceDto(s: VoiceState) {
  *  calling token's, so a client knows up front which actions will be refused. */
 export function agentCapabilities(
   scopes: AgentScope[],
-  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; shogiCommentary?: boolean; minigame?: boolean; watch?: boolean; appIssued?: boolean; macAssistant?: boolean; beagleOnDevice?: boolean; beagleServer?: boolean } = {}
+  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; shogiCommentary?: boolean; minigame?: boolean; watch?: boolean; offkai?: boolean; appIssued?: boolean; macAssistant?: boolean; beagleOnDevice?: boolean; beagleServer?: boolean } = {}
 ) {
   const ttlHours = parseInt(CHAT_TTL, 10) || 24;
   const can = (s: AgentScope) => scopes.includes(s);
@@ -284,6 +299,7 @@ export function agentCapabilities(
           ...(opts.shogi && opts.shogiCommentary ? ["shogi_commentary"] : []),
           ...(opts.minigame ? ["minigame"] : []),
           ...(opts.watch ? ["watch"] : []),
+          ...(opts.offkai ? ["offkai"] : []),
         ],
         affects_presence: false,
       },
@@ -314,6 +330,8 @@ export function agentCapabilities(
       // 📺 YouTube 共同鑑賞, behind WATCH_ENABLED. The player is a web page the app shows in a WebView
       // (bridge_version 1); the app relays the page's actions to the API and the stream's `watch` to the page.
       watch: watchCapability(!!opts.watch, scopes),
+      // 🍻 オフ会（docs/offkai-spec.md）。声は LiveKit（鍵は POST token / speak）、写真は POST photos（multipart）。
+      offkai: { enabled: !!opts.offkai, path: "/api/agent/offkai", control: !!opts.offkai && scopes.includes("chat") },
       // Mac のアシスタント機能（MAC_ASSISTANT_ENABLED・最初はオーナーだけ）。false なら Mac アプリは出さない。
       mac_assistant: !!opts.macAssistant,
       voice: {

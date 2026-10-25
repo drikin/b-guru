@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { livekitConfig, verifyWebhook } from "@/lib/livekit";
 import { handleWebhookEvent, type LkWebhookEvent } from "@/lib/voice";
+import { handleOffkaiWebhook, ROOM_PREFIX as OFFKAI_ROOM_PREFIX } from "@/lib/offkai";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,7 +30,9 @@ export async function POST(req: NextRequest) {
     return new NextResponse(null, { status: 400 });
   }
   try {
-    await handleWebhookEvent(ev);
+    // 🍻 オフ会の部屋（bguru-offkai-<id>）はこちら。ボイスルームの記録には入れない。
+    if (ev.room?.name?.startsWith(OFFKAI_ROOM_PREFIX)) await handleOffkaiWebhook(ev);
+    else await handleWebhookEvent(ev);
   } catch (e) {
     console.error("[voice] webhook:", (e as Error)?.message);
     return new NextResponse(null, { status: 500 });

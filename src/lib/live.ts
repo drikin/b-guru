@@ -1,3 +1,4 @@
+import type { EventDto as OffkaiEventDto, PhotoDto as OffkaiPhotoDto } from "./offkai";
 import type { PostPoll } from "./poll";
 import { EventEmitter } from "events";
 import type { ChatMessage } from "./chat";
@@ -63,7 +64,17 @@ export type LiveEvent =
    *  （配信の側で落とす）。本人のベストは personal-live.ts で本人だけ。 */
   | { type: "minigame"; action: "leaderboard"; period: "today"; key: string; top: LeaderEntry[] }
   // 📺 YouTube 共同鑑賞: 変わった後の状態（表示名だけ、メールなし）。
-  | { type: "watch"; state: WatchStateDto };
+  | { type: "watch"; state: WatchStateDto }
+  // 🍻 オフ会（lib/offkai.ts）: 始まり・変化・終わり・写真・聞いている人数。人は user_id・表示名だけ（メールなし）。
+  | {
+      type: "offkai";
+      action: "start" | "update" | "end" | "photo" | "photo_delete" | "listeners";
+      event?: OffkaiEventDto;
+      eventId?: number;
+      photo?: OffkaiPhotoDto;
+      photoId?: number;
+      listeners?: number;
+    };
 
 export type ChatReactionLive = { emoji: string; count: number; reactors: string[]; userIds: string[] };
 

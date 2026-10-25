@@ -57,6 +57,8 @@ const AUDIO_EXTS = new Set([
 /** Chat photos: small (long side 1280 px, resized on the device), at most 4 a message.
  *  Saved as chat-… so they can be found and deleted with the 24 h chat. */
 export const CHAT_UPLOAD = { prefix: "chat-", maxImages: 4, maxImageBytes: 4 * 1024 * 1024, maxTotalBytes: 17 * 1024 * 1024 };
+/** 🍻 オフ会のアルバムの写真（chat- と違い、掃除されずに残る）。 */
+export const OFFKAI_UPLOAD_PREFIX = "offkai-";
 
 /* 大きなアップロードの同時数の上限（サーバ全体）。
  * req.formData() はリクエストを丸ごとメモリに載せる（動画・音声は 1 本 100MB まで）。ストリームで解析して
@@ -74,11 +76,11 @@ export function _bigUploadsInFlightForTest(): number {
 export async function handleUpload(
   req: Request,
   email: string,
-  opts: { imagesOnly?: boolean; chat?: boolean; appMedia?: boolean } = {}
+  opts: { imagesOnly?: boolean; chat?: boolean; appMedia?: boolean; offkai?: boolean; onForm?: (form: FormData) => void } = {}
 ): Promise<NextResponse> {
   const len = Number(req.headers.get("content-length") ?? "0");
   // No length (chunked) counts as big: formData() still reads it all into memory.
-  const big = !opts.chat && (!(len > 0) || len > BIG_UPLOAD_BYTES);
+  const big = !opts.chat && !opts.offkai && (!(len > 0) || len > BIG_UPLOAD_BYTES);
   if (big) {
     if (bigUploadsInFlight >= MAX_CONCURRENT_BIG_UPLOADS) {
       return NextResponse.json(
@@ -99,19 +101,22 @@ async function handleUploadInner(
   req: Request,
   _email: string,
   /** imagesOnly: アプリの画像だけ（合計 50MB）。appMedia: アプリから画像・動画・音声（動画・音声は Web と
-   *  同じ形式と 100MB まで、画像は imagesOnly と同じ合計 50MB まで）。chat: チャットの写真。 */
-  opts: { imagesOnly?: boolean; chat?: boolean; appMedia?: boolean },
+   *  同じ形式と 100MB まで、画像は imagesOnly と同じ合計 50MB まで）。chat: チャットの写真。
+   *  offkai: 🍻 オフ会のアルバム（チャットの写真と同じ大きさの枠、offkai-… で残る。サーバでも EXIF を落とす）。 */
+  opts: { imagesOnly?: boolean; chat?: boolean; appMedia?: boolean; offkai?: boolean; onForm?: (form: FormData) => void },
   len: number
 ): Promise<NextResponse> {
   const chat = !!opts.chat;
-  const maxImages = chat ? CHAT_UPLOAD.maxImages : MAX_IMAGES;
-  const maxImageBytes = chat ? CHAT_UPLOAD.maxImageBytes : MAX_BYTES;
+  const offkai = !!opts.offkai;
+  const small = chat || offkai;
+  const maxImages = small ? CHAT_UPLOAD.maxImages : MAX_IMAGES;
+  const maxImageBytes = small ? CHAT_UPLOAD.maxImageBytes : MAX_BYTES;
   // Apps send phone photos resized to ~1 MB each: refuse anything far larger
   // before the multipart body is buffered in memory.
-  if (opts.imagesOnly || chat) {
-    const limit = chat ? CHAT_UPLOAD.maxTotalBytes : APP_UPLOAD_MAX_BYTES;
+  if (opts.imagesOnly || small) {
+    const limit = small ? CHAT_UPLOAD.maxTotalBytes : APP_UPLOAD_MAX_BYTES;
     if (!len || len > limit) {
-      return NextResponse.json({ error: chat ? "写真が大きすぎます" : "画像が大きすぎます（合計 50MB まで）" }, { status: 413 });
+      return NextResponse.json({ error: small ? "写真が大きすぎます" : "画像が大きすぎます（合計 50MB まで）" }, { status: 413 });
     }
   } else if (opts.appMedia) {
     // 動画・音声 1 本（100MB）＋ multipart の枠。画像だけのときは下でさらに 50MB に絞る。
@@ -126,13 +131,15 @@ async function handleUploadInner(
   } catch {
     return NextResponse.json({ error: "不正なリクエストです" }, { status: 400 });
   }
+  // 画像のほかの欄（🍻 オフ会の写真の説明など）を呼び出し側へ。
+  opts.onForm?.(form as unknown as FormData);
 
   const toFile = (f: FormDataEntryValue | null): File | null =>
     f && typeof f === "object" && "arrayBuffer" in f ? (f as File) : null;
 
   const videoFile = toFile(form.get("video"));
   const audioFile = toFile(form.get("audio"));
-  if ((opts.imagesOnly || chat) && (videoFile || audioFile)) {
+  if ((opts.imagesOnly || small) && (videoFile || audioFile)) {
     return NextResponse.json({ error: "画像だけ送れます" }, { status: 400 });
   }
 
@@ -268,7 +275,7 @@ async function handleUploadInner(
   for (const file of files) {
     const ext = path.extname(file.name).toLowerCase() || ".jpg";
     let safeExt = [".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext) ? ext : ".jpg";
-    const base = `${chat ? CHAT_UPLOAD.prefix : ""}${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
+    const base = `${chat ? CHAT_UPLOAD.prefix : offkai ? OFFKAI_UPLOAD_PREFIX : ""}${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
     let filename = `${base}${safeExt}`;
     try {
       // Post images (not chat: those are already ≤1280 px and EXIF-free from the

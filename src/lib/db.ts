@@ -882,5 +882,33 @@ export async function initSchema() {
       added_by TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    -- 🍻 オフ会（lib/offkai.ts, docs/offkai-spec.md）: 開催中は 1 つだけ。写真はアルバムとしてずっと残る。
+    CREATE TABLE IF NOT EXISTS offkai_events (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT '',
+      started_by_email TEXT NOT NULL,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      ends_at TIMESTAMPTZ NOT NULL,
+      ended_at TIMESTAMPTZ,
+      ended_by_email TEXT,
+      speaker_email TEXT,
+      speaker_since TIMESTAMPTZ,
+      speaker_left_at TIMESTAMPTZ,
+      version INT NOT NULL DEFAULT 1,
+      finalized_at TIMESTAMPTZ,
+      summary_post_id INT,
+      notice_msg_id INT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_offkai_one_open ON offkai_events ((true)) WHERE ended_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_offkai_started ON offkai_events(id DESC);
+    CREATE TABLE IF NOT EXISTS offkai_photos (
+      id SERIAL PRIMARY KEY,
+      event_id INT NOT NULL REFERENCES offkai_events(id) ON DELETE CASCADE,
+      path TEXT NOT NULL,
+      uploader_email TEXT NOT NULL,
+      caption TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_offkai_photos_event ON offkai_photos(event_id, id);
   `);
 }

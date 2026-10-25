@@ -32,6 +32,7 @@ import { shogiEnabledFor } from "@/lib/shogi";
 import { commentaryEnabledFor } from "@/lib/shogi-commentary-store";
 import { minigameEnabledFor } from "@/lib/minigame";
 import { watchEnabledFor } from "@/lib/watch";
+import { offkaiEnabledFor } from "@/lib/offkai";
 import { dmEnabledFor, ensureDmSweeper, getDmUnreadTotal } from "@/lib/dm";
 
 export const dynamic = "force-dynamic";
@@ -104,6 +105,7 @@ export async function GET(req: NextRequest) {
   const commentaryOn = commentaryEnabledFor(agent.email);
   const minigameOn = minigameEnabledFor(agent.email);
   const watchOn = watchEnabledFor(agent.email);
+  const offkaiOn = offkaiEnabledFor(agent.email);
   const dmOn = dmEnabledFor(agent.email);
   if (dmOn) ensureDmSweeper();
   const onLive = (ev: LiveEvent) => {
@@ -112,6 +114,7 @@ export async function GET(req: NextRequest) {
     if (ev.type === "shogi_commentary" && !commentaryOn) return; // ☗ ビーグルの実況: behind SHOGI_COMMENTARY_ENABLED
     if (ev.type === "minigame" && !minigameOn) return; // 🎮 散財ダッシュ: behind MINIGAME_ENABLED
     if (ev.type === "watch" && !watchOn) return; // 📺 共同鑑賞: behind WATCH_ENABLED
+    if (ev.type === "offkai" && !offkaiOn) return; // 🍻 オフ会: behind OFFKAI_ENABLED
     const out = liveToStreamEvent(ev, viewer);
     if (out) send(out);
   };

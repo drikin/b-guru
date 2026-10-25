@@ -15,7 +15,7 @@ import { activePushDevices, markPushSent, pushDeviceOwners, removePushDevice, ty
 import { isMentionedIn, mentionNamesFor } from "./chat-mention";
 import { resolveDisplayNames } from "./display-name";
 
-export type PushKind = "chat_mention" | "chat_new" | "reply" | "timeline_new" | "shogi_offer" | "shogi_turn" | "dm";
+export type PushKind = "chat_mention" | "chat_new" | "reply" | "timeline_new" | "shogi_offer" | "shogi_turn" | "dm" | "offkai_start";
 
 /** 0:00–7:00 JST — new-message pushes wait (mentions still go out). */
 export function isQuietHourJst(now = new Date()): boolean {
@@ -66,6 +66,20 @@ export function buildShogiPayload(kind: "shogi_offer" | "shogi_turn", gameId: nu
     },
     kind,
     game_id: gameId,
+  };
+}
+
+/** 🍻 オフ会が始まった（1 回だけ）。中身は id だけ、文は固定（場所は出さない）。 */
+export function buildOffkaiPayload(eventId: number) {
+  return {
+    aps: {
+      alert: { title: "🍻 オフ会", body: "オフ会が始まりました。チャットの 🍻 から聞けます" },
+      sound: "default",
+      category: "offkai",
+      "thread-id": `offkai-${eventId}`,
+    },
+    kind: "offkai_start",
+    event_id: eventId,
   };
 }
 
@@ -232,4 +246,14 @@ export async function pushDm(recipientEmail: string, messageId: number, senderUs
   const devices = await activePushDevices([recipientEmail]);
   if (devices.length === 0) return 0;
   return deliver(devices, buildDmPayload(messageId, senderUserId), `dm-${senderUserId}`);
+}
+
+/** 🍻 オフ会が始まった: 始めた人以外の全端末へ 1 回だけ。静かな時間（0〜7 時）を選んだ端末には送らない。 */
+export async function pushOffkaiStart(eventId: number, starterEmail: string): Promise<number> {
+  if (!pushEnabled()) return 0;
+  const starter = starterEmail.trim().toLowerCase();
+  const quiet = isQuietHourJst();
+  const devices = (await activePushDevices(null)).filter((d) => d.email !== starter && !(quiet && d.quietHours));
+  if (devices.length === 0) return 0;
+  return deliver(devices, buildOffkaiPayload(eventId), `offkai-${eventId}`);
 }
