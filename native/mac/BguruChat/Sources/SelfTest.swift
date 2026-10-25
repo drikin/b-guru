@@ -148,7 +148,7 @@ extension SelfTest {
             ]
             let dark: [Step] = [
                 ("dark-chat", 12, {
-                    RoomModePicker.choose(.text, room: store.room, shogi: store.shogi, minigame: store.minigame)
+                    RoomModePicker.choose(.text, room: store.room, shogi: store.shogi, minigame: store.minigame, offkai: store.offkai)
                     win.appearance = NSAppearance(named: .darkAqua)
                 }),
                 ("dark-jukebox", 12, { pin.tab = .jukebox }),

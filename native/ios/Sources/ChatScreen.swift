@@ -28,10 +28,27 @@ struct ChatScreen: View {
         }
     }
 
+    /// チャットの上に重ねる形 is on for this member and something can sit over the chat.
+    private var overlayOn: Bool { store.overlay.enabled && store.overlay.anyAvailable }
+
+    /// A chip: the keyboard goes down and that one comes back, expanded.
+    private func chipTapped(_ id: ActivityID) {
+        composer.focused = false
+        store.overlay.expand(id)
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if store.room.enabled || store.shogi.enabled || store.minigame.enabled || store.watch.enabled || store.offkai.enabled {
+                if overlayOn {
+                    // チャットの上に重ねる形 (docs/chat-overlay-spec.md): the row is switches only; the features sit
+                    // over the messages (ChatOverlayLayer below), the chat keeps its full height.
+                    OverlaySwitchRow(overlay: store.overlay, onChip: chipTapped)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 14).padding(.top, 4).padding(.bottom, 8)
+                    Divider()
+                    if !store.room.enabled { VoiceBar(voice: store.voice) }
+                } else if store.room.enabled || store.shogi.enabled || store.minigame.enabled || store.watch.enabled || store.offkai.enabled {
                     // The club room: テキスト｜ルーム (the ルーム tab shows who is in the voice) replaces the voice bar.
                     // ☗ 将棋 is a third choice (テキスト｜☗ 将棋 without the room). Centred under the
                     // timeline｜chat switch. 📺 sits beside it (the player stays open whatever the chat shows).
@@ -73,6 +90,9 @@ struct ChatScreen: View {
                 }
                 ChatMessageList(store: store, composer: composer, viewing: $viewing)
                     .environment(\.shogi, store.shogi.enabled ? store.shogi : nil)
+                    .overlay {
+                        if overlayOn { ChatOverlayLayer(store: store, onChip: chipTapped) }
+                    }
                 Divider()
                 ChatComposerBar(store: store, composer: composer)
             }
@@ -86,8 +106,25 @@ struct ChatScreen: View {
             // ☗ / 🎮 opening moves a docked 📺 to the floating window (MainView draws it over every page;
             // two above the chat would leave no room for the chat).
             .onChange(of: store.shogi.open || store.minigame.open || store.offkai.open) { _, busy in
+                guard !store.overlay.enabled else { return } // the overlay places 📺 itself
                 if busy && store.watch.open && store.watch.mode == .docked { store.watch.setMode(.floating) }
             }
+            // The overlay: typing shrinks every window to a chip (the keyboard takes half the screen); they come
+            // back when the focus goes or the message is sent (the box empties), and shrink again on the next letter.
+            .onChange(of: composer.focused, initial: true) { _, focused in store.overlay.typing = focused }
+            .onChange(of: composer.draft.isEmpty) { wasEmpty, isEmpty in
+                guard composer.focused else { return }
+                if isEmpty && !wasEmpty { store.overlay.typing = false } else if !isEmpty { store.overlay.typing = true }
+            }
+            #if DEBUG
+            // BGURU_DEMO_OVERLAY_TYPING=1: the composer takes the focus (the screenshot of the typing state).
+            .task {
+                guard ProcessInfo.processInfo.environment["BGURU_DEMO_OVERLAY_TYPING"] != nil else { return }
+                try? await Task.sleep(for: .seconds(1.2))
+                composer.draft = "そのレンズ何ですか？"
+                composer.focused = true
+            }
+            #endif
             .imageViewer($viewing)
             .navigationTitle("B-guru チャット")
             .navigationBarTitleDisplayMode(.inline)

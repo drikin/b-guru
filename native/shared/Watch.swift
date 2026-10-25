@@ -40,6 +40,12 @@ final class WatchStore {
     @ObservationIgnored private var lastVersion = -1
     /// Mac: the player's own window comes and goes with the mode (set by the app).
     @ObservationIgnored var onModeChange: (@MainActor (Mode) -> Void)?
+    /// About to open (chat overlay: from outside the switch row it is switched on, and expanded unless floating).
+    @ObservationIgnored var willShow: (@MainActor (_ floating: Bool) -> Void)?
+    /// Chat overlay: the page draws only the picture and its bar (a small window) — nil: as the mode says.
+    @ObservationIgnored var compactOverride: Bool? {
+        didSet { if compactOverride != oldValue { controller?.sendLayout() } }
+    }
 
     private let api: APIClient
 
@@ -75,8 +81,18 @@ final class WatchStore {
         #endif
     }
 
+    #if DEBUG
+    /// The demo (BGURU_DEMO=1 + BGURU_DEMO_OVERLAY=1): 📺 on, nothing can be operated (with BGURU_WATCH_FAKE_VIDEO=ID
+    /// that video plays on this device only). Only reads (the state, the player page) — nothing is sent.
+    func debugLoadDemo() {
+        configure(nil, enabled: true)
+        canControl = false
+    }
+    #endif
+
     func show(_ m: Mode? = nil) {
         guard enabled else { return }
+        willShow?(m == .floating)
         if controller == nil { controller = WatchController(store: self) }
         open = true
         if let m { setMode(m) }
@@ -119,6 +135,7 @@ final class WatchStore {
 
     /// The page is small (floating on a phone): only the picture and the bar.
     var compact: Bool {
+        if let compactOverride { return compactOverride }
         #if os(iOS)
         return mode == .floating
         #else
@@ -480,26 +497,51 @@ struct WatchTogetherButton: View {
 /// two sizes (the ⤢ button), ⤓ back above the chat, ✕ closes. Only the picture and the page's bar.
 struct WatchFloatingView: View {
     let watch: WatchStore
-    @State private var corner = 3 // 0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right
+    @State private var corner: Int // 0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right
     @State private var large = false
     @State private var drag: CGSize = .zero
+    /// Chat overlay: what ⤓ does (expand it over the chat) instead of docking it above the chat.
+    private let onDock: (() -> Void)?
+    /// Chat overlay: kept off the switch row (top) and the message box (bottom).
+    private let insets: EdgeInsets
+    /// Chat overlay: the corner is remembered on this device.
+    private let remember: Bool
+    /// Chat overlay: the small size's width (the mock's small window; the large one stays 360).
+    private let smallWidth: CGFloat
+    private static let cornerKey = "watchFloatingCorner"
+
+    init(watch: WatchStore, onDock: (() -> Void)? = nil, insets: EdgeInsets = EdgeInsets(), remember: Bool = false,
+         smallWidth: CGFloat = 240) {
+        self.watch = watch
+        self.smallWidth = smallWidth
+        self.onDock = onDock
+        self.insets = insets
+        self.remember = remember
+        let saved = UserDefaults.standard.object(forKey: Self.cornerKey) as? Int
+        _corner = State(initialValue: remember ? (saved ?? 0) : 3)
+    }
 
     var body: some View {
         GeometryReader { g in
-            let w = min(g.size.width - 16, large ? 360 : 240)
+            let w = min(g.size.width - 16, large ? 360 : smallWidth)
             let h = (w * 9 / 16) + 44 + 26
             let left = corner % 2 == 0
             let top = corner < 2
             let x = left ? 8 + w / 2 : g.size.width - 8 - w / 2
-            let y = top ? 8 + h / 2 : g.size.height - 8 - h / 2
+            let y = top ? 8 + insets.top + h / 2 : g.size.height - 8 - insets.bottom - h / 2
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     Text("📺 \(watch.title ?? "みんなで見る")").font(.app(.caption2, weight: .semibold)).lineLimit(1)
                     Spacer(minLength: 4)
                     Button { large.toggle() } label: { Image(systemName: large ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right") }
                         .accessibilityLabel(large ? "小さくする" : "大きくする")
-                    Button { watch.setMode(.docked) } label: { Image(systemName: "rectangle.bottomhalf.inset.filled") }
-                        .accessibilityLabel("チャットの上に戻す")
+                    if let onDock {
+                        Button(action: onDock) { Image(systemName: "arrow.up.left.and.arrow.down.right.rectangle") }
+                            .accessibilityLabel("広げる")
+                    } else {
+                        Button { watch.setMode(.docked) } label: { Image(systemName: "rectangle.bottomhalf.inset.filled") }
+                            .accessibilityLabel("チャットの上に戻す")
+                    }
                     Button { watch.close() } label: { Image(systemName: "xmark") }
                         .accessibilityLabel("閉じる")
                 }
@@ -518,6 +560,7 @@ struct WatchFloatingView: View {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                                 corner = (py < g.size.height / 2 ? 0 : 2) + (px < g.size.width / 2 ? 0 : 1)
                                 drag = .zero
+                                if remember { UserDefaults.standard.set(corner, forKey: Self.cornerKey) }
                             }
                         }
                 )

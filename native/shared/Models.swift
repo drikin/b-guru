@@ -241,6 +241,8 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var minigame: MinigameFeatures?
         var watch: WatchFeatures?
         var offkai: OffkaiFeatures?
+        /// チャットの上に機能を重ねる形 (docs/chat-overlay-spec.md, CHAT_OVERLAY_ENABLED): `chat_overlay.enabled`.
+        var chatOverlay: FlagFeature?
     }
     var apiVersion: Int
     var scopes: [String]?
@@ -291,6 +293,8 @@ struct Capabilities: Decodable, Sendable, Equatable {
     }
     /// 🍻 オフ会 is on for this member.
     var offkaiEnabled: Bool { features?.offkai?.enabled ?? false }
+    /// The chat's second row as switches, the features over the chat (false or absent: the old row as it was).
+    var chatOverlayEnabled: Bool { features?.chatOverlay?.enabled ?? false }
     var shogiEnabled: Bool {
         guard features?.shogi?.enabled == true else { return false }
         return (features?.shogi?.bridgeVersion ?? 1) == 1

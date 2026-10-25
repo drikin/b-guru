@@ -25,11 +25,19 @@ struct ChatView: View {
     }
     @State private var viewing: ImageViewerItem?
 
+    /// チャットの上に重ねる形 is on for this member and something can sit over the chat.
+    private var overlayOn: Bool { store.overlay.enabled && store.overlay.anyAvailable }
+
     var body: some View {
         VStack(spacing: 0) {
             ChatHeader(store: store, pin: pin, tabPicker: tabPicker, onSignOut: onSignOut)
             Divider()
             AssistantBannerRow()
+            if overlayOn {
+                // チャットの上に重ねる形 (docs/chat-overlay-spec.md): the switches sit in the header; the features
+                // over the messages (ChatOverlayLayer below). The voice bar stays where it was.
+                if !store.room.enabled { VoiceBar(voice: store.voice) }
+            } else {
             if store.watch.open && store.watch.mode == .docked {
                 // 📺 above the chat (⧉ moves the same player into its own window and back).
                 WatchDockView(watch: store.watch)
@@ -60,8 +68,12 @@ struct ChatView: View {
             } else {
                 VoiceBar(voice: store.voice)
             }
+            }
             ChatMessageList(store: store, composer: composer, viewing: $viewing)
                 .environment(\.shogi, store.shogi.enabled ? store.shogi : nil)
+                .overlay {
+                    if overlayOn { ChatOverlayLayer(store: store) { store.overlay.expand($0) } }
+                }
             Divider()
             ChatComposerBar(store: store, pin: pin, composer: composer, onClose: onClose)
         }
@@ -87,6 +99,7 @@ struct ChatView: View {
         .onChange(of: store.shogi.open) { _, open in if open { pin.wantsHeight?(820) } }
         // ☗ / 🎮 opening moves a docked 📺 into its own window (two above the chat leave no room for it).
         .onChange(of: store.shogi.open || store.minigame.open || store.offkai.open) { _, busy in
+            guard !store.overlay.enabled else { return } // the overlay places 📺 itself
             if busy && store.watch.open && store.watch.mode == .docked { store.watch.setMode(.floating) }
         }
         .imageViewer($viewing)
@@ -130,10 +143,16 @@ private struct ChatHeader: View {
         HStack(spacing: 8) {
             if let tabPicker {
                 tabPicker
+                if store.overlay.enabled && store.overlay.anyAvailable {
+                    // チャットの上に重ねる形: the icons are switches (each puts its feature over the chat).
+                    OverlaySwitchRow(overlay: store.overlay, compact: true) { store.overlay.expand($0) }
+                        .layoutPriority(-1)
+                } else {
                 if store.room.enabled || store.shogi.enabled || store.minigame.enabled || store.offkai.enabled {
                     RoomModeIcons(room: store.room, shogi: store.shogi, minigame: store.minigame, offkai: store.offkai)
                 }
                 if store.watch.enabled { WatchToggleButton(watch: store.watch) }
+                }
             } else {
                 Image(systemName: store.unreadCount > 0 ? "dog.fill" : "dog")
                     .foregroundStyle(Color.accentGreen)

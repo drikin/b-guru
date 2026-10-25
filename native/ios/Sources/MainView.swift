@@ -45,7 +45,18 @@ struct MainView: View {
             .environment(\.watch, store.watch.enabled ? store.watch : nil)
             // 📺 floating over every page (a 「みんなで見る」 on the timeline opens it here).
             .overlay {
-                if store.watch.open && store.watch.mode == .floating { WatchFloatingView(watch: store.watch) }
+                if store.watch.open && store.watch.mode == .floating {
+                    if store.overlay.enabled {
+                        // チャットの上に重ねる形: 📺's small window (hidden while typing / another is expanded — a chip
+                        // then); ⤢ expands it over the chat; kept off the switch row and the message box.
+                        if store.overlay.watchFloats {
+                            WatchFloatingView(watch: store.watch, onDock: { [overlay = store.overlay] in overlay.expand(.watch) },
+                                              insets: EdgeInsets(top: 96, leading: 0, bottom: 64, trailing: 0), remember: true, smallWidth: 180)
+                        }
+                    } else {
+                        WatchFloatingView(watch: store.watch)
+                    }
+                }
             }
             .environment(\.sendToNeta, store.sendToNeta)
             .sheet(item: Binding(get: { store.netaPost }, set: { store.netaPost = $0 })) { post in

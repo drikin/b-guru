@@ -1362,7 +1362,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let more: [(String, @MainActor () -> Void)] = [
             ("shogi", { store.shogi.openGame(101) }),
             ("minigame", { store.minigame.show() }),
-            ("text", { RoomModePicker.choose(.text, room: store.room, shogi: store.shogi, minigame: store.minigame) }),
+            ("text", { RoomModePicker.choose(.text, room: store.room, shogi: store.shogi, minigame: store.minigame, offkai: store.offkai) }),
             ("reopened", {
                 self.panel?.orderOut(nil)
                 Task { @MainActor in
@@ -1383,7 +1383,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             ("dark-minigame", { store.minigame.show() }),
             ("light-chat", {
                 NSApp.appearance = NSAppearance(named: .aqua)
-                RoomModePicker.choose(.text, room: store.room, shogi: store.shogi, minigame: store.minigame)
+                RoomModePicker.choose(.text, room: store.room, shogi: store.shogi, minigame: store.minigame, offkai: store.offkai)
             }),
             ("light-timeline", { self.panel?.pin.tab = .timeline }),
             ("final-chat", { self.panel?.pin.tab = .chat }),

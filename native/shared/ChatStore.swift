@@ -123,11 +123,15 @@ final class ChatStore {
     let watch: WatchStore
     /// 🍻 オフ会 (Offkai.swift, docs/offkai-spec.md), when the server has it on for this member.
     let offkai: OffkaiStore
+    /// チャットの上に機能を重ねる形 (ChatOverlay.swift): which features sit over the chat. Only used when
+    /// the server has `chat_overlay` on for this member.
+    let overlay: OverlayModel
 
     init(api: APIClient) {
         self.api = api
         self.dm = DMStore(api: api)
-        self.watch = WatchStore(api: api)
+        let watch = WatchStore(api: api)
+        self.watch = watch
         self.voice = VoiceStore(api: api)
         let room = RoomStore(api: api, voice: voice)
         self.room = room
@@ -137,21 +141,29 @@ final class ChatStore {
         self.minigame = minigame
         let offkai = OffkaiStore(api: api)
         self.offkai = offkai
+        let overlay = OverlayModel(room: room, shogi: shogi, minigame: minigame, watch: watch, offkai: offkai)
+        self.overlay = overlay
+        // The overlay: several over the chat at once, nobody leaves the room; an open from outside the switch
+        // row (a push, a chat card, a link) switches it on and expands it.
+        watch.willShow = { [weak overlay] floating in overlay?.watchWillShow(floating: floating) }
         // One thing above the chat (テキスト｜ルーム｜☗｜🎮｜🍻): opening one leaves the club room
         // and closes the others.
-        shogi.willOpen = { [weak room, weak minigame, weak offkai] in
+        shogi.willOpen = { [weak room, weak minigame, weak offkai, weak overlay] in
+            if let overlay, overlay.enabled { overlay.storeWillOpen(.shogi); return }
             minigame?.close()
             offkai?.close()
             guard let room, room.mode == .room else { return }
             Task { await room.toText() }
         }
-        minigame.willOpen = { [weak room, weak shogi, weak offkai] in
+        minigame.willOpen = { [weak room, weak shogi, weak offkai, weak overlay] in
+            if let overlay, overlay.enabled { overlay.storeWillOpen(.game); return }
             shogi?.close()
             offkai?.close()
             guard let room, room.mode == .room else { return }
             Task { await room.toText() }
         }
-        offkai.willOpen = { [weak room, weak shogi, weak minigame] in
+        offkai.willOpen = { [weak room, weak shogi, weak minigame, weak overlay] in
+            if let overlay, overlay.enabled { overlay.storeWillOpen(.offkai); return }
             shogi?.close()
             minigame?.close()
             guard let room, room.mode == .room else { return }
@@ -248,6 +260,9 @@ final class ChatStore {
     private func loadCapabilities() async {
         do {
             capabilities = try await api.capabilities()
+            // Before the features: an open they make while configuring (a push tapped at launch) is then
+            // already an overlay open (switched on and expanded).
+            overlay.enabled = capabilities?.chatOverlayEnabled ?? false
             voice.configure(with: capabilities)
             room.configure(enabled: capabilities?.roomEnabled ?? false)
             shogi.configure(capabilities?.features?.shogi, enabled: capabilities?.shogiEnabled ?? false)
@@ -755,10 +770,20 @@ final class ChatStore {
         // -demoNoEdit: a key from before the operations' mark (post, but edit false): 「編集するには一度ログインし直してください」.
         let noEdit = ProcessInfo.processInfo.arguments.contains("-demoNoEdit") || env["BGURU_DEMO_NO_EDIT"] == "1"
         let postOps = oldServer ? "" : #","edit":\#(!textOnly && !noEdit),"delete":\#(!noEdit),"edit_text_only":\#(textOnly && !noEdit),"whisper":true,"video":true,"audio":true,"max_media_mb":100,"poll":true,"poll_vote":true,"poll_edit":true,"pin":true,"pinned_list":true,"bookmarks":true,"bookmarks_set":true,"favorites":true,"custom_emoji_list":"/api/agent/emojis","club_select":true,"club_change":true,"mentions":"/api/agent/members","display":true,"include":["reactions","read","display"]"#
-        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4,"beagle_ondevice":true},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5\#(postOps)},"jukebox":{"enabled":\#(ProcessInfo.processInfo.arguments.contains("-demoJukebox") || ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil),"path":"/api/agent/jukebox"}\#(shogiCaps)\#(minigameCaps)\#(offkaiCaps),"mac_assistant":true}}"#
+        // チャットの上に重ねる形 (on with BGURU_DEMO_OVERLAY=1 / -demoOverlay): 📺 too (BGURU_WATCH_FAKE_VIDEO=ID plays
+        // one on this device only); BGURU_DEMO_OVERLAY_SHOW / _EXPAND set the windows (OverlayModel.debugApplyDemoEnv).
+        let overlayOn = env["BGURU_DEMO_OVERLAY"] == "1" || ProcessInfo.processInfo.arguments.contains("-demoOverlay")
+        let overlayCaps = overlayOn ? #","chat_overlay":{"enabled":true},"watch":{"enabled":true,"path":"/api/agent/watch","player_url":"/watch/index.html","bridge_version":1,"control":false}"# : ""
+        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4,"beagle_ondevice":true},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5\#(postOps)},"jukebox":{"enabled":\#(ProcessInfo.processInfo.arguments.contains("-demoJukebox") || ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil),"path":"/api/agent/jukebox"}\#(shogiCaps)\#(minigameCaps)\#(offkaiCaps)\#(overlayCaps),"mac_assistant":true}}"#
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
         capabilities = try? dec.decode(Capabilities.self, from: Data(caps.utf8))
+        if overlayOn {
+            overlay.enabled = true
+            watch.debugLoadDemo()
+            // After the app's own demo opens (BGURU_DEMO_ROOM etc.) have run.
+            DispatchQueue.main.async { [overlay] in overlay.debugApplyDemoEnv() }
+        }
     }
 
     /// A message from someone else, as if it came on the stream.
