@@ -272,6 +272,10 @@ fun PollCard(post: Post, poll: PostPoll, canVote: Boolean, canEdit: Boolean, onV
             Spacer(Modifier.weight(1f))
             Text(if (closed) "終了" else PollRules.timeLeft(poll.endsAt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        // Who voted is shown to the poll's author (drikin 2026-10-24): say so to the voters.
+        if (!post.isAuthor) {
+            Text("作った人には誰が入れたか見えます", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 

@@ -1554,6 +1554,10 @@ function PollCard({
           <Text size="xs" c="dimmed">{closed ? "終了" : pollTimeLeft(poll.endsAt)}</Text>
         )}
       </Group>
+      {votersOf == null && !compact && (
+        // 誰が入れたかは作った人に見える（drikin 2026-10-24）。投票する側にも知らせる。
+        <Text size="xs" c="dimmed" mt={2}>作った人には誰が入れたか見えます</Text>
+      )}
       {votersOf != null && (
         <PollVotersModal postId={votersOf} question={poll.question} opened={votersOpen} onClose={() => setVotersOpen(false)} />
       )}

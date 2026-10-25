@@ -254,6 +254,10 @@ struct PollCard: View {
                 Text(closed ? "終了" : Self.timeLeft(poll.endsAt))
             }
             .font(.app(.caption)).foregroundStyle(.secondary)
+            // Who voted is shown to the poll's author (drikin 2026-10-24): say so to the voters.
+            if post.isAuthor != true {
+                Text("作った人には誰が入れたか見えます").font(.app(.caption2)).foregroundStyle(.secondary)
+            }
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.04)))
