@@ -38,12 +38,14 @@ object Push {
     const val EXTRA_SHOGI_GAME_ID = "shogi_game_id"
     const val EXTRA_DM_PEER_ID = "dm_peer_id"
     const val EXTRA_DM_PEER_NAME = "dm_peer_name"
+    const val EXTRA_OFFKAI = "offkai"
     private const val CH_DM = "dm"
     private const val CH_MENTION = "mention"
     private const val CH_CHAT = "chat"
     private const val CH_REPLY = "reply"
     private const val CH_TIMELINE = "timeline"
     private const val CH_SHOGI = "shogi"
+    private const val CH_OFFKAI = "offkai"
     /** All "new messages" pushes share one rolling notification. */
     private const val NEW_MESSAGES_ID = 1
     private const val PREFS = "push"
@@ -74,6 +76,7 @@ object Push {
             NotificationChannel(CH_TIMELINE, "タイムラインの新着", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "タイムラインの新しい投稿（コメントは除く）" },
             NotificationChannel(CH_SHOGI, "将棋", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "対局の申し込みと、あなたの番になったとき" },
             NotificationChannel(CH_DM, "DM", NotificationManager.IMPORTANCE_HIGH).apply { description = "あなた宛ての DM（1 対 1）" },
+            NotificationChannel(CH_OFFKAI, "オフ会", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "オフ会が始まったとき（1 回だけ）" },
         ))
     }
 
@@ -148,6 +151,7 @@ object Push {
         val kind = data["kind"] ?: return
         if (PushContent.isShogi(kind)) { showShogi(context, kind, data["game_id"]?.toLongOrNull() ?: return); return }
         if (kind == PushContent.DM) { showDM(context, data["dm_id"]?.toLongOrNull(), data["peer_id"]); return }
+        if (kind == PushContent.OFFKAI_START) { showOffkai(context, data["event_id"]?.toLongOrNull() ?: 0L); return }
         val messageId = data["message_id"]?.toLongOrNull()
         val postId = data["post_id"]?.toLongOrNull()
         val session = App.session(context)
@@ -223,6 +227,30 @@ object Push {
             b.addAction(replyAction(context, messageId, notifId))
             if (kind == "chat_mention") b.addAction(heartAction(context, messageId, notifId))
         }
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < 33) {
+            NotificationManagerCompat.from(context).notify(notifId, b.build())
+        }
+    }
+
+    /** 🍻 オフ会が始まった (once per event). Fixed words, like the server's (the place is not shown). */
+    private fun showOffkai(context: Context, eventId: Long) {
+        val store = App.session(context).store
+        // Already looking at it.
+        if (store != null && store.isVisible && store.offkai.open) return
+        val open = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_OFFKAI, true)
+        }
+        val notifId = PushContent.notificationId(PushContent.OFFKAI_START, null, eventId, NEW_MESSAGES_ID)
+        val b = NotificationCompat.Builder(context, CH_OFFKAI)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(0xFF16A34A.toInt())
+            .setContentTitle(PushContent.defaultTitle(PushContent.OFFKAI_START))
+            .setContentText(PushContent.defaultText(PushContent.OFFKAI_START))
+            .setContentIntent(PendingIntent.getActivity(context, notifId, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_EVENT)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < 33) {
             NotificationManagerCompat.from(context).notify(notifId, b.build())
         }
@@ -346,6 +374,9 @@ object PushContent {
 
     fun isShogi(kind: String) = kind == SHOGI_OFFER || kind == SHOGI_TURN
 
+    /** 🍻 オフ会が始まった (`event_id`). */
+    const val OFFKAI_START = "offkai_start"
+
     /** ✉️ 簡易 DM (`dm_id`, `peer_id` — not message_id: older apps would read a chat message by it). */
     const val DM = "dm"
 
@@ -358,6 +389,7 @@ object PushContent {
     fun defaultTitle(kind: String) = when (kind) {
         "reply" -> "B-guru"
         SHOGI_OFFER, SHOGI_TURN -> "☗ 将棋"
+        OFFKAI_START -> "🍻 オフ会"
         TIMELINE_NEW -> "B-guru タイムライン"
         DM -> DMLogic.FALLBACK_TITLE
         else -> "B-guru チャット"
@@ -369,6 +401,7 @@ object PushContent {
         TIMELINE_NEW -> "新しい投稿があります"
         SHOGI_OFFER -> "対局の申し込みが届きました"
         SHOGI_TURN -> "あなたの番です"
+        OFFKAI_START -> "オフ会が始まりました。チャットの 🍻 から聞けます"
         DM -> DMLogic.FALLBACK_TEXT
         else -> "あなたの投稿に返信がありました"
     }
@@ -387,6 +420,7 @@ object PushContent {
         "chat_mention" -> "あなたへのメンションがあります"
         TIMELINE_NEW -> "新しい投稿があります"
         SHOGI_OFFER, SHOGI_TURN -> "将棋の通知があります"
+        OFFKAI_START -> "オフ会が始まりました"
         DM -> DMLogic.FALLBACK_TEXT
         else -> "新着があります"
     }
@@ -420,6 +454,8 @@ object PushContent {
         TIMELINE_NEW -> (postId ?: 0L).toInt() + 3_000_000
         // One per game (offer and turn replace each other, like the server's collapse key shogi-{id}).
         SHOGI_OFFER, SHOGI_TURN -> (postId ?: 0L).toInt() + 4_000_000
+        // One per event (the server's collapse key offkai-{id}).
+        OFFKAI_START -> (postId ?: 0L).toInt() + 5_000_000
         else -> (postId ?: 0L).toInt() + 1_000_000
     }
 }

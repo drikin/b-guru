@@ -148,16 +148,18 @@ d("🍻 オフ会（DB）", () => {
     const s3 = await call(b, "POST", ["speak"], { on: false });
     expect(s3.body).toMatchObject({ event: { speaker: { user_id: c.userId } } });
 
-    // b は始めた人でも話す人でもない → 終えられない。話す人 c は終えられる。
-    const no = await call(b, "POST", ["end"]);
-    expect(no.status).toBe(403);
-    const yes = await call(c, "POST", ["end"]);
+    // 話す人 c も終えられない（後勝ちで誰でも話す人になれるので、「話す」→「終了」で他人の会を終わらせない）。
+    // GET の can_end も話す人には false。始めた人 a は終えられる。
+    expect((await call(b, "POST", ["end"])).status).toBe(403);
+    expect((await call(c, "POST", ["end"])).status).toBe(403);
+    expect((await call(c, "GET", [])).body).toMatchObject({ current: { can_end: false }, is_admin: false });
+    const yes = await call(a, "POST", ["end"]);
     expect(yes.status).toBe(200);
     expect(yes.body).toMatchObject({ event: { id, speaker: null } });
     expect((yes.body as { event: { ended_at: string | null } }).event.ended_at).not.toBeNull();
     // 写真がなければタイムライン投稿はしない。終わりの行は出る。後処理は済んでいる。
     const row = await sql(`SELECT summary_post_id, finalized_at, ended_by_email FROM offkai_events WHERE id = $1`, [id]);
-    expect(row.rows[0]).toMatchObject({ summary_post_id: null, ended_by_email: C });
+    expect(row.rows[0]).toMatchObject({ summary_post_id: null, ended_by_email: A });
     expect(row.rows[0].finalized_at).not.toBeNull();
     const notice = await sql(`SELECT body FROM chat_messages WHERE kind = 'notice' ORDER BY id DESC LIMIT 1`);
     expect(notice.rows[0].body).toBe("🍻 オフ会が終わりました（写真 0 枚）。🍻 のアーカイブから見返せます");
@@ -218,6 +220,17 @@ d("🍻 オフ会（DB）", () => {
     const row = await sql(`SELECT summary_post_id FROM offkai_events WHERE id = $1`, [id]);
     const postId = row.rows[0].summary_post_id;
     expect(postId).not.toBeNull();
+    // 後処理が途中で落ちたとみなしてやり直しても、終わりの行と投稿は 1 本ずつのまま。
+    await sql(`UPDATE offkai_events SET finalized_at = NULL, finalizing_at = now() - interval '5 minutes' WHERE id = $1`, [id]);
+    m.o._resetOffkaiForTest(); // 動いている見回りを止めて、すぐ 1 回走らせる
+    m.o.ensureOffkaiSweeper();
+    await new Promise((r) => setTimeout(r, 500));
+    const again = await sql(`SELECT summary_post_id, finalized_at FROM offkai_events WHERE id = $1`, [id]);
+    expect(again.rows[0].summary_post_id).toBe(postId);
+    expect(again.rows[0].finalized_at).not.toBeNull();
+    const ends = await sql(`SELECT count(*)::int AS n FROM chat_messages WHERE kind = 'notice' AND body LIKE '🍻 オフ会（上野）が終わりました%'`);
+    expect(ends.rows[0].n).toBe(1);
+    m.o._resetOffkaiForTest();
     const post = await sql(`SELECT text FROM posts WHERE id = $1`, [postId]);
     expect(post.rows[0].text).toContain("オフ会（上野）のアルバム（写真 1 枚）");
     const imgs = await sql(`SELECT url FROM post_images WHERE post_id = $1`, [postId]);

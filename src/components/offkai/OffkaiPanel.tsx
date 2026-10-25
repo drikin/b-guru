@@ -108,7 +108,7 @@ export function OffkaiPanel() {
       style={{ maxHeight: max, overflowY: "auto", borderBottom: "1px solid var(--border-light)", padding: "8px 10px", flexShrink: 0 }}
     >
       {archived ? (
-        <ArchivedAlbum event={archived.event} photos={archived.photos} more={archived.more != null} onOpen={setViewing} />
+        <ArchivedAlbum event={archived.event} photos={archived.photos} more={archived.more != null} loading={!!archived.loading} onOpen={setViewing} />
       ) : s.current ? (
         <Live s={s} event={s.current} onOpen={setViewing} />
       ) : (
@@ -242,7 +242,7 @@ function Live({ s, event, onOpen }: { s: OffkaiSnapshot; event: EventDto; onOpen
           </Button>
         ) : (
           <Tooltip label="現地にいる人だけ。話せるのは 1 人で、押すと前の人から替わります" openDelay={300}>
-            <Button size="xs" color="orange" variant="light" loading={s.busy} onClick={() => void speak()}>
+            <Button size="xs" color="orange" variant="light" loading={s.speakBusy} onClick={() => void speak()}>
               🎙 現地から話す
             </Button>
           </Tooltip>
@@ -253,7 +253,7 @@ function Live({ s, event, onOpen }: { s: OffkaiSnapshot; event: EventDto; onOpen
           </Button>
         )}
       </Group>
-      <PhotoUpload busy={s.busy} />
+      <PhotoUpload busy={s.uploading} />
       <PhotoGrid photos={s.album?.event.id === event.id ? s.album.photos : []} onOpen={onOpen} />
       {s.album?.more != null && (
         <Button size="compact-xs" variant="subtle" onClick={() => void loadMorePhotos()}>
@@ -315,7 +315,7 @@ function PhotoGrid({ photos, onOpen }: { photos: PhotoDto[]; onOpen: (i: number)
   );
 }
 
-function ArchivedAlbum({ event, photos, more, onOpen }: { event: EventDto; photos: PhotoDto[]; more: boolean; onOpen: (i: number) => void }) {
+function ArchivedAlbum({ event, photos, more, loading, onOpen }: { event: EventDto; photos: PhotoDto[]; more: boolean; loading: boolean; onOpen: (i: number) => void }) {
   return (
     <Stack gap={8}>
       <Group gap={6} wrap="nowrap">
@@ -331,7 +331,15 @@ function ArchivedAlbum({ event, photos, more, onOpen }: { event: EventDto; photo
           </Text>
         </div>
       </Group>
-      {photos.length === 0 && event.photo_count > 0 ? <Loader size="xs" /> : <PhotoGrid photos={photos} onOpen={onOpen} />}
+      {loading && photos.length === 0 ? (
+        <Loader size="xs" />
+      ) : photos.length === 0 && event.photo_count > 0 ? (
+        <Button size="compact-xs" variant="subtle" onClick={() => void openAlbum(event)}>
+          写真を読み込めませんでした。もう一度読む
+        </Button>
+      ) : (
+        <PhotoGrid photos={photos} onOpen={onOpen} />
+      )}
       {more && (
         <Button size="compact-xs" variant="subtle" onClick={() => void loadMorePhotos()}>
           もっと見る

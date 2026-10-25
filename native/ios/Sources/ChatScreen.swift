@@ -21,24 +21,28 @@ struct ChatScreen: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if store.room.enabled || store.shogi.enabled || store.minigame.enabled || store.watch.enabled {
+                if store.room.enabled || store.shogi.enabled || store.minigame.enabled || store.watch.enabled || store.offkai.enabled {
                     // The club room: テキスト｜ルーム (the ルーム tab shows who is in the voice) replaces the voice bar.
                     // ☗ 将棋 is a third choice (テキスト｜☗ 将棋 without the room). Centred under the
                     // timeline｜chat switch. 📺 sits beside it (the player stays open whatever the chat shows).
                     HStack(spacing: 8) {
-                        if store.room.enabled || store.shogi.enabled || store.minigame.enabled {
-                            RoomModePicker(room: store.room, shogi: store.shogi, minigame: store.minigame)
+                        if store.room.enabled || store.shogi.enabled || store.minigame.enabled || store.offkai.enabled {
+                            RoomModePicker(room: store.room, shogi: store.shogi, minigame: store.minigame, offkai: store.offkai)
                         }
                         if store.watch.enabled { WatchToggleButton(watch: store.watch) }
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 12).padding(.vertical, store.shogi.open || store.minigame.open ? 3 : 6)
+                    .padding(.horizontal, 12).padding(.vertical, store.shogi.open || store.minigame.open || store.offkai.open ? 3 : 6)
                     if store.watch.open && store.watch.mode == .docked {
                         // 📺 above the chat (the same player moves to the floating window and back).
                         WatchDockView(watch: store.watch)
                         Divider()
                     }
-                    if store.minigame.enabled && store.minigame.open {
+                    if store.offkai.enabled && store.offkai.open {
+                        // 🍻 above the chat: the event (or the archive), about half the column, the chat below.
+                        OffkaiArea(store: store, composer: composer)
+                        Divider()
+                    } else if store.minigame.enabled && store.minigame.open {
                         // 🎮 above the chat: the game's own height (≤ ~45 %), the chat below.
                         MinigameScreen(minigame: store.minigame)
                             .frame(maxWidth: 760)
@@ -66,10 +70,11 @@ struct ChatScreen: View {
                 store.shogi.setAreaHeight($0)
                 store.minigame.setAreaHeight($0)
                 store.watch.setAreaHeight($0)
+                store.offkai.setAreaHeight($0)
             }
             // ☗ / 🎮 opening moves a docked 📺 to the floating window (MainView draws it over every page;
             // two above the chat would leave no room for the chat).
-            .onChange(of: store.shogi.open || store.minigame.open) { _, busy in
+            .onChange(of: store.shogi.open || store.minigame.open || store.offkai.open) { _, busy in
                 if busy && store.watch.open && store.watch.mode == .docked { store.watch.setMode(.floating) }
             }
             .imageViewer($viewing)
@@ -428,6 +433,22 @@ private struct ShogiArea: View {
             ShogiFoldedBar(shogi: store.shogi) { composer.focused = false }
         } else {
             ShogiScreen(shogi: store.shogi)
+                .frame(maxWidth: 760)
+                .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+/// 🍻 above the chat; folded to one line while typing (the keyboard leaves little room).
+private struct OffkaiArea: View {
+    let store: ChatStore
+    let composer: ChatComposerModel
+
+    var body: some View {
+        if composer.focused {
+            OffkaiFoldedBar(offkai: store.offkai) { composer.focused = false }
+        } else {
+            OffkaiScreen(offkai: store.offkai)
                 .frame(maxWidth: 760)
                 .frame(maxWidth: .infinity)
         }

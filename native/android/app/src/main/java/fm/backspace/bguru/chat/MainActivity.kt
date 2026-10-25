@@ -53,7 +53,8 @@ class MainActivity : ComponentActivity() {
 
     /** Demo only — open a screen at launch (scripts/orientation-check.sh walks them):
      *  `--es demo_tab timeline|chat|jukebox`, `--ez demo_jukebox_play true`,
-     *  `--es demo_open shogi|minigame|viewer` (viewer: the first photo; needs `--es demo_images`),
+     *  `--es demo_open shogi|minigame|offkai|offkai_album|offkai_none|viewer` (viewer: the first photo; needs
+     *  `--es demo_images`; offkai_none: no event on, the start form and the archive),
      *  `--es demo_ops …` (the timeline's operations, TimelineStore.demoOps). */
     private fun demoScreen(session: Session) {
         val store = session.store ?: return
@@ -71,6 +72,10 @@ class MainActivity : ComponentActivity() {
         when (intent.getStringExtra("demo_open")) {
             "shogi" -> { store.shogi.open = true; store.shogi.liveGame?.let { store.shogi.select(it.id) } }
             "minigame" -> store.minigame.open = true
+            // 🍻 オフ会: the running one, an ended one's album, or none on.
+            "offkai" -> store.openOffkai()
+            "offkai_album" -> { store.openOffkai(); store.offkai.archive.firstOrNull()?.let(store.offkai::openAlbum) }
+            "offkai_none" -> { store.offkai.demoEndCurrent(); store.openOffkai() }
             "viewer" -> store.demoViewer = true
             // ✉️ the DM list, or the conversation with mazzo (one unread).
             "dm" -> store.dm.openList()
@@ -87,6 +92,11 @@ class MainActivity : ComponentActivity() {
         // ☗ 将棋 (shogi_offer / shogi_turn): the shogi screen at that game.
         val game = intent?.getLongExtra(Push.EXTRA_SHOGI_GAME_ID, 0L) ?: 0L
         if (game > 0) App.session(this).store?.openShogi(game)
+        // 🍻 オフ会 (offkai_start): the chat on the 🍻 tab.
+        if (intent?.getBooleanExtra(Push.EXTRA_OFFKAI, false) == true) {
+            App.session(this).store?.openOffkai()
+            intent.removeExtra(Push.EXTRA_OFFKAI)
+        }
         // ✉️ DM: that conversation.
         intent?.getStringExtra(Push.EXTRA_DM_PEER_ID)?.takeIf { it.isNotBlank() }?.let { peer ->
             App.session(this).store?.dm?.openConversation(DMPeer(peer, intent.getStringExtra(Push.EXTRA_DM_PEER_NAME)))

@@ -183,6 +183,13 @@ struct Capabilities: Decodable, Sendable, Equatable {
         /// This token may operate (has the "chat" scope).
         var control: Bool?
     }
+    /// 🍻 オフ会 (docs/offkai-spec.md). Absent or enabled:false → nothing of it shows.
+    struct OffkaiFeatures: Decodable, Sendable, Equatable {
+        var enabled: Bool?
+        var path: String?
+        /// This token may start / speak / upload (has the "chat" scope); without it the tab only shows.
+        var control: Bool?
+    }
     /// ☗ 将棋 (docs/shogi-spec.md). Absent or enabled:false → nothing of it shows.
     struct ShogiFeatures: Decodable, Sendable, Equatable {
         struct TimeControl: Decodable, Sendable, Equatable {
@@ -233,6 +240,7 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var shogi: ShogiFeatures?
         var minigame: MinigameFeatures?
         var watch: WatchFeatures?
+        var offkai: OffkaiFeatures?
     }
     var apiVersion: Int
     var scopes: [String]?
@@ -281,6 +289,8 @@ struct Capabilities: Decodable, Sendable, Equatable {
         guard features?.watch?.enabled == true else { return false }
         return (features?.watch?.bridgeVersion ?? 1) == 1
     }
+    /// 🍻 オフ会 is on for this member.
+    var offkaiEnabled: Bool { features?.offkai?.enabled ?? false }
     var shogiEnabled: Bool {
         guard features?.shogi?.enabled == true else { return false }
         return (features?.shogi?.bridgeVersion ?? 1) == 1

@@ -1,4 +1,4 @@
-/* /api/agent/offkai/* — 🍻 オフ会（アプリ）。読む（GET）はスコープ read、操作は chat（写真は multipart）。
+/* /api/agent/offkai/* — 🍻 オフ会（アプリ）。読む（GET）はスコープ read、操作は chat（写真は multipart）でアプリの鍵だけ。
  * 操作のレート制限はオフ会用の枠（agent-auth.ts の BUCKET_RATE_RULES.offkai）。チャットの枠は減らさない。
  * 道順と応答の形は lib/offkai-api.ts（Web の /api/offkai/* と同じ）。OFFKAI_ENABLED で出していない人には 404。 */
 import { NextRequest } from "next/server";
@@ -19,6 +19,8 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path?: string[]
     read ? "read" : "chat",
     async (agent) => {
       if (!offkaiEnabledFor(agent.email)) return { ...notFound(), headers: {} };
+      // 始める（全員に push）・話す（全員に聞こえる）・写真は、アプリの鍵だけ。外部の鍵は読むだけ。
+      if (!read && !agent.appIssued) return { status: 403, body: { error: "アプリからだけ使えます", code: "forbidden" }, headers: {} };
       const r = await handleOffkai(req, path ?? [], { email: agent.email, userId: agent.userId });
       return { status: r.status, body: r.body, headers: {} };
     },

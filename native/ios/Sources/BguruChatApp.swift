@@ -75,6 +75,8 @@ final class Session {
             }
             // BGURU_DEMO_MINIGAME_OPEN=1: 🎮 open at once (answered locally, nothing is sent).
             if ProcessInfo.processInfo.environment["BGURU_DEMO_MINIGAME_OPEN"] != nil { s.minigame.show() }
+            // BGURU_DEMO_OFFKAI_OPEN=1: 🍻 open at once (BGURU_DEMO_OFFKAI=idle: none going on, only the archive).
+            if ProcessInfo.processInfo.environment["BGURU_DEMO_OFFKAI_OPEN"] != nil { s.offkai.show() }
             store = s
             let t = TimelineStore(api: APIClient(token: "demo"))
             t.debugLoadDemo()

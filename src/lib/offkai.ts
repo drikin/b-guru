@@ -32,6 +32,8 @@ export const ROOM_PREFIX = "bguru-offkai-";
 export const ARCHIVE_PAGE = 20;
 export const PHOTOS_PAGE = 100;
 export const PHOTOS_PAGE_MAX = 200;
+/** 1 人が 1 つのオフ会に上げられる写真（ずっと残るのでディスクを守る）。 */
+export const PHOTOS_PER_PERSON = 200;
 const TOKEN_TTL_SEC = 2 * 60;
 const MAX_PARTICIPANTS = 100;
 const BEAGLE_NAME = "ビーグル";
@@ -69,7 +71,7 @@ export type EventDto = {
   speaker: (PersonDto & { connected: boolean }) | null;
   photo_count: number;
   cover: string | null;
-  /** 見ている人が「終了」を押せるか（始めた人・話す人・管理者）。 */
+  /** 見ている人が「終了」を押せるか（始めた人・管理者。話す人は後勝ちで誰でもなれるので含めない）。 */
   can_end: boolean;
 };
 export type PhotoDto = { id: number; url: string; uploader: PersonDto; caption: string; created_at: string; mine: boolean };
@@ -251,10 +253,7 @@ async function toDtos(rows: Row[], viewerEmail: string | null): Promise<EventDto
       speaker: sp ? { ...sp, connected: !!sp.user_id && roomIdentities(r.id).has(sp.user_id) } : null,
       photo_count: Number(r.photo_count ?? 0),
       cover: r.cover ?? null,
-      can_end:
-        open &&
-        !!viewer &&
-        (norm(r.started_by_email) === viewer || (r.speaker_email ? norm(r.speaker_email) === viewer : false) || isAdmin(viewer)),
+      can_end: open && !!viewer && (norm(r.started_by_email) === viewer || isAdmin(viewer)),
     };
   });
 }
@@ -278,6 +277,8 @@ export async function getState(actor: Actor, before?: number | null) {
   return {
     enabled: true,
     can: { start: !cur, speak: !!cur, upload: !!cur },
+    /** 管理者はどの会も終了できる（知らせの event の can_end は常に false なので、端末はこれと始めた人で決める）。 */
+    is_admin: isAdmin(actor.email),
     current: current ?? null,
     listeners: cur ? listenerCount(cur.id) : 0,
     archive: await toDtos(arch.rows as Row[], actor.email),
@@ -381,7 +382,12 @@ export async function start(actor: Actor, input: { title?: unknown }): Promise<E
     const who = (await persons([actor.email])).get(actor.email)?.name ?? "だれか";
     const notice = await postChatNotice(`🍻 ${who}さんがオフ会を始めました${title ? `（${title}）` : ""}。🍻 から聞けます`).catch(() => null);
     if (notice) await pool.query(`UPDATE offkai_events SET notice_msg_id = $1 WHERE id = $2`, [notice.id, id]);
-    void pushOffkaiStart(id, actor.email).catch((e) => console.error("[offkai] push:", (e as Error)?.message));
+    // 同じ人が終えて 1 時間以内に始め直したのは、やり直し（同じ集まり）なので知らせ直さない。
+    const redo = await pool.query(
+      `SELECT 1 FROM offkai_events WHERE id <> $1 AND lower(started_by_email) = lower($2) AND ended_at > now() - interval '1 hour' LIMIT 1`,
+      [id, actor.email],
+    );
+    if (!redo.rowCount) void pushOffkaiStart(id, actor.email).catch((e) => console.error("[offkai] push:", (e as Error)?.message));
   }
   ensureOffkaiSweeper();
   return getEvent(actor, id);
@@ -460,8 +466,8 @@ export async function end(actor: Actor): Promise<EventDto> {
   const cur = await currentRow();
   if (!cur) throw new OffkaiError(409, "not_open", "開催中のオフ会はありません");
   const me = norm(actor.email);
-  const may = norm(cur.started_by_email) === me || (cur.speaker_email && norm(cur.speaker_email) === me) || isAdmin(me);
-  if (!may) throw new OffkaiError(403, "forbidden", "終了できるのは始めた人・話している人だけです");
+  // 話す人は後勝ちで誰でもなれるので、終了は始めた人と管理者だけ（「話す」→「終了」で他人の会を終わらせない）。
+  if (norm(cur.started_by_email) !== me && !isAdmin(me)) throw new OffkaiError(403, "forbidden", "終了できるのは始めた人だけです");
   await closeEvent(cur.id, actor.email, false);
   return getEvent(actor, cur.id);
 }
@@ -488,8 +494,18 @@ export async function expireDue(): Promise<void> {
 
 /** 終了の後処理（冪等）: 部屋を消す・チャットの行・タイムライン投稿。途中で落ちても見回りがやり直す。 */
 async function finalize(id: number): Promise<void> {
-  const r = await pool.query(`${SELECT} WHERE e.id = $1 AND e.ended_at IS NOT NULL AND e.finalized_at IS NULL`, [id]);
-  const ev = r.rows[0] as Row | undefined;
+  // 権利を取った 1 者だけ（終了の直後と見回りが重なっても 2 回走らない）。2 分たっても済んでいなければ
+  // 途中で落ちたものとみなして取り直せる。行と投稿は済んだ印（end_notice_msg_id・summary_post_id）を見て出し直さない。
+  const claim = await pool.query(
+    `UPDATE offkai_events SET finalizing_at = now()
+     WHERE id = $1 AND ended_at IS NOT NULL AND finalized_at IS NULL
+       AND (finalizing_at IS NULL OR finalizing_at < now() - interval '2 minutes')
+     RETURNING id`,
+    [id],
+  );
+  if (!claim.rowCount) return;
+  const r = await pool.query(`${SELECT} WHERE e.id = $1`, [id]);
+  const ev = r.rows[0] as (Row & { end_notice_msg_id?: number | null }) | undefined;
   if (!ev) return;
   const cfg = livekitConfig();
   if (cfg) await roomService(cfg, "DeleteRoom", { room: roomName(id) }, roomName(id)).catch(() => null);
@@ -498,7 +514,10 @@ async function finalize(id: number): Promise<void> {
   if (announce()) {
     // 題は「渋谷で飲んでます」のような文のこともあるので、括弧に入れる。
     const name = ev.title ? `オフ会（${ev.title}）` : "オフ会";
-    await postChatNotice(`🍻 ${name}が終わりました（写真 ${count} 枚）。🍻 のアーカイブから見返せます`).catch(() => null);
+    if (!ev.end_notice_msg_id) {
+      const notice = await postChatNotice(`🍻 ${name}が終わりました（写真 ${count} 枚）。🍻 のアーカイブから見返せます`).catch(() => null);
+      if (notice) await pool.query(`UPDATE offkai_events SET end_notice_msg_id = $1 WHERE id = $2`, [notice.id, id]);
+    }
     if (count > 0 && !ev.summary_post_id) {
       const covers = await pool.query(`SELECT path FROM offkai_photos WHERE event_id = $1 ORDER BY id LIMIT 4`, [id]);
       const post = await createPost({
@@ -529,17 +548,27 @@ export async function addPhotos(actor: Actor, urls: string[], captionRaw: unknow
     await removeFiles(files);
     throw new OffkaiError(409, "not_open", "開催中のオフ会はありません");
   }
+  const have = await pool.query(`SELECT count(*)::int AS n FROM offkai_photos WHERE event_id = $1 AND lower(uploader_email) = lower($2)`, [cur.id, actor.email]);
+  if (have.rows[0].n + files.length > PHOTOS_PER_PERSON) {
+    await removeFiles(files);
+    throw new OffkaiError(409, "too_many", `写真は 1 人 ${PHOTOS_PER_PERSON} 枚までです`);
+  }
   const caption = typeof captionRaw === "string" ? captionRaw.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trim().slice(0, CAPTION_MAX) : "";
-  const ins = await pool.query(
-    `INSERT INTO offkai_photos (event_id, path, uploader_email, caption)
-     SELECT $1, u, $2, $3 FROM unnest($4::text[]) WITH ORDINALITY AS t(u, n) ORDER BY n
-     RETURNING id, path, uploader_email, caption, created_at`,
-    [cur.id, actor.email, caption, files],
-  );
+  const ins = await pool
+    .query(
+      `INSERT INTO offkai_photos (event_id, path, uploader_email, caption)
+       SELECT $1, u, $2, $3 FROM unnest($4::text[]) WITH ORDINALITY AS t(u, n) ORDER BY n
+       RETURNING id, path, uploader_email, caption, created_at`,
+      [cur.id, actor.email, caption, files],
+    )
+    .catch(async (e) => {
+      await removeFiles(files); // 入れられなかったファイルは残さない
+      throw e;
+    });
   const people = await persons([actor.email]);
   const photos = ins.rows.map((x) => photoDto(x, people, actor.email));
   for (const p of ins.rows.map((x) => photoDto(x, people, null))) emitLive({ type: "offkai", action: "photo", eventId: cur.id, photo: p });
-  await broadcast("update", cur.id);
+  await touch(cur.id, `ended_at = ended_at`); // 枚数が変わった版を全員へ
   // チャットにも（24 時間で消えるいつもの写真として。アルバムの原本は消えない）。
   try {
     const chatUrls: string[] = [];
@@ -594,6 +623,17 @@ async function removeFiles(urls: string[]): Promise<void> {
 export async function handleOffkaiWebhook(ev: { event?: string; room?: { name?: string } }): Promise<void> {
   const name = ev.room?.name ?? "";
   if (!name.startsWith(ROOM_PREFIX)) return;
+  ensureOffkaiSweeper();
+  if (ev.event === "participant_joined") {
+    // 終わった会の部屋に（古い鍵・再接続で）入り直されたら、部屋ごと消す。
+    const id = Number(name.slice(ROOM_PREFIX.length));
+    const open = Number.isInteger(id) && id > 0 ? await pool.query(`SELECT 1 FROM offkai_events WHERE id = $1 AND ended_at IS NULL`, [id]) : null;
+    if (!open?.rowCount) {
+      const cfg = livekitConfig();
+      if (cfg) await roomService(cfg, "DeleteRoom", { room: name }, name).catch(() => null);
+      return;
+    }
+  }
   if (ev.event === "participant_joined" || ev.event === "participant_left" || ev.event === "room_finished") {
     await reconcileSpeaker();
   }

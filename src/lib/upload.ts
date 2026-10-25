@@ -284,6 +284,14 @@ async function handleUploadInner(
       // animations, odd files) is stored as sent, like before.
       if (!chat && file.size <= maxImageBytes) {
         const prepared = await preparePostImage(Buffer.from(await file.arrayBuffer()));
+        // 🍻 オフ会の写真はずっと残る: 位置情報などを落とせなかった（読めない・形式が違う）ものは断る。
+        if (offkai) {
+          const after = await imageInfo(prepared.data).catch(() => null);
+          if (!after || after.hasPrivateMeta) {
+            await Promise.all(written.map((n) => rm(path.join(uploadDir, n), { force: true })));
+            return NextResponse.json({ error: "この写真は送れません（位置情報などを消せない形式です）" }, { status: 400 });
+          }
+        }
         if (prepared.ext) safeExt = prepared.ext;
         filename = `${base}${safeExt}`;
         try {

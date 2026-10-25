@@ -207,6 +207,8 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
         notice = null
         // The jukebox stops while you are in the room (the mini player offers 続きを再生 afterwards).
         App.session(app).jukebox?.voiceStarted()
+        // 🍻 オフ会 stops too: never two rooms' sound at once.
+        App.session(app).store?.offkai?.stopListening("ボイスルームに入ったので、オフ会の音を止めました")
         phase = Phase.CONNECTING
         val mine = ++attempt
         scope.launch {

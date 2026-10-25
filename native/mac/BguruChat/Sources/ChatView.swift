@@ -35,7 +35,12 @@ struct ChatView: View {
                 WatchDockView(watch: store.watch)
                 Divider()
             }
-            if store.minigame.enabled && store.minigame.open {
+            if store.offkai.enabled && store.offkai.open {
+                // 🍻 オフ会 (its choice sits in the header): the event or the archive above the chat.
+                OffkaiScreen(offkai: store.offkai)
+                Divider()
+                if !store.room.enabled { VoiceBar(voice: store.voice) }
+            } else if store.minigame.enabled && store.minigame.open {
                 // 🎮 (its choice sits in the header): the game above the chat, at its own height.
                 MinigameScreen(minigame: store.minigame)
                 Divider()
@@ -75,12 +80,13 @@ struct ChatView: View {
             store.shogi.setAreaHeight($0)
             store.minigame.setAreaHeight($0)
             store.watch.setAreaHeight($0)
+            store.offkai.setAreaHeight($0)
         }
         // ☗ 将棋 takes up to half the chat (the board shrinks past that): a short panel grows
         // once, so the chat below stays readable.
         .onChange(of: store.shogi.open) { _, open in if open { pin.wantsHeight?(820) } }
         // ☗ / 🎮 opening moves a docked 📺 into its own window (two above the chat leave no room for it).
-        .onChange(of: store.shogi.open || store.minigame.open) { _, busy in
+        .onChange(of: store.shogi.open || store.minigame.open || store.offkai.open) { _, busy in
             if busy && store.watch.open && store.watch.mode == .docked { store.watch.setMode(.floating) }
         }
         .imageViewer($viewing)
@@ -124,8 +130,8 @@ private struct ChatHeader: View {
         HStack(spacing: 8) {
             if let tabPicker {
                 tabPicker
-                if store.room.enabled || store.shogi.enabled || store.minigame.enabled {
-                    RoomModeIcons(room: store.room, shogi: store.shogi, minigame: store.minigame)
+                if store.room.enabled || store.shogi.enabled || store.minigame.enabled || store.offkai.enabled {
+                    RoomModeIcons(room: store.room, shogi: store.shogi, minigame: store.minigame, offkai: store.offkai)
                 }
                 if store.watch.enabled { WatchToggleButton(watch: store.watch) }
             } else {

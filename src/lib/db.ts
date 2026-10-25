@@ -899,6 +899,9 @@ export async function initSchema() {
       summary_post_id INT,
       notice_msg_id INT
     );
+    -- 終了の後処理を取った時刻（2 つ同時に走らせない）と、終わりの行（出し直さない印）。
+    ALTER TABLE offkai_events ADD COLUMN IF NOT EXISTS finalizing_at TIMESTAMPTZ;
+    ALTER TABLE offkai_events ADD COLUMN IF NOT EXISTS end_notice_msg_id INT;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_offkai_one_open ON offkai_events ((true)) WHERE ended_at IS NULL;
     CREATE INDEX IF NOT EXISTS idx_offkai_started ON offkai_events(id DESC);
     CREATE TABLE IF NOT EXISTS offkai_photos (

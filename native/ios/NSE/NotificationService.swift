@@ -28,7 +28,8 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
             postId: (info["post_id"] as? NSNumber)?.intValue,
             replyId: (info["reply_id"] as? NSNumber)?.intValue,
             gameId: (info["game_id"] as? NSNumber)?.intValue,
-            dmId: (info["dm_id"] as? NSNumber)?.intValue
+            dmId: (info["dm_id"] as? NSNumber)?.intValue,
+            eventId: (info["event_id"] as? NSNumber)?.intValue
         )
         Task {
             if let text = await Self.lookup(ask, token: token) { self.apply(text) }
@@ -73,6 +74,7 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
         var replyId: Int?
         var gameId: Int?
         var dmId: Int?
+        var eventId: Int?
     }
 
     /// The real (title, body) for a push, or nil to keep the generic text.
@@ -121,6 +123,14 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
             guard let opponent else { return nil }
             let move = label.map { "\($0) と指しました。" } ?? "指しました。"
             return ("☗ 将棋（\(opponent) さんとの対局）", "\(opponent) さんが\(move)あなたの番です")
+        case "offkai_start":
+            // 🍻 オフ会: who started it (the place stays out of the notification, as the server's line).
+            guard let id = q.eventId,
+                  let e = await get("/api/agent/offkai/\(id)", token: token)?["event"] as? [String: Any],
+                  e["ended_at"] is NSNull || e["ended_at"] == nil else { return nil }
+            let who = ((e["started_by"] as? [String: Any])?["name"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            guard !who.isEmpty else { return nil }
+            return ("🍻 オフ会", "\(who) さんがオフ会を始めました。チャットの 🍻 から聞けます")
         default:
             return nil
         }

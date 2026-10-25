@@ -96,6 +96,13 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val minigame: MinigameFeatures? = null,
         val dm: DMFeatures? = null,
         val watch: WatchFeatures? = null,
+        val offkai: OffkaiFeatures? = null,
+    )
+    /** 🍻 オフ会 (docs/offkai-spec.md), behind OFFKAI_ENABLED. `control` = may start, speak, upload (chat scope). */
+    @Serializable data class OffkaiFeatures(
+        val enabled: Boolean? = null,
+        val path: String? = null,
+        val control: Boolean? = null,
     )
     /** 📺 YouTube 共同鑑賞 (src/lib/watch.ts), behind WATCH_ENABLED. `control` = may operate (chat scope). */
     @Serializable data class WatchFeatures(
@@ -261,6 +268,12 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val watchPath get() = features?.watch?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/watch"
     /** The player page (no token): only under /watch/ on our own server. */
     val watchPlayerUrl get() = features?.watch?.playerUrl?.takeIf { it.startsWith("/watch/") && !it.contains("..") } ?: "/watch/index.html"
+    /** 🍻 オフ会 is on for this member. */
+    val offkaiEnabled get() = features?.offkai?.enabled ?: false
+    /** May start, speak, upload and end (the chat scope); otherwise look and listen only. */
+    val canControlOffkai get() = offkaiEnabled && (features?.offkai?.control ?: false)
+    /** Only paths on our own server (the request carries the token). */
+    val offkaiPath get() = features?.offkai?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/offkai"
     /** 🎮 is on for this member (and the game speaks a bridge this app knows). */
     val minigameEnabled get() = features?.minigame?.enabled == true && (features?.minigame?.bridgeVersion ?: 1) == 1
     val canPlayMinigame get() = minigameEnabled && (features?.minigame?.play ?: false)
@@ -587,3 +600,61 @@ data class ShogiGame(
 )
 /** The stream's `event: shogi_commentary` (apps get `{ game_id, commentary }`). */
 @Serializable data class ShogiCommentaryEvent(val gameId: Long = 0, val commentary: ShogiCommentary? = null)
+
+// MARK: 🍻 オフ会 (src/lib/offkai.ts — EventDto / PhotoDto)
+
+@Serializable data class OffkaiPerson(val userId: String = "", val name: String? = null, val avatar: String? = null)
+/** The one who speaks now; `connected` = in the room right now (only then 「◯◯が話しています」). */
+@Serializable data class OffkaiSpeaker(val userId: String = "", val name: String? = null, val avatar: String? = null, val connected: Boolean = false)
+
+@androidx.compose.runtime.Immutable
+@Serializable
+data class OffkaiEvent(
+    val id: Long,
+    val version: Int = 0,
+    val title: String = "",
+    val startedBy: OffkaiPerson = OffkaiPerson(),
+    val startedAt: String = "",
+    val endsAt: String = "",
+    val endedAt: String? = null,
+    val speaker: OffkaiSpeaker? = null,
+    val photoCount: Int = 0,
+    val cover: String? = null,
+    /** For the viewer who asked (GET); always false on the stream. */
+    val canEnd: Boolean = false,
+)
+
+@androidx.compose.runtime.Immutable
+@Serializable
+data class OffkaiPhoto(
+    val id: Long,
+    val url: String = "",
+    val uploader: OffkaiPerson = OffkaiPerson(),
+    val caption: String = "",
+    val createdAt: String = "",
+    /** For the viewer who asked (GET / my upload); always false on the stream. */
+    val mine: Boolean = false,
+)
+
+@Serializable data class OffkaiCan(val start: Boolean = false, val speak: Boolean = false, val upload: Boolean = false)
+/** GET /offkai: `{ enabled, can, current, listeners, archive }` (archive newest first, 20 a page). */
+@Serializable data class OffkaiState(
+    val enabled: Boolean = false,
+    val can: OffkaiCan? = null,
+    val current: OffkaiEvent? = null,
+    val listeners: Int = 0,
+    val archive: List<OffkaiEvent> = emptyList(),
+)
+@Serializable data class OffkaiEventReply(val event: OffkaiEvent? = null)
+/** POST token / speak: the key to the room (speak also carries the event). */
+@Serializable data class OffkaiTokenReply(val event: OffkaiEvent? = null, val token: String = "", val url: String = "", val room: String = "", val canSpeak: Boolean = false)
+@Serializable data class OffkaiPhotosReply(val photos: List<OffkaiPhoto> = emptyList(), val nextAfter: Long? = null)
+/** The stream's `event: offkai`. */
+@Serializable data class OffkaiStreamData(
+    val action: String = "",
+    val event: OffkaiEvent? = null,
+    val eventId: Long? = null,
+    val photo: OffkaiPhoto? = null,
+    val photoId: Long? = null,
+    val listeners: Int? = null,
+)

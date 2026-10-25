@@ -16,7 +16,7 @@ import { shogiEnabledFor } from "@/lib/shogi";
 import { commentaryEnabledFor } from "@/lib/shogi-commentary-store";
 import { minigameEnabledFor } from "@/lib/minigame";
 import { watchEnabledFor } from "@/lib/watch";
-import { offkaiEnabledFor } from "@/lib/offkai";
+import { ensureOffkaiSweeper, offkaiEnabledFor } from "@/lib/offkai";
 import { dmEnabledFor, ensureDmSweeper } from "@/lib/dm";
 
 export const dynamic = "force-dynamic";
@@ -46,6 +46,8 @@ export async function GET(req: NextRequest) {
   const watchOn = !!email && watchEnabledFor(email);
   // 🍻 オフ会 (OFFKAI_ENABLED): signed-in members with the feature only.
   const offkaiOn = !!email && offkaiEnabledFor(email);
+  // 再起動のあとも、誰かがつなげば見回り（期限・話す人の離席・後処理のやり直し）が動く。
+  if (offkaiOn) ensureOffkaiSweeper();
   // ✉️ 簡易 DM (DM_ENABLED): my DMs and read marks over the personal bus (`event: dm`, per-recipient DTO).
   const dmOn = dmEnabledFor(email);
   if (dmOn) ensureDmSweeper();

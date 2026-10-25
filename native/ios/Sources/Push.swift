@@ -120,7 +120,11 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
             let watching = gameId.map { id in MainActor.assumeIsolated { PushCenter.shared.isShowingShogi(id) } } ?? false
             // ✉️ Not while that DM conversation is on screen.
             let readingDM = dmPeer.map { id in MainActor.assumeIsolated { PushCenter.shared.session?.store?.dm.isShowing(peerId: id) ?? false } } ?? false
-            completionHandler(watching || readingDM ? [] : options)
+            // 🍻 Not while the 🍻 tab is on screen (it already shows the event).
+            let seeingOffkai = kind == "offkai_start" && MainActor.assumeIsolated {
+                UIApplication.shared.applicationState == .active && PushCenter.shared.session?.store?.offkai.open == true
+            }
+            completionHandler(watching || readingDM || seeingOffkai ? [] : options)
         }
     }
 
@@ -133,11 +137,16 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
         let kind = info["kind"] as? String
         let gameId = kind?.hasPrefix("shogi_") == true ? (info["game_id"] as? NSNumber)?.intValue : nil
         let dmPeer = kind == "dm" ? info["peer_id"] as? String : nil
+        let offkai = kind == "offkai_start"
         let action = response.actionIdentifier
         let text = (response as? UNTextInputNotificationResponse)?.userText
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
-                if let dmPeer, let store = PushCenter.shared.session?.store {
+                if offkai, let store = PushCenter.shared.session?.store {
+                    // 🍻 オフ会が始まった: the chat page with the 🍻 tab (聞く is one tap from there).
+                    store.showChat?()
+                    store.offkai.show()
+                } else if let dmPeer, let store = PushCenter.shared.session?.store {
                     // ✉️ 簡易 DM: the chat page with that conversation open (its name comes with the thread).
                     store.showChat?()
                     store.dm.open(DMPeer(userId: dmPeer, name: nil, avatar: nil))

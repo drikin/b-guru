@@ -56,6 +56,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     val dm = DMStore(api)
     /** 📺 YouTube 共同鑑賞 — only when the server turns it on for this member (capabilities.watch). */
     val watch = WatchStore(api)
+    /** 🍻 オフ会 — only when the server turns it on for this member (capabilities.offkai). */
+    val offkai = OffkaiStore(api, app.applicationContext).also { it.fallbackMe = { myUserId } }
     private val voiceApp = app.applicationContext
 
     /** True while the chat is on screen: drives read marking. */
@@ -168,11 +170,13 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             shogi = if (!withShogi) null else Capabilities.ShogiFeatures(enabled = true, path = "/api/agent/shogi", boardUrl = "/shogi-board/index.html", bridgeVersion = 1, play = true, beagle = true, commentary = true),
             minigame = if (!withMinigame) null else Capabilities.MinigameFeatures(enabled = true, path = "/api/agent/minigame", gameUrl = "/minigame/index.html", bridgeVersion = 1, play = true),
             dm = Capabilities.DMFeatures(enabled = true, path = "/api/agent/dm", send = true, maxBody = 1000, ttlHours = 24, rateLimitPerHour = 60, streamEvent = "dm"),
+            offkai = Capabilities.OffkaiFeatures(enabled = true, path = "/api/agent/offkai", control = true),
         ))
         dm.loadDemo()
         // ☗ 将棋: sample games (one in progress against me, one to watch) and the chat's game card.
         if (withShogi) shogi.loadDemo("me", "ドリキン", shogiScenario)
         if (withMinigame) minigame.loadDemo()
+        offkai.loadDemo(images)
         val card = if (withShogi) shogi.demoCardGame?.let { id -> shogi.games.first { it.id == id } } else null
         if (card != null) rows = rows + ChatRow(ChatMessage(6000, authorName = "B-guru", body = "${ShogiLogic.vsText(card)} 対局中 → 将棋で観戦",
             createdAt = "2026-10-16T09:30:00Z", kind = "shogi", shogiGameId = card.id))
@@ -252,6 +256,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         shogi.close()
         dm.close()
         room.close()
+        offkai.close()
         voice.close()
         scope.cancel()
     }
@@ -265,6 +270,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             shogi.configure(caps)
             minigame.configure(caps)
             watch.configure(caps)
+            offkai.configure(caps)
             dm.configure(caps)
             // Voice is on for me but this token predates the "voice" scope: send the member
             // back to sign in once (a new sign-in gets the scope). Only once per install,
@@ -322,6 +328,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
                 if (room.enabled) scope.launch { room.reload() }
                 if (shogi.enabled) shogi.load() // resync games missed while disconnected
                 if (watch.enabled) scope.launch { watch.reload() } // where the shared video is now
+                if (offkai.enabled) scope.launch { offkai.reload() } // started / ended / photos while away
                 dm.onReady(ev.data)
                 reload()
             }
@@ -331,6 +338,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             "dm" -> dm.apply(ev.data)
             "minigame" -> if (minigame.enabled) minigame.onStreamEvent(ev.data)
             "watch" -> if (watch.enabled) watch.onStreamEvent(ev.data)
+            "offkai" -> if (offkai.enabled) offkai.onStreamEvent(ev.data)
             "post" -> onPostCreated?.invoke()
             "voice" -> runCatching { ApiJson.decodeFromString<VoiceRoomInfo>(ev.data) }.getOrNull()?.let(voice::apply)
             "chat" -> {
@@ -526,7 +534,16 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     fun openShogi(id: Long) {
         room.toText()
         minigame.open = false
+        offkai.open = false
         shogi.openGame(id)
+    }
+
+    /** 🍻 オフ会 (notification tap): the chat on the 🍻 tab, out of the room view and ☗ / 🎮. */
+    fun openOffkai() {
+        room.toText()
+        shogi.open = false
+        minigame.open = false
+        offkai.reveal()
     }
 
     /** Jump to a message (from a notification tap) and highlight it briefly. */

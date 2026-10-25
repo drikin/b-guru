@@ -14,8 +14,9 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 
 /** Keeps a voice-room call alive while the app is in the background or the screen is
- *  off. Holds no audio itself — the LiveKit room lives in VoiceStore; this only tells
- *  Android "a call is going on" (ongoing notification with 退出).
+ *  off. Holds no audio itself — the LiveKit room lives in VoiceStore (or OffkaiStore: 🍻 オフ会
+ *  uses the same service, never at the same time); this only tells Android "a call is going
+ *  on" (ongoing notification with 退出).
  *
  *  Starts as "mediaPlayback" (listening; no permission needed) and gains the
  *  "microphone" type on the first unmute, while the app is on screen — without that
@@ -27,9 +28,11 @@ class VoiceService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_LEAVE) {
             App.session(this).store?.voice?.leave()
+            App.session(this).store?.offkai?.stopListening()
             stopSelf()
             return START_NOT_STICKY
         }
+        intent?.getStringExtra(EXTRA_TITLE)?.let { title = it }
         val mic = intent?.getBooleanExtra(EXTRA_MIC, false) == true && App.session(this).store?.voice?.hasMicPermission == true
         if (mic) micType = true
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -44,6 +47,7 @@ class VoiceService : Service() {
             // Never started: end the call — without this service nothing would end it
             // when the app is swiped away, and a live connection must not outlive the app.
             if (!foreground) {
+                App.session(this).store?.offkai?.stopListening("オフ会の音声を続けられませんでした。もう一度押してください")
                 App.session(this).store?.voice?.leave("ボイスルームを続けられませんでした。もう一度入ってください")
                 stopSelf()
             }
@@ -53,6 +57,7 @@ class VoiceService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         App.session(this).store?.voice?.leave()
+        App.session(this).store?.offkai?.stopListening()
         stopSelf()
     }
 
@@ -64,6 +69,7 @@ class VoiceService : Service() {
 
     private var micType = false
     private var foreground = false
+    private var title = TITLE_VOICE
 
     private fun notification() = run {
         val nm = getSystemService(NotificationManager::class.java)
@@ -85,7 +91,7 @@ class VoiceService : Service() {
         )
         NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("ボイスルームに参加中")
+            .setContentTitle(title)
             .setContentText("タップでチャットに戻ります")
             .setContentIntent(open)
             .addAction(0, "退出", leave)
@@ -100,10 +106,14 @@ class VoiceService : Service() {
         private const val NOTIFICATION_ID = 7001
         private const val ACTION_LEAVE = "fm.backspace.bguru.chat.VOICE_LEAVE"
         private const val EXTRA_MIC = "mic"
+        private const val EXTRA_TITLE = "title"
+        const val TITLE_VOICE = "ボイスルームに参加中"
+        const val TITLE_OFFKAI = "🍻 オフ会を聞いています"
+        const val TITLE_OFFKAI_SPEAK = "🍻 オフ会で話しています"
 
-        fun start(context: Context, mic: Boolean) {
+        fun start(context: Context, mic: Boolean, title: String = TITLE_VOICE) {
             runCatching {
-                ContextCompat.startForegroundService(context, Intent(context, VoiceService::class.java).putExtra(EXTRA_MIC, mic))
+                ContextCompat.startForegroundService(context, Intent(context, VoiceService::class.java).putExtra(EXTRA_MIC, mic).putExtra(EXTRA_TITLE, title))
             }.onFailure { if (BuildConfig.DEBUG) android.util.Log.d("BguruVoice", "start service failed", it) }
         }
 

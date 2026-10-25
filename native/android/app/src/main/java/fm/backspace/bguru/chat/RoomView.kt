@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -128,25 +129,29 @@ private fun rememberRoomActions(room: RoomStore, voice: VoiceStore): RoomActions
 /** テキスト｜ルーム, at the top of the chat. The ルーム tab shows how many are in the
  *  room's voice (and a green dot while someone talks) — the text view's way in. */
 @Composable
-fun RoomModeSwitch(room: RoomStore, voice: VoiceStore, shogi: ShogiStore? = null, minigame: MinigameStore? = null) {
+fun RoomModeSwitch(room: RoomStore, voice: VoiceStore, shogi: ShogiStore? = null, minigame: MinigameStore? = null, offkai: OffkaiStore? = null) {
     val actions = rememberRoomActions(room, voice)
     BackHandler(enabled = room.roomView) { room.toText() }
-    // テキスト｜ルーム｜☗｜🎮 (☗ and 🎮 only when on; icons only). ☗ and 🎮 never open together.
+    // テキスト｜ルーム｜☗｜🎮｜🍻 (☗, 🎮 and 🍻 only when on; icons only). ☗, 🎮 and 🍻 never open together.
     val withShogi = shogi?.enabled == true
     val withGame = minigame?.enabled == true
+    val withOffkai = offkai?.enabled == true
     val shogiOpen = withShogi && shogi!!.open
     val gameOpen = withGame && minigame!!.open
+    val offkaiOpen = withOffkai && offkai!!.open
     if (withShogi) ShogiBackHandler(shogi!!)
     if (withGame) MinigameBackHandler(minigame!!)
-    val n = 2 + (if (withShogi) 1 else 0) + (if (withGame) 1 else 0)
+    if (withOffkai) OffkaiBackHandler(offkai!!)
+    val n = 2 + (if (withShogi) 1 else 0) + (if (withGame) 1 else 0) + (if (withOffkai) 1 else 0)
     val inVoice = room.members.count { it.inRoom && it.listening }
     val talking = voice.phase == VoiceStore.Phase.CONNECTED && voice.members.any { it.speaking }
+    fun closeOthers() { shogi?.open = false; minigame?.open = false; offkai?.open = false }
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        SingleChoiceSegmentedButtonRow(Modifier.width(when (n) { 4 -> 340.dp; 3 -> 270.dp; else -> 196.dp }).height(32.dp)) {
-            SegmentedButton(selected = !room.roomView && !shogiOpen && !gameOpen, onClick = { room.toText(); shogi?.open = false; minigame?.open = false }, shape = SegmentedButtonDefaults.itemShape(0, n), icon = {}) {
-                Text("テキスト", style = MaterialTheme.typography.labelSmall)
+        SingleChoiceSegmentedButtonRow(Modifier.widthIn(max = when (n) { 5 -> 380.dp; 4 -> 340.dp; 3 -> 270.dp; else -> 196.dp }).fillMaxWidth().height(32.dp)) {
+            SegmentedButton(selected = !room.roomView && !shogiOpen && !gameOpen && !offkaiOpen, onClick = { room.toText(); closeOthers() }, shape = SegmentedButtonDefaults.itemShape(0, n), icon = {}) {
+                Text("テキスト", style = MaterialTheme.typography.labelSmall, maxLines = 1)
             }
-            SegmentedButton(selected = room.roomView, onClick = { shogi?.open = false; minigame?.open = false; actions.enter() }, shape = SegmentedButtonDefaults.itemShape(1, n), icon = {}) {
+            SegmentedButton(selected = room.roomView, onClick = { closeOthers(); actions.enter() }, shape = SegmentedButtonDefaults.itemShape(1, n), icon = {}) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(if (inVoice > 0) "ルーム 🎧$inVoice" else "ルーム", style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     if (talking) Box(Modifier.size(7.dp).background(AccentGreen, CircleShape))
@@ -154,13 +159,18 @@ fun RoomModeSwitch(room: RoomStore, voice: VoiceStore, shogi: ShogiStore? = null
             }
             var i = 2
             if (withShogi) {
-                SegmentedButton(selected = shogiOpen, onClick = { room.toText(); minigame?.open = false; shogi!!.open = true }, shape = SegmentedButtonDefaults.itemShape(i++, n), icon = {}) {
+                SegmentedButton(selected = shogiOpen, onClick = { room.toText(); closeOthers(); shogi!!.open = true }, shape = SegmentedButtonDefaults.itemShape(i++, n), icon = {}) {
                     ShogiSegmentLabel(shogi!!)
                 }
             }
             if (withGame) {
-                SegmentedButton(selected = gameOpen, onClick = { room.toText(); shogi?.open = false; minigame!!.open = true }, shape = SegmentedButtonDefaults.itemShape(i, n), icon = {}) {
+                SegmentedButton(selected = gameOpen, onClick = { room.toText(); closeOthers(); minigame!!.open = true }, shape = SegmentedButtonDefaults.itemShape(i++, n), icon = {}) {
                     MinigameSegmentLabel()
+                }
+            }
+            if (withOffkai) {
+                SegmentedButton(selected = offkaiOpen, onClick = { room.toText(); closeOthers(); offkai!!.open = true }, shape = SegmentedButtonDefaults.itemShape(i, n), icon = {}) {
+                    OffkaiSegmentLabel(offkai!!)
                 }
             }
         }

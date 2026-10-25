@@ -121,6 +121,8 @@ final class ChatStore {
     let dm: DMStore
     /// 📺 YouTube 共同鑑賞 (Watch.swift), when the server has it on for this member.
     let watch: WatchStore
+    /// 🍻 オフ会 (Offkai.swift, docs/offkai-spec.md), when the server has it on for this member.
+    let offkai: OffkaiStore
 
     init(api: APIClient) {
         self.api = api
@@ -133,22 +135,43 @@ final class ChatStore {
         self.shogi = shogi
         let minigame = MinigameStore(api: api)
         self.minigame = minigame
-        // One thing above the chat (テキスト｜ルーム｜☗｜🎮): opening ☗ or 🎮 leaves the club room
-        // and closes the other.
-        shogi.willOpen = { [weak room, weak minigame] in
+        let offkai = OffkaiStore(api: api)
+        self.offkai = offkai
+        // One thing above the chat (テキスト｜ルーム｜☗｜🎮｜🍻): opening one leaves the club room
+        // and closes the others.
+        shogi.willOpen = { [weak room, weak minigame, weak offkai] in
             minigame?.close()
+            offkai?.close()
             guard let room, room.mode == .room else { return }
             Task { await room.toText() }
         }
-        minigame.willOpen = { [weak room, weak shogi] in
+        minigame.willOpen = { [weak room, weak shogi, weak offkai] in
             shogi?.close()
+            offkai?.close()
+            guard let room, room.mode == .room else { return }
+            Task { await room.toText() }
+        }
+        offkai.willOpen = { [weak room, weak shogi, weak minigame] in
+            shogi?.close()
+            minigame?.close()
             guard let room, room.mode == .room else { return }
             Task { await room.toText() }
         }
         let jukebox = JukeboxStore(api: api)
         self.jukebox = jukebox
-        voice.onWillJoin = { [weak jukebox] in jukebox?.pauseForVoice() }
-        jukebox.voiceBusy = { [weak voice] in (voice?.phase ?? .idle) != .idle }
+        // Two rooms never sound at once: listening to 🍻 leaves the voice room (and the club room's
+        // voice), joining the voice room stops 🍻. The jukebox pauses for either.
+        voice.onWillJoin = { [weak jukebox, weak offkai] in
+            jukebox?.pauseForVoice()
+            if let offkai, offkai.audio != .off { Task { await offkai.stopAudio(release: true) } }
+        }
+        offkai.willListen = { [weak jukebox, weak voice, weak room] in
+            jukebox?.pauseForVoice()
+            if let room, room.mode == .room { await room.toText() }
+            if let voice, voice.inRoom { await voice.leave() }
+        }
+        jukebox.voiceBusy = { [weak voice, weak offkai] in (voice?.phase ?? .idle) != .idle || (offkai?.audio ?? .off) != .off }
+        offkai.myUserId = { [weak self] in self?.myUserId ?? self?.voice.myUserId }
     }
 
     private static let voiceReloginKey = "voiceReloginAsked"
@@ -179,6 +202,7 @@ final class ChatStore {
         pathMonitor?.cancel()
         pathMonitor = nil
         Task { await voice.leave() }
+        Task { await offkai.stopAudio(release: false) }
     }
 
     #if os(iOS)
@@ -194,7 +218,7 @@ final class ChatStore {
         if background {
             backgroundClose = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(30))
-                guard let self, !Task.isCancelled, self.voice.phase == .idle else { return }
+                guard let self, !Task.isCancelled, self.voice.phase == .idle, self.offkai.audio == .off else { return }
                 self.streamTask?.cancel()
                 self.streamTask = nil
                 self.connection = .connecting
@@ -229,6 +253,7 @@ final class ChatStore {
             shogi.configure(capabilities?.features?.shogi, enabled: capabilities?.shogiEnabled ?? false)
             minigame.configure(capabilities?.features?.minigame, enabled: capabilities?.minigameEnabled ?? false)
             watch.configure(capabilities?.features?.watch, enabled: capabilities?.watchEnabled ?? false)
+            offkai.configure(capabilities?.features?.offkai, enabled: capabilities?.offkaiEnabled ?? false)
             dm.configure(capabilities)
             // Voice is on for me but this token predates the "voice" scope: send the
             // member back to sign in once (a new sign-in gets the scope). Only once per
@@ -290,6 +315,7 @@ final class ChatStore {
             if room.enabled { Task { await room.load() } }
             if shogi.enabled { Task { await shogi.reload() } } // moves missed while away
             if watch.enabled { Task { await watch.reload() } } // where the shared video is now
+            if offkai.enabled { Task { await offkai.reload() } } // who speaks now, photos missed while away
             dm.applyReady(ev.data)
             await reload()
         case "chat":
@@ -328,6 +354,8 @@ final class ChatStore {
             minigame.apply(ev.data)
         case "watch":
             watch.apply(ev.data)
+        case "offkai":
+            offkai.apply(ev.data)
         case "shogi":
             shogi.apply(ev.data)
         case "shogi_commentary":
@@ -714,6 +742,11 @@ final class ChatStore {
         if minigameOn { minigame.debugLoadDemo() }
         // ✉️ 簡易 DM (on unless -demoDMOff): sample conversations, nothing is sent.
         if !ProcessInfo.processInfo.arguments.contains("-demoDMOff") { dm.debugLoadDemo() }
+        // 🍻 オフ会 (on unless -demoOffkaiOff / BGURU_DEMO_OFFKAI=0; =idle: none going on, only the archive).
+        let offkaiSetting = ProcessInfo.processInfo.arguments.contains("-demoOffkaiOff") ? "0"
+            : (ProcessInfo.processInfo.arguments.contains("-demoOffkaiIdle") ? "idle" : (env["BGURU_DEMO_OFFKAI"] ?? "1"))
+        if offkaiSetting != "0" { offkai.debugLoadDemo(running: offkaiSetting != "idle") }
+        let offkaiCaps = offkaiSetting != "0" ? #","offkai":{"enabled":true,"path":"/api/agent/offkai","control":true}"# : ""
         let minigameCaps = minigameOn ? #","minigame":{"enabled":true,"path":"/api/agent/minigame","game_url":"/minigame/index.html","bridge_version":1,"engine_version":1,"play":true}"# : ""
         // 段階 3 (the operations): on unless -demoOldServer / BGURU_DEMO_OLD_SERVER=1 (a server from
         // before them says nothing); -demoTextOnly: an external agent's write key (text-only edits).
@@ -722,7 +755,7 @@ final class ChatStore {
         // -demoNoEdit: a key from before the operations' mark (post, but edit false): 「編集するには一度ログインし直してください」.
         let noEdit = ProcessInfo.processInfo.arguments.contains("-demoNoEdit") || env["BGURU_DEMO_NO_EDIT"] == "1"
         let postOps = oldServer ? "" : #","edit":\#(!textOnly && !noEdit),"delete":\#(!noEdit),"edit_text_only":\#(textOnly && !noEdit),"whisper":true,"video":true,"audio":true,"max_media_mb":100,"poll":true,"poll_vote":true,"poll_edit":true,"pin":true,"pinned_list":true,"bookmarks":true,"bookmarks_set":true,"favorites":true,"custom_emoji_list":"/api/agent/emojis","club_select":true,"club_change":true,"mentions":"/api/agent/members","display":true,"include":["reactions","read","display"]"#
-        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4,"beagle_ondevice":true},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5\#(postOps)},"jukebox":{"enabled":\#(ProcessInfo.processInfo.arguments.contains("-demoJukebox") || ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil),"path":"/api/agent/jukebox"}\#(shogiCaps)\#(minigameCaps),"mac_assistant":true}}"#
+        let caps = #"{"api_version":1,"scopes":["read","read_state","chat","post"],"features":{"chat":{"send":true,"edit_own":true,"reactions":true,"images":true,"max_images":4,"beagle_ondevice":true},"posts":{"read":true,"publish":true,"upload":true,"reactions":true,"max_images":5\#(postOps)},"jukebox":{"enabled":\#(ProcessInfo.processInfo.arguments.contains("-demoJukebox") || ProcessInfo.processInfo.environment["BGURU_DEMO_JUKEBOX"] != nil),"path":"/api/agent/jukebox"}\#(shogiCaps)\#(minigameCaps)\#(offkaiCaps),"mac_assistant":true}}"#
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
         capabilities = try? dec.decode(Capabilities.self, from: Data(caps.utf8))

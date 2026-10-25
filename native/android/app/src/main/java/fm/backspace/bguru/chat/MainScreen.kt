@@ -79,6 +79,8 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
                 LaunchedEffect(ChatQuote.pending) { if (ChatQuote.pending != null) right = 0 }
                 // ☗ 将棋 from a notification / the chat card: show the chat (the shogi panel is above it).
                 LaunchedEffect(store.shogi.revealTick) { if (store.shogi.revealTick > 0) right = 0 }
+                // 🍻 オフ会 from a notification: show the chat (the panel is above it).
+                LaunchedEffect(store.offkai.revealTick) { if (store.offkai.revealTick > 0) right = 0 }
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
                 // A phone on its side with ☗ / 🎮 open: the board / game takes the timeline's place, beside the chat
                 // (ChatScreen puts it there at the full height; above the chat it would be cut off).
@@ -133,6 +135,8 @@ private fun Pages(
     LaunchedEffect(store.demoPage) { store.demoPage?.let { p -> pager.scrollToPage(p.coerceIn(0, count - 1)); store.demoPage = null } }
     // ☗ 将棋 from a notification: show the chat (the shogi panel opens above it).
     LaunchedEffect(store.shogi.revealTick) { if (store.shogi.revealTick > 0) scope.launch { pager.animateScrollToPage(1) } }
+    // 🍻 オフ会 from a notification: show the chat (the panel opens above it).
+    LaunchedEffect(store.offkai.revealTick) { if (store.offkai.revealTick > 0) scope.launch { pager.animateScrollToPage(1) } }
     // The playback notification / the mini player: show the jukebox.
     LaunchedEffect(jb?.showTab, count) { if (jb?.showTab == true && count == 3) { pager.animateScrollToPage(2); jb.showTab = false; jb.revealTick++ } }
 

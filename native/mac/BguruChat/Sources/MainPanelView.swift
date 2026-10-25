@@ -169,6 +169,7 @@ private struct PanelTabWatcher: View {
     @State private var restoredChatScreen = false
 
     private var chatScreen: String {
+        if store.offkai.enabled && store.offkai.open { return "offkai" }
         if store.minigame.enabled && store.minigame.open { return "minigame" }
         if store.shogi.enabled && store.shogi.open { return "shogi" }
         return store.room.enabled && store.room.mode == .room ? "room" : "text"
@@ -182,6 +183,8 @@ private struct PanelTabWatcher: View {
             if store.shogi.enabled { if !store.shogi.open { store.shogi.show() } } else if store.capabilities == nil { return }
         case "minigame":
             if store.minigame.enabled { if !store.minigame.open { store.minigame.show() } } else if store.capabilities == nil { return }
+        case "offkai":
+            if store.offkai.enabled { if !store.offkai.open { store.offkai.show() } } else if store.capabilities == nil { return }
         default: break
         }
         restoredChatScreen = true

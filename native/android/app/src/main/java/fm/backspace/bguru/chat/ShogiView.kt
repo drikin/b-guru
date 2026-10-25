@@ -103,27 +103,35 @@ private val ShogiGreen = Color(0xFF16A34A)
 // MARK: switch (when the room is off for this member: テキスト｜☗ 将棋)
 
 @Composable
-fun ShogiModeSwitch(shogi: ShogiStore, minigame: MinigameStore) {
-    // テキスト｜☗｜🎮 (each only when on). ☗ and 🎮 never open together.
+fun ShogiModeSwitch(shogi: ShogiStore, minigame: MinigameStore, offkai: OffkaiStore? = null) {
+    // テキスト｜☗｜🎮｜🍻 (each only when on). ☗, 🎮 and 🍻 never open together.
     val withShogi = shogi.enabled
     val withGame = minigame.enabled
+    val withOffkai = offkai?.enabled == true
+    val offkaiOpen = withOffkai && offkai!!.open
     if (withShogi) ShogiBackHandler(shogi)
     if (withGame) MinigameBackHandler(minigame)
-    val n = 1 + (if (withShogi) 1 else 0) + (if (withGame) 1 else 0)
+    if (withOffkai) OffkaiBackHandler(offkai!!)
+    val n = 1 + (if (withShogi) 1 else 0) + (if (withGame) 1 else 0) + (if (withOffkai) 1 else 0)
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.Center) {
-        SingleChoiceSegmentedButtonRow(Modifier.width(if (n == 3) 220.dp else 180.dp).height(32.dp)) {
-            SegmentedButton(selected = !shogi.open && !minigame.open, onClick = { shogi.open = false; minigame.open = false }, shape = SegmentedButtonDefaults.itemShape(0, n), icon = {}) {
+        SingleChoiceSegmentedButtonRow(Modifier.width(when (n) { 4 -> 260.dp; 3 -> 220.dp; else -> 180.dp }).height(32.dp)) {
+            SegmentedButton(selected = !shogi.open && !minigame.open && !offkaiOpen, onClick = { shogi.open = false; minigame.open = false; offkai?.open = false }, shape = SegmentedButtonDefaults.itemShape(0, n), icon = {}) {
                 Text("テキスト", style = MaterialTheme.typography.labelSmall)
             }
             var i = 1
             if (withShogi) {
-                SegmentedButton(selected = shogi.open, onClick = { minigame.open = false; shogi.open = true }, shape = SegmentedButtonDefaults.itemShape(i++, n), icon = {}) {
+                SegmentedButton(selected = shogi.open, onClick = { minigame.open = false; offkai?.open = false; shogi.open = true }, shape = SegmentedButtonDefaults.itemShape(i++, n), icon = {}) {
                     ShogiSegmentLabel(shogi)
                 }
             }
             if (withGame) {
-                SegmentedButton(selected = minigame.open, onClick = { shogi.open = false; minigame.open = true }, shape = SegmentedButtonDefaults.itemShape(i, n), icon = {}) {
+                SegmentedButton(selected = minigame.open, onClick = { shogi.open = false; offkai?.open = false; minigame.open = true }, shape = SegmentedButtonDefaults.itemShape(i++, n), icon = {}) {
                     MinigameSegmentLabel()
+                }
+            }
+            if (withOffkai) {
+                SegmentedButton(selected = offkaiOpen, onClick = { shogi.open = false; minigame.open = false; offkai!!.open = true }, shape = SegmentedButtonDefaults.itemShape(i, n), icon = {}) {
+                    OffkaiSegmentLabel(offkai!!)
                 }
             }
         }

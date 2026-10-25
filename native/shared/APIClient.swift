@@ -330,6 +330,31 @@ final class APIClient: Sendable {
         return r.urls
     }
 
+    /// 🍻 オフ会の写真: multipart `images` (already small JPEGs) and `caption` → (status, body) as is.
+    func offkaiUpload(path: String, images: [Data], caption: String) async -> (Int, Data) {
+        let boundary = "bguru-\(UUID().uuidString)"
+        var body = Data()
+        for (i, data) in images.enumerated() {
+            body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"images\"; filename=\"photo\(i).jpg\"\r\nContent-Type: image/jpeg\r\n\r\n".utf8))
+            body.append(data)
+            body.append(Data("\r\n".utf8))
+        }
+        if !caption.isEmpty {
+            body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n\(caption)\r\n".utf8))
+        }
+        body.append(Data("--\(boundary)--\r\n".utf8))
+        var req = request("POST", path)
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+        req.timeoutInterval = 120
+        do {
+            let (data, resp) = try await session.data(for: req)
+            return ((resp as? HTTPURLResponse)?.statusCode ?? 0, data)
+        } catch {
+            return (0, Data())
+        }
+    }
+
     func togglePostReaction(id: Int, emoji: String) async throws -> PostReactionToggleResponse {
         try await perform(request("POST", "/api/agent/reactions", json: ["post_id": id, "emoji": emoji]))
     }

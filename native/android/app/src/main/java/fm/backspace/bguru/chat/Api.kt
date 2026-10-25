@@ -251,6 +251,44 @@ class ApiClient(val token: String) : PostOpsApi {
         }
     }
 
+    // MARK: 🍻 オフ会 (docs/offkai-spec.md) — `base` is capabilities' offkai path; GET needs read, POST / DELETE chat
+
+    suspend fun offkaiState(base: String, before: Long? = null): OffkaiState =
+        get(base, if (before != null) mapOf("before" to "$before") else emptyMap())
+    /** 409 `busy` when another one is on (ApiError.Http). */
+    suspend fun offkaiStart(base: String, title: String): OffkaiEvent? =
+        decode<OffkaiEventReply>(send(request("POST", base, buildJsonObject { put("title", title) }))).event
+    suspend fun offkaiEnd(base: String): OffkaiEvent? =
+        decode<OffkaiEventReply>(send(request("POST", "$base/end", buildJsonObject {}))).event
+    /** Speak (the last one to press wins) or stop. Speaking gives a key that may publish the mic. */
+    suspend fun offkaiSpeak(base: String, on: Boolean): OffkaiTokenReply =
+        decode(send(request("POST", "$base/speak", buildJsonObject { put("on", on) })))
+    suspend fun offkaiToken(base: String): OffkaiTokenReply =
+        decode(send(request("POST", "$base/token", buildJsonObject {})))
+    suspend fun offkaiEvent(base: String, id: Long): OffkaiEvent? = get<OffkaiEventReply>("$base/$id").event
+    /** The album, oldest first; `after` = the last photo id already shown. */
+    suspend fun offkaiPhotos(base: String, id: Long, after: Long? = null): OffkaiPhotosReply =
+        get("$base/$id/photos", if (after != null) mapOf("after" to "$after") else emptyMap())
+    suspend fun offkaiDeletePhoto(base: String, photoId: Long) { send(request("DELETE", "$base/photos/$photoId")) }
+
+    /** Up to 4 JPEGs (already resized, EXIF gone) as multipart `images` + `caption`. */
+    suspend fun offkaiUpload(base: String, jpegs: List<ByteArray>, caption: String): List<OffkaiPhoto> {
+        val body = MultipartBody.Builder().setType(MultipartBody.FORM).apply {
+            jpegs.forEachIndexed { i, b -> addFormDataPart("images", "photo$i.jpg", b.toRequestBody("image/jpeg".toMediaType())) }
+            if (caption.isNotBlank()) addFormDataPart("caption", caption)
+        }.build()
+        val req = Request.Builder().url(Net.BASE + "$base/photos").header("Authorization", "Bearer $token").post(body).build()
+        Net.http.newBuilder().callTimeout(120, TimeUnit.SECONDS).writeTimeout(120, TimeUnit.SECONDS).build().newCall(req).await().use {
+            val text = it.body.string()
+            if (!it.isSuccessful) {
+                val err = runCatching { ApiJson.decodeFromString<ApiErrorBody>(text) }.getOrNull()
+                if (it.code == 401) throw ApiError.Unauthorized(err?.code)
+                throw ApiError.Http(it.code, err?.code, err?.error)
+            }
+            return decode<OffkaiPhotosReply>(text).photos
+        }
+    }
+
     // MARK: ✉️ 簡易 DM (src/lib/dm.ts) — `base` is capabilities' dm path
 
     suspend fun dmConversations(base: String = "/api/agent/dm"): DMListResponse = get(base)

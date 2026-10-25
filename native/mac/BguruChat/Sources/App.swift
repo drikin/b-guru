@@ -217,6 +217,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 if CommandLine.arguments.contains("-demoShogi") { store.shogi.show() }
                 // -demoMinigame: 🎮 open (answered locally, nothing is sent).
                 if CommandLine.arguments.contains("-demoMinigame") { store.minigame.show() }
+                // -demoOffkai: 🍻 open (a sample event going on; -demoOffkaiIdle: only the archive). Nothing is sent.
+                if CommandLine.arguments.contains("-demoOffkai") || CommandLine.arguments.contains("-demoOffkaiIdle") { store.offkai.show() }
                 if CommandLine.arguments.contains("-demoShogiGame") { store.shogi.openGame(101) }
                 if CommandLine.arguments.contains("-demoShogiWatch") { store.shogi.openGame(101) }
                 // -orientationTour: walk through every screen for the upside-down check

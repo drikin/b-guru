@@ -291,13 +291,15 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             // 📺 YouTube 共同鑑賞 sits beside the switch (the player stays open whatever the chat shows).
             if (store.room.enabled) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) { RoomModeSwitch(store.room, store.voice, store.shogi, store.minigame) }
+                    Box(Modifier.weight(1f)) { RoomModeSwitch(store.room, store.voice, store.shogi, store.minigame, store.offkai) }
                     if (store.watch.enabled) WatchToggle(store.watch)
                 }
             } else {
-                if (store.shogi.enabled || store.minigame.enabled || store.watch.enabled) {
+                if (store.shogi.enabled || store.minigame.enabled || store.watch.enabled || store.offkai.enabled) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.weight(1f)) { if (store.shogi.enabled || store.minigame.enabled) ShogiModeSwitch(store.shogi, store.minigame) }
+                        Box(Modifier.weight(1f)) {
+                            if (store.shogi.enabled || store.minigame.enabled || store.offkai.enabled) ShogiModeSwitch(store.shogi, store.minigame, store.offkai)
+                        }
                         if (store.watch.enabled) WatchToggle(store.watch)
                     }
                 }
@@ -308,9 +310,10 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                     WatchDock(store.watch, maxHeight = LocalConfiguration.current.screenHeightDp.dp)
                 }
             }
-            // ☗ / 🎮 opening moves a docked 📺 to the floating window (two above the chat leave no room for it).
-            LaunchedEffect(store.shogi.open || store.minigame.open) {
-                if ((store.shogi.open || store.minigame.open) && store.watch.open && store.watch.mode == WatchStore.Mode.DOCKED) {
+            // ☗ / 🎮 / 🍻 opening moves a docked 📺 to the floating window (two above the chat leave no room for it).
+            val panelAbove = store.shogi.open || store.minigame.open || (store.offkai.enabled && store.offkai.open)
+            LaunchedEffect(panelAbove) {
+                if (panelAbove && store.watch.open && store.watch.mode == WatchStore.Mode.DOCKED) {
                     store.watch.switchTo(WatchStore.Mode.FLOATING)
                 }
             }
@@ -428,7 +431,25 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             val room = store.room
             val shogi = store.shogi
             val minigame = store.minigame
-            if (!beside && minigame.enabled && minigame.open && !(room.enabled && room.roomView)) {
+            val offkai = store.offkai
+            if (!beside && offkai.enabled && offkai.open && !(room.enabled && room.roomView)) {
+                // 🍻 オフ会: the panel above, the chat below (beside it on a wide window) — the chat stays usable.
+                androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                    if (maxWidth >= 700.dp && maxWidth > maxHeight) {
+                        Row(Modifier.fillMaxSize()) {
+                            OffkaiPanel(offkai, Modifier.weight(1f).fillMaxSize())
+                            chatPane(Modifier.width(400.dp).fillMaxSize())
+                        }
+                    } else {
+                        // Like ☗: about half the column, the chat keeps the rest.
+                        val cap = maxHeight * (if (maxHeight < 760.dp) 0.52f else 0.6f)
+                        Column(Modifier.fillMaxSize()) {
+                            OffkaiPanel(offkai, Modifier.fillMaxWidth().height(cap))
+                            chatPane(Modifier.weight(1f).fillMaxWidth())
+                        }
+                    }
+                }
+            } else if (!beside && minigame.enabled && minigame.open && !(room.enabled && room.roomView)) {
                 // 🎮: the game above, the chat below (no scrolling; the game is as tall as it says, at most
                 // half the column, 150–520 dp — the chat stays in sight; the game fills the width up to it,
                 // drikin 2026-10-24). Typing in the chat pauses it.
@@ -1003,9 +1024,9 @@ internal fun ChatMessage.dmPeer(dmEnabled: Boolean): DMPeer? {
     return DMPeer(uid, authorName, avatar)
 }
 
-/** ☗ 将棋 or 🎮 is the mode chosen above the chat (and the room is not in its own view). */
+/** ☗ 将棋, 🎮 or 🍻 is the mode chosen above the chat (and the room is not in its own view). */
 val ChatStore.panelOpen: Boolean
-    get() = !(room.enabled && room.roomView) && ((minigame.enabled && minigame.open) || (shogi.enabled && shogi.open))
+    get() = !(room.enabled && room.roomView) && ((minigame.enabled && minigame.open) || (shogi.enabled && shogi.open) || (offkai.enabled && offkai.open))
 
 /** When the board / the game goes beside the chat instead of above it: a window wider than tall and too
  *  short for the board above the chat (a phone on its side, 411 dp). The board needs about 260 dp of height
@@ -1028,7 +1049,9 @@ private fun SidePanel(store: ChatStore, visible: Boolean, onScreen: Boolean, com
             .only(androidx.compose.foundation.layout.WindowInsetsSides.Vertical + androidx.compose.foundation.layout.WindowInsetsSides.Start)
         androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(insets)) {
             val h = maxHeight
-            if (store.minigame.enabled && store.minigame.open) {
+            if (store.offkai.enabled && store.offkai.open) {
+                OffkaiPanel(store.offkai, Modifier.fillMaxSize())
+            } else if (store.minigame.enabled && store.minigame.open) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     MinigamePanel(store, active = visible && !composerFocused, maxHeight = h, modifier = Modifier.fillMaxWidth())
                 }
