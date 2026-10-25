@@ -5,6 +5,7 @@ import { findMemberByEmail } from "@/lib/ghost";
 import { gravatarUrl } from "@/lib/posts";
 import { ensureUserId } from "@/lib/user";
 import { isAdmin } from "@/lib/admin";
+import { CHAT_OVERLAY_FLAG, featureEnabledFor } from "@/lib/feature-flag";
 import { slideSession } from "@/lib/login";
 
 // Per-user auth state: never cache (the early <link rel=preload> fetch in
@@ -75,6 +76,8 @@ export async function GET() {
     userId,
     // Server-computed; the client no longer carries the admin allowlist.
     isAdmin: isAdmin(email),
+    // チャットの上に機能を重ねる新しい形（docs/chat-overlay-spec.md）。
+    chatOverlay: featureEnabledFor(CHAT_OVERLAY_FLAG, email),
     email,
     name,
     avatar,

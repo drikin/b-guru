@@ -38,3 +38,6 @@ export const MAC_ASSISTANT_FLAG = "MAC_ASSISTANT_ENABLED";
 export function macAssistantEnabledFor(email: string | null | undefined): boolean {
   return featureEnabledFor(MAC_ASSISTANT_FLAG, email);
 }
+
+/** チャットの上に機能を重ねる新しい形（docs/chat-overlay-spec.md）。外せばアプリを出し直さずに今までの段に戻る。 */
+export const CHAT_OVERLAY_FLAG = "CHAT_OVERLAY_ENABLED";

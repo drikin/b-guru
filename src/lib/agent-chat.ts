@@ -216,7 +216,7 @@ export function toAgentVoiceDto(s: VoiceState) {
  *  calling token's, so a client knows up front which actions will be refused. */
 export function agentCapabilities(
   scopes: AgentScope[],
-  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; shogiCommentary?: boolean; minigame?: boolean; watch?: boolean; offkai?: boolean; appIssued?: boolean; macAssistant?: boolean; beagleOnDevice?: boolean; beagleServer?: boolean } = {}
+  opts: { voice?: boolean; voiceAdmin?: boolean; room?: boolean; jukebox?: boolean; shogi?: boolean; shogiCommentary?: boolean; minigame?: boolean; watch?: boolean; offkai?: boolean; chatOverlay?: boolean; appIssued?: boolean; macAssistant?: boolean; beagleOnDevice?: boolean; beagleServer?: boolean } = {}
 ) {
   const ttlHours = parseInt(CHAT_TTL, 10) || 24;
   const can = (s: AgentScope) => scopes.includes(s);
@@ -332,6 +332,8 @@ export function agentCapabilities(
       watch: watchCapability(!!opts.watch, scopes),
       // 🍻 オフ会（docs/offkai-spec.md）。声は LiveKit（鍵は POST token / speak）、写真は POST photos（multipart）。
       offkai: { enabled: !!opts.offkai, path: "/api/agent/offkai", control: !!opts.offkai && scopes.includes("chat") },
+      // チャットの上に機能を重ねる新しい形（docs/chat-overlay-spec.md）。false = 今までの段（テキスト｜ルーム｜☗…）。
+      chat_overlay: { enabled: !!opts.chatOverlay },
       // Mac のアシスタント機能（MAC_ASSISTANT_ENABLED・最初はオーナーだけ）。false なら Mac アプリは出さない。
       mac_assistant: !!opts.macAssistant,
       voice: {
