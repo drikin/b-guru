@@ -19,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var store: ChatStore?
     private var timeline: TimelineStore?
     private var hotKey: HotKey?
+    /// 右 ⇧ を 2 回でパネルを開閉（設定、既定はオン）。
+    private var rightShift: RightShiftDoubleTap?
     private var observeTask: Task<Void, Never>?
     private let settings = AppSettings.shared
     /// The bundled "new messages" notification: how many it covers and the
@@ -54,6 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         #if DEBUG
         // Dev only: -assistantSelfTest runs the assistant's filter / addressee tests and exits (1 on failure).
         if CommandLine.arguments.contains("-assistantSelfTest") { exit(Assistant.selfTest() ? 0 : 1) }
+        // Dev only: -doubleShiftSelfTest runs the right ⇧ double-tap detector's tests and exits (1 on failure).
+        if CommandLine.arguments.contains("-doubleShiftSelfTest") { exit(DoubleTapDetector.selfTest() ? 0 : 1) }
         // Dev only: -beagleAsk Q1 Q2 … — 🐶 Beagle's on-device answers to these questions, with the demo
         // chat and timeline as knowledge, printed to stderr (to compare prompt changes; nothing is sent).
         if let i = CommandLine.arguments.firstIndex(of: "-beagleAsk") {
@@ -102,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         hotKey = HotKey(keyCode: 11 /* B */, modifiers: [.control, .option]) { [weak self] in
             self?.togglePanel(toChat: true) // ⌃⌥B: the chat with the caret in the message box
         }
+        setupRightShift()
 
         #if DEBUG
         // Dev only: -timelineFixtures DIR — the display rules against the shared examples.
@@ -529,6 +534,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             gpu.state = settings.menuBarRunnerGPU ? .on : .off
             menu.addItem(gpu)
         }
+        let shift = NSMenuItem(title: "右 ⇧ を 2 回押してパネルを開閉", action: #selector(toggleRightShift), keyEquivalent: "")
+        shift.target = self
+        shift.state = settings.rightShiftDoubleTap ? .on : .off
+        menu.addItem(shift)
+        if settings.rightShiftDoubleTap && !RightShiftDoubleTap.canMonitorGlobally {
+            let allow = NSMenuItem(title: "ほかのアプリが前でも使う（入力監視を許可…）", action: #selector(allowRightShiftGlobal), keyEquivalent: "")
+            allow.target = self
+            allow.indentationLevel = 1
+            menu.addItem(allow)
+        }
         let tick = NSMenuItem(title: "メニューバーにティッカーを流す", action: #selector(toggleTicker), keyEquivalent: "")
         tick.target = self
         tick.state = settings.menuBarTicker ? .on : .off
@@ -575,6 +590,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc private func toggleRunnerGPU() { settings.menuBarRunnerGPU.toggle() }
     @objc private func toggleAIPicks() { settings.aiTimelinePicks.toggle() }
     @objc private func toggleTickerNames() { settings.menuBarTickerNamesOnly.toggle() }
+    @objc private func toggleRightShift() { settings.rightShiftDoubleTap.toggle() }
+    @objc private func allowRightShiftGlobal() { RightShiftDoubleTap.requestGlobalAccess() }
     @objc private func signOutAction() { signOut() }
     @objc private func checkUpdates() { Updater.shared.checkNow() }
     @objc private func openWeb() { NSWorkspace.shared.open(APIClient.baseURL) }
@@ -704,6 +721,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationWillTerminate(_ notification: Notification) {
         collapser?.disable() // 区切りを残さない
+    }
+
+    // MARK: - 右 ⇧ を 2 回でパネルを開閉
+
+    private func setupRightShift() {
+        let r = RightShiftDoubleTap { [weak self] in self?.togglePanel() } // ビーグルのクリックと同じ（最後のタブで開く）
+        r.onLocalTrigger = { [weak self] in self?.showRightShiftHintIfNeeded() }
+        rightShift = r
+        settings.onRightShiftChange = { [weak self] on in self?.rightShift?.enabled = on }
+        if !CommandLine.arguments.contains("-selftest") { r.enabled = settings.rightShiftDoubleTap }
+    }
+
+    /// アプリの中で初めて右 ⇧ 2 回が効いたとき、ほかのアプリが前でも使うための許可を 1 回だけ案内する。
+    private func showRightShiftHintIfNeeded() {
+        guard !RightShiftDoubleTap.canMonitorGlobally, !UserDefaults.standard.bool(forKey: "rightShiftHintShown") else { return }
+        UserDefaults.standard.set(true, forKey: "rightShiftHintShown")
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "右 ⇧ を 2 回でパネルを開閉"
+            alert.informativeText = "いまはこのアプリが前のときだけ効きます。ほかのアプリを使っているときも効かせるには、"
+                + "macOS の「入力監視」で B-guru Chat を許可してください（システム設定 › プライバシーとセキュリティ › 入力監視）。\n\n"
+                + "見るのは右 ⇧ が押されたかどうかと、そのあいだにほかのキーが押されたかだけで、打った文字は読みも残しもしません。"
+                + "パスワードの入力中は何もしません。⋯ メニューで切れます。\n\n許可したあと効かないときは、アプリを再起動してください。"
+            alert.addButton(withTitle: "許可する…")
+            alert.addButton(withTitle: "あとで")
+            NSApp.activate()
+            if alert.runModal() == .alertFirstButtonReturn { RightShiftDoubleTap.requestGlobalAccess() }
+        }
     }
 
     // MARK: - 新着でビーグルが吠える
