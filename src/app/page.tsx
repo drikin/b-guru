@@ -94,6 +94,7 @@ import { applyWatchEvent, isYoutubeVideoUrl, reloadWatch } from "@/lib/watch-cli
 import { WatchPanel, WatchTogetherButton } from "@/components/watch/WatchPanel";
 import { OffkaiPanel } from "@/components/offkai/OffkaiPanel";
 import { applyOffkaiEvent, reloadOffkai, setMyUserId as setOffkaiUserId } from "@/lib/offkai-client";
+import { speakChat } from "@/lib/offkai-tts";
 import { applyShogiCommentaryEvent, applyShogiEvent, openShogiGame, reloadShogi } from "@/lib/shogi-client";
 import { bubbleText } from "@/lib/room-logic";
 import { EDIT_HINT, SAVE_HINT, SEND_HINT, handleComposerKeyDown, useEnterSends } from "@/lib/composer-keys";
@@ -7126,6 +7127,8 @@ export default function Home() {
         if (msg.kind === "notice" || msg.kind === "shogi") return; // ☗ 将棋の対局中カードも数えない
         // Club room: a speech bubble over the author on the map (📷 for photos only).
         roomChatBubble(msg.authorId, bubbleText(msg.body, msg.images?.length ?? 0));
+        // 🍻 オフ会の音声に入っていれば読み上げる（自分の発言は読まない）。
+        if (!isMine && msg.kind !== "beagle_ai") speakChat(msg); // 🐶 の回答は会員の発言でなく長いので読まない
         if (chatViewRef.current) {
           setChatUnread(0);
           fetch("/api/chat/read", { method: "POST" }).catch(() => {});

@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ActionIcon, Button, Group, Image, Loader, Modal, Stack, Text, TextInput, Tooltip, UnstyledButton } from "@mantine/core";
 import type { EventDto, PhotoDto } from "@/lib/offkai";
+import { primeSpeech, setTtsEnabled, subscribeTts, ttsEnabled } from "@/lib/offkai-tts";
 import {
   closeAlbum,
   deletePhoto,
@@ -229,7 +230,7 @@ function Live({ s, event, onOpen }: { s: OffkaiSnapshot; event: EventDto; onOpen
       </Text>
       <Group gap={6}>
         {s.audio === "idle" ? (
-          <Button size="xs" variant="light" onClick={() => void listen()}>
+          <Button size="xs" variant="light" onClick={() => { primeSpeech(); void listen(); }}>
             🔊 聞く
           </Button>
         ) : (
@@ -237,6 +238,7 @@ function Live({ s, event, onOpen }: { s: OffkaiSnapshot; event: EventDto; onOpen
             🔇 聞くのをやめる
           </Button>
         )}
+        <OffkaiTtsToggle />
         {(s.audio === "listening" || s.audio === "speaking") && (
           <Tooltip label="スマホに届く知らせをタップすると、そちらに切り替わります" openDelay={300}>
             <Button size="xs" variant="subtle" color="gray" onClick={() => void handoffOffkai()}>
@@ -250,7 +252,7 @@ function Live({ s, event, onOpen }: { s: OffkaiSnapshot; event: EventDto; onOpen
           </Button>
         ) : (
           <Tooltip label="現地にいる人だけ。話せるのは 1 人で、押すと前の人から替わります" openDelay={300}>
-            <Button size="xs" color="orange" variant="light" loading={s.speakBusy} onClick={() => void speak()}>
+            <Button size="xs" color="orange" variant="light" loading={s.speakBusy} onClick={() => { primeSpeech(); void speak(); }}>
               🎙 現地から話す
             </Button>
           </Tooltip>
@@ -416,5 +418,24 @@ function PhotoViewer({ photos, index, onIndex }: { photos: PhotoDto[]; index: nu
         </Stack>
       )}
     </Modal>
+  );
+}
+
+/** 🔈 チャットを読み上げる（このブラウザだけ・既定はオン。🍻 の音声に入っているあいだ読む）。 */
+export function OffkaiTtsToggle({ compact = false }: { compact?: boolean }) {
+  const on = useSyncExternalStore(subscribeTts, ttsEnabled, () => true);
+  if (typeof window !== "undefined" && !("speechSynthesis" in window)) return null;
+  return (
+    <Tooltip label={on ? "チャットの発言を読み上げています（🍻 を聞いているあいだ）。押すと止めます" : "押すと、🍻 を聞いているあいだチャットの発言を読み上げます"} openDelay={300}>
+      <Button
+        size={compact ? "compact-xs" : "xs"}
+        variant="subtle"
+        color="gray"
+        aria-pressed={on}
+        onClick={() => setTtsEnabled(!on)}
+      >
+        {on ? "🔈 読み上げ" : "🔇 読み上げ"}
+      </Button>
+    </Tooltip>
   );
 }

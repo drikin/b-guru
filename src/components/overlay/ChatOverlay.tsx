@@ -43,7 +43,8 @@ import {
 import { ShogiPanel } from "@/components/shogi/ShogiPanel";
 import { MinigamePanel } from "@/components/minigame/MinigamePanel";
 import { WatchPanel, useWatch } from "@/components/watch/WatchPanel";
-import { OffkaiPanel, useOffkai } from "@/components/offkai/OffkaiPanel";
+import { OffkaiPanel, OffkaiTtsToggle, useOffkai } from "@/components/offkai/OffkaiPanel";
+import { primeSpeech } from "@/lib/offkai-tts";
 import { DmToggle } from "@/components/dm/DMPanel";
 import { RoomOverlayContent } from "@/components/RoomView";
 
@@ -341,11 +342,12 @@ export function OverlayLayer() {
                     size="compact-xs"
                     color="orange"
                     variant={offkai.audio === "idle" ? "filled" : "light"}
-                    onClick={() => void (offkai.audio === "idle" ? listen() : stopAudio())}
+                    onClick={() => { if (offkai.audio === "idle") primeSpeech(); void (offkai.audio === "idle" ? listen() : stopAudio()); }}
                   >
                     {offkai.audio === "idle" ? "🔊 聞く" : "🔇 止める"}
                   </Button>
                 )}
+                {offkai.current && <OffkaiTtsToggle compact />}
               </>
             )}
             {a.id === "room" && (
