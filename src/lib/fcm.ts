@@ -129,7 +129,7 @@ export function toFcmData(payload: Record<string, unknown>): Record<string, stri
 export async function sendFcm(
   deviceToken: string,
   data: Record<string, string>,
-  opts: { collapseKey?: string; ttlSec?: number } = {}
+  opts: { collapseKey?: string; ttlSec?: number; priority?: "HIGH" | "NORMAL" } = {}
 ): Promise<FcmResult> {
   const cfg = config();
   if (!cfg) return { status: 0, reason: "disabled" };
@@ -145,8 +145,9 @@ export async function sendFcm(
           token: deviceToken,
           data,
           android: {
-            // High priority so the app may wake and post the notification at once.
-            priority: "HIGH",
+            // High priority so the app may wake and post the notification at once
+            // (NORMAL for messages that show nothing, e.g. read_sync: Android demotes apps whose HIGH shows nothing).
+            priority: opts.priority ?? "HIGH",
             ttl: `${opts.ttlSec ?? 3600}s`,
             ...(opts.collapseKey ? { collapse_key: opts.collapseKey.slice(0, 64) } : {}),
           },

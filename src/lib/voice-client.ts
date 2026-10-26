@@ -153,6 +153,7 @@ export function voiceLoaded() {
 export async function joinVoice(): Promise<void> {
   if (snap.phase !== "idle" || !snap.enabled) return;
   const mine = ++attempt;
+  movedAway = false;
   set({ phase: "connecting", notice: null });
   try {
     const r = await fetch("/api/voice/token", { method: "POST", cache: "no-store" });
@@ -224,8 +225,19 @@ async function connect(url: string, token: string, mine: number) {
     .on(lk.RoomEvent.Disconnected, (reason) => {
       if (room !== r) return; // a late event from an earlier room
       const removed = reason === lk.DisconnectReason.PARTICIPANT_REMOVED;
+      // 同じ人が別の端末で入った（スマホで続けた）: 失敗ではない。
+      const moved = reason === lk.DisconnectReason.DUPLICATE_IDENTITY;
+      movedAway = moved; // 部室（room-client）がサーバへ「聞いていない」と書かないように（書くと続けた端末のマイクまで切れる）
       void teardown().then(() =>
-        set({ notice: removed ? "ボイスルームから退出させられました" : reason === lk.DisconnectReason.CLIENT_INITIATED ? null : "ボイスルームの接続が切れました" })
+        set({
+          notice: moved
+            ? HANDOFF_MOVED
+            : removed
+              ? "ボイスルームから退出させられました"
+              : reason === lk.DisconnectReason.CLIENT_INITIATED
+                ? null
+                : "ボイスルームの接続が切れました",
+        })
       );
     });
 
@@ -252,6 +264,41 @@ async function connect(url: string, token: string, mine: number) {
   await refreshDevices();
   if (snap.outputId) await r.switchActiveDevice("audiooutput", snap.outputId).catch(() => {});
   refreshMembers();
+}
+
+let movedAway = false;
+/** 最後の切断が「別の端末で続けた」だったか（次に入るまで）。 */
+export function voiceMovedAway(): boolean {
+  return movedAway;
+}
+
+/** 音声が別の端末に移ったときの文（🍻 も同じ）。 */
+export const HANDOFF_MOVED = "別の端末で続けています";
+
+/** 「スマホで続ける」: 本人のスマホへ知らせを送る（docs/device-sync-spec.md）。音声はスマホが入るまで続ける。
+ *  返り値は出す文。 */
+export async function requestHandoff(target: "offkai" | "voice" | "room", mic: boolean): Promise<string> {
+  try {
+    const r = await fetch("/api/voice/handoff", {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target, mic }),
+    });
+    const d = (await r.json().catch(() => null)) as { sent?: number; error?: string } | null;
+    if (!r.ok) return d?.error ?? "送れませんでした";
+    return (d?.sent ?? 0) > 0
+      ? "スマホの知らせをタップすると、そちらに切り替わります"
+      : "続けられるスマホが見つかりません（アプリを最新にしてください）";
+  } catch {
+    return "送れませんでした";
+  }
+}
+
+/** ボイスルーム・部室の音声をスマホで続ける。 */
+export async function handoffVoice(): Promise<void> {
+  if (!room) return;
+  set({ notice: await requestHandoff(proximity ? "room" : "voice", snap.micOn) });
 }
 
 export async function leaveVoice(): Promise<void> {

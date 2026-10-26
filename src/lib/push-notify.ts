@@ -14,8 +14,11 @@ import { fcmEnabled, isDeadFcmToken, sendFcm, toFcmData } from "./fcm";
 import { activePushDevices, markPushSent, pushDeviceOwners, removePushDevice, type PushDevice } from "./push-devices";
 import { isMentionedIn, mentionNamesFor } from "./chat-mention";
 import { resolveDisplayNames } from "./display-name";
+import { emitPersonal, type SyncScope } from "./personal-live";
 
-export type PushKind = "chat_mention" | "chat_new" | "reply" | "timeline_new" | "shogi_offer" | "shogi_turn" | "dm" | "offkai_start";
+export type PushKind =
+  | "chat_mention" | "chat_new" | "reply" | "timeline_new" | "shogi_offer" | "shogi_turn" | "dm" | "offkai_start"
+  | "voice_handoff";
 
 /** 0:00–7:00 JST — new-message pushes wait (mentions still go out). */
 export function isQuietHourJst(now = new Date()): boolean {
@@ -107,20 +110,33 @@ export function pushEnabled(): boolean {
   return apnsEnabled() || fcmEnabled();
 }
 
-async function deliver(devices: PushDevice[], payload: Record<string, unknown>, collapseId: string): Promise<number> {
+async function deliver(
+  devices: PushDevice[],
+  payload: Record<string, unknown>,
+  collapseId: string,
+  opts: { background?: boolean; ttlSec?: number } = {}
+): Promise<number> {
   const sent: string[] = [];
   const data = toFcmData(payload);
   for (let i = 0; i < devices.length; i += SEND_CONCURRENCY) {
     await Promise.all(
       devices.slice(i, i + SEND_CONCURRENCY).map(async (d) => {
         if (d.environment === "fcm") {
-          const r = await sendFcm(d.apnsToken, data, { collapseKey: collapseId });
+          const r = await sendFcm(d.apnsToken, data, {
+            collapseKey: collapseId,
+            ttlSec: opts.ttlSec,
+            priority: opts.background ? "NORMAL" : "HIGH",
+          });
           if (r.status === 200) sent.push(d.apnsToken);
           else if (isDeadFcmToken(r)) await removePushDevice(d.apnsToken).catch(() => {});
           else if (r.reason !== "disabled") console.error("[fcm]", r.status, r.reason);
           return;
         }
-        const r = await sendApns(d.apnsToken, d.environment, payload, { collapseId });
+        const r = await sendApns(d.apnsToken, d.environment, payload, {
+          collapseId,
+          pushType: opts.background ? "background" : "alert",
+          expirationSec: opts.ttlSec,
+        });
         if (r.status === 200) sent.push(d.apnsToken);
         else if (isDeadToken(r)) await removePushDevice(d.apnsToken).catch(() => {});
         else if (r.reason !== "disabled") console.error("[apns]", r.status, r.reason);
@@ -152,6 +168,7 @@ export async function pushChatMessage(m: { id: number; body: string }, authorEma
   const mentionTo = [...mentioned].filter((e) => !throttled(e, "chat_mention"));
   if (mentionTo.length) {
     sent += await deliver(await activePushDevices(mentionTo), buildPushPayload("chat_mention", { messageId: m.id }), `chat-${m.id}`);
+    notePushed(mentionTo, "chat", m.id);
   }
 
   // 2) Everyone else on "all": one rolling "new messages" notification
@@ -169,6 +186,7 @@ export async function pushChatMessage(m: { id: number; body: string }, authorEma
     buildPushPayload("chat_new", { messageId: m.id }),
     "chat-new"
   );
+  notePushed(recipients, "chat", m.id);
   return sent;
 }
 
@@ -180,6 +198,7 @@ export async function pushPersonalNotification(
   if (throttled(recipientEmail.trim().toLowerCase(), "reply")) return 0;
   const devices = await activePushDevices([recipientEmail]);
   if (devices.length === 0) return 0;
+  if (n.postId != null) notePushed([recipientEmail], `reply:${n.postId}`, n.replyId ?? n.postId);
   return deliver(devices, buildPushPayload("reply", { postId: n.postId, replyId: n.replyId }), `reply-${n.replyId ?? n.postId}`);
 }
 
@@ -209,6 +228,7 @@ export async function pushShogi(recipientEmail: string, kind: "shogi_offer" | "s
   const quiet = isQuietHourJst();
   const devices = (await activePushDevices([recipientEmail])).filter((d) => d.notifyShogi && !(quiet && d.quietHours));
   if (devices.length === 0) return 0;
+  notePushed([recipientEmail], `shogi:${gameId}`, gameId);
   return deliver(devices, buildShogiPayload(kind, gameId), `shogi-${gameId}`);
 }
 
@@ -245,6 +265,7 @@ export async function pushDm(recipientEmail: string, messageId: number, senderUs
   if (!pushEnabled()) return 0;
   const devices = await activePushDevices([recipientEmail]);
   if (devices.length === 0) return 0;
+  notePushed([recipientEmail], `dm:${senderUserId}`, messageId);
   return deliver(devices, buildDmPayload(messageId, senderUserId), `dm-${senderUserId}`);
 }
 
@@ -255,5 +276,149 @@ export async function pushOffkaiStart(eventId: number, starterEmail: string): Pr
   const quiet = isQuietHourJst();
   const devices = (await activePushDevices(null)).filter((d) => d.email !== starter && !(quiet && d.quietHours));
   if (devices.length === 0) return 0;
+  notePushed(new Set(devices.map((d) => d.email)), `offkai:${eventId}`, eventId);
   return deliver(devices, buildOffkaiPayload(eventId), `offkai-${eventId}`);
 }
+
+/* ---- 既読で知らせを消す（read_sync、docs/device-sync-spec.md） ----
+ * push を送った相手ごと・範囲ごとに「送った最大 id」を覚えておき、既読がそこまで進んだら
+ * その人の notify_sync 端末へ消す合図（background push / FCM data）を 1 回だけ送る。
+ * 覚えはメモリだけ（3 日で忘れる。再起動で消えたら合図は出ない＝アプリが前に出たときの掃除に任せる）。 */
+const LEDGER_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+const ledger = new Map<string, Map<string, { id: number; at: number }>>();
+
+function notePushed(emails: Iterable<string>, key: string, id: number, now = Date.now()): void {
+  for (const raw of emails) {
+    const email = raw.trim().toLowerCase();
+    let m = ledger.get(email);
+    if (!m) ledger.set(email, (m = new Map()));
+    for (const [k, v] of m) if (now - v.at >= LEDGER_TTL_MS) m.delete(k); // 読まれないまま古くなった覚え
+    const prev = m.get(key);
+    m.set(key, { id: Math.max(id, prev ? prev.id : 0), at: now });
+  }
+  if (ledger.size > 2000) {
+    for (const [e, m] of ledger) {
+      for (const [k, v] of m) if (now - v.at >= LEDGER_TTL_MS) m.delete(k);
+      if (m.size === 0) ledger.delete(e);
+    }
+  }
+}
+
+/** 合図の collapse id: 範囲ごと（相手・投稿・対局ごと）。端末がオフラインの間に別の相手の合図で上書きされないように。 */
+function syncCollapseId(s: SyncScope): string {
+  const id =
+    s.scope === "dm" ? s.peer_id : s.scope === "reply" ? s.post_id : s.scope === "shogi" ? s.game_id : s.scope === "offkai" ? s.event_id : "";
+  return `sync-${s.scope}${id === "" ? "" : `-${id}`}`.slice(0, 64);
+}
+
+/** この既読で消える覚え（消したものを返す）。純粋に近い（テスト用に export）。 */
+export function takeCleared(email: string, s: SyncScope, now = Date.now()): string[] {
+  const m = ledger.get(email.trim().toLowerCase());
+  if (!m) return [];
+  const live = (k: string) => {
+    const v = m.get(k);
+    return v && now - v.at < LEDGER_TTL_MS ? v : null;
+  };
+  let keys: string[];
+  switch (s.scope) {
+    case "chat": {
+      const v = live("chat");
+      keys = v && s.up_to >= v.id ? ["chat"] : [];
+      break;
+    }
+    case "dm": {
+      const v = live(`dm:${s.peer_id}`);
+      keys = v && s.up_to >= v.id ? [`dm:${s.peer_id}`] : [];
+      break;
+    }
+    case "reply":
+      keys = live(`reply:${s.post_id}`) ? [`reply:${s.post_id}`] : [];
+      break;
+    case "reply_all":
+      keys = [...m.keys()].filter((k) => k.startsWith("reply:") && live(k));
+      break;
+    case "shogi":
+      keys = live(`shogi:${s.game_id}`) ? [`shogi:${s.game_id}`] : [];
+      break;
+    case "offkai":
+      keys = live(`offkai:${s.event_id}`) ? [`offkai:${s.event_id}`] : [];
+      break;
+  }
+  for (const k of keys) m.delete(k);
+  if (m.size === 0) ledger.delete(email.trim().toLowerCase());
+  return keys;
+}
+
+/** 消す合図の本体（APNs は background push、FCM は data）。 */
+export function buildSyncPayload(s: SyncScope) {
+  return { aps: { "content-available": 1 }, kind: "read_sync" as const, ...s };
+}
+
+/** 既読が進んだ: 本人のストリームへ `event: sync`（Mac がアプリ内の知らせを消す）と、
+ *  その範囲の push を送っていたら notify_sync 端末へ消す合図。fire-and-forget で呼ぶ。 */
+export async function syncRead(email: string, s: SyncScope): Promise<number> {
+  const me = email.trim().toLowerCase();
+  if (!me) return 0;
+  emitPersonal(me, { type: "sync", sync: s });
+  if (takeCleared(me, s).length === 0 || !pushEnabled()) return 0;
+  const devices = (await activePushDevices([me])).filter((d) => d.notifySync);
+  if (devices.length === 0) return 0;
+  return deliver(devices, buildSyncPayload(s), syncCollapseId(s), { background: true, ttlSec: 24 * 3600 });
+}
+
+/** 🍻 が終わった: 「始まりました」を受け取った全員へ。 */
+export async function syncOffkaiEnded(eventId: number): Promise<void> {
+  const key = `offkai:${eventId}`;
+  const emails = [...ledger.entries()].filter(([, m]) => m.has(key)).map(([e]) => e);
+  for (const e of emails) await syncRead(e, { scope: "offkai", event_id: eventId }).catch(() => 0);
+}
+
+export function __resetSyncLedgerForTests() {
+  ledger.clear();
+}
+export const __notePushedForTests = notePushed;
+
+/* ---- 音声をスマホで続ける（voice_handoff、docs/device-sync-spec.md） ---- */
+export type HandoffTarget = "offkai" | "voice" | "room";
+
+export function buildVoiceHandoffPayload(target: HandoffTarget, mic: boolean, eventId?: number | null) {
+  // Android は同じ文を自分で組み立てる（DeviceSync.kt の VoiceHandoff.text）。
+  const micText = `（マイク${mic ? "オン" : "オフ"}）`;
+  const body =
+    target === "offkai"
+      ? "🍻 オフ会の音声をこのスマホで続けます。タップして切り替え"
+      : target === "room"
+        ? `🏠 部室の音声をこのスマホで続けます${micText}。タップして切り替え`
+        : `ボイスルームの音声をこのスマホで続けます${micText}。タップして切り替え`;
+  return {
+    aps: {
+      alert: { title: "🎧 音声をこの端末で続ける", body },
+      sound: "default",
+      category: "voicehandoff",
+      "thread-id": "voice-handoff",
+    },
+    kind: "voice_handoff" as const,
+    target,
+    mic,
+    ...(target === "offkai" && eventId != null ? { event_id: eventId } : {}),
+  };
+}
+
+/** 本人の操作で本人のスマホへ（静かな時間でも送る）。同じ機能は 20 秒に 1 回まで、5 分で期限切れ。
+ *  返り値は送れた端末の数（0 = 続けられるスマホがない）。 */
+export async function pushVoiceHandoff(email: string, target: HandoffTarget, mic: boolean, eventId?: number | null): Promise<number> {
+  if (!pushEnabled()) return 0;
+  const me = email.trim().toLowerCase();
+  const devices = (await activePushDevices([me])).filter((d) => d.notifySync);
+  if (devices.length === 0) return 0;
+  // 同じ機能を少し前に送った（まだ届いている）。機能が違えば送り直す（collapse で置き換わる）。
+  const key = `${me}:${target}`;
+  const now = Date.now();
+  const prev = handoffSentAt.get(key);
+  if (prev !== undefined && now - prev < THROTTLE_MS) return devices.length;
+  const n = await deliver(devices, buildVoiceHandoffPayload(target, mic, eventId), "voice-handoff", { ttlSec: 300 });
+  if (n > 0) handoffSentAt.set(key, now); // 送れなかったときは次の押し直しを止めない
+  if (handoffSentAt.size > 2000) for (const [k, t] of handoffSentAt) if (now - t >= THROTTLE_MS) handoffSentAt.delete(k);
+  return n;
+}
+const handoffSentAt = new Map<string, number>();

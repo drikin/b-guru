@@ -3,6 +3,7 @@
  *   POST   { token, environment: "production"|"sandbox"|"fcm", platform?, notify_mode?: "all"|"mentions",
  *            quiet_hours?: boolean, notify_timeline?: boolean, notify_shogi?: boolean } → この端末にプッシュを送る（設定の変更も同じ POST）
  *   notify_shogi: ☗ 将棋の通知（shogi_offer / shogi_turn）に対応したアプリだけが true を送る（既定 false）。
+ *   notify_sync: 既読で知らせを消す合図（read_sync）と「スマホで続ける」（voice_handoff）に対応したアプリだけが true（既定 false）。
  *   DELETE { token }                                                   → 送らない（ログアウト時）
  * 端末はこの agent token に紐付く。トークンが失効・期限切れになれば送られない。 */
 import { NextRequest } from "next/server";
@@ -51,6 +52,7 @@ export async function POST(req: NextRequest) {
       // Only when sent: older apps re-register without it and must not switch it off.
       notifyTimeline: typeof b?.notify_timeline === "boolean" ? b.notify_timeline : undefined,
       notifyShogi: typeof b?.notify_shogi === "boolean" ? b.notify_shogi : undefined,
+      notifySync: typeof b?.notify_sync === "boolean" ? b.notify_sync : undefined,
     });
     return { status: 200, body: { apiVersion: AGENT_API_VERSION, ok: true }, headers: {} };
   });

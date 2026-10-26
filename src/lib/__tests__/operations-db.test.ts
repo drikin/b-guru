@@ -23,7 +23,7 @@ const d = URL_ ? describe : describe.skip;
 // 外へ出る呼び出し（Ghost・Web Push・AI の自動分類）は止める。
 vi.mock("../ghost", () => ({ findMemberByEmail: async () => null, isPaidMember: () => true, listMembers: async () => [] }));
 vi.mock("../push", () => ({ sendWebPush: async () => {} }));
-vi.mock("../push-notify", () => ({ pushNewPost: async () => {}, pushPersonalNotification: async () => {} }));
+vi.mock("../push-notify", () => ({ pushNewPost: async () => {}, pushPersonalNotification: async () => {}, syncRead: async () => 0 }));
 vi.mock("../clubs", () => ({ classifyPost: async () => null }));
 // Web のセッション（/api/publish・/api/poll/* を本物の DB で通す）。
 const web = vi.hoisted(() => ({ email: null as string | null }));

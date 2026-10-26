@@ -24,7 +24,7 @@ import { createPost, gravatarUrl, SYSTEM_EMAIL } from "./posts";
 import { ensureUserId } from "./user";
 import { resolveDisplayNames } from "./display-name";
 import { postShogiCard } from "./chat";
-import { pushShogi } from "./push-notify";
+import { pushShogi, syncRead } from "./push-notify";
 import {
   INITIAL_SFEN,
   buildKif,
@@ -694,6 +694,7 @@ export async function acceptGame(actor: Actor, id: number): Promise<ShogiGameDto
   });
   await postStartCard(out);
   schedule(out);
+  void syncRead(actor.email, { scope: "shogi", game_id: out.id }).catch(logErr("sync accept")); // 受けた: 申し込みの知らせは古い
   const game = await broadcast(out, "state");
   if (announces(out) && out.mode === "slow" && out.black_uid !== actor.userId) {
     const email = await emailOf(out.black_uid);
@@ -716,6 +717,7 @@ export async function declineGame(actor: Actor, id: number): Promise<ShogiGameDt
     return up.rows[0] as GameRow;
   });
   unschedule(out.id);
+  void syncRead(actor.email, { scope: "shogi", game_id: out.id }).catch(logErr("sync decline"));
   return broadcast(out, "state");
 }
 
@@ -818,6 +820,7 @@ export async function playMove(actor: Actor, id: number, input: MoveInput): Prom
     return { game, duplicate: false };
   }
   schedule(out.row);
+  void syncRead(actor.email, { scope: "shogi", game_id: out.row.id }).catch(logErr("sync move")); // 指した: 「あなたの番です」は古い
   const game = await broadcast(out.row, "state");
   kickCommentary("move", out.row);
   const next = sideToMove(out.row.ply) === "black" ? out.row.black_uid : out.row.white_uid;
@@ -885,6 +888,11 @@ async function finalize(row: GameRow): Promise<ShogiGameDto> {
   try {
     watchers.delete(row.id);
     lastSpectatorBroadcast.delete(row.id);
+    // 終わった対局の「あなたの番です」は、どちらの端末に残っていても古い（read_sync）。
+    for (const uid of [row.black_uid, row.white_uid]) {
+      if (!uid || uid === mem.beagleUid) continue;
+      void emailOf(uid).then((e) => (e ? syncRead(e, { scope: "shogi", game_id: row.id }) : 0)).catch(logErr("sync end"));
+    }
     const players = await playersOf([row.black_uid, row.white_uid]);
     const names = { black: players.get(row.black_uid ?? "")?.name ?? "先手", white: players.get(row.white_uid ?? "")?.name ?? "後手" };
     const reason = row.end_reason as EndReason | null;

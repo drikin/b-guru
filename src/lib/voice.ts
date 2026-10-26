@@ -251,6 +251,18 @@ function firstDelivery(id: string | undefined): boolean {
   return true;
 }
 
+/** Whether `identity` is in the voice room right now (LiveKit's own list). Unknown → false (the old behaviour). */
+async function stillInVoiceRoom(identity: string): Promise<boolean> {
+  const cfg = livekitConfig();
+  if (!cfg) return false;
+  try {
+    const res = await roomService<{ participants?: LkParticipant[] }>(cfg, "ListParticipants", { room: VOICE_ROOM }, VOICE_ROOM);
+    return (res?.participants ?? []).some((p) => p.identity === identity);
+  } catch {
+    return false;
+  }
+}
+
 export async function handleWebhookEvent(ev: LkWebhookEvent): Promise<void> {
   if (ev.room?.name !== VOICE_ROOM) return;
   if (!firstDelivery(ev.id)) return;
@@ -288,6 +300,9 @@ export async function handleWebhookEvent(ev: LkWebhookEvent): Promise<void> {
       break;
     }
     case "participant_left":
+      // The same member continued on another device (same identity: LiveKit dropped the old one with
+      // DUPLICATE_IDENTITY, and the new device's join may have arrived first): still in, not a leave.
+      if (identity && (await stillInVoiceRoom(identity))) break;
       if (identity) {
         const left = await pool.query(
           `UPDATE voice_participations SET left_at = now()

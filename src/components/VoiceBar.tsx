@@ -11,6 +11,7 @@ import {
   canModerate,
   getServerSnapshot,
   getSnapshot,
+  handoffVoice,
   joinVoice,
   kickVoice,
   muteVoice,
@@ -196,6 +197,11 @@ export default function VoiceBar() {
           )}
           <MicButton s={s} />
           <DeviceMenu s={s} />
+          <Tooltip label="スマホで続ける（スマホに届く知らせをタップすると切り替わります）" openDelay={300} withinPortal>
+            <ActionIcon variant="subtle" color="gray" aria-label="スマホで続ける" onClick={() => void handoffVoice()}>
+              📱
+            </ActionIcon>
+          </Tooltip>
           <Button size="compact-sm" variant="light" color="red" onClick={() => void userLeaveVoice()}>
             退出
           </Button>

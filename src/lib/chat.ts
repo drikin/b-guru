@@ -14,7 +14,7 @@ import { resolveDisplayNames } from "./display-name";
 import { emailToUserId, emailToUserIds } from "./user";
 import { emitLive } from "./live";
 import { CHAT_BODY_LIMIT } from "./chat-optimistic";
-import { pushChatMessage } from "./push-notify";
+import { pushChatMessage, syncRead } from "./push-notify";
 
 /**
  * A chat message as serialized to the client.
@@ -511,12 +511,16 @@ export async function markChatRead(
   email: string,
   lastReadId: number
 ): Promise<void> {
-  await pool.query(
+  const r = await pool.query(
     `INSERT INTO chat_read_state (email, last_read_id, updated_at)
      VALUES ($1, $2, now())
      ON CONFLICT (email) DO UPDATE SET
        last_read_id = GREATEST(chat_read_state.last_read_id, EXCLUDED.last_read_id),
-       updated_at = now()`,
+       updated_at = now()
+     RETURNING last_read_id`,
     [email, lastReadId]
   );
+  // ほかの端末に残っているチャットの知らせを消す（read_sync）。
+  const upTo = Number(r.rows[0]?.last_read_id ?? lastReadId);
+  void syncRead(email, { scope: "chat", up_to: upTo }).catch((e) => console.error("[sync] chat:", (e as Error)?.message));
 }

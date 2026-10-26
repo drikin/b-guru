@@ -135,7 +135,7 @@ describe("POST/DELETE /api/agent/devices/push", () => {
     expect(res.status).toBe(200);
     const sqls = query.mock.calls.map((c) => String(c[0]));
     const ins = query.mock.calls.find((c) => String(c[0]).includes("INSERT INTO push_devices"))!;
-    expect(ins[1]).toEqual(["me@example.com", 21, "ab".repeat(32), "sandbox", "ios", "all", true, null, null]); // notify_timeline / notify_shogi: 送られなければ元のまま
+    expect(ins[1]).toEqual(["me@example.com", 21, "ab".repeat(32), "sandbox", "ios", "all", true, null, null, null]); // notify_timeline / notify_shogi / notify_sync: 送られなければ元のまま
     // 付け替えは同じ人か、元の持ち主のトークンが無効なときだけ
     expect(String(ins[0])).toMatch(/WHERE push_devices\.email = EXCLUDED\.email\s+OR NOT EXISTS/);
     // 同じ agent token の古い端末を消し、1 人 10 台まで

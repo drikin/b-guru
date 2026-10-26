@@ -19,7 +19,7 @@ import { featureEnabledFor, featurePublic } from "./feature-flag";
 import { postChatNotice, sendChatMessage } from "./chat";
 import { livekitConfig, roomService, signAccessToken } from "./livekit";
 import { mediaCacheDir } from "./media-variants";
-import { pushOffkaiStart } from "./push-notify";
+import { pushOffkaiStart, syncOffkaiEnded } from "./push-notify";
 import { CHAT_UPLOAD, OFFKAI_UPLOAD_PREFIX } from "./upload";
 
 export const OFFKAI_FLAG = "OFFKAI_ENABLED";
@@ -531,6 +531,7 @@ async function finalize(id: number): Promise<void> {
     }
   }
   await pool.query(`UPDATE offkai_events SET finalized_at = now() WHERE id = $1`, [id]);
+  void syncOffkaiEnded(id).catch(() => {}); // 「オフ会が始まりました」はもう古い（read_sync）
 }
 
 // ---- 写真 ----

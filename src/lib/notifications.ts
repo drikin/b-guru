@@ -5,7 +5,7 @@ import { pool } from "./db";
 import { resolveDisplayNames, cleanDisplayName } from "./display-name";
 import { emailToUserId, emailToUserIds } from "./user";
 import { emitPersonal } from "./personal-live";
-import { pushPersonalNotification } from "./push-notify";
+import { pushPersonalNotification, syncRead } from "./push-notify";
 
 /**
  * A notification as serialized to the client.
@@ -153,9 +153,13 @@ export async function countUnreadNotifications(userEmail: string): Promise<numbe
 export async function markNotificationRead(id: number, userEmail: string): Promise<boolean> {
   const res = await pool.query(
     `UPDATE notifications SET read_at = now()
-     WHERE id = $1 AND user_email = $2 AND read_at IS NULL`,
+     WHERE id = $1 AND user_email = $2 AND read_at IS NULL
+     RETURNING post_id`,
     [id, userEmail]
   );
+  // ほかの端末に残っているこの投稿への返信の知らせを消す（read_sync）。
+  const postId = res.rows[0]?.post_id as number | null | undefined;
+  if (postId != null) void syncRead(userEmail, { scope: "reply", post_id: postId }).catch(() => 0);
   return (res.rowCount ?? 0) > 0;
 }
 
@@ -166,6 +170,7 @@ export async function markAllNotificationsRead(userEmail: string): Promise<numbe
      WHERE user_email = $1 AND read_at IS NULL`,
     [userEmail]
   );
+  void syncRead(userEmail, { scope: "reply_all" }).catch(() => 0);
   return res.rowCount ?? 0;
 }
 
@@ -175,5 +180,6 @@ export async function clearAllNotifications(userEmail: string): Promise<number> 
     `DELETE FROM notifications WHERE user_email = $1`,
     [userEmail]
   );
+  void syncRead(userEmail, { scope: "reply_all" }).catch(() => 0);
   return res.rowCount ?? 0;
 }

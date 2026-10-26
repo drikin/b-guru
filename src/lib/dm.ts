@@ -15,7 +15,7 @@ import { emailToUserIds, userIdToEmail } from "./user";
 import { CHAT_BODY_LIMIT } from "./chat-optimistic";
 import { featureEnabledFor } from "./feature-flag";
 import { emitPersonal } from "./personal-live";
-import { pushDm } from "./push-notify";
+import { pushDm, syncRead } from "./push-notify";
 
 export const DM_FLAG = "DM_ENABLED";
 export function dmEnabledFor(email: string | null | undefined): boolean {
@@ -292,16 +292,20 @@ export async function markDmRead(actor: DmActor, peerId: unknown, lastReadId: un
   const n = Number(lastReadId);
   if (!Number.isInteger(n) || n < 0 || n > 2147483647) throw new DmError(400, "invalid_request", "last_read_id が不正です");
   const me = normEmail(actor.email);
-  await pool.query(
+  const r = await pool.query(
     `INSERT INTO dm_read_state (email, peer_email, last_read_id, updated_at)
      VALUES ($1, $2, $3, now())
      ON CONFLICT (email, peer_email) DO UPDATE SET
        last_read_id = GREATEST(dm_read_state.last_read_id, EXCLUDED.last_read_id),
-       updated_at = now()`,
+       updated_at = now()
+     RETURNING last_read_id`,
     [me, peer.email, n]
   );
   const unread = await getDmUnreadTotal(me);
   emitPersonal(me, { type: "dm", data: { action: "read", peer_id: peer.userId, last_read_id: n, unread_count: unread } });
+  // ほかの端末に残っているこの人の DM の知らせを消す（read_sync）。
+  const upTo = Number(r.rows[0]?.last_read_id ?? n);
+  void syncRead(me, { scope: "dm", peer_id: peer.userId, up_to: upTo }).catch((e) => console.error("[sync] dm:", (e as Error)?.message));
   return { unread_count: unread };
 }
 

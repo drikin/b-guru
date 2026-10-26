@@ -130,6 +130,9 @@ export async function GET(req: NextRequest) {
     } else if (ev.type === "dm" && dmOn) {
       // ✉️ 簡易 DM: this member's view, built per recipient by lib/dm.ts (no email).
       send({ event: "dm", data: ev.data });
+    } else if (ev.type === "sync") {
+      // Read somewhere else: clear this app's own notifications for it (docs/device-sync-spec.md).
+      send({ event: "sync", data: ev.sync });
     }
   };
 

@@ -23,7 +23,18 @@ export type PersonalEvent =
     }
   /** ✉️ 簡易 DM（lib/dm.ts）: 受け取る人ごとに作った DTO（メールなし）。そのまま `event: dm` で流す。
    *  { action: "create", message, peer, unread_count? } / { action: "read", peer_id, last_read_id, unread_count } */
-  | { type: "dm"; data: Record<string, unknown> };
+  | { type: "dm"; data: Record<string, unknown> }
+  /** 既読が進んだ（ほかの端末に残っている同じ知らせを消す合図、docs/device-sync-spec.md）。`event: sync` で流す。 */
+  | { type: "sync"; sync: SyncScope };
+
+/** read_sync の範囲（push の本体とストリームの `event: sync` で同じ形）。 */
+export type SyncScope =
+  | { scope: "chat"; up_to: number }
+  | { scope: "dm"; peer_id: string; up_to: number }
+  | { scope: "reply"; post_id: number }
+  | { scope: "reply_all" }
+  | { scope: "shogi"; game_id: number }
+  | { scope: "offkai"; event_id: number };
 
 export const personalBus = new EventEmitter();
 personalBus.setMaxListeners(0);

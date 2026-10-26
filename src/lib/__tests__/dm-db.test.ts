@@ -26,6 +26,7 @@ vi.mock("../push-notify", () => ({
     pushes.push({ to, id, from });
     return 1;
   },
+  syncRead: async () => 0,
 }));
 const web = { email: "" };
 vi.mock("@/lib/session", () => ({ getSessionEmail: async () => web.email || null }));

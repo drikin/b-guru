@@ -23,6 +23,7 @@ import {
   speak,
   startOffkai,
   stopAudio,
+  handoffOffkai,
   stopSpeaking,
   subscribe,
   unlockOffkaiAudio,
@@ -235,6 +236,13 @@ function Live({ s, event, onOpen }: { s: OffkaiSnapshot; event: EventDto; onOpen
           <Button size="xs" variant="light" color="gray" loading={s.audio === "connecting"} onClick={() => void stopAudio()}>
             🔇 聞くのをやめる
           </Button>
+        )}
+        {(s.audio === "listening" || s.audio === "speaking") && (
+          <Tooltip label="スマホに届く知らせをタップすると、そちらに切り替わります" openDelay={300}>
+            <Button size="xs" variant="subtle" color="gray" onClick={() => void handoffOffkai()}>
+              📱 スマホで続ける
+            </Button>
+          </Tooltip>
         )}
         {iSpeak && s.audio === "speaking" ? (
           <Button size="xs" color="red" variant="light" onClick={() => void stopSpeaking()}>

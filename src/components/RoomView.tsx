@@ -32,6 +32,7 @@ import {
 import {
   getServerSnapshot as getVoiceServerSnapshot,
   getSnapshot as getVoiceSnapshot,
+  handoffVoice,
   loadVoice,
   micActive,
   setVoiceNotice,
@@ -220,6 +221,13 @@ function RoomControls({ s, v, me, speaking }: { s: RoomSnapshot; v: VoiceSnapsho
         </Button>
       </Tooltip>
       <HearPopover s={s} me={me} speaking={speaking} />
+      {connected && (
+        <Tooltip label="スマホで続ける（スマホに届く知らせをタップすると切り替わります）" openDelay={400}>
+          <Button size="compact-sm" variant="subtle" color="gray" aria-label="スマホで続ける" onClick={() => void handoffVoice()}>
+            📱
+          </Button>
+        </Tooltip>
+      )}
     </Group>
   );
 }

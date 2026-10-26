@@ -36,6 +36,7 @@ import {
   setRoomProximity,
   setVoiceHooks,
   subscribe as subscribeVoice,
+  voiceMovedAway,
 } from "./voice-client";
 
 export type RoomStatus = "unknown" | "enabled" | "disabled";
@@ -657,6 +658,12 @@ if (typeof window !== "undefined") {
     const v = getVoiceSnapshot();
     const was = lastVoicePhase;
     lastVoicePhase = v.phase;
-    if (was !== "idle" && v.phase === "idle" && expectVoice && roomActive()) voiceDropped();
+    if (was !== "idle" && v.phase === "idle" && expectVoice && roomActive()) {
+      if (voiceMovedAway()) {
+        // スマホなど別の端末で続けている: サーバの「自分」はそちらなので、ここでは何も書かない。
+        expectVoice = false;
+        set({ wantListening: false, notice: v.notice });
+      } else voiceDropped();
+    }
   });
 }

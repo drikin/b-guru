@@ -9,7 +9,7 @@
 import type { Room as LkRoom } from "livekit-client";
 import type { EventDto, PhotoDto } from "./offkai";
 import { prepareChatPhoto } from "./chat-photos";
-import { getSnapshot as getVoiceSnapshot, userLeaveVoice } from "./voice-client";
+import { getSnapshot as getVoiceSnapshot, HANDOFF_MOVED, requestHandoff, userLeaveVoice } from "./voice-client";
 
 export type OffkaiAvailability = "unknown" | "enabled" | "disabled";
 export type AudioPhase = "idle" | "connecting" | "listening" | "speaking";
@@ -364,6 +364,12 @@ export async function stopAudio(): Promise<void> {
   await r?.disconnect().catch(() => {});
 }
 
+/** 🍻 の音声をスマホで続ける（話していれば話す側で）。 */
+export async function handoffOffkai(): Promise<void> {
+  if (snap.audio !== "listening" && snap.audio !== "speaking") return;
+  showError(await requestHandoff("offkai", snap.audio === "speaking"));
+}
+
 export async function unlockOffkaiAudio(): Promise<void> {
   await room?.startAudio().catch(() => {});
   set({ needsAudioUnlock: room ? !room.canPlaybackAudio : false });
@@ -394,11 +400,13 @@ async function connectWith(t: Tok, publish: boolean): Promise<void> {
         // 後勝ちで話す権利を取り上げられた
         if (room === r && snap.audio === "speaking" && !r.localParticipant.permissions?.canPublish) void demote();
       })
-      .on(lk.RoomEvent.Disconnected, () => {
+      .on(lk.RoomEvent.Disconnected, (reason) => {
         if (room !== r) return;
         room = null;
         audioBox?.replaceChildren();
         set({ audio: "idle" });
+        // 同じ人が別の端末で入った（スマホで続けた）。
+        if (reason === lk.DisconnectReason.DUPLICATE_IDENTITY) showError(HANDOFF_MOVED);
       });
     await r.connect(t.url, t.token);
     if (mine !== attempt || room !== r) {
