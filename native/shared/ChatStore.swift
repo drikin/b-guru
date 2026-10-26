@@ -126,6 +126,23 @@ final class ChatStore {
     let watch: WatchStore
     /// 🍻 オフ会 (Offkai.swift, docs/offkai-spec.md), when the server has it on for this member.
     let offkai: OffkaiStore
+
+    /// 「🔈 読み上げ」 in the chat (docs/offkai-spec.md「チャット欄の読み上げ」): read every new message aloud,
+    /// 🍻 or not. This device only, kept here, **off by default**. Off stops the reader at once (🍻's part too;
+    /// 🍻 reads again from the next message if it still applies).
+    var readAloud: Bool = ChatStore.savedReadAloud {
+        didSet {
+            UserDefaults.standard.set(readAloud, forKey: Self.readAloudKey)
+            if !readAloud { speaker.stop() }
+        }
+    }
+    static let readAloudKey = "chatReadAloud"
+    private static var savedReadAloud: Bool { UserDefaults.standard.object(forKey: readAloudKey) as? Bool ?? false }
+    /// One reader for the chat's switch and 🍻's (ChatSpeech.swift).
+    @ObservationIgnored private let speaker = ChatSpeaker()
+    /// iPhone: in the background (the chat's switch reads only while the app is in front; 🍻's goes on).
+    @ObservationIgnored private var inBackground = false
+    private var chatReadActive: Bool { readAloud && !inBackground }
     /// チャットの上に機能を重ねる形 (ChatOverlay.swift): which features sit over the chat. Only used when
     /// the server has `chat_overlay` on for this member.
     let overlay: OverlayModel
@@ -200,6 +217,11 @@ final class ChatStore {
         }
         jukebox.voiceBusy = { [weak voice, weak offkai] in (voice?.phase ?? .idle) != .idle || (offkai?.audio ?? .off) != .off }
         offkai.myUserId = { [weak self] in self?.myUserId ?? self?.voice.myUserId }
+        speaker.nicknamer = { name in await ChatNickname.ask(name) } // 賢い読み方: long names, on this device only
+        offkai.readingEnded = { [weak self] in
+            guard let self, !self.chatReadActive else { return }
+            self.speaker.stop()
+        }
     }
 
     private static let voiceReloginKey = "voiceReloginAsked"
@@ -231,6 +253,7 @@ final class ChatStore {
         pathMonitor = nil
         Task { await voice.leave() }
         Task { await offkai.stopAudio(release: false) }
+        speaker.stop()
     }
 
     #if os(iOS)
@@ -243,6 +266,8 @@ final class ChatStore {
     func scenePhaseChanged(background: Bool) {
         backgroundClose?.cancel()
         backgroundClose = nil
+        inBackground = background
+        if background, !offkai.readsChat { speaker.stop() } // the chat's switch reads only in front
         if background {
             backgroundClose = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(30))
@@ -420,9 +445,9 @@ final class ChatStore {
         // A quiet note (room comings and goings): in the list, but never unread or notified.
         // 🐶 Beagle's on-device answers are not unread (the server does not count them either).
         guard !m.isAuthor, !alreadyShown, !m.isNotice, !m.isBeagleAI else { return }
-        // 🍻 チャットの読み上げ: members' own words only (no ☗ card or any other kind of card).
-        if m.kind == nil || m.kind == "" {
-            offkai.chatArrived(name: m.authorName, body: m.body, hasPhotos: !(m.images ?? []).isEmpty)
+        // チャットの読み上げ (🍻 or the chat's own switch; once either way): members' own words only (no cards).
+        if m.kind == nil || m.kind == "", chatReadActive || offkai.readsChat {
+            speaker.enqueue(.init(authorId: m.authorId, name: m.authorName, body: m.body, hasPhotos: !(m.images ?? []).isEmpty))
         }
         if isVisible {
             markReadSoon()

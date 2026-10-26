@@ -208,6 +208,25 @@ struct OffkaiReadAloudToggle: View {
     }
 }
 
+/// 「🔈 読み上げ」 in the chat's header (docs/offkai-spec.md「チャット欄の読み上げ」): every new message read
+/// aloud on this device, 🍻 or not. Off by default; the icon shows which (🔈 with waves = on).
+struct ChatReadAloudButton: View {
+    let store: ChatStore
+
+    var body: some View {
+        Button { store.readAloud.toggle() } label: {
+            Image(systemName: store.readAloud ? "speaker.wave.2.fill" : "speaker.slash")
+                .foregroundStyle(store.readAloud ? Color.accentColor : Color.secondary)
+                .contentShape(Rectangle())
+        }
+        .help(store.readAloud ? "読み上げ：オン（届いた発言をこの端末で読み上げます。押すと止める）"
+                              : "読み上げ：オフ（押すと、届いた発言をこの端末で読み上げます）")
+        .accessibilityLabel("🔈 読み上げ")
+        .accessibilityValue(store.readAloud ? "オン" : "オフ")
+        .accessibilityAddTraits(.isToggle)
+    }
+}
+
 /// 📷 (and the camera on iPhone): the picked photos with one caption, then 送る.
 private struct OffkaiPhotoBar: View {
     @Bindable var offkai: OffkaiStore

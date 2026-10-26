@@ -171,6 +171,7 @@ private struct ChatHeader: View {
                     .help("いま B-guru を開いている人")
                     .accessibilityLabel("オンライン \(store.onlineCount) 人")
             }
+            ChatReadAloudButton(store: store).buttonStyle(.borderless) // 🔈 読み上げ（この Mac だけ、既定はオフ）
             Button {
                 pin.pinned.toggle()
             } label: {

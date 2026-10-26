@@ -13,18 +13,90 @@ enum ChatSpeech {
     /// A message that waited this long is not read (do not read an old conversation on and on).
     static let maxWait: TimeInterval = 120
 
-    /// 「〇〇さん、本文」. URLs read 「リンク」; over 80 characters → cut + 「、以下略」. Photos only →
-    /// 「〇〇さんが写真を送りました」 (photos + text read the text). No name → the body alone. nil: nothing to read.
-    static func utterance(name rawName: String?, body rawBody: String, hasPhotos: Bool) -> String? {
-        let name = rawName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    /// The same person again within this long (from when this device began reading their last one): no name.
+    static let sameSpeakerWindow: TimeInterval = 60
+
+    /// 「〇〇さん、本文」 with the call name (`callName`, or `nickname` from the on-device model). URLs read
+    /// 「リンク」; over 80 code points → cut + 「、以下略」. Photos only → 「〇〇さんが写真を送りました」 (photos + text
+    /// read the text). No name → the body alone. `sameSpeaker` (the one read just before, within 60 s): the body
+    /// alone, photos only → 「写真です」. nil: nothing to read.
+    static func utterance(name rawName: String?, body rawBody: String, hasPhotos: Bool,
+                          sameSpeaker: Bool = false, nickname: String? = nil) -> String? {
         // The server's stand-in body for a photo-only message (ChatMessage.displayBody).
         let given = (hasPhotos && rawBody.trimmingCharacters(in: .whitespacesAndNewlines) == "📷 写真") ? "" : rawBody
         let body = spokenBody(given)
+        let call = sameSpeaker ? "" : (nickname.map(withHonorific) ?? callName(rawName ?? "").spoken)
         if body.isEmpty {
             guard hasPhotos else { return nil }
-            return name.isEmpty ? "写真が送られました" : "\(name)さんが写真を送りました"
+            if sameSpeaker { return "写真です" }
+            return call.isEmpty ? "写真が送られました" : "\(call)が写真を送りました"
         }
-        return name.isEmpty ? body : "\(name)さん、\(body)"
+        return call.isEmpty ? body : "\(call)、\(body)"
+    }
+
+    // MARK: Call names (the same steps on Web and Android; docs/offkai-spec.md「賢い読み方」)
+
+    struct CallName: Equatable {
+        /// The name to say, without さん (empty: no name).
+        var base: String
+        /// What is said: base + 「さん」 unless it already ends in an honorific.
+        var spoken: String
+        /// Step 4 cut it (still long): the Apple apps may ask the on-device model for a nickname.
+        var wasCut: Bool
+    }
+
+    static let maxNameLength = 8
+    static let cutNameLength = 6
+    private static let honorifics = ["さん", "様", "さま", "氏", "くん", "君", "ちゃん", "先生"]
+
+    /// 1. drop what is in brackets 2. drop leading @ / ＠, split at separators, 3. the first part with a letter
+    /// or digit 4. over 8 code points → the first 6 5. nothing left → the whole name (spaces as one) cut to 6
+    /// 6. no 「さん」 after an honorific.
+    static func callName(_ raw: String) -> CallName {
+        var s = raw
+        for p in [#"（[^（）]*）"#, #"\([^()]*\)"#, #"【[^【】]*】"#, #"\[[^\[\]]*\]"#, #"「[^「」]*」"#, #"『[^『』]*』"#, #"〔[^〔〕]*〕"#] {
+            s = s.replacingOccurrences(of: p, with: "", options: .regularExpression)
+        }
+        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let f = s.first, f == "@" || f == "＠" { s.removeFirst() }
+        let parts = s.components(separatedBy: CharacterSet(charactersIn: "／/|｜・:：@＠～〜").union(.whitespacesAndNewlines))
+        var base = parts.first { !$0.isEmpty && hasLetterOrDigit($0) } ?? ""
+        var cut = false
+        if base.unicodeScalars.count > maxNameLength {
+            base = prefix(base, cutNameLength)
+            cut = true
+        }
+        if base.isEmpty {
+            let whole = raw.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            base = prefix(whole, cutNameLength).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return CallName(base: base, spoken: base.isEmpty ? "" : withHonorific(base), wasCut: cut)
+    }
+
+    /// 「さん」 unless the name already ends in one (さん・様・さま・氏・くん・君・ちゃん・先生).
+    static func withHonorific(_ name: String) -> String {
+        honorifics.contains { name.hasSuffix($0) } ? name : name + "さん"
+    }
+
+    /// A nickname from the on-device model is used only when it is 1–8 code points, one line, has a letter or
+    /// digit, carries no honorific of its own (dropped if it does) and — stricter than the spec, against made-up
+    /// names — is a part of the display name as written (ignoring case). nil: use the rule's name.
+    static func acceptNickname(_ raw: String?, for name: String) -> String? {
+        guard var n = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty, !n.contains(where: \.isNewline) else { return nil }
+        n = n.trimmingCharacters(in: CharacterSet(charactersIn: "「」『』\"'“”"))
+        for h in honorifics where n.hasSuffix(h) && n.count > h.count { n.removeLast(h.count); break }
+        guard (1...maxNameLength).contains(n.unicodeScalars.count), hasLetterOrDigit(n),
+              name.range(of: n, options: [.caseInsensitive, .widthInsensitive]) != nil else { return nil }
+        return n
+    }
+
+    private static func hasLetterOrDigit(_ s: String) -> Bool {
+        s.unicodeScalars.contains { CharacterSet.letters.contains($0) || CharacterSet.decimalDigits.contains($0) }
+    }
+
+    private static func prefix(_ s: String, _ n: Int) -> String {
+        String(String.UnicodeScalarView(s.unicodeScalars.prefix(n)))
     }
 
     /// The body as read: URLs → 「リンク」, lines and runs of spaces → one space, then the 80-character cut.
@@ -67,21 +139,60 @@ enum ChatSpeech {
 /// activate a session of its own, which can interrupt or duck the call's session. The Mac has no audio session.
 @MainActor
 final class ChatSpeaker: NSObject {
-    private struct Item { var text: String; var arrived: Date }
+    /// One message to read. The words are made when its turn comes (the name depends on who was read before).
+    struct Item {
+        var authorId: String?
+        var name: String?
+        var body: String
+        var hasPhotos: Bool
+        var arrived = Date()
+    }
 
     private var queue: [Item] = []
     private var current: AVSpeechUtterance?
+    /// Waiting (at most ~1.5 s) for the on-device model's nickname before reading.
+    private var preparing = false
+    /// Bumped by stop(): a nickname that comes back after it is not read.
+    private var generation = 0
+    /// Who was read last, and when that began (「同じ人が続けたら名前を省く」).
+    private var lastAuthor: (id: String, at: Date)?
+
+    /// The on-device model's nickname for a long name (ChatStore sets it; nil: rule names only). Never blocks
+    /// reading longer than `nicknameWait`.
+    var nicknamer: (@MainActor (String) async -> String?)?
+    static let nicknameWait: Duration = .milliseconds(1500)
+    /// authorId + name → the accepted nickname ("" = asked, none usable). A new name asks again.
+    private var nicknames: [String: String] = [:]
+    private var asking: [String: Task<String?, Never>] = [:]
     /// Moves on if the synthesizer never reports the current line finished (ChatSpeech.watchdog).
     private var watchdog: Task<Void, Never>?
     private var synth: AVSpeechSynthesizer?
     private let voice = AVSpeechSynthesisVoice(language: "ja-JP")
 
     /// Waiting or being read now.
-    var isBusy: Bool { current != nil || !queue.isEmpty }
+    var isBusy: Bool { current != nil || preparing || !queue.isEmpty }
 
-    func enqueue(_ text: String, arrived: Date = Date()) {
-        queue.append(Item(text: text, arrived: arrived))
-        if current == nil { speakNext() }
+    func enqueue(_ item: Item) {
+        guard ChatSpeech.utterance(name: item.name, body: item.body, hasPhotos: item.hasPhotos) != nil else { return }
+        queue.append(item)
+        askNickname(for: item) // starts now, so it is usually ready by its turn
+        if current == nil, !preparing { speakNext() }
+    }
+
+    private static func nicknameKey(_ item: Item) -> String? {
+        guard let name = item.name, ChatSpeech.callName(name).wasCut else { return nil }
+        return (item.authorId ?? "") + "\u{1F}" + name
+    }
+
+    private func askNickname(for item: Item) {
+        guard let nicknamer, let key = Self.nicknameKey(item), let name = item.name,
+              nicknames[key] == nil, asking[key] == nil else { return }
+        asking[key] = Task { [weak self] in
+            let n = ChatSpeech.acceptNickname(await nicknamer(name), for: name)
+            self?.nicknames[key] = n ?? ""
+            self?.asking[key] = nil
+            return n
+        }
     }
 
     /// Stop mid-sentence and forget everything waiting.
@@ -90,6 +201,8 @@ final class ChatSpeaker: NSObject {
         if isBusy { NSLog("[offkai-read] stop (%d waiting dropped)", queue.count) }
         #endif
         queue.removeAll()
+        generation += 1
+        preparing = false
         watchdog?.cancel()
         watchdog = nil
         guard current != nil else { return }
@@ -102,16 +215,43 @@ final class ChatSpeaker: NSObject {
         guard let i = turn.index else { queue.removeAll(); current = nil; return }
         let item = queue[i]
         queue.removeFirst(i + 1)
+        #if DEBUG
+        if turn.dropped > 0 { NSLog("[offkai-read] %d dropped (waited over 2 min)", turn.dropped) }
+        #endif
+        let now = Date()
+        let same = item.authorId.map { id in lastAuthor.map { $0.id == id && now.timeIntervalSince($0.at) <= ChatSpeech.sameSpeakerWindow } ?? false } ?? false
+        // A long name not yet given a nickname: wait for the model a little (never past nicknameWait).
+        if !same, let key = Self.nicknameKey(item), nicknames[key] == nil, let task = asking[key] {
+            preparing = true
+            let gen = generation
+            Task { [weak self] in
+                let nick = await Self.first(within: Self.nicknameWait, task)
+                guard let self, self.generation == gen, self.preparing else { return }
+                self.preparing = false
+                self.say(item, sameSpeaker: false, nickname: nick)
+            }
+            return
+        }
+        say(item, sameSpeaker: same, nickname: Self.nicknameKey(item).flatMap { nicknames[$0] }.flatMap { $0.isEmpty ? nil : $0 })
+    }
+
+    private func say(_ item: Item, sameSpeaker: Bool, nickname: String?) {
+        guard let text = ChatSpeech.utterance(name: item.name, body: item.body, hasPhotos: item.hasPhotos,
+                                              sameSpeaker: sameSpeaker, nickname: nickname) else {
+            if !queue.isEmpty { speakNext() }
+            return
+        }
+        if let id = item.authorId { lastAuthor = (id, Date()) } else { lastAuthor = nil }
         let s = synth ?? makeSynth()
-        let u = AVSpeechUtterance(string: item.text)
+        let u = AVSpeechUtterance(string: text)
         u.voice = voice
         current = u
         #if DEBUG
-        NSLog("[offkai-read] speak (%d dropped, %d waiting): %@", turn.dropped, queue.count, item.text)
+        NSLog("[offkai-read] speak (%d waiting): %@", queue.count, text)
         #endif
         s.speak(u)
         watchdog?.cancel()
-        let limit = ChatSpeech.watchdog(for: item.text)
+        let limit = ChatSpeech.watchdog(for: text)
         watchdog = Task { [weak self] in
             try? await Task.sleep(for: .seconds(limit))
             guard !Task.isCancelled else { return }
@@ -129,6 +269,16 @@ final class ChatSpeaker: NSObject {
         watchdog = nil
         synth?.stopSpeaking(at: .immediate) // its late didCancel is ignored (no longer current)
         if !queue.isEmpty { speakNext() }
+    }
+
+    /// The value, or nil if it takes longer than `limit` (the work goes on and still fills the cache).
+    /// (Not a task group: that would wait for the model before returning.)
+    private static func first(within limit: Duration, _ task: Task<String?, Never>) async -> String? {
+        await withCheckedContinuation { (c: CheckedContinuation<String?, Never>) in
+            let once = ResumeOnce(c)
+            Task.detached { once.resume(await task.value) }
+            Task.detached { try? await Task.sleep(for: limit); once.resume(nil) }
+        }
     }
 
     private func makeSynth() -> AVSpeechSynthesizer {
@@ -170,4 +320,18 @@ extension ChatSpeaker: AVSpeechSynthesizerDelegate {
 private struct UncheckedUtterance: @unchecked Sendable {
     let value: AVSpeechUtterance
     init(_ v: AVSpeechUtterance) { value = v }
+}
+
+/// Resumes a continuation once, from whichever side comes first.
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var c: CheckedContinuation<String?, Never>?
+    init(_ c: CheckedContinuation<String?, Never>) { self.c = c }
+    func resume(_ v: String?) {
+        lock.lock()
+        let pending = c
+        c = nil
+        lock.unlock()
+        pending?.resume(returning: v)
+    }
 }

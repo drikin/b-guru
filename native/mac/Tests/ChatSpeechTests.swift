@@ -58,6 +58,67 @@ final class ChatSpeechTests: XCTestCase {
         XCTAssertNil(say("たけし", "  \n "))
     }
 
+    // MARK: 賢い読み方 (the same results on Web and Android)
+
+    private func call(_ n: String) -> ChatSpeech.CallName { ChatSpeech.callName(n) }
+
+    func testCallNames() {
+        XCTAssertEqual(call("ドリキン").spoken, "ドリキンさん")
+        XCTAssertEqual(call("山田太郎（Backspace）").spoken, "山田太郎さん")
+        XCTAssertEqual(call("@koh_aoki").spoken, "koh_aokiさん", "leading @ dropped; _ is not a separator; 8 code points is not cut")
+        XCTAssertEqual(call("＠ゆう").spoken, "ゆうさん")
+        XCTAssertEqual(call("Koh Aoki").spoken, "Kohさん")
+        XCTAssertEqual(call("たなかさん").spoken, "たなかさん", "an honorific already there: no extra さん")
+        XCTAssertEqual(call("鈴木先生").spoken, "鈴木先生")
+        XCTAssertEqual(call("ゆう｜散財部").spoken, "ゆうさん")
+        XCTAssertEqual(call("【公式】B-guru").spoken, "B-guruさん")
+        XCTAssertEqual(call("🍻 mazzo").spoken, "mazzoさん", "a part of emoji only is skipped")
+        XCTAssertFalse(call("ドリキン").wasCut)
+
+        let long = call("とても長い名前のメンバーです")
+        XCTAssertEqual(long.spoken, "とても長い名さん")
+        XCTAssertTrue(long.wasCut, "step 4 cut it: the Apple apps may ask for a nickname")
+
+        let emoji = call("🍺🍺")
+        XCTAssertEqual(emoji.base, "🍺🍺", "nothing with a letter: the whole name, cut to 6")
+        XCTAssertEqual(emoji.spoken, "🍺🍺さん")
+        XCTAssertFalse(emoji.wasCut)
+        XCTAssertEqual(call("🍺🍺🍺🍺🍺🍺🍺🍺").base, "🍺🍺🍺🍺🍺🍺")
+        XCTAssertEqual(call("").spoken, "")
+        XCTAssertEqual(call("   ").spoken, "")
+    }
+
+    func testCallNameInTheLine() {
+        XCTAssertEqual(say("山田太郎（Backspace）", "こんばんは"), "山田太郎さん、こんばんは")
+        XCTAssertEqual(say("たなかさん", "📷 写真", photos: true), "たなかさんが写真を送りました")
+        XCTAssertEqual(ChatSpeech.utterance(name: "とても長い名前のメンバーです", body: "やあ", hasPhotos: false, nickname: "メンバー"),
+                       "メンバーさん、やあ", "the on-device nickname replaces the cut name")
+    }
+
+    func testSameSpeakerLeavesOutTheName() {
+        XCTAssertEqual(ChatSpeech.utterance(name: "コバン", body: "続きです", hasPhotos: false, sameSpeaker: true), "続きです")
+        XCTAssertEqual(ChatSpeech.utterance(name: "コバン", body: "📷 写真", hasPhotos: true, sameSpeaker: true), "写真です")
+        XCTAssertEqual(ChatSpeech.utterance(name: "コバン", body: "乾杯", hasPhotos: true, sameSpeaker: true), "乾杯")
+        XCTAssertNil(ChatSpeech.utterance(name: "コバン", body: "", hasPhotos: false, sameSpeaker: true))
+    }
+
+    func testAcceptNickname() {
+        let name = "とても長い名前のメンバーです"
+        func ok(_ n: String?) -> String? { ChatSpeech.acceptNickname(n, for: name) }
+        XCTAssertEqual(ok("メンバー"), "メンバー")
+        XCTAssertEqual(ok(" 「メンバー」 "), "メンバー")
+        XCTAssertEqual(ok("メンバーさん"), "メンバー", "the model's honorific is dropped (ours is added)")
+        XCTAssertNil(ok("とも"), "not a part of the name: made up")
+        XCTAssertNil(ok("ともくん"))
+        XCTAssertNil(ok("メンバー\nです"))
+        XCTAssertNil(ok(""))
+        XCTAssertNil(ok(nil))
+        XCTAssertEqual(ChatSpeech.acceptNickname("macbook", for: "MacBookProユーザー"), "macbook", "case is ignored")
+        XCTAssertEqual(ChatSpeech.acceptNickname("12345678", for: "123456789012"), "12345678")
+        XCTAssertNil(ChatSpeech.acceptNickname("123456789", for: "123456789012"), "over 8")
+        XCTAssertNil(ChatSpeech.acceptNickname("🍺🍺", for: "🍺🍺の会のみなさまがた"), "symbols only")
+    }
+
     func testWatchdog() {
         XCTAssertEqual(ChatSpeech.watchdog(for: ""), 5, accuracy: 0.001)
         XCTAssertEqual(ChatSpeech.watchdog(for: "コバンさん、乾杯"), 8 * 0.2 + 5, accuracy: 0.001)

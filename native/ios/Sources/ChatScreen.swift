@@ -130,7 +130,12 @@ struct ChatScreen: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let tabPicker { ToolbarItem(placement: .principal) { tabPicker } }
-                ToolbarItem(placement: .topBarLeading) { ChatStatus(store: store) }
+                ToolbarItem(placement: .topBarLeading) {
+                    HStack(spacing: 12) {
+                        ChatStatus(store: store)
+                        ChatReadAloudButton(store: store).font(.subheadline) // 🔈 読み上げ（この端末だけ、既定はオフ）
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 14) {
                         DMBadgeButton(dm: store.dm) // ✉️ 簡易 DM（未読の数つき）

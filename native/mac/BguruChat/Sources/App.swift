@@ -1164,7 +1164,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 // 🍻 チャットの読み上げ: into / out of the event's sound (demo: answered locally), then msg / photo / long / burst.
                 case "offkaiListen": if let store = self.store { Task { await store.offkai.listen() } }
                 case "offkaiStop": if let store = self.store { Task { await store.offkai.stopAudio(release: false) } }
-                case "msg", "mention", "notice", "photo", "long", "room", "burst":
+                // 🔈 読み上げ (the chat's switch; saved — `defaults delete fm.backspace.bguru.chat chatReadAloud` after).
+                case "readOn": self.store?.readAloud = true
+                case "readOff": self.store?.readAloud = false
+                case "msg", "mention", "notice", "photo", "long", "room", "burst", "longname":
                     guard let store = self.store else { return }
                     self.debugSeq += 1
                     let id = 5000 + self.debugSeq
@@ -1175,6 +1178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     case "photo": store.debugReceive("📷 写真", id: id, author: "たけし", images: ["/api/media/chat-demo.jpg"])
                     case "long": store.debugReceive(String(repeating: "とても長いメッセージを流してみるテストです。", count: 4), id: id, author: "長文さん")
                     case "room": store.debugReceive("🎧 コバンが部室に入りました", id: id, author: "B-guru", kind: "notice")
+                    case "longname": store.debugReceive("長い名前の人の発言です", id: id, author: "とても長い名前のメンバーです")
                     default:
                         for k in 0..<7 { store.debugReceive("連投 \(k + 1)", id: id + 100 + k, author: "連投さん") }
                     }
