@@ -80,8 +80,9 @@ targets:
         # Voice room: WebRTC receives the audio over UDP on sockets it binds itself,
         # which the sandbox treats as "incoming connections" (LiveKit's own test host has it too).
         com.apple.security.network.server: true
-        # Read the images a member chooses (file picker / drag & drop) to attach to a post.
-        com.apple.security.files.user-selected.read-only: true
+        # Read the images a member chooses (file picker / drag & drop) to attach to a post,
+        # and write 🍻 アルバムの「⬇ まとめて保存」 into the folder they choose (NSOpenPanel).
+        com.apple.security.files.user-selected.read-write: true
         # Sparkle installer (sandboxed apps): talk to its XPC services.
         com.apple.security.temporary-exception.mach-lookup.global-name:
           - fm.backspace.bguru.chat-spks
@@ -136,6 +137,8 @@ targets:
         NSMicrophoneUsageDescription: ボイスルームで話すときだけマイクを使います。録音はしません。
         # The camera takes a photo for a post or a chat message (「カメラで撮る」).
         NSCameraUsageDescription: タイムラインやチャットに付ける写真をその場で撮るときにカメラを使います。
+        # 🍻 アルバムの「⬇ まとめて保存」（追加だけ。写真アプリの中は読まない）。
+        NSPhotoLibraryAddUsageDescription: オフ会のアルバムの写真を写真アプリに保存します。
         # Keep the voice room going with the screen off / in another app.
         # remote-notification: 既読で知らせを消す (read_sync, a background push) runs without opening the app.
         UIBackgroundModes:
@@ -193,6 +196,7 @@ targets:
       - path: ../shared/ChatSpeech.swift
       - path: BguruChat/Sources/KeepAwakeLogic.swift
       - path: BguruChat/Sources/BatteryBeagleLogic.swift
+      - path: ../shared/OffkaiSaveNames.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fm.backspace.bguru.chat.tests
