@@ -14,6 +14,11 @@ import AppKit
 /// 「« に入った」、右へはみ出していれば「外された」。結果は揺れるので、待って 2 回同じ値になってから読む。
 /// 測れない・不安定・区切りがビーグルの右にあるときは安全側（何も隠さない、最小の幅）に戻す。
 /// macOS の仕様外の動きに頼るので、将来の macOS で効かなくなりうる（そのときも何も隠れないだけ）。
+///
+/// macOS 27 の « との二重の扱い（2026-10-26）: 区切りは macOS の « の中に入っているので、利用者が « を押すと macOS は
+/// しまった項目を全部並べようとし、幅の広い透明な区切りまで並ぶ（真ん中が空白・アプリのメニューが押し縮められる）。
+/// そこで « が押された（区切りの窓が « の中から出てきた）のを見つけたら、こちらも「出した」に切り替えて区切りを最小の幅へ
+/// 縮める。macOS の « と B-guru の出し入れが同じ向きにそろい、メニューバーを離れれば（自動で畳む）また畳む。
 @MainActor
 final class StatusBarCollapser {
     enum Fit: String { case fits, overflow, dropped, unknown }
@@ -44,6 +49,14 @@ final class StatusBarCollapser {
     private var mouseWasInBar = false
     private var leftBarAt: Date?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
+    /// 区切りの窓が動いた・大きさが変わったとき（macOS の « が押されたかを見る）。
+    private var sepMoveTask: Task<Void, Never>?
+    /// 窓の移動の知らせが来ない場合の予備：畳めているあいだ、カーソルがメニューバーにあるときだけ 0.5 秒ごとに確かめる。
+    private var pressWatch: Timer?
+    /// 畳めたときの前面のアプリ（« が押されたのか、アプリが替わって並びが変わったのかを分ける）。
+    private var hiddenFor: String?
+    /// 畳めたときの区切りの窓の位置（« が押されると、区切りは « の中のまま左へずれるので、位置の変化で見る）。
+    private var hiddenSepFrame: NSRect?
     /// 状態が変わるたびに（ログ・デバッグ用）。
     var onLog: ((String) -> Void)?
     /// カーソルをビーグルに乗せて少し止めたら出す（設定。既定はオン）。
@@ -93,6 +106,26 @@ final class StatusBarCollapser {
                 self?.scheduleRemeasure("画面の構成が変わった", delay: 1.0)
             }
         }))
+        // macOS 27 の «: 区切りの窓が動いたら、« が押されて区切りが並べられたのかを確かめる。
+        for name in [NSWindow.didMoveNotification, NSWindow.didResizeNotification] {
+            observers.append((nc, nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] n in
+                guard let moved = (n.object as? NSWindow).map(ObjectIdentifier.init) else { return }
+                MainActor.assumeIsolated {
+                    guard let self, let w = self.separator?.button?.window, ObjectIdentifier(w) == moved else { return }
+                    self.separatorMoved()
+                }
+            }))
+        }
+        pressWatch = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.wantCollapsed, self.hiding, self.fitTask == nil, self.sepMoveTask == nil,
+                      Self.mouseInMenuBar(),
+                      let s = self.separator?.button?.window?.frame, let b = self.beagle.button?.window?.frame,
+                      self.classify(sep: s, beagle: b) != .overflow || self.sepShifted(s) else { return }
+                self.separatorMoved()
+            }
+        }
+        pressWatch?.tolerance = 0.2
         // ほかのステータスアイテムの増減などは見えないので、畳んでいるあいだ定期的に軽く確かめる（幅は変えない）。
         checkTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.lightCheck() }
@@ -112,6 +145,8 @@ final class StatusBarCollapser {
         generation += 1
         fitTask?.cancel(); fitTask = nil
         debounceTask?.cancel(); debounceTask = nil
+        sepMoveTask?.cancel(); sepMoveTask = nil
+        pressWatch?.invalidate(); pressWatch = nil
         autoTimer?.invalidate(); autoTimer = nil
         checkTimer?.invalidate(); checkTimer = nil
         for (center, o) in observers { center.removeObserver(o) }
@@ -292,6 +327,41 @@ final class StatusBarCollapser {
         }
     }
 
+    // MARK: - macOS 27 の « と合わせる
+
+    /// 区切りの窓が動いた。畳めている（« の中にいる）はずなのに並べられていて、カーソルがメニューバーにあり、前面のアプリも
+    /// 同じなら、利用者が macOS の « を押したとみなして「出す」（区切りを最小の幅に）。こちらが幅を変えている最中・
+    /// ティッカーで貸しているあいだは見ない。アプリが替わった・ほかのアイコンが増えたなどは、今までどおり測り直しに任せる。
+    private func separatorMoved() {
+        guard wantCollapsed, hiding, fitTask == nil, tickerWidth == 0 else { return }
+        sepMoveTask?.cancel()
+        sepMoveTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(150)) // 並べ替えが落ち着くまで
+            guard !Task.isCancelled, let self else { return }
+            defer { self.sepMoveTask = nil }
+            guard self.wantCollapsed, self.hiding, self.fitTask == nil, self.tickerWidth == 0 else { return }
+            guard let s = self.separator?.button?.window?.frame, let b = self.beagle.button?.window?.frame else { return }
+            let state = self.classify(sep: s, beagle: b)
+            let shifted = self.sepShifted(s)
+            guard state != .overflow || shifted else { return } // まだ « の中で、動いてもいない
+            let sameApp = NSWorkspace.shared.frontmostApplication?.bundleIdentifier == self.hiddenFor
+            if Self.mouseInMenuBar() && sameApp {
+                StatusBarDiag.note("macOS の « が押された（区切りが \(state.rawValue)）→ 出す")
+                self.expand()
+                // 出したあと、メニューバーを離れたら畳む（autoTick）。« を押したのはメニューバーの上なので数え始めから。
+                self.mouseWasInBar = true
+            } else {
+                self.scheduleRemeasure("区切りが動いた: \(state.rawValue)", delay: 0.4)
+            }
+        }
+    }
+
+    /// 畳めたときから区切りの窓がずれたか（macOS 27 で « が開くと、« の中の項目が左に並び、区切りも左へずれる。2026-10-26 実機）。
+    private func sepShifted(_ s: NSRect) -> Bool {
+        guard let h = hiddenSepFrame else { return false }
+        return abs(h.minX - s.minX) > 2 || abs(h.width - s.width) > 2
+    }
+
     // MARK: - 自動で畳む
 
     private func autoTick() {
@@ -415,6 +485,8 @@ final class StatusBarCollapser {
             case .overflow:
                 cache[key] = L
                 hiding = true
+                hiddenFor = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                hiddenSepFrame = sep.button?.window?.frame
                 log("畳んだ（« ビーグル、幅 \(Int(L))）")
                 return
             case .fits:
@@ -440,6 +512,8 @@ final class StatusBarCollapser {
             if let f = await settledFrames(gen), classify(sep: f.sep, beagle: f.beagle) == .fits {
                 cache[key] = lo
                 hiding = true
+                hiddenFor = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                hiddenSepFrame = sep.button?.window?.frame
                 log("畳んだ（メニューの右に «、幅 \(Int(lo))）")
                 return
             }

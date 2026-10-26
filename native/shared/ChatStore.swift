@@ -395,7 +395,10 @@ final class ChatStore {
             dm.apply(ev.data)
         case "sync":
             // 既読で知らせを消す: read on some device of mine (ReadSync.swift).
-            if let sync = ReadSync(json: ev.data) { onReadSync?(sync) }
+            if let sync = ReadSync(json: ev.data) {
+                if sync.scope == .chat { readElsewhere(upTo: sync.upTo) }
+                onReadSync?(sync)
+            }
         case "voice":
             if let v = try? dec.decode(VoiceRoomInfo.self, from: ev.data) { voice.apply(v) }
         case "revoked":
@@ -436,7 +439,8 @@ final class ChatStore {
             latestId = max(latestId, r.latestId)
             if let c = r.lastReadId { readCursor = max(readCursor ?? 0, c) }
             unreadCount = isVisible ? 0 : r.unreadCount
-            if isVisible { mentionCount = 0 }
+            // Read on another device: the mentions counted here are read too (the "@" stayed on the beagle).
+            mentionCount = isVisible ? 0 : min(mentionCount, unreadCount)
             if let mine = r.messages.first(where: { $0.isAuthor }) { myUserId = mine.authorId }
             // Keep rows still sending / failed; reconcile cleans up any that
             // the server list already contains.
@@ -850,6 +854,17 @@ final class ChatStore {
         Task {
             try? await Task.sleep(for: .seconds(1.6))
             if highlightId == id { highlightId = nil }
+        }
+    }
+
+    /// The chat was read on another device of mine (`event: sync`): the unread count and the "@" follow.
+    private func readElsewhere(upTo: Int?) {
+        if let c = upTo { readCursor = max(readCursor ?? 0, c) }
+        if upTo == nil || (upTo ?? 0) >= latestId {
+            unreadCount = 0
+            mentionCount = 0
+        } else {
+            Task { await reload() } // read part of it: the server knows how many are left
         }
     }
 
