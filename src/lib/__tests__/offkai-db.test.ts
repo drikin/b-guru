@@ -245,6 +245,40 @@ d("🍻 オフ会（DB）", () => {
     expect(leftovers).toEqual([]);
   });
 
+  it("まとめて保存: 参加した人（始めた・写真）と管理者だけ。zip に古い順で入る。記録前の会は始めた人と写真の人で埋まる", async () => {
+    const r = await call(a, "POST", [], { title: "新橋/2次会" });
+    const id = (r.body as { event: { id: number } }).event.id;
+    const up = await m.api.handleOffkai(await photoReq("一枚目", 2), ["photos"], b);
+    const photos = (up.body as { photos: { id: number; url: string }[] }).photos;
+    for (const p of photos) written.push(p.url);
+    const chat = await sql(`SELECT images FROM chat_messages WHERE author_email = $1 ORDER BY id DESC LIMIT 1`, [B]);
+    written.push(...(chat.rows[0].images as string[]));
+
+    const can = async (x: Actor) => ((await call(x, "GET", [String(id), "photos"])).body as { can_download: boolean }).can_download;
+    expect(await can(a)).toBe(true); // 始めた人
+    expect(await can(b)).toBe(true); // 写真を上げた人
+    expect(await can(c)).toBe(false); // 見ているだけ
+    await expect(m.o.albumZip(c, id)).rejects.toMatchObject({ status: 403, code: "not_participant" });
+
+    const z = await m.o.albumZip(a, id);
+    expect(z.filename).toMatch(/^B-guru オフ会 \d{4}-\d{2}-\d{2} 新橋2次会\.zip$/);
+    expect(z.asciiName).toBe(`B-guru-offkai-${id}-${z.filename.match(/\d{4}-\d{2}-\d{2}/)![0]}.zip`);
+    const buf = Buffer.from(await new Response(z.stream).arrayBuffer());
+    const end = buf.length - 22;
+    expect(buf.readUInt16LE(end + 10)).toBe(2);
+    const n1 = buf.readUInt16LE(26);
+    expect(buf.subarray(30, 30 + n1).toString("utf8")).toMatch(/^001_みけ_\d{4}\.jpg$/);
+
+    // 記録を始める前の会: 表を作り直すと、始めた人と写真の人で埋まる（何度流しても同じ）
+    await sql(`DELETE FROM offkai_participants WHERE event_id = $1`, [id]);
+    expect(await can(b)).toBe(false);
+    await m.db.initSchema();
+    await m.db.initSchema();
+    const rows = await sql(`SELECT email FROM offkai_participants WHERE event_id = $1 ORDER BY email`, [id]);
+    expect(rows.rows.map((x) => x.email)).toEqual([A, B].map((e) => e.toLowerCase()).sort());
+    await call(a, "POST", ["end"]);
+  });
+
   it("道順: 知らない道は 404、おかしな id は 404、声の鍵は LiveKit なしで 503", async () => {
     expect((await call(a, "GET", ["nope"])).status).toBe(404);
     expect((await call(a, "GET", ["0"])).status).toBe(404);

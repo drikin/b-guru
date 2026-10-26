@@ -22,7 +22,8 @@ export interface OffkaiSnapshot {
   archive: EventDto[];
   archiveMore: boolean;
   /** 開いているアルバム（開催中の会か、アーカイブから開いた会）。 */
-  album: { event: EventDto; photos: PhotoDto[]; more: number | null; loading?: boolean } | null;
+  /** canDownload: まとめて保存できるか（その会に参加した人・管理者。アルバムの応答の can_download）。 */
+  album: { event: EventDto; photos: PhotoDto[]; more: number | null; loading?: boolean; canDownload?: boolean } | null;
   audio: AudioPhase;
   needsAudioUnlock: boolean;
   myUserId: string | null;
@@ -244,15 +245,16 @@ export async function endOffkai(): Promise<void> {
 // ---- アルバム ----
 
 export async function openAlbum(event: EventDto): Promise<void> {
-  set({ album: { event, photos: snap.album?.event.id === event.id ? snap.album.photos : [], more: null, loading: true } });
+  const same = snap.album?.event.id === event.id;
+  set({ album: { event, photos: same ? snap.album!.photos : [], more: null, loading: true, canDownload: same ? snap.album!.canDownload : false } });
   const r = await api(`/${event.id}/photos?limit=200`);
   if (snap.album?.event.id !== event.id) return;
   if (r.status !== 200) {
     set({ album: { ...snap.album, loading: false } });
     return fail(r, "写真を読み込めませんでした");
   }
-  const b = r.body as unknown as { photos: PhotoDto[]; next_after: number | null };
-  set({ album: { event: snap.album.event, photos: byId(b.photos), more: b.next_after, loading: false } });
+  const b = r.body as unknown as { photos: PhotoDto[]; next_after: number | null; can_download?: boolean };
+  set({ album: { event: snap.album.event, photos: byId(b.photos), more: b.next_after, loading: false, canDownload: !!b.can_download } });
 }
 
 export async function loadMorePhotos(): Promise<void> {
@@ -264,8 +266,14 @@ export async function loadMorePhotos(): Promise<void> {
   set({ album: { ...snap.album, photos: [...snap.album.photos, ...b.photos.filter((p) => !snap.album!.photos.some((x) => x.id === p.id))], more: b.next_after } });
 }
 
+/** アルバムをまとめた zip の場所（Web。参加した人・管理者だけ。docs/offkai-spec.md「アルバムをまとめて保存」）。 */
+export function albumZipUrl(eventId: number): string {
+  return `/api/offkai/${eventId}/photos.zip`;
+}
+
 export function closeAlbum(): void {
-  set({ album: snap.current ? { event: snap.current, photos: snap.album?.event.id === snap.current.id ? snap.album.photos : [], more: null } : null });
+  const same = !!snap.current && snap.album?.event.id === snap.current.id;
+  set({ album: snap.current ? { event: snap.current, photos: same ? snap.album!.photos : [], more: null, canDownload: same ? snap.album!.canDownload : false } : null });
   if (snap.current && snap.album?.photos.length === 0) void openAlbum(snap.current);
 }
 

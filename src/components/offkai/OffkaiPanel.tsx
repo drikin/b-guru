@@ -10,6 +10,7 @@ import { ActionIcon, Button, Group, Image, Loader, Modal, Stack, Text, TextInput
 import type { EventDto, PhotoDto } from "@/lib/offkai";
 import { primeSpeech, setTtsEnabled, subscribeTts, ttsEnabled } from "@/lib/offkai-tts";
 import {
+  albumZipUrl,
   closeAlbum,
   deletePhoto,
   endOffkai,
@@ -110,7 +111,7 @@ export function OffkaiPanel() {
       style={{ maxHeight: max, overflowY: "auto", borderBottom: "1px solid var(--border-light)", padding: "8px 10px", flexShrink: 0 }}
     >
       {archived ? (
-        <ArchivedAlbum event={archived.event} photos={archived.photos} more={archived.more != null} loading={!!archived.loading} onOpen={setViewing} />
+        <ArchivedAlbum event={archived.event} photos={archived.photos} more={archived.more != null} loading={!!archived.loading} canDownload={!!archived.canDownload} onOpen={setViewing} />
       ) : s.current ? (
         <Live s={s} event={s.current} onOpen={setViewing} />
       ) : (
@@ -265,6 +266,7 @@ function Live({ s, event, onOpen }: { s: OffkaiSnapshot; event: EventDto; onOpen
       </Group>
       <PhotoUpload busy={s.uploading} />
       <PhotoGrid photos={s.album?.event.id === event.id ? s.album.photos : []} onOpen={onOpen} />
+      {s.album?.event.id === event.id && <AlbumDownload event={event} can={!!s.album.canDownload} count={event.photo_count} />}
       {s.album?.more != null && (
         <Button size="compact-xs" variant="subtle" onClick={() => void loadMorePhotos()}>
           もっと見る
@@ -325,7 +327,17 @@ function PhotoGrid({ photos, onOpen }: { photos: PhotoDto[]; onOpen: (i: number)
   );
 }
 
-function ArchivedAlbum({ event, photos, more, loading, onOpen }: { event: EventDto; photos: PhotoDto[]; more: boolean; loading: boolean; onOpen: (i: number) => void }) {
+/** ⬇ まとめて保存（zip）。参加した人・管理者で、写真が 1 枚以上のときだけ。 */
+function AlbumDownload({ event, can, count }: { event: EventDto; can: boolean; count: number }) {
+  if (!can || count < 1) return null;
+  return (
+    <Button component="a" href={albumZipUrl(event.id)} download size="compact-xs" variant="light" color="gray" style={{ alignSelf: "flex-start" }}>
+      ⬇ まとめて保存（{count} 枚）
+    </Button>
+  );
+}
+
+function ArchivedAlbum({ event, photos, more, loading, canDownload, onOpen }: { event: EventDto; photos: PhotoDto[]; more: boolean; loading: boolean; canDownload: boolean; onOpen: (i: number) => void }) {
   return (
     <Stack gap={8}>
       <Group gap={6} wrap="nowrap">
@@ -350,6 +362,7 @@ function ArchivedAlbum({ event, photos, more, loading, onOpen }: { event: EventD
       ) : (
         <PhotoGrid photos={photos} onOpen={onOpen} />
       )}
+      <AlbumDownload event={event} can={canDownload} count={event.photo_count} />
       {more && (
         <Button size="compact-xs" variant="subtle" onClick={() => void loadMorePhotos()}>
           もっと見る
