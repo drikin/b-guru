@@ -1161,6 +1161,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 case "forceLight": self.ticker?.debugAppearance = NSAppearance(named: .aqua)
                 case "forceDark": self.ticker?.debugAppearance = NSAppearance(named: .darkAqua)
                 case "forceNone": self.ticker?.debugAppearance = nil
+                // 🍻 チャットの読み上げ: into / out of the event's sound (demo: answered locally), then msg / photo / long / burst.
+                case "offkaiListen": if let store = self.store { Task { await store.offkai.listen() } }
+                case "offkaiStop": if let store = self.store { Task { await store.offkai.stopAudio(release: false) } }
                 case "msg", "mention", "notice", "photo", "long", "room", "burst":
                     guard let store = self.store else { return }
                     self.debugSeq += 1

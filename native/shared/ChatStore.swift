@@ -420,6 +420,10 @@ final class ChatStore {
         // A quiet note (room comings and goings): in the list, but never unread or notified.
         // 🐶 Beagle's on-device answers are not unread (the server does not count them either).
         guard !m.isAuthor, !alreadyShown, !m.isNotice, !m.isBeagleAI else { return }
+        // 🍻 チャットの読み上げ: members' own words only (no ☗ card or any other kind of card).
+        if m.kind == nil || m.kind == "" {
+            offkai.chatArrived(name: m.authorName, body: m.body, hasPhotos: !(m.images ?? []).isEmpty)
+        }
         if isVisible {
             markReadSoon()
         } else {

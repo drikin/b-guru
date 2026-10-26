@@ -134,6 +134,7 @@ private struct OffkaiRunningView: View {
                         }
                 }
             }
+            OffkaiReadAloudToggle(offkai: offkai, font: .app(.caption))
             if let n = offkai.notice {
                 Text(n).font(.app(.caption2)).foregroundStyle(.secondary).lineLimit(2)
             }
@@ -173,6 +174,37 @@ private struct OffkaiRunningView: View {
             .frame(height: 28)
             .background(Capsule().fill(filled ? tint : Color.primary.opacity(0.08)))
             .contentShape(Capsule())
+    }
+}
+
+/// 「🔈 チャットを読み上げる」: this device's switch (default on). It only sounds while this device is in the
+/// event's sound, so the hint says so while it is not.
+struct OffkaiReadAloudToggle: View {
+    let offkai: OffkaiStore
+    var font: Font
+    /// The small window (188 pt wide): 「🔈 チャット読み上げ」 and no hint.
+    var compact = false
+
+    var body: some View {
+        Button { offkai.readChatAloud.toggle() } label: {
+            HStack(spacing: 5) {
+                Image(systemName: offkai.readChatAloud ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(offkai.readChatAloud ? Color.accentColor : Color.secondary)
+                Text(compact ? "🔈 チャット読み上げ" : "🔈 チャットを読み上げる")
+                    .foregroundStyle(offkai.readChatAloud ? Color.primary : Color.secondary)
+                if !compact, offkai.readChatAloud, offkai.audio == .off {
+                    Text("（聞いている間）").foregroundStyle(.secondary)
+                }
+            }
+            .font(font)
+            .lineLimit(1)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("この端末で 🍻 の音声に入っている間、届いたチャットを読み上げます（この端末だけの設定）")
+        .accessibilityLabel("チャットを読み上げる")
+        .accessibilityValue(offkai.readChatAloud ? "オン" : "オフ")
+        .accessibilityAddTraits(.isToggle)
     }
 }
 

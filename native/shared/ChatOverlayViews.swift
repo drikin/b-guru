@@ -452,6 +452,7 @@ private struct OverlayOffkaiMini: View {
                 }
                 #endif
             }
+            OffkaiReadAloudToggle(offkai: offkai, font: .app(size: 12), compact: true)
             #if os(macOS)
             if offkai.audio != .off { VoiceHandoffNotice(handoff: offkai.handoff, target: .offkai, font: .app(size: 11)) }
             #endif

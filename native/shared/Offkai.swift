@@ -75,7 +75,9 @@ final class OffkaiStore {
     private(set) var album: OffkaiEvent?
     private(set) var albumPhotos: [OffkaiPhoto] = []
     private(set) var albumLoading = false
-    private(set) var audio: Audio = .off
+    private(set) var audio: Audio = .off {
+        didSet { if audio == .off { speaker.stop() } } // out of the sound: stop reading, forget the waiting ones
+    }
     /// My microphone is going out to the room.
     private(set) var speaking = false
     /// A start / speak / end request is on its way.
@@ -86,6 +88,27 @@ final class OffkaiStore {
     /// The chat column's height (the panel takes at most about half of it).
     private(set) var areaHeight: CGFloat = 0
     func setAreaHeight(_ h: CGFloat) { if abs(h - areaHeight) > 1 { areaHeight = h } }
+
+    /// 「🔈 チャットを読み上げる」 on this device (kept here, default on; docs/offkai-spec.md「チャットの読み上げ」).
+    var readChatAloud: Bool = OffkaiStore.savedReadChatAloud {
+        didSet {
+            UserDefaults.standard.set(readChatAloud, forKey: Self.readChatAloudKey)
+            if !readChatAloud { speaker.stop() }
+        }
+    }
+    static let readChatAloudKey = "offkaiReadChatAloud"
+    private static var savedReadChatAloud: Bool {
+        UserDefaults.standard.object(forKey: readChatAloudKey) as? Bool ?? true
+    }
+    @ObservationIgnored private let speaker = ChatSpeaker()
+
+    /// A chat message from someone else just arrived on the stream (ChatStore filters out mine, notices, cards
+    /// and anything already shown). Read only while an event goes on and this device is in its sound.
+    func chatArrived(name: String?, body: String, hasPhotos: Bool) {
+        guard enabled, readChatAloud, running != nil, audio == .listening, // listening or speaking, not while connecting
+              let text = ChatSpeech.utterance(name: name, body: body, hasPhotos: hasPhotos) else { return }
+        speaker.enqueue(text)
+    }
 
     /// Photos waiting to be sent (📷, up to 4), and their one caption.
     let draft = PostDraft(maxImages: 4)
@@ -311,6 +334,7 @@ final class OffkaiStore {
         if current?.id == e.id || current == nil {
             let wasRunning = current?.isOpen == true
             current = nil
+            speaker.stop() // the event ended: not one more word
             photos = []
             listeners = 0
             if audio != .off { Task { await stopAudio(release: false) } }

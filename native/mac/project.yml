@@ -190,6 +190,7 @@ targets:
     sources:
       - path: Tests
       - path: ../shared/ReadSync.swift
+      - path: ../shared/ChatSpeech.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fm.backspace.bguru.chat.tests
