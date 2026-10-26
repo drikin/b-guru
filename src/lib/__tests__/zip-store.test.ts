@@ -46,3 +46,13 @@ describe("zip-store", () => {
     expect(buf.readUInt32LE(buf.readUInt32LE(cen2 + 42))).toBe(0x04034b50);
   });
 });
+
+describe("zipFits", () => {
+  it("keeps one entry below the ZIP64 marker and under 4 GB", async () => {
+    const { zipFits } = await import("../zip-store");
+    expect(zipFits(0xfffe, 0)).toBe(true);
+    expect(zipFits(0xffff, 0)).toBe(false);
+    expect(zipFits(10, 0xffffffff)).toBe(false);
+    expect(zipFits(400, 400 * 4 * 1024 * 1024)).toBe(true);
+  });
+});

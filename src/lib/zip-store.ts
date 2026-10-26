@@ -30,6 +30,13 @@ function dosTime(d: Date): { time: number; date: number } {
 export type ZipEntry = { name: string; mtime: Date; read: () => Promise<Uint8Array | null> };
 
 const LIMIT = 0xffffffff;
+// 0xffff ちょうどは ZIP64 の印と読み違える展開ソフトがあるので、1 つ手前まで。
+const MAX_ENTRIES = 0xfffe;
+
+/** ZIP64 なしで作れるか（件数と、名前・ヘッダの余裕を見た合計の大きさ）。 */
+export function zipFits(count: number, totalBytes: number): boolean {
+  return count <= MAX_ENTRIES && totalBytes + count * (30 + 46 + 2 * 256) + 22 < LIMIT;
+}
 
 /** entries を順に読み、zip のバイト列として流す。read が null を返したもの（消えたファイル）は飛ばす。 */
 export function zipStream(entries: ZipEntry[]): ReadableStream<Uint8Array> {
@@ -43,7 +50,7 @@ export function zipStream(entries: ZipEntry[]): ReadableStream<Uint8Array> {
         const e = entries[i++];
         const data = await e.read();
         if (!data) continue;
-        if (count >= 0xffff || offset + data.length + 30 + 4096 > LIMIT) throw new Error("zip too large");
+        if (count >= MAX_ENTRIES || offset + data.length + 30 + 4096 > LIMIT) throw new Error("zip too large");
         const name = Buffer.from(e.name, "utf8");
         const crc = crc32(data);
         const { time, date } = dosTime(e.mtime);

@@ -6,7 +6,7 @@
  *   - 写真: offkai-… として保存（チャットの写真と違い掃除されない）、chat-… の複製をチャットにも流す。
  *   - 知らせ: 始まったときに 1 回だけ全員へ push。チャットの小さな行・終了時のタイムライン投稿は公開後だけ。
  * メールは外へ出さない（人は user_id・表示名・アバター）。 */
-import { copyFile, readdir, readFile, rm } from "fs/promises";
+import { copyFile, readdir, readFile, rm, stat } from "fs/promises";
 import path from "path";
 import crypto from "crypto";
 import { pool } from "./db";
@@ -21,7 +21,7 @@ import { livekitConfig, roomService, signAccessToken } from "./livekit";
 import { mediaCacheDir } from "./media-variants";
 import { pushOffkaiStart, syncOffkaiEnded } from "./push-notify";
 import { CHAT_UPLOAD, OFFKAI_UPLOAD_PREFIX } from "./upload";
-import { zipStream } from "./zip-store";
+import { zipFits, zipStream } from "./zip-store";
 
 export const OFFKAI_FLAG = "OFFKAI_ENABLED";
 export const OFFKAI_DURATION_MS = 6 * 60 * 60 * 1000;
@@ -340,14 +340,18 @@ function jst(d: Date) {
 
 /** ファイル名に使える形（区切りや制御文字を落とし、短く）。 */
 export function safeFilePart(v: string, max = 24): string {
-  return [...v.replace(/[\u0000-\u001f\u007f\\/:*?"<>|]/g, "").replace(/\s+/g, " ").trim()].slice(0, max).join("").replace(/^\.+/, "");
+  return [...v.replace(/[\u0000-\u001f\u007f\\/:*?"<>|]|\p{Cf}/gu, "").replace(/\s+/g, " ").trim()].slice(0, max).join("").replace(/^\.+/, "");
 }
 
 /** アルバムをまとめた zip（Web）。中の名前は「001_表示名_1930.jpg」、zip の名前は「B-guru オフ会 2026-10-26 題.zip」。 */
 export async function albumZip(actor: Actor, eventId: number): Promise<{ filename: string; asciiName: string; stream: ReadableStream<Uint8Array> }> {
-  if (!rateOk("zip", actor.userId)) throw new OffkaiError(429, "rate_limited", "少し待ってから、もう一度保存してください");
   const { event, photos } = await photosForDownload(actor, eventId);
+  // 数えるのは権限を確かめた後（ほかの人の枠を減らしたり、無駄に読ませたりしない）。
+  if (!rateOk("zip", actor.userId)) throw new OffkaiError(429, "rate_limited", "少し待ってから、もう一度保存してください");
   if (photos.length === 0) throw new OffkaiError(404, "no_photos", "写真がありません");
+  // ZIP64 なしで作れる大きさかを先に確かめる（流し始めてからは失敗を伝えられない）。
+  const sizes = await Promise.all(photos.map((ph) => stat(path.join(uploadsDir(), ph.file)).then((x) => x.size, () => 0)));
+  if (!zipFits(photos.length, sizes.reduce((x, y) => x + y, 0))) throw new OffkaiError(413, "too_large", "写真が多すぎて、まとめられません");
   const day = jst(new Date(event.started_at));
   const title = safeFilePart(event.title ?? "", 30);
   const width = Math.max(3, String(photos.length).length);
