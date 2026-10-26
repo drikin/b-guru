@@ -3,7 +3,7 @@
 import { NextRequest } from "next/server";
 import { getSessionEmail } from "@/lib/session";
 import { ensureUserId } from "@/lib/user";
-import { offkaiEnabledFor } from "@/lib/offkai";
+import { albumZip, OffkaiError, offkaiEnabledFor } from "@/lib/offkai";
 import { handleOffkai, notFound, type OffkaiHttpOut } from "@/lib/offkai-api";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +21,23 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path?: string[]
   if (!offkaiEnabledFor(email)) return respond(notFound());
   const { path } = await ctx.params;
   const userId = await ensureUserId(email);
+  // アルバムをまとめて保存（zip）。JSON ではないのでここで返す。参加した人と管理者だけ（lib/offkai.ts albumZip）。
+  const [a, b, c] = path ?? [];
+  if (req.method === "GET" && /^\d{1,9}$/.test(a ?? "") && b === "photos.zip" && !c) {
+    try {
+      const z = await albumZip({ email, userId }, Number(a));
+      return new Response(z.stream, {
+        headers: {
+          "Content-Type": "application/zip",
+          "Content-Disposition": `attachment; filename="${z.asciiName}"; filename*=UTF-8''${encodeURIComponent(z.filename)}`,
+          ...NO_STORE,
+        },
+      });
+    } catch (e) {
+      if (e instanceof OffkaiError) return respond({ status: e.status, body: { error: e.message, code: e.code } });
+      throw e;
+    }
+  }
   return respond(await handleOffkai(req, path ?? [], { email, userId }));
 }
 

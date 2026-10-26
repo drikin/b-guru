@@ -916,5 +916,18 @@ export async function initSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_offkai_photos_event ON offkai_photos(event_id, id);
+    -- 参加した人（始めた・聞いた／話した・写真を上げた）。アルバムのまとめて保存はこの人たちと管理者だけ（2026-10-26）。
+    -- 記録を始める前の会は、始めた人と写真を上げた人で埋める（何度流しても同じ）。
+    CREATE TABLE IF NOT EXISTS offkai_participants (
+      event_id INT NOT NULL REFERENCES offkai_events(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      first_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (event_id, email)
+    );
+    INSERT INTO offkai_participants (event_id, email, first_at)
+      SELECT id, lower(started_by_email), started_at FROM offkai_events
+      UNION ALL
+      SELECT event_id, lower(uploader_email), min(created_at) FROM offkai_photos GROUP BY event_id, lower(uploader_email)
+      ON CONFLICT DO NOTHING;
   `);
 }

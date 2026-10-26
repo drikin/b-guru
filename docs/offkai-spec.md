@@ -151,6 +151,26 @@ Photo: `{ id, url, uploader: Person, caption, created_at, mine }`
 - iPhone・Mac: 決まりで縮めてもまだ長い（手順 4 で切った）名前は、端末内の Foundation Models に呼び名を頼む（「6 文字以内・敬称なし」）。返ってきた呼び名が 1〜8 文字で改行・記号だけでなければ使い、人ごとに覚える（authorId＋名前。名前が変わったら作り直す）。間に合わない・使えない端末は決まりの呼び名。外へは何も送らない。
 - Web・Android は決まりの呼び名だけ（端末内の言語モデルが無い）。
 
+## アルバムをまとめて保存（2026-10-26 オーナー決定）
+
+オーナー「アルバムの写真を一括でダウンロードしたい」。選択: 全端末、**そのオフ会の参加者だけ**（参加の記録を始める）、管理者はどの会でも、全員に出す。
+
+- 参加した人: `offkai_participants (event_id, email lower, first_at, PK(event_id, email))`。記録するのは
+  始めた（start）・聞いた／話した（部屋の鍵を出したとき = token / speak）・写真を上げた（addPhotos）とき。記録の失敗で本来の操作は止めない。
+  記録を始める前の会は、表を作るときに「始めた人」と「写真を上げた人」で埋める（`ON CONFLICT DO NOTHING`、何度流しても同じ）。
+  チャットだけで参加した人は入らない（オフ会と結び付かないため）。
+- 保存できるか: アルバムの応答 `GET <id>/photos` に `can_download`（参加した人・管理者）。端末はこれが true で写真が 1 枚以上のときだけ
+  「⬇ まとめて保存（N 枚）」を出す。見る（アルバムを開く・1 枚ずつ）は今までどおり会員全員。
+- Web: `GET /api/offkai/<id>/photos.zip`（セッション）。無圧縮の zip を 1 枚ずつ流す（lib/zip-store.ts、依存なし・ZIP64 なし）。
+  中の名前は古い順に `001_表示名_1930.jpg`（日本時間の時分）、zip の名前は `B-guru オフ会 2026-10-26 題.zip`（ASCII の名前も付ける）。
+  参加していなければ 403 `not_participant`、写真が無ければ 404 `no_photos`、1 人 1 時間 10 回まで（429）。
+- アプリ（zip は使わない）: アルバムの一覧（`GET /api/agent/offkai/<id>/photos`、`next_after` で全部）を読み、写真を 1 枚ずつ取って保存する。
+  - iPhone・iPad: 写真アプリへ（追加だけの許可 `NSPhotoLibraryAddUsageDescription`、`PHPhotoLibrary` の add-only）。
+  - Mac: 選んだフォルダ（`NSOpenPanel`、最初は「ダウンロード」）に、Web の zip の中と同じ名前で書く。同じ名前があれば上書きしない（` (2)` を付ける）。
+  - Android: `MediaStore` の `Pictures/B-guru/<オフ会の日付と題>/` へ（Android 10 以上は許可なし。9 以下は書き込みの許可を聞く）。
+  - 進み具合（`12 / 40`）と中止を出す。終わったら「40 枚を保存しました」（失敗があれば「38 枚を保存、2 枚は失敗」）。
+- 何も外へ送らない。写真は今の 1280px・EXIF なしのまま（原本は持っていない）。
+
 ## 後始末
 
 - 写真を消すと offkai- のファイルと縮小版（mediaVariant）も消す。チャットに流した複製はそのまま（24 時間で消える）。

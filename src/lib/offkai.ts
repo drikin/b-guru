@@ -6,7 +6,7 @@
  *   - 写真: offkai-… として保存（チャットの写真と違い掃除されない）、chat-… の複製をチャットにも流す。
  *   - 知らせ: 始まったときに 1 回だけ全員へ push。チャットの小さな行・終了時のタイムライン投稿は公開後だけ。
  * メールは外へ出さない（人は user_id・表示名・アバター）。 */
-import { copyFile, readdir, rm } from "fs/promises";
+import { copyFile, readdir, readFile, rm } from "fs/promises";
 import path from "path";
 import crypto from "crypto";
 import { pool } from "./db";
@@ -21,6 +21,7 @@ import { livekitConfig, roomService, signAccessToken } from "./livekit";
 import { mediaCacheDir } from "./media-variants";
 import { pushOffkaiStart, syncOffkaiEnded } from "./push-notify";
 import { CHAT_UPLOAD, OFFKAI_UPLOAD_PREFIX } from "./upload";
+import { zipStream } from "./zip-store";
 
 export const OFFKAI_FLAG = "OFFKAI_ENABLED";
 export const OFFKAI_DURATION_MS = 6 * 60 * 60 * 1000;
@@ -307,6 +308,84 @@ export async function listPhotos(actor: Actor, eventId: number, after: number | 
   return {
     photos: rows.map((x) => photoDto(x, people, actor.email)),
     next_after: r.rows.length > limit ? rows[rows.length - 1].id : null,
+    /** まとめて保存できるか（その会に参加した人と管理者）。 */
+    can_download: await canDownload(actor, eventId),
+  };
+}
+
+// ---- 参加した人・まとめて保存 ----
+
+/** 参加の記録（始めた・聞いた／話した・写真を上げた）。記録が失敗しても本来の操作は止めない。 */
+async function noteParticipant(eventId: number, email: string): Promise<void> {
+  await pool
+    .query(`INSERT INTO offkai_participants (event_id, email) VALUES ($1, lower($2)) ON CONFLICT DO NOTHING`, [eventId, email])
+    .catch((e) => console.error("[offkai] participant:", (e as Error)?.message));
+}
+
+export async function canDownload(actor: Actor, eventId: number): Promise<boolean> {
+  if (isAdmin(actor.email)) return true;
+  const r = await pool.query(`SELECT 1 FROM offkai_participants WHERE event_id = $1 AND email = lower($2)`, [eventId, actor.email]);
+  return !!r.rowCount;
+}
+
+/** 日本時間の年月日・時分秒（zip の中の名前と日時に使う。サーバの時計の地域によらない）。 */
+function jst(d: Date) {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" })
+      .formatToParts(d)
+      .map((x) => [x.type, x.value]),
+  );
+  return { y: p.year, mo: p.month, d: p.day, h: p.hour, mi: p.minute, s: p.second };
+}
+
+/** ファイル名に使える形（区切りや制御文字を落とし、短く）。 */
+export function safeFilePart(v: string, max = 24): string {
+  return [...v.replace(/[\u0000-\u001f\u007f\\/:*?"<>|]/g, "").replace(/\s+/g, " ").trim()].slice(0, max).join("").replace(/^\.+/, "");
+}
+
+/** アルバムをまとめた zip（Web）。中の名前は「001_表示名_1930.jpg」、zip の名前は「B-guru オフ会 2026-10-26 題.zip」。 */
+export async function albumZip(actor: Actor, eventId: number): Promise<{ filename: string; asciiName: string; stream: ReadableStream<Uint8Array> }> {
+  if (!rateOk("zip", actor.userId)) throw new OffkaiError(429, "rate_limited", "少し待ってから、もう一度保存してください");
+  const { event, photos } = await photosForDownload(actor, eventId);
+  if (photos.length === 0) throw new OffkaiError(404, "no_photos", "写真がありません");
+  const day = jst(new Date(event.started_at));
+  const title = safeFilePart(event.title ?? "", 30);
+  const width = Math.max(3, String(photos.length).length);
+  const entries = photos.map((ph, n) => {
+    const t = jst(ph.created_at);
+    const who = safeFilePart(ph.uploader, 16);
+    return {
+      name: `${String(n + 1).padStart(width, "0")}${who ? `_${who}` : ""}_${t.h}${t.mi}${path.extname(ph.file).toLowerCase()}`,
+      mtime: new Date(Number(t.y), Number(t.mo) - 1, Number(t.d), Number(t.h), Number(t.mi), Number(t.s)),
+      read: () => readFile(path.join(uploadsDir(), ph.file)).then((b) => new Uint8Array(b), () => null),
+    };
+  });
+  const date = `${day.y}-${day.mo}-${day.d}`;
+  return {
+    filename: `B-guru オフ会 ${date}${title ? ` ${title}` : ""}.zip`,
+    asciiName: `B-guru-offkai-${event.id}-${date}.zip`,
+    stream: zipStream(entries),
+  };
+}
+
+export type DownloadPhoto = { id: number; file: string; uploader: string; created_at: Date };
+
+/** まとめて保存する写真（古い順）。参加した人と管理者だけ。file は uploads の中のファイル名だけ。 */
+export async function photosForDownload(actor: Actor, eventId: number): Promise<{ event: { id: number; title: string; started_at: Date }; photos: DownloadPhoto[] }> {
+  const ev = await pool.query(`SELECT id, title, started_at FROM offkai_events WHERE id = $1`, [eventId]);
+  if (!ev.rows[0]) throw new OffkaiError(404, "not_found", "オフ会が見つかりません");
+  if (!(await canDownload(actor, eventId))) throw new OffkaiError(403, "not_participant", "まとめて保存できるのは、そのオフ会に参加した人だけです");
+  const r = await pool.query(`SELECT id, path, uploader_email, created_at FROM offkai_photos WHERE event_id = $1 ORDER BY id`, [eventId]);
+  const rows = (r.rows as { id: number; path: string; uploader_email: string; created_at: Date }[]).filter((x) => OFFKAI_PATH_RE.test(x.path));
+  const people = await persons(rows.map((x) => x.uploader_email));
+  return {
+    event: ev.rows[0],
+    photos: rows.map((x) => ({
+      id: x.id,
+      file: path.basename(x.path),
+      uploader: people.get(x.uploader_email)?.name ?? "",
+      created_at: new Date(x.created_at),
+    })),
   };
 }
 
@@ -332,6 +411,7 @@ const RATE: Record<string, { limit: number; windowMs: number }> = {
   photo: { limit: 60, windowMs: 60 * 60_000 },
   speak: { limit: 60, windowMs: 60 * 60_000 },
   token: { limit: 120, windowMs: 60 * 60_000 },
+  zip: { limit: 10, windowMs: 60 * 60_000 },
 };
 
 export function rateOk(kind: keyof typeof RATE, userId: string, now = Date.now()): boolean {
@@ -377,6 +457,7 @@ export async function start(actor: Actor, input: { title?: unknown }): Promise<E
     }
     throw e;
   }
+  await noteParticipant(id, actor.email);
   await broadcast("start", id);
   if (announce()) {
     const who = (await persons([actor.email])).get(actor.email)?.name ?? "だれか";
@@ -442,6 +523,7 @@ async function joinToken(actor: Actor, id: number) {
   if (!cfg) throw new OffkaiError(503, "voice_unavailable", "音声は今使えません");
   const r = await pool.query(`SELECT speaker_email FROM offkai_events WHERE id = $1`, [id]);
   const canSpeak = !!r.rows[0]?.speaker_email && norm(r.rows[0].speaker_email) === norm(actor.email);
+  await noteParticipant(id, actor.email);
   const name = (await persons([actor.email])).get(actor.email)?.name ?? null;
   const room = roomName(id);
   const tok = signAccessToken(cfg, {
@@ -566,6 +648,7 @@ export async function addPhotos(actor: Actor, urls: string[], captionRaw: unknow
       await removeFiles(files); // 入れられなかったファイルは残さない
       throw e;
     });
+  await noteParticipant(cur.id, actor.email);
   const people = await persons([actor.email]);
   const photos = ins.rows.map((x) => photoDto(x, people, actor.email));
   for (const p of ins.rows.map((x) => photoDto(x, people, null))) emitLive({ type: "offkai", action: "photo", eventId: cur.id, photo: p });
