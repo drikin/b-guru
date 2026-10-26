@@ -436,7 +436,12 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
                 if (BuildConfig.DEBUG) android.util.Log.d("BguruVoice", "disconnected: ${e.reason}", e.error)
                 // We hung up ourselves (leave) — nothing to tell.
                 if (e.reason == DisconnectReason.CLIENT_INITIATED) return
-                notice = if (e.reason == DisconnectReason.PARTICIPANT_REMOVED) "ボイスルームから退出させられました" else "ボイスルームの接続が切れました"
+                notice = when (e.reason) {
+                    DisconnectReason.PARTICIPANT_REMOVED -> "ボイスルームから退出させられました"
+                    // I joined on another device (same identity, e.g. 「スマホで続ける」): not a failure, no rejoin.
+                    DisconnectReason.DUPLICATE_IDENTITY -> VoiceHandoff.CONTINUED_ELSEWHERE
+                    else -> "ボイスルームの接続が切れました"
+                }
                 teardown()
                 return
             }

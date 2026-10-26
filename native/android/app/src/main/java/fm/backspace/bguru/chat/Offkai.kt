@@ -535,8 +535,14 @@ class OffkaiStore(private val api: ApiClient, private val app: Context) {
             }
             is RoomEvent.Disconnected -> {
                 if (e.reason == DisconnectReason.CLIENT_INITIATED) return
+                // (teardown, not stopListening: the speaker stays the speaker on the server.)
                 teardown()
-                notice = if (running) "オフ会の音声が切れました" else null
+                notice = when {
+                    // I joined on another device (same identity, e.g. 「スマホで続ける」): not a failure, no rejoin.
+                    e.reason == DisconnectReason.DUPLICATE_IDENTITY -> VoiceHandoff.CONTINUED_ELSEWHERE
+                    running -> "オフ会の音声が切れました"
+                    else -> null
+                }
             }
             else -> Unit
         }

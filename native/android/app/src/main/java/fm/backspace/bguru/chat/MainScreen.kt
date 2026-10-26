@@ -81,6 +81,8 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
                 LaunchedEffect(store.shogi.revealTick) { if (store.shogi.revealTick > 0) right = 0 }
                 // 🍻 オフ会 from a notification: show the chat (the panel is above it).
                 LaunchedEffect(store.offkai.revealTick) { if (store.offkai.revealTick > 0) right = 0 }
+                // 🎧 音声をこの端末で続ける (voice_handoff): show the chat (the feature is on it).
+                LaunchedEffect(store.chatRevealTick) { if (store.chatRevealTick > 0) right = 0 }
                 // 📺 「みんなで見る」 over the chat (chat_overlay): the player is a window of the chat, so show the chat.
                 LaunchedEffect(store.watch.revealTick) { if (store.watch.revealTick > 0 && store.chatOverlay) right = 0 }
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -140,6 +142,8 @@ private fun Pages(
     LaunchedEffect(store.shogi.revealTick) { if (store.shogi.revealTick > 0) scope.launch { pager.animateScrollToPage(1) } }
     // 🍻 オフ会 from a notification: show the chat (the panel opens above it).
     LaunchedEffect(store.offkai.revealTick) { if (store.offkai.revealTick > 0) scope.launch { pager.animateScrollToPage(1) } }
+    // 🎧 音声をこの端末で続ける (voice_handoff): the chat page (the feature is on it).
+    LaunchedEffect(store.chatRevealTick) { if (store.chatRevealTick > 0) scope.launch { pager.animateScrollToPage(1) } }
     // 📺 「みんなで見る」 on the timeline over the chat (chat_overlay): the chat page, where the player is expanded
     // (the old form floats it over every page instead).
     LaunchedEffect(store.watch.revealTick) { if (store.watch.revealTick > 0 && store.chatOverlay) scope.launch { pager.animateScrollToPage(1) } }

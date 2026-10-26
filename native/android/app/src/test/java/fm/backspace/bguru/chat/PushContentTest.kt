@@ -59,6 +59,8 @@ class PushContentTest {
         assertTrue(base != PushContent.registrationSignature("fcm", "all", true, false, "tok2"))
         // notify_shogi is part of it (devices register again once to say they take ☗ 将棋 pushes).
         assertTrue(base != PushContent.registrationSignature("fcm", "all", true, false, "tok", shogi = false))
+        // notify_sync too (read_sync / voice_handoff): installs register once more to say they know them.
+        assertTrue(base != PushContent.registrationSignature("fcm", "all", true, false, "tok", sync = true))
         assertFalse(base.contains("fcm") || base.contains("tok"))
     }
 

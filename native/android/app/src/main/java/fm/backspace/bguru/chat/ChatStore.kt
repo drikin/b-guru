@@ -12,6 +12,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 import kotlinx.serialization.Serializable
 import java.time.Instant
 import java.util.UUID
@@ -59,6 +62,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     /** 🍻 オフ会 — only when the server turns it on for this member (capabilities.offkai). */
     val offkai = OffkaiStore(api, app.applicationContext).also { it.fallbackMe = { myUserId } }
     private val voiceApp = app.applicationContext
+    /** Bumped by a voice_handoff tap: the phone pager / the wide layout shows the chat. */
+    var chatRevealTick by mutableIntStateOf(0); private set
     /** The windows over the chat (docs/chat-overlay-spec.md; only used while [chatOverlay]). */
     val overlay = OverlayState(OverlayPositions.Prefs(app))
     /** Demo only (`--ez demo_overlay true`): the overlay form whatever the capabilities say. */
@@ -278,6 +283,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             watch.configure(caps)
             offkai.configure(caps)
             dm.configure(caps)
+            // A voice_handoff tapped before the capabilities arrived (cold start).
+            pendingHandoff?.let { (t, mic) -> pendingHandoff = null; continueVoiceHere(t, mic, handoffAskMic) }
             // Voice is on for me but this token predates the "voice" scope: send the member
             // back to sign in once (a new sign-in gets the scope). Only once per install,
             // so a server that still withholds it cannot loop us.
@@ -571,6 +578,85 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         }
     }
 
+    // MARK: 音声をこの端末で続ける (voice_handoff — docs/device-sync-spec.md)
+
+    private var pendingHandoff: Pair<VoiceHandoff.Target, Boolean>? = null
+    /** Asks for RECORD_AUDIO (the activity's launcher) and calls back with the answer. */
+    private var handoffAskMic: ((Boolean) -> Unit) -> Unit = { it(false) }
+    private var handoffJob: Job? = null
+
+    /**
+     * The voice_handoff notification was tapped: the chat, that feature, and its audio — 🍻 as the speaker when
+     * the server has me speaking (else listening), the voice room / 🏠 with the mic as the other device had it.
+     * The other device is cut off by LiveKit (same identity) and says 「別の端末で続けています」.
+     */
+    fun continueVoiceHere(target: VoiceHandoff.Target, mic: Boolean, askMic: ((Boolean) -> Unit) -> Unit) {
+        handoffAskMic = askMic
+        chatRevealTick++
+        if (capabilities == null) { pendingHandoff = target to mic; return }
+        handoffJob?.cancel()
+        handoffJob = scope.launch {
+            when (target) {
+                VoiceHandoff.Target.OFFKAI -> handoffOffkai()
+                // With the club room on, the voice room is the room's voice (the plain bar is not shown).
+                VoiceHandoff.Target.VOICE -> if (room.enabled) handoffRoom(mic) else handoffVoice(mic)
+                VoiceHandoff.Target.ROOM -> if (room.enabled) handoffRoom(mic)
+            }
+        }
+    }
+
+    private suspend fun handoffOffkai() {
+        if (!offkai.enabled) return
+        openOffkai()
+        offkai.reload() // who speaks now
+        if (!offkai.running) return
+        if (offkai.canControl && offkai.iAmSpeaker) { speakOrListen(); return }
+        val knewMe = offkai.me != null
+        offkai.listen()
+        // Who I am was not known yet: the room says it (identity) once connected.
+        if (!knewMe && offkai.canControl && waitUntil { offkai.phase == OffkaiStore.Phase.CONNECTED } && offkai.iAmSpeaker) speakOrListen()
+    }
+
+    private suspend fun speakOrListen() {
+        if (micGranted()) { offkai.speak(true); return }
+        if (offkai.phase == OffkaiStore.Phase.IDLE) offkai.listen()
+        offkai.notice = MIC_REFUSED
+    }
+
+    private suspend fun handoffVoice(mic: Boolean) {
+        if (!voice.enabled || !voice.canJoin) return
+        voice.join()
+        if (!mic || !waitUntil { voice.phase == VoiceStore.Phase.CONNECTED }) return
+        if (micGranted()) voice.setMic(true) else voice.notice = MIC_REFUSED
+    }
+
+    private suspend fun handoffRoom(mic: Boolean) {
+        // Over the chat: 🏠 switched on and expanded. The old row: the room view takes the chat's place.
+        if (chatOverlay) overlay.show(ActivityId.ROOM, expand = true)
+        else { shogi.open = false; minigame.open = false; offkai.open = false }
+        if (!room.listening) room.changeListening(true)
+        val wasIn = room.roomView
+        room.enter()
+        // Already in the room view (its voice cut off earlier, e.g. continued elsewhere): the voice only.
+        if (wasIn && !voice.inRoom && voice.canJoin) voice.join()
+        if (!mic || !waitUntil { voice.phase == VoiceStore.Phase.CONNECTED }) return
+        if (micGranted()) room.setMic(true) else room.notice = MIC_REFUSED
+    }
+
+    private suspend fun micGranted(): Boolean {
+        if (voice.hasMicPermission) return true
+        val ask = handoffAskMic
+        return withTimeoutOrNull(60_000) {
+            suspendCancellableCoroutine { c -> ask { ok -> if (c.isActive) c.resume(ok) } }
+        } ?: false
+    }
+
+    /** Polls (the stores are Compose state, not flows) for up to 20 s. */
+    private suspend fun waitUntil(ok: () -> Boolean): Boolean {
+        repeat(100) { if (ok()) return true; delay(200) }
+        return ok()
+    }
+
     /** Jump to a message (from a notification tap) and highlight it briefly. */
     fun reveal(id: Long) {
         highlightId = id
@@ -595,6 +681,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     companion object {
         /** How long the stream outlives ON_STOP (see [pause]). */
         const val PAUSE_GRACE_MS = 45_000L
+        private const val MIC_REFUSED = "マイクを使えません（設定でマイクを許可してください）"
 
         /** Same rule as reconcileChat in src/lib/chat-optimistic.ts: a pending row is
          *  replaced only by the same author's stored message with its clientId. */

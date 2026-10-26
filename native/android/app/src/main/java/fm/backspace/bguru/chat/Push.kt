@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -39,13 +40,18 @@ object Push {
     const val EXTRA_DM_PEER_ID = "dm_peer_id"
     const val EXTRA_DM_PEER_NAME = "dm_peer_name"
     const val EXTRA_OFFKAI = "offkai"
-    private const val CH_DM = "dm"
-    private const val CH_MENTION = "mention"
-    private const val CH_CHAT = "chat"
-    private const val CH_REPLY = "reply"
+    /** voice_handoff tap: the target (offkai / voice / room) and whether the mic goes on. */
+    const val EXTRA_HANDOFF = "voice_handoff"
+    const val EXTRA_HANDOFF_MIC = "voice_handoff_mic"
+    // (Not private: ReadSync tells the notifications apart by channel.)
+    const val CH_DM = "dm"
+    const val CH_MENTION = "mention"
+    const val CH_CHAT = "chat"
+    const val CH_REPLY = "reply"
     private const val CH_TIMELINE = "timeline"
-    private const val CH_SHOGI = "shogi"
-    private const val CH_OFFKAI = "offkai"
+    const val CH_SHOGI = "shogi"
+    const val CH_OFFKAI = "offkai"
+    private const val CH_HANDOFF = "voice_handoff"
     /** All "new messages" pushes share one rolling notification. */
     private const val NEW_MESSAGES_ID = 1
     private const val PREFS = "push"
@@ -77,6 +83,7 @@ object Push {
             NotificationChannel(CH_SHOGI, "将棋", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "対局の申し込みと、あなたの番になったとき" },
             NotificationChannel(CH_DM, "DM", NotificationManager.IMPORTANCE_HIGH).apply { description = "あなた宛ての DM（1 対 1）" },
             NotificationChannel(CH_OFFKAI, "オフ会", NotificationManager.IMPORTANCE_DEFAULT).apply { description = "オフ会が始まったとき（1 回だけ）" },
+            NotificationChannel(CH_HANDOFF, "音声をこの端末で続ける", NotificationManager.IMPORTANCE_HIGH).apply { description = "Mac・Web で「スマホで続ける」を押したとき" },
         ))
     }
 
@@ -101,11 +108,11 @@ object Push {
             scope.launch {
                 val p = prefs(app)
                 val mode = notifyMode(app); val quiet = quietHours(app); val timeline = notifyTimeline(app)
-                val sig = PushContent.registrationSignature(t, mode, quiet, timeline, api.token, shogi = NOTIFY_SHOGI)
+                val sig = PushContent.registrationSignature(t, mode, quiet, timeline, api.token, shogi = NOTIFY_SHOGI, sync = NOTIFY_SYNC)
                 val now = System.currentTimeMillis()
                 if (p.getString("registered", null) == sig && now - p.getLong("registeredAt", 0L) in 0 until REREGISTER_MS) return@launch
                 p.edit().putString("fcmToken", t).apply()
-                runCatching { api.registerPush(t, mode, quiet, timeline, notifyShogi = NOTIFY_SHOGI) }
+                runCatching { api.registerPush(t, mode, quiet, timeline, notifyShogi = NOTIFY_SHOGI, notifySync = NOTIFY_SYNC) }
                     .onSuccess { p.edit().putString("registered", sig).putLong("registeredAt", now).apply() }
             }
         }
@@ -114,6 +121,8 @@ object Push {
     private const val REREGISTER_MS = 7L * 24 * 60 * 60 * 1000
     /** This app shows ☗ 将棋 pushes (the server sends them only to devices that say so). */
     private const val NOTIFY_SHOGI = true
+    /** This app knows read_sync and voice_handoff (docs/device-sync-spec.md): never shown as a plain notification. */
+    private const val NOTIFY_SYNC = true
 
 
     /** Sign-out: stop pushes to this device (the token is revoked right after,
@@ -149,6 +158,11 @@ object Push {
 
     fun show(context: Context, data: Map<String, String>) {
         val kind = data["kind"] ?: return
+        // Read on another device: cancel, never show (first — it must not fall through to a notification).
+        if (kind == ReadSync.KIND) { ReadSync.parse(data)?.let { readSync(context, it) }; return }
+        if (kind == VoiceHandoff.KIND) { showHandoff(context, data); return }
+        // A kind this version does not know (a newer server): nothing, rather than a generic notification.
+        if (!PushContent.isKnown(kind)) return
         if (PushContent.isShogi(kind)) { showShogi(context, kind, data["game_id"]?.toLongOrNull() ?: return); return }
         if (kind == PushContent.DM) { showDM(context, data["dm_id"]?.toLongOrNull(), data["peer_id"]); return }
         if (kind == PushContent.OFFKAI_START) { showOffkai(context, data["event_id"]?.toLongOrNull() ?: 0L); return }
@@ -210,6 +224,7 @@ object Push {
             .setContentIntent(tap)
             .setAutoCancel(true)
             .setGroup(if (kind == PushContent.TIMELINE_NEW) "timeline" else "chat")
+            .addExtras(syncExtras(kind, if (kind == "chat_mention" || kind == "chat_new") messageId else postId))
             .setCategory(if (kind == PushContent.TIMELINE_NEW) NotificationCompat.CATEGORY_SOCIAL else NotificationCompat.CATEGORY_MESSAGE)
             // Lock screen: the generic text only (the message shows once unlocked).
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
@@ -250,6 +265,7 @@ object Push {
             .setContentIntent(PendingIntent.getActivity(context, notifId, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_EVENT)
+            .addExtras(syncExtras(PushContent.OFFKAI_START, eventId))
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < 33) {
             NotificationManagerCompat.from(context).notify(notifId, b.build())
@@ -282,6 +298,7 @@ object Push {
             .setContentIntent(tap)
             .setAutoCancel(true)
             .setGroup("shogi")
+            .addExtras(syncExtras(kind, gameId))
             .setCategory(NotificationCompat.CATEGORY_SOCIAL)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(
@@ -327,6 +344,7 @@ object Push {
             .setContentIntent(tap)
             .setAutoCancel(true)
             .setGroup("dm")
+            .addExtras(syncExtras(PushContent.DM, messageId, peerId))
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             // Lock screen: the generic text only.
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
@@ -338,6 +356,59 @@ object Push {
                     .setContentText(PushContent.publicText(PushContent.DM))
                     .build()
             )
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < 33) {
+            NotificationManagerCompat.from(context).notify(notifId, b.build())
+        }
+    }
+
+    /** What a later read_sync matches this notification by (ReadSync.Shown). */
+    private fun syncExtras(kind: String, id: Long?, peerId: String? = null) = Bundle().apply {
+        putString(ReadSync.EXTRA_KIND, kind)
+        if (id != null && id > 0) putLong(ReadSync.EXTRA_ID, id)
+        if (peerId != null) putString(ReadSync.EXTRA_PEER, peerId)
+    }
+
+    /** read_sync: the notifications for what was read on another device go. */
+    private fun readSync(context: Context, s: ReadSync.Signal) {
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        val shown = runCatching { nm.activeNotifications.toList() }.getOrDefault(emptyList()).map { sbn ->
+            val x = sbn.notification.extras
+            ReadSync.Shown(
+                id = sbn.id,
+                channel = sbn.notification.channelId,
+                kind = x?.getString(ReadSync.EXTRA_KIND),
+                itemId = x?.getLong(ReadSync.EXTRA_ID, 0L)?.takeIf { it > 0 },
+                peerId = x?.getString(ReadSync.EXTRA_PEER),
+            )
+        }
+        val nmc = NotificationManagerCompat.from(context)
+        ReadSync.toCancel(s, shown, NEW_MESSAGES_ID).forEach(nmc::cancel)
+    }
+
+    /** voice_handoff: 「🎧 音声をこの端末で続ける」 (sent even in quiet hours — the member pressed it). A tap opens
+     *  the chat at that feature and joins its audio (MainActivity → ChatStore.continueVoiceHere). */
+    private fun showHandoff(context: Context, data: Map<String, String>) {
+        val target = VoiceHandoff.target(data["target"]) ?: return
+        val mic = VoiceHandoff.mic(data["mic"])
+        val open = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_HANDOFF, target.key)
+            putExtra(EXTRA_HANDOFF_MIC, mic)
+        }
+        val notifId = VoiceHandoff.NOTIFICATION_ID
+        val text = VoiceHandoff.text(target, mic)
+        val b = NotificationCompat.Builder(context, CH_HANDOFF)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(0xFF16A34A.toInt())
+            .setContentTitle(VoiceHandoff.TITLE)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setContentIntent(PendingIntent.getActivity(context, notifId, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+            .setAutoCancel(true)
+            // The server forgets it after 5 minutes.
+            .setTimeoutAfter(VoiceHandoff.EXPIRES_MS)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < 33) {
             NotificationManagerCompat.from(context).notify(notifId, b.build())
         }
@@ -373,6 +444,10 @@ object PushContent {
     const val SHOGI_TURN = "shogi_turn"
 
     fun isShogi(kind: String) = kind == SHOGI_OFFER || kind == SHOGI_TURN
+
+    /** The kinds shown as a notification here (read_sync / voice_handoff are handled before). Anything else —
+     *  a kind a newer server sends — shows nothing rather than a generic 「新着があります」. */
+    fun isKnown(kind: String) = kind in setOf("chat_mention", "chat_new", "reply", TIMELINE_NEW, SHOGI_OFFER, SHOGI_TURN, OFFKAI_START, DM)
 
     /** 🍻 オフ会が始まった (`event_id`). */
     const val OFFKAI_START = "offkai_start"
@@ -437,10 +512,11 @@ object PushContent {
 
     /** What a push registration was made with (a hash: the tokens are not stored again in
      *  clear). Push.register sends again only when this changes (or after a week). */
-    fun registrationSignature(fcmToken: String, mode: String, quiet: Boolean, timeline: Boolean, agentToken: String, shogi: Boolean = true): String {
+    fun registrationSignature(fcmToken: String, mode: String, quiet: Boolean, timeline: Boolean, agentToken: String, shogi: Boolean = true, sync: Boolean = false): String {
         val md = java.security.MessageDigest.getInstance("SHA-256")
         // notify_shogi joined later: its line changes the hash, so devices register once more.
-        md.update("$fcmToken\n$mode\n$quiet\n$timeline\n$agentToken\nshogi=$shogi".toByteArray())
+        // notify_sync too (read_sync / voice_handoff) — only when on, so `sync = false` hashes as before.
+        md.update("$fcmToken\n$mode\n$quiet\n$timeline\n$agentToken\nshogi=$shogi${if (sync) "\nsync=true" else ""}".toByteArray())
         return md.digest().joinToString("") { "%02x".format(it) }
     }
 

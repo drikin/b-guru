@@ -166,13 +166,16 @@ class ApiClient(val token: String) : PostOpsApi {
     }
 
     /** FCM registration token for this device. */
-    suspend fun registerPush(fcmToken: String, notifyMode: String, quietHours: Boolean, notifyTimeline: Boolean, notifyShogi: Boolean = true) {
+    suspend fun registerPush(fcmToken: String, notifyMode: String, quietHours: Boolean, notifyTimeline: Boolean, notifyShogi: Boolean = true, notifySync: Boolean = false) {
         send(request("POST", "/api/agent/devices/push", buildJsonObject {
             put("token", fcmToken); put("environment", "fcm"); put("platform", "android")
             put("notify_mode", notifyMode); put("quiet_hours", quietHours)
             put("notify_timeline", notifyTimeline)
             // ☗ 将棋 pushes (shogi_offer / shogi_turn) go only to apps that say they know them.
             put("notify_shogi", notifyShogi)
+            // read_sync / voice_handoff (docs/device-sync-spec.md): only to apps that know them (older Android
+            // apps would show an unknown kind as a plain notification).
+            put("notify_sync", notifySync)
         }))
     }
 

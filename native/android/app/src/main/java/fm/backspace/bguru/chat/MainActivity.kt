@@ -1,13 +1,22 @@
 package fm.backspace.bguru.chat
 
+import android.Manifest
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 
 class MainActivity : ComponentActivity() {
+    /** voice_handoff with the mic on: RECORD_AUDIO asked here (the flow runs in ChatStore, not in a screen). */
+    private var micAnswer: ((Boolean) -> Unit)? = null
+    private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        micAnswer?.invoke(granted)
+        micAnswer = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -113,6 +122,16 @@ class MainActivity : ComponentActivity() {
         intent?.getStringExtra(Push.EXTRA_DM_PEER_ID)?.takeIf { it.isNotBlank() }?.let { peer ->
             App.session(this).store?.dm?.openConversation(DMPeer(peer, intent.getStringExtra(Push.EXTRA_DM_PEER_NAME)))
             intent.removeExtra(Push.EXTRA_DM_PEER_ID)
+        }
+        // 🎧 音声をこの端末で続ける (voice_handoff): the chat at that feature, joined.
+        VoiceHandoff.target(intent?.getStringExtra(Push.EXTRA_HANDOFF))?.let { target ->
+            val mic = intent?.getBooleanExtra(Push.EXTRA_HANDOFF_MIC, false) == true
+            intent?.removeExtra(Push.EXTRA_HANDOFF)
+            App.session(this).store?.continueVoiceHere(target, mic) { answer ->
+                micAnswer?.invoke(false)
+                micAnswer = answer
+                micPermission.launch(Manifest.permission.RECORD_AUDIO)
+            }
         }
         // The jukebox's playback notification.
         if (intent?.getBooleanExtra(JukeboxService.EXTRA_OPEN_JUKEBOX, false) == true) App.session(this).jukebox?.showTab = true
