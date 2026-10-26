@@ -197,6 +197,10 @@ private struct ChatHeader: View {
                 Toggle("タイムラインの新しい投稿も通知する", isOn: $settings.notifyTimeline)
                 Toggle("静かな時間（0:00〜7:00）は新着を通知しない", isOn: $settings.quietHours)
                 Toggle("Dock にも表示（未読バッジ）", isOn: $settings.showInDock)
+                Toggle("右 ⇧ を 2 回押してパネルを開閉", isOn: $settings.rightShiftDoubleTap)
+                if settings.rightShiftDoubleTap && !RightShiftDoubleTap.canMonitorGlobally {
+                    Button("　ほかのアプリが前でも使う（入力監視を許可…）") { RightShiftDoubleTap.requestGlobalAccess() }
+                }
                 Toggle("試験的：ほかのステータスバーアイコンを畳む", isOn: $settings.collapseStatusItems)
                 if settings.collapseStatusItems {
                     Toggle("　カーソルを乗せたら出す", isOn: $settings.collapseRevealOnHover)

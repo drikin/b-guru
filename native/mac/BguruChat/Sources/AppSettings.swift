@@ -124,6 +124,15 @@ final class AppSettings {
         }
     }
     @ObservationIgnored var onAIPicksChange: ((Bool) -> Void)?
+    /// 右 ⇧ を素早く 2 回押すとパネルを開閉する（ほかのアプリが前でも。それには入力監視の許可が要る）。既定はオン。
+    var rightShiftDoubleTap: Bool {
+        didSet {
+            guard rightShiftDoubleTap != oldValue else { return }
+            UserDefaults.standard.set(rightShiftDoubleTap, forKey: "rightShiftDoubleTap")
+            onRightShiftChange?(rightShiftDoubleTap)
+        }
+    }
+    @ObservationIgnored var onRightShiftChange: ((Bool) -> Void)?
 
     static let quietStartHour = 0
     static let quietEndHour = 7
@@ -147,6 +156,7 @@ final class AppSettings {
         assistantExcluded = d.stringArray(forKey: "assistantExcluded") ?? Assistant.defaultExcluded
         menuBarRunnerGPU = d.bool(forKey: "menuBarRunnerGPU")
         aiTimelinePicks = d.bool(forKey: "aiTimelinePicks")
+        rightShiftDoubleTap = d.object(forKey: "rightShiftDoubleTap") as? Bool ?? true
     }
 
     func isQuietNow(_ date: Date = Date()) -> Bool {
