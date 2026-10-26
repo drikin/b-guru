@@ -28,6 +28,8 @@
 	<string>タイムラインやチャットに付ける写真をその場で撮るときにカメラを使います。</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>ボイスルームで話すときだけマイクを使います。録音はしません。</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>オフ会のアルバムの写真を写真アプリに保存します。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

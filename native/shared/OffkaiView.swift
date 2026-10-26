@@ -407,6 +407,7 @@ private struct OffkaiAlbumView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+            OffkaiSaveBar(offkai: offkai, saver: offkai.saver)
             Divider()
             if offkai.albumLoading {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -414,6 +415,65 @@ private struct OffkaiAlbumView: View {
                 OffkaiPhotoGrid(photos: offkai.albumPhotos, offkai: offkai, empty: "写真はありません", onOpen: onOpen)
             }
         }
+    }
+}
+
+/// 「⬇ まとめて保存（N 枚）」（参加した人と管理者、写真が 1 枚以上のときだけ）→ 「12 / 40」と中止 → 結果の一言。
+private struct OffkaiSaveBar: View {
+    let offkai: OffkaiStore
+    let saver: OffkaiAlbumSaver
+
+    var body: some View {
+        let mine = saver.eventId == offkai.album?.id
+        switch mine ? saver.phase : .idle {
+        case .idle:
+            if offkai.albumCanDownload, !offkai.albumLoading, !offkai.albumPhotos.isEmpty {
+                row {
+                    Button { offkai.saveAlbum() } label: {
+                        Text("⬇ まとめて保存（\(offkai.albumPhotos.count) 枚）").font(.app(.caption, weight: .semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    #if os(iOS)
+                    Text("写真アプリへ").font(.app(.caption2)).foregroundStyle(.tertiary)
+                    #endif
+                }
+            }
+        case .preparing:
+            row { ProgressView().controlSize(.small) }
+        case let .running(done, total):
+            row {
+                ProgressView(value: Double(done), total: Double(max(total, 1))).frame(maxWidth: 140)
+                Text("\(done) / \(total)").font(.app(.caption)).monospacedDigit()
+                Button("中止") { saver.cancel() }
+                    .buttonStyle(.borderless)
+                    .font(.app(.caption))
+            }
+        case let .finished(message, folder):
+            row {
+                Text(message).font(.app(.caption)).foregroundStyle(.secondary).lineLimit(3)
+                #if os(macOS)
+                if let folder {
+                    Button("Finder で見る") { OffkaiAlbumSaver.reveal(folder) }
+                        .buttonStyle(.borderless)
+                        .font(.app(.caption))
+                }
+                #endif
+                Button { saver.dismiss() } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.borderless)
+                    .font(.app(.caption2))
+                    .accessibilityLabel("閉じる")
+            }
+        }
+    }
+
+    private func row(@ViewBuilder _ content: () -> some View) -> some View {
+        HStack(spacing: 8) {
+            content()
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
     }
 }
 

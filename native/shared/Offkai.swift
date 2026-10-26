@@ -75,6 +75,10 @@ final class OffkaiStore {
     private(set) var album: OffkaiEvent?
     private(set) var albumPhotos: [OffkaiPhoto] = []
     private(set) var albumLoading = false
+    /// この人はこのアルバムを「⬇ まとめて保存」できる（アルバムの応答の can_download: 参加した人と管理者）。
+    private(set) var albumCanDownload = false
+    /// 「⬇ まとめて保存」の進み具合（アルバムを閉じたら中止）。
+    let saver: OffkaiAlbumSaver
     private(set) var audio: Audio = .off {
         didSet { if audio == .off, oldValue != .off { readingEnded?() } } // out of the sound: stop reading (ChatStore decides)
     }
@@ -133,6 +137,7 @@ final class OffkaiStore {
 
     init(api: APIClient) {
         self.api = api
+        self.saver = OffkaiAlbumSaver(token: api.token)
     }
 
     var running: OffkaiEvent? { current.flatMap { $0.isOpen ? $0 : nil } }
@@ -180,7 +185,7 @@ final class OffkaiStore {
     /// The tab goes away; the sound goes on (stopped with 「止める」).
     func close() {
         open = false
-        album = nil
+        if album != nil { closeAlbum() }
     }
 
     // MARK: State
@@ -218,45 +223,62 @@ final class OffkaiStore {
         archiveHasMore = (s.archive ?? []).count >= 20
     }
 
-    /// All of an event's photos (oldest first), page by page.
-    private func fetchPhotos(_ eventId: Int) async -> [OffkaiPhoto]? {
-        struct Page: Decodable { var photos: [OffkaiPhoto]; var nextAfter: Int? }
+    /// All of an event's photos (oldest first), page by page, and whether I may save them all (`can_download`
+    /// of the first page; a server without it says no).
+    private func fetchPhotos(_ eventId: Int) async -> (photos: [OffkaiPhoto], canDownload: Bool)? {
+        struct Page: Decodable { var photos: [OffkaiPhoto]; var nextAfter: Int?; var canDownload: Bool? }
         var out: [OffkaiPhoto] = []
+        var can: Bool?
         var after: Int?
         for _ in 0..<20 {
             var q = [URLQueryItem(name: "limit", value: "200")]
             if let after { q.append(URLQueryItem(name: "after", value: String(after))) }
             let r = await api.minigameRaw("GET", path: "\(path)/\(eventId)/photos", query: q)
-            guard r.0 == 200, let p = try? Self.decoder.decode(Page.self, from: r.1) else { return out.isEmpty ? nil : out }
+            guard r.0 == 200, let p = try? Self.decoder.decode(Page.self, from: r.1) else {
+                return out.isEmpty ? nil : (out, can ?? false)
+            }
             out += p.photos
+            if can == nil { can = p.canDownload ?? false }
             guard let n = p.nextAfter else { break }
             after = n
         }
-        return out
+        return (out, can ?? false)
     }
 
     private func loadPhotos() async {
-        guard let e = running, !offline, let list = await fetchPhotos(e.id), running?.id == e.id else { return }
+        guard let e = running, !offline, let list = await fetchPhotos(e.id)?.photos, running?.id == e.id else { return }
         photos = list
     }
 
     func openAlbum(_ e: OffkaiEvent) {
         album = e
         albumPhotos = []
+        albumCanDownload = false
         if offline { albumPhotos = demoAlbums[e.id] ?? []; return }
         albumLoading = true
         Task {
-            let list = await fetchPhotos(e.id)
+            let got = await fetchPhotos(e.id)
             guard album?.id == e.id else { return }
             albumLoading = false
-            albumPhotos = list ?? []
-            if list == nil { notice = "写真を読み込めませんでした" }
+            albumPhotos = got?.photos ?? []
+            albumCanDownload = got?.canDownload ?? false
+            if got == nil { notice = "写真を読み込めませんでした" }
         }
     }
 
     func closeAlbum() {
         album = nil
         albumPhotos = []
+        albumCanDownload = false
+        // 保存の途中なら止める（進み具合を見せる場所が無くなる）。結果の一言も閉じる。
+        saver.cancel()
+        saver.dismiss()
+    }
+
+    /// 「⬇ まとめて保存」: 開いているアルバムの写真を全部（古い順）。
+    func saveAlbum() {
+        guard let e = album, albumCanDownload, !albumPhotos.isEmpty else { return }
+        saver.start(event: e, photos: albumPhotos)
     }
 
     /// The stream's `event: offkai` ({ action, event?, event_id?, photo?, photo_id?, listeners? }).
