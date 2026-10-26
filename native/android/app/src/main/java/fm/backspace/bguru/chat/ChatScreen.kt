@@ -102,6 +102,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -299,7 +301,14 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             TopAppBar(
                 title = { if (tabSwitch != null) tabSwitch() else Text("B-guru チャット", maxLines = 1) },
                 navigationIcon = { StatusBadge(store) },
-                actions = { DMHeaderButton(store.dm); ChatMenu(onSignOut) },
+                actions = {
+                    // 🔈 読み上げ: switched in the menu (no room in the header of a narrow phone); while on, 🔈 here turns it off.
+                    if (store.readAloud) IconButton(onClick = { store.changeReadAloud(false) }) {
+                        Text("🔈", fontSize = 18.sp, modifier = Modifier.semantics { contentDescription = "読み上げ中（タップで止める）" })
+                    }
+                    DMHeaderButton(store.dm)
+                    ChatMenu(onSignOut, readAloud = store.readAloud, onReadAloud = store::changeReadAloud)
+                },
             )
         },
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0),
@@ -579,7 +588,7 @@ private fun StatusBadge(store: ChatStore) {
 }
 
 @Composable
-private fun ChatMenu(onSignOut: () -> Unit) {
+private fun ChatMenu(onSignOut: () -> Unit, readAloud: Boolean, onReadAloud: (Boolean) -> Unit) {
     val context = LocalContext.current
     var open by remember { mutableStateOf(false) }
     var notifyAll by remember { mutableStateOf(Push.notifyMode(context) == "all") }
@@ -611,6 +620,17 @@ private fun ChatMenu(onSignOut: () -> Unit) {
             },
             leadingIcon = { if (timeline) Icon(Icons.Default.Check, null) else Spacer(Modifier.size(24.dp)) },
             onClick = { timeline = !timeline; Push.setSettings(context, if (notifyAll) "all" else "mentions", quiet, timeline) },
+        )
+        HorizontalDivider()
+        DropdownMenuItem(
+            text = {
+                Column {
+                    Text("🔈 読み上げ")
+                    Text("届いた発言を声で読む（この端末だけ・アプリが前にあるあいだ）", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            leadingIcon = { if (readAloud) Icon(Icons.Default.Check, null) else Spacer(Modifier.size(24.dp)) },
+            onClick = { open = false; onReadAloud(!readAloud) },
         )
         HorizontalDivider()
         DropdownMenuItem(text = { Text("B-guru をブラウザで開く") }, onClick = {

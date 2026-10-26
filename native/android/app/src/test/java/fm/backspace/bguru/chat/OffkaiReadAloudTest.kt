@@ -44,6 +44,34 @@ class OffkaiReadAloudTest {
         assertEquals("mazzoさん、二軒目 リンク", OffkaiReadAloud.speech(msg("二軒目\nhttps://maps.example/x", images = listOf("/api/media/a.jpg", "/api/media/b.jpg"))))
     }
 
+    @Test fun callNames() {
+        fun c(n: String?) = OffkaiReadAloud.callName(n)
+        assertEquals("ドリキンさん", c("ドリキン"))
+        assertEquals("山田太郎さん", c("山田太郎（Backspace）"))
+        assertEquals("koh_aokiさん", c("@koh_aoki")) // _ is not a separator
+        assertEquals("Kohさん", c("Koh Aoki"))
+        assertEquals("とても長い名さん", c("とても長い名前のメンバーです")) // over 8 → first 6
+        assertEquals("たなかさん", c("たなかさん")) // an honorific already
+        assertEquals("🍺🍺さん", c("🍺🍺")) // no letters → the whole name (step 5)
+        assertEquals("ゆうさん", c("ゆう｜散財部"))
+        assertEquals("abcdefghさん", c("abcdefgh")) // 8 is kept
+        assertEquals("まさ先生", c("【公式】まさ先生"))
+        assertEquals("ケンさん", c("🍻 ケン"))
+        assertEquals("こうさん", c("＠こう　(仮)"))
+        assertNull(c("  "))
+        assertNull(c(null))
+    }
+
+    @Test fun sameAuthorLeavesTheNameOut() {
+        assertTrue(OffkaiReadAloud.omitsName("u1", 1_000L, "u1", 61_000L))
+        assertFalse(OffkaiReadAloud.omitsName("u1", 1_000L, "u1", 61_001L)) // over 60 s
+        assertFalse(OffkaiReadAloud.omitsName("u2", 1_000L, "u1", 2_000L))
+        assertFalse(OffkaiReadAloud.omitsName(null, 1_000L, null, 2_000L))
+        assertEquals("二杯目", OffkaiReadAloud.speech(msg("二杯目"), omitName = true))
+        assertEquals("写真です", OffkaiReadAloud.speech(msg("", images = listOf("/api/media/a.jpg")), omitName = true))
+        assertEquals("山田太郎さんが写真を送りました", OffkaiReadAloud.speech(msg("", name = "山田太郎（Backspace）", images = listOf("/api/media/a.jpg"))))
+    }
+
     @Test fun watchdog() {
         assertEquals(5_000L + 3 * 200L, OffkaiReadAloud.watchdogMs("あいう"))
         assertEquals(5_000L + 200L, OffkaiReadAloud.watchdogMs("🍻"))

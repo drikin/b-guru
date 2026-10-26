@@ -26,6 +26,25 @@ import java.util.UUID
 class ChatStore(val api: ApiClient, app: android.content.Context) {
     enum class Connection { CONNECTING, LIVE, OFFLINE }
 
+    /** 🔈 読み上げ (docs/offkai-spec.md「チャット欄の読み上げ」): one text-to-speech queue for the chat's own switch
+     *  and 🍻's, so a message is read once whichever applies. */
+    private val reader = ChatReader(app.applicationContext) { msg -> if (offkai.listening) offkai.notice = msg else sendError = msg }
+    private val readPrefs = app.applicationContext.getSharedPreferences(OffkaiReadAloud.PREFS, android.content.Context.MODE_PRIVATE)
+    /** The chat's 「🔈 読み上げ」: every new message, 🍻 or not. This phone only, off by default. */
+    var readAloud by mutableStateOf(readPrefs.getBoolean(OffkaiReadAloud.PREF_ALL_KEY, false)); private set
+    /** Between ON_START and ON_STOP: the chat's switch reads only while the app is in front (the stream is kept
+     *  in the background only for 🍻 — battery). */
+    private var foreground = false
+    private val chatReading get() = readAloud && foreground
+
+    fun changeReadAloud(on: Boolean) {
+        readAloud = on
+        readPrefs.edit().putBoolean(OffkaiReadAloud.PREF_ALL_KEY, on).apply()
+        reader.reset()
+        // Off stops what is being read, 🍻's too; 🍻 (if on and listening) reads again from the next message.
+        if (!on) reader.stop()
+    }
+
     var rows by mutableStateOf<List<ChatRow>>(emptyList()); private set
     var unreadCount by mutableIntStateOf(0); private set
     var onlineCount by mutableIntStateOf(0); private set
@@ -60,7 +79,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     /** 📺 YouTube 共同鑑賞 — only when the server turns it on for this member (capabilities.watch). */
     val watch = WatchStore(api)
     /** 🍻 オフ会 — only when the server turns it on for this member (capabilities.offkai). */
-    val offkai = OffkaiStore(api, app.applicationContext).also { it.fallbackMe = { myUserId } }
+    val offkai: OffkaiStore = OffkaiStore(api, app.applicationContext, reader, readerWanted = { chatReading }).also { it.fallbackMe = { myUserId } }
     private val voiceApp = app.applicationContext
     /** Bumped by a voice_handoff tap: the phone pager / the wide layout shows the chat. */
     var chatRevealTick by mutableIntStateOf(0); private set
@@ -217,6 +236,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     /** On screen (ON_START): connect. Off screen the stream is closed — pushes
      *  cover the background, and an idle socket would only drain the battery. */
     fun start() {
+        foreground = true
         shogi.foreground = true
         watch.background(false)
         pauseJob?.cancel(); pauseJob = null
@@ -241,6 +261,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
      *  share sheet or a glance at another app come back to a live stream with nothing to
      *  resync. Only a real stay in the background closes it. */
     fun pause() {
+        foreground = false
+        if (!offkai.reading) reader.stop() // the chat's switch reads only in front
         shogi.foreground = false
         watch.background(true)
         watchNetwork(false)
@@ -270,6 +292,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         dm.close()
         room.close()
         offkai.close()
+        reader.stop()
         voice.close()
         scope.cancel()
     }
@@ -404,7 +427,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         // A quiet note (room comings and goings) or a ☗ game card: in the list, but no bubble, never unread.
         val quiet = m.isNotice || m.kind == "shogi"
         if (!alreadyShown && !quiet) room.onChat(m)
-        offkai.onChatArrived(m, alreadyShown) // 🍻 チャットの読み上げ (only new ones from the stream, never a reload)
+        // 🔈 読み上げ / 🍻 チャットを読み上げる: only new ones from the stream (never a reload), once whichever applies.
+        if ((chatReading || offkai.reading) && OffkaiReadAloud.shouldRead(m, alreadyShown)) reader.enqueue(m)
         if (m.isAuthor || alreadyShown || quiet) return
         if (isVisible) markReadSoon() else unreadCount += 1
     }

@@ -103,7 +103,9 @@ object OffkaiLogic {
     }
 }
 
-class OffkaiStore(private val api: ApiClient, private val app: Context) {
+/** [reader]: the chat's (shared with 「🔈 読み上げ」); [readerWanted]: the chat still reads without 🍻, so
+ *  leaving the 🍻 audio must not stop it. */
+class OffkaiStore(private val api: ApiClient, private val app: Context, private val reader: ChatReader, private val readerWanted: () -> Boolean) {
     enum class Phase { IDLE, CONNECTING, CONNECTED, RECONNECTING }
 
     var enabled by mutableStateOf(false); private set
@@ -137,22 +139,19 @@ class OffkaiStore(private val api: ApiClient, private val app: Context) {
 
     /** 🔈 チャットを読み上げる: this phone's own switch (kept on the phone, on by default). */
     var readChat by mutableStateOf(app.getSharedPreferences(OffkaiReadAloud.PREFS, Context.MODE_PRIVATE).getBoolean(OffkaiReadAloud.PREF_KEY, true)); private set
-    private val reader = OffkaiReader(app) { notice = it }
 
     fun changeReadChat(on: Boolean) {
         readChat = on
         app.getSharedPreferences(OffkaiReadAloud.PREFS, Context.MODE_PRIVATE).edit().putBoolean(OffkaiReadAloud.PREF_KEY, on).apply()
         reader.reset()
-        if (!on) reader.stop()
+        if (!on) stopReading()
     }
 
-    /** A chat message that just arrived over the stream (ChatStore.received): read aloud while this phone is
-     *  in the 🍻 audio (listening or speaking) and its switch is on. */
-    fun onChatArrived(m: ChatMessage, alreadyShown: Boolean) {
-        if (!readChat || !running || !listening) return
-        if (!OffkaiReadAloud.shouldRead(m, alreadyShown)) return
-        OffkaiReadAloud.speech(m)?.let(reader::enqueue)
-    }
+    /** New chat messages are read for 🍻: this phone is in the 🍻 audio (listening or speaking) and its switch is on. */
+    val reading get() = readChat && running && listening
+
+    /** 🍻 no longer wants reading: stop (mid-sentence, the queue dropped) unless the chat's 「🔈 読み上げ」 still does. */
+    private fun stopReading() { if (!readerWanted()) reader.stop() }
 
     /** The GET's can_end for the current event (admins may end any). */
     private var serverCanEnd = false
@@ -283,7 +282,7 @@ class OffkaiStore(private val api: ApiClient, private val app: Context) {
         if (intoArchive) archive = listOf(e.copy(photoCount = maxOf(e.photoCount, photos.size), cover = e.cover ?: photos.firstOrNull()?.url)) +
             archive.filterNot { it.id == e.id }
         photos = emptyList()
-        reader.stop()
+        stopReading()
         stopListening()
     }
 
@@ -471,7 +470,7 @@ class OffkaiStore(private val api: ApiClient, private val app: Context) {
     fun closeAlbum() { album = null; albumPhotos = emptyList(); albumLoading = false }
 
     fun close() {
-        reader.stop()
+        stopReading()
         stopListening()
         scope.cancel()
     }
@@ -578,7 +577,7 @@ class OffkaiStore(private val api: ApiClient, private val app: Context) {
         if (r != null) { r.disconnect(); r.release() }
         phase = Phase.IDLE
         micOn = false
-        if (!keepService) reader.stop() // out of the audio (keepService: back in at once to speak)
+        if (!keepService) stopReading() // out of the audio (keepService: back in at once to speak)
         if (!keepService && !demo) VoiceService.stop(app)
     }
 
