@@ -151,6 +151,23 @@ Photo: `{ id, url, uploader: Person, caption, created_at, mine }`
 - iPhone・Mac: 決まりで縮めてもまだ長い（手順 4 で切った）名前は、端末内の Foundation Models に呼び名を頼む（「6 文字以内・敬称なし」）。返ってきた呼び名が 1〜8 文字で改行・記号だけでなければ使い、人ごとに覚える（authorId＋名前。名前が変わったら作り直す）。間に合わない・使えない端末は決まりの呼び名。外へは何も送らない。
 - Web・Android は決まりの呼び名だけ（端末内の言語モデルが無い）。
 
+### 声の選び方（2026-10-26 オーナー「もうちょっと自然な TTS」→「① 端末のいちばん良い声」）
+
+- 外へは何も送らないまま、**端末に入っている日本語の声のうち、いちばん自然なもの**を使う（今までは標準の軽い声）。
+- 既定は「自動」。自動の順: 品質（プレミアム > 拡張 > 標準）→ 名の通った自然な声（O-ren・Kyoko・Otoya・Hattori・Google・Microsoft の日本語）→ そのほか。
+  おもちゃの声（Eddy・Flo・Grandma・Grandpa・Reed・Rocko・Sandy・Shelley・Bad News などの Eloquence／ノベルティ）は自動では選ばない（選択肢には出す）。
+  - iPhone・Mac: `AVSpeechSynthesisVoice.speechVoices()` の `ja` で `quality`（.premium > .enhanced > .default）。
+  - Web: `speechSynthesis.getVoices()` の `localService` で `ja`（名前の「Premium／プレミアム」「Enhanced／拡張」で品質を見る）。
+  - Android: `TextToSpeech.voices` の日本語で `isNetworkConnectionRequired == false`、`quality` の高い順（同じなら `latency` の低い順）。
+- 選べる: 読み上げの設定に「声」（自動・端末の日本語の声の一覧。品質の印つき）と「▶ 試しに聞く」（「みなさん、こんばんは。チャットを読み上げます。」）。
+  選んだ声が消えたら自動に戻る。手元に保存（端末ごと）。
+  - 置き場所: Web は ⚙ の設定（文字サイズの近く）、Mac は ⋯ の設定、iPhone は ⚙（設定）、Android は ⋮ の「🔈 読み上げ」の近く。
+- 標準の声しか無い端末には、入れ方を一行で案内する:
+  iPhone「設定 › アクセシビリティ › 読み上げコンテンツ › 声 › 日本語 で、拡張・プレミアムの声を入れると自然になります」、
+  Mac「システム設定 › アクセシビリティ › 読み上げコンテンツ › システムの声 › 声を管理 で…」、
+  Android「設定 › 音声出力（テキスト読み上げ）› Google の音声データで日本語を入れると…」。Web は OS の声を使う旨。
+- Siri の声はアプリから使えない（Apple が開けていない）。
+
 ## アルバムをまとめて保存（2026-10-26 オーナー決定）
 
 オーナー「アルバムの写真を一括でダウンロードしたい」。選択: 全端末、**そのオフ会の参加者だけ**（参加の記録を始める）、管理者はどの会でも、全員に出す。
