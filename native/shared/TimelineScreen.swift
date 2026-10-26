@@ -678,6 +678,79 @@ struct ImageViewer: View {
     }
 }
 
+#if os(iOS)
+/// iPhone・iPad: UIScrollView のズーム（写真アプリと同じ）。指のあいだを中心に広がり、広げたら指で動かせ、
+/// ダブルタップはその場所を 2.5 倍（もう一度で元に戻す）。前は scaleEffect で、いつも真ん中しか広がらなかった
+/// （ドリキン 2026-10-27「画像の中心しか拡大できない」）。等倍のあいだの横スワイプは TabView の次の写真へ。
+private struct ZoomableImage: UIViewRepresentable {
+    let path: String
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> ZoomScrollView {
+        let host = UIHostingController(rootView: MediaImage(path: path, contentMode: .fit, maxPixel: 2560))
+        host.view.backgroundColor = .clear
+        let v = ZoomScrollView(content: host.view)
+        v.delegate = context.coordinator
+        context.coordinator.host = host
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.doubleTap(_:)))
+        tap.numberOfTapsRequired = 2
+        v.addGestureRecognizer(tap)
+        return v
+    }
+
+    func updateUIView(_ v: ZoomScrollView, context: Context) {
+        context.coordinator.host?.rootView = MediaImage(path: path, contentMode: .fit, maxPixel: 2560)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        var host: UIHostingController<MediaImage>?
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? { (scrollView as? ZoomScrollView)?.content }
+
+        @objc func doubleTap(_ g: UITapGestureRecognizer) {
+            guard let v = g.view as? ZoomScrollView else { return }
+            if v.zoomScale > 1 {
+                v.setZoomScale(1, animated: true)
+            } else {
+                let p = g.location(in: v.content)
+                let size = CGSize(width: v.bounds.width / 2.5, height: v.bounds.height / 2.5)
+                v.zoom(to: CGRect(x: p.x - size.width / 2, y: p.y - size.height / 2, width: size.width, height: size.height), animated: true)
+            }
+        }
+    }
+}
+
+/// The picture fills the scroll view at 1× (fit, letterboxed), and grows from there.
+final class ZoomScrollView: UIScrollView {
+    let content: UIView
+
+    init(content: UIView) {
+        self.content = content
+        super.init(frame: .zero)
+        minimumZoomScale = 1
+        maximumZoomScale = 5
+        showsHorizontalScrollIndicator = false
+        showsVerticalScrollIndicator = false
+        contentInsetAdjustmentBehavior = .never
+        bouncesZoom = true
+        backgroundColor = .clear
+        addSubview(content)
+    }
+
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // 等倍のあいだは画面いっぱい（回転・大きさの変化に合わせる）。広げているあいだは触らない。
+        if zoomScale == 1, content.frame.size != bounds.size {
+            content.frame = CGRect(origin: .zero, size: bounds.size)
+            contentSize = bounds.size
+        }
+    }
+}
+#else
 private struct ZoomableImage: View {
     let path: String
     @State private var scale: CGFloat = 1
@@ -694,6 +767,7 @@ private struct ZoomableImage: View {
             .onTapGesture(count: 2) { withAnimation { scale = scale > 1 ? 1 : 2.5 } }
     }
 }
+#endif
 
 #if os(macOS)
 extension Notification.Name {
