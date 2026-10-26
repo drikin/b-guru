@@ -214,6 +214,9 @@ private struct ChatHeader: View {
                 if settings.menuBarRunner {
                     Toggle("　GPU の負荷も見る", isOn: $settings.menuBarRunnerGPU)
                 }
+                if KeepAwake.shared.hasBattery { // 電池の無い Mac では出さない
+                    Toggle("🔋 ビーグルで電池の残量を見せる", isOn: $settings.menuBarBattery)
+                }
                 Toggle("メニューバーにティッカーを流す", isOn: $settings.menuBarTicker)
                 // 端末内 AI のおすすめ（使えないときは理由を 1 行）
                 let ai = AIPicks.availability()

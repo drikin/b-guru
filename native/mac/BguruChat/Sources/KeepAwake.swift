@@ -27,6 +27,8 @@ final class KeepAwake {
 
     /// 入っているか・理由が変わった（ビーグルの印・説明を描き直す）。
     @ObservationIgnored var onChange: (() -> Void)?
+    /// 電池・電源が変わった（IOPS の知らせ。🔋 ビーグルで電池の残量を見せるが同じ知らせを使う。2 つ目の見張りは作らない）。
+    @ObservationIgnored var onPowerChange: (() -> Void)?
     /// 🍻・通話・📺 の様子を見るチャット（ログインしていなければ nil）。
     @ObservationIgnored var store: ChatStore? {
         didSet { if store !== oldValue { observe(); update() } }
@@ -53,7 +55,10 @@ final class KeepAwake {
         started = true
         // 電池・電源の変化（残りの % が変わったときも来る）。登録した run loop（メイン）で呼ばれる。
         if let src = IOPSNotificationCreateRunLoopSource({ _ in
-            MainActor.assumeIsolated { KeepAwake.shared.update() }
+            MainActor.assumeIsolated {
+                KeepAwake.shared.update()
+                KeepAwake.shared.onPowerChange?()
+            }
         }, nil)?.takeRetainedValue() {
             CFRunLoopAddSource(CFRunLoopGetMain(), src, .defaultMode)
             powerSource = src
@@ -278,8 +283,15 @@ final class KeepAwake {
 
     /// 電池の様子（IOPSCopyPowerSourcesInfo）。内蔵の電池が無ければデスクトップ扱い。
     static func battery() -> KeepAwakeLogic.Battery {
+        guard let s = batteryStatus() else { return .desktop }
+        return KeepAwakeLogic.Battery(hasBattery: true, onAC: s.onAC, percent: s.percent)
+    }
+
+    /// 内蔵の電池の細かい様子（🔋 ビーグルで電池の残量を見せる）。電池が無ければ nil。
+    /// Current / Max Capacity・Power Source State・Is Charging・Time to Empty / Full Charge（分、計算中は -1）と、macOS の低電力の目安。
+    static func batteryStatus() -> BatteryBeagleLogic.Status? {
         guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
-              let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else { return .desktop }
+              let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else { return nil }
         let providing = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() as String?
         for ps in list {
             guard let d = IOPSGetPowerSourceDescription(info, ps)?.takeUnretainedValue() as? [String: Any],
@@ -289,9 +301,14 @@ final class KeepAwake {
             let max = (d[kIOPSMaxCapacityKey] as? NSNumber)?.doubleValue ?? 100
             let percent = max > 0 ? Int((cur / max * 100).rounded()) : 100
             let onAC = (d[kIOPSPowerSourceStateKey] as? String).map { $0 == kIOPSACPowerValue } ?? (providing == kIOPSACPowerValue)
-            return KeepAwakeLogic.Battery(hasBattery: true, onAC: onAC, percent: percent)
+            let warning = IOPSGetBatteryWarningLevel()
+            return BatteryBeagleLogic.Status(percent: Swift.min(Swift.max(percent, 0), 100), onAC: onAC,
+                                             isCharging: d[kIOPSIsChargingKey] as? Bool ?? false,
+                                             minutesToEmpty: (d[kIOPSTimeToEmptyKey] as? NSNumber)?.intValue,
+                                             minutesToFull: (d[kIOPSTimeToFullChargeKey] as? NSNumber)?.intValue,
+                                             lowWarning: warning == kIOPSLowBatteryWarningEarly || warning == kIOPSLowBatteryWarningFinal)
         }
-        return .desktop
+        return nil
     }
 
     // MARK: - 知らせ

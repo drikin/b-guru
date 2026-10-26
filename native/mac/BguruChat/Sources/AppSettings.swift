@@ -90,6 +90,15 @@ final class AppSettings {
         }
     }
     @ObservationIgnored var onRunnerChange: ((Bool) -> Void)?
+    /// 🔋 ビーグルで電池の残量を見せる（体の塗りが残量、⚡ 充電中、20% 以下でしょんぼり）。既定は切。電池の無い Mac では出さない。
+    var menuBarBattery: Bool {
+        didSet {
+            guard menuBarBattery != oldValue else { return }
+            UserDefaults.standard.set(menuBarBattery, forKey: "menuBarBattery")
+            onBatteryChange?(menuBarBattery)
+        }
+    }
+    @ObservationIgnored var onBatteryChange: ((Bool) -> Void)?
     /// アシスタント（試験的）：裏のウインドウの変化を端末内 AI が見て知らせる。既定は切。
     var assistant: Bool {
         didSet { guard assistant != oldValue else { return }; UserDefaults.standard.set(assistant, forKey: "assistant"); onAssistantChange?() }
@@ -181,6 +190,7 @@ final class AppSettings {
         menuBarTickerNamesOnly = d.bool(forKey: "menuBarTickerNamesOnly")
         menuBarBark = d.object(forKey: "menuBarBark") as? Bool ?? true
         menuBarRunner = d.bool(forKey: "menuBarRunner")
+        menuBarBattery = d.bool(forKey: "menuBarBattery")
         assistant = d.bool(forKey: "assistant")
         assistantAutoFront = d.bool(forKey: "assistantAutoFront")
         assistantPaused = d.bool(forKey: "assistantPaused")

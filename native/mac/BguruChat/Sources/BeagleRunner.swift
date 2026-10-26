@@ -21,15 +21,15 @@ extension BeagleIcon {
 
     /// 走るコマの数。
     static let runFrames = 4
-    private static var runCache: [String: NSImage] = [:]
+    static var runCache: [String: NSImage] = [:]
 
     /// 走るコマ（0〜3）。キャンバス・左向き・足元の基準線は通常の絵と同じ（30×17pt、足先は y=15）。
     /// 脚は描き足さず、記号の脚の部分だけを付け根から傾けて作る（胴・頭・しっぽは元のまま）。宙に浮くコマだけ犬ごと 1pt 上がる。
     /// 座標は右向きの絵の上から測った pt（犬は x 0〜22）。
     static func runImage(filled: Bool, frame k: Int) -> NSImage {
-        let key = "\(filled)-\(k)-\(awake)"
+        let key = "\(filled)-\(k)\(styleKey)"
         if let img = runCache[key] { return img }
-        let symbol = NSImage(systemSymbolName: filled ? "dog.fill" : "dog", accessibilityDescription: nil) ?? NSImage()
+        let symbol = dogSymbol(filled: filled)
         let hi = hiRes(symbol)
         let W = canvas.width
         // (前脚, 後ろ脚) の傾き（度、正 = 足先が前へ）と、体ごと上がる量。伸びる・着地・縮む（宙に浮く）・けり出す。
@@ -63,9 +63,7 @@ extension BeagleIcon {
             }
             return true
         }
-        var align = symbol.alignmentRect
-        align.size.width = W
-        let baked = bake(img, alignment: align, mark: awake)
+        let baked = bake(img, alignment: alignment, mark: awake, bolt: battery?.charging == true)
         runCache[key] = baked
         return baked
     }
@@ -79,7 +77,7 @@ extension BeagleIcon {
         align.size.width = canvas.width
         return bake(NSImage(size: canvas, flipped: true) { _ in true }, alignment: align)
     }()
-    private static var cgCache: [String: CGImage] = [:]
+    static var cgCache: [String: CGImage] = [:]
 
     /// 絵（通常・吠える・走る）を文字色（ダーク＝白、ライト＝黒）で塗った CGImage（前もって作ってキャッシュ）。
     static func tinted(_ name: String, _ img: NSImage, dark: Bool, scale: CGFloat) -> CGImage? {
@@ -306,7 +304,7 @@ final class BeagleRunner {
             name = "still-\(filled)"; img = BeagleIcon.image(filled: filled)
         }
         ov.layer?.contentsScale = scale
-        ov.layer?.contents = BeagleIcon.tinted(name + (BeagleIcon.awake ? "-awake" : ""), img, dark: dark, scale: scale)
+        ov.layer?.contents = BeagleIcon.tinted(name + BeagleIcon.styleKey, img, dark: dark, scale: scale)
         ov.alphaValue = button.appearsDisabled ? 0.5 : 1 // 接続していないときは淡く（ボタンの淡色表示と同じ）
     }
 

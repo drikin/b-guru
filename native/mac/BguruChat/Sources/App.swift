@@ -39,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var barker: BeagleBarker?
     /// 負荷に合わせてビーグルが走る。
     private var runner: BeagleRunner?
+    /// 🔋 ビーグルで見せている電池の様子（nil = 見せていない）。
+    private var batteryShown: BatteryBeagleLogic.Status?
     /// 端末内 AI のタイムラインのおすすめ。
     private let aiPicks = AIPicks()
     /// ビーグルの右の未読の数（ティッカーが流しているあいだはティッカーがタイトルを持つ）。
@@ -58,6 +60,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if CommandLine.arguments.contains("-assistantSelfTest") { exit(Assistant.selfTest() ? 0 : 1) }
         // Dev only: -doubleShiftSelfTest runs the right ⇧ double-tap detector's tests and exits (1 on failure).
         if CommandLine.arguments.contains("-doubleShiftSelfTest") { exit(DoubleTapDetector.selfTest() ? 0 : 1) }
+        // Dev only: -batteryIconShots DIR — 🔋 のビーグルの見本（残量・充電中・ライト／ダーク・走る）を PNG に書いて終わる（設定には触らない）。
+        if let i = CommandLine.arguments.firstIndex(of: "-batteryIconShots"), i + 1 < CommandLine.arguments.count {
+            for p in BeagleIcon.debugBatteryShots(outDir: CommandLine.arguments[i + 1]) { print(p) }
+            exit(0)
+        }
         // Dev only: -beagleAsk Q1 Q2 … — 🐶 Beagle's on-device answers to these questions, with the demo
         // chat and timeline as knowledge, printed to stderr (to compare prompt changes; nothing is sent).
         if let i = CommandLine.arguments.firstIndex(of: "-beagleAsk") {
@@ -89,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         setupBarker()
         setupKeepAwake()
+        setupBattery()
         updateStatusIcon(unread: 0, mentions: 0, connection: .connecting)
         if !CommandLine.arguments.contains("-selftest") { setupCollapser(); setupTicker(); setupAIPicks(); setupAssistant() }
         settings.onDockChange = { [weak self] _ in self?.applyDockSetting() }
@@ -506,6 +514,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     private func showMenu() {
         let menu = NSMenu()
+        // 🔋 の細かい値（開いたときに読み直す）
+        if settings.menuBarBattery, let b = KeepAwake.batteryStatus() {
+            let i = NSMenuItem(title: BatteryBeagleLogic.detail(b), action: nil, keyEquivalent: "")
+            i.isEnabled = false
+            menu.addItem(i)
+            menu.addItem(.separator())
+        }
         menu.addItem(withTitle: "チャットを開く  ⌃⌥B", action: #selector(openPanelAction), keyEquivalent: "").target = self
         menu.addItem(withTitle: "B-guru をブラウザで開く", action: #selector(openWeb), keyEquivalent: "").target = self
         let update = NSMenuItem(title: "アップデートを確認…", action: #selector(checkUpdates), keyEquivalent: "")
@@ -539,6 +554,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             gpu.indentationLevel = 1
             gpu.state = settings.menuBarRunnerGPU ? .on : .off
             menu.addItem(gpu)
+        }
+        if KeepAwake.shared.hasBattery { // 電池の無い Mac では出さない
+            let batt = NSMenuItem(title: "🔋 ビーグルで電池の残量を見せる", action: #selector(toggleBattery), keyEquivalent: "")
+            batt.target = self
+            batt.state = settings.menuBarBattery ? .on : .off
+            menu.addItem(batt)
         }
         let shift = NSMenuItem(title: "右 ⇧ を 2 回押してパネルを開閉", action: #selector(toggleRightShift), keyEquivalent: "")
         shift.target = self
@@ -595,6 +616,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc private func toggleBark() { settings.menuBarBark.toggle() }
     @objc private func toggleRunner() { settings.menuBarRunner.toggle() }
     @objc private func toggleRunnerGPU() { settings.menuBarRunnerGPU.toggle() }
+    @objc private func toggleBattery() { settings.menuBarBattery.toggle() }
     @objc private func toggleAIPicks() { settings.aiTimelinePicks.toggle() }
     @objc private func toggleTickerNames() { settings.menuBarTickerNamesOnly.toggle() }
     @objc private func toggleRightShift() { settings.rightShiftDoubleTap.toggle() }
@@ -627,6 +649,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard let button = statusItem?.button else { return }
         // Posture tells the state, not colour (template image stays monochrome):
         // sitting = nothing new, filled = new messages, "@" = someone called you.
+        // 🔋 を見せているあいだは体の塗りが電池の残量（新着は右の件数と「@」で分かる）。
         // 左向きのビーグル（BeagleIcon）。吠えている途中なら、終わったときにこの状態の絵に戻る。
         barker?.filled = unread > 0
         if runner?.drawsIcon == true {
@@ -647,8 +670,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let state = connection == .offline ? "、オフライン" : ""
         let detail = mentions > 0 ? "、うちメンション \(mentions) 件" : ""
         let awake = KeepAwake.shared.summary.map { "、\($0)" } ?? "" // ☕ スリープさせない（理由と終わりの時刻）
-        button.setAccessibilityLabel(unread > 0 ? "B-guru チャット、未読 \(unread) 件\(detail)\(state)\(awake)" : "B-guru チャット\(state)\(awake)")
-        button.toolTip = KeepAwake.shared.summary.map { "☕ \($0)" }
+        let battery = batteryShown.map(BatteryBeagleLogic.detail) // 🔋 残量と残り時間
+        let batt = battery.map { "、\($0)" } ?? ""
+        button.setAccessibilityLabel(unread > 0 ? "B-guru チャット、未読 \(unread) 件\(detail)\(state)\(batt)\(awake)" : "B-guru チャット\(state)\(batt)\(awake)")
+        let tips = [battery, KeepAwake.shared.summary.map { "☕ \($0)" }].compactMap { $0 }
+        button.toolTip = tips.isEmpty ? nil : tips.joined(separator: "\n")
         collapser?.beagleChanged()
         if settings.showInDock {
             NSApp.dockTile.badgeLabel = unread > 0 ? (mentions > 0 ? "@\(n)" : "\(n)") : nil
@@ -772,6 +798,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             StatusBarDiag.note("スリープさせない: \(k.summary ?? "切")")
         }
         k.start()
+    }
+
+    // MARK: - 🔋 ビーグルで電池の残量を見せる
+
+    /// 電池の変化は ☕ と同じ IOPS の知らせで受ける（定期的には起きない）。設定のオン・オフでも決め直す。
+    private func setupBattery() {
+        if CommandLine.arguments.contains("-selftest") { return }
+        settings.onBatteryChange = { [weak self] on in
+            self?.refreshBattery()
+            StatusBarDiag.note("ビーグルで電池の残量を見せる: \(on ? "オン" : "オフ")")
+        }
+        KeepAwake.shared.onPowerChange = { [weak self] in self?.refreshBattery() }
+        refreshBattery()
+    }
+
+    /// 電池の様子を読み直し、1% 変わった・充電の状態が変わったときだけ描き直す（残り時間だけの変化では描き直さない）。
+    private func refreshBattery() {
+        let s = settings.menuBarBattery ? KeepAwake.batteryStatus() : nil
+        let redraw = BatteryBeagleLogic.needsRedraw(old: batteryShown, new: s)
+        batteryShown = s
+        guard redraw else { return }
+        BeagleIcon.battery = s.map { BatteryBeagleLogic.look($0, steps: BeagleIcon.fillSteps) }
+        #if DEBUG
+        NSLog("[battery] %@", s.map(BatteryBeagleLogic.detail) ?? "見せない")
+        #endif
+        updateStatusIcon(unread: store?.unreadCount ?? 0, mentions: store?.mentionCount ?? 0, connection: store?.connection ?? .offline)
     }
 
     /// 右クリックのメニューの「☕ スリープさせない」（下に：切るまで／30 分／1 時間／2 時間／4 時間／—／画面も消さない／止める）。

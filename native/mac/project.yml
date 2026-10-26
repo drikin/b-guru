@@ -192,6 +192,7 @@ targets:
       - path: ../shared/ReadSync.swift
       - path: ../shared/ChatSpeech.swift
       - path: BguruChat/Sources/KeepAwakeLogic.swift
+      - path: BguruChat/Sources/BatteryBeagleLogic.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fm.backspace.bguru.chat.tests

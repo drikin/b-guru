@@ -13,15 +13,22 @@ import AppKit
 enum BeagleIcon {
     static let canvas = NSSize(width: 30, height: 17)
     static let dogWidth: CGFloat = 22
-    private static var cache: [String: NSImage] = [:]
+    /// 焼いた絵（電池の絵が変わったら BeagleRunner の分も含めて捨てる）。
+    static var cache: [String: NSImage] = [:]
     /// ☕ スリープさせないが入っているあいだ、顔の前の足元に小さなカップの印を描く（どの絵にも。幅・位置は変わらない）。
     static var awake = false
+    /// 🔋 ビーグルで電池の残量を見せる（nil = 見せない。いつもどおり体の塗り＝未読）。見せているあいだは未読でも体を塗らない。
+    static var battery: BatteryBeagleLogic.Look? {
+        didSet { if battery != oldValue { clearCaches() } }
+    }
+    /// キャッシュの鍵に足す今の印（☕・🔋）。
+    static var styleKey: String { (awake ? "-awake" : "") + (battery.map { "-batt\($0.key)" } ?? "") }
 
     /// `filled`: 未読あり（dog.fill）。`bark`: 0 = 通常、1〜4 = 吠えるコマ。
     static func image(filled: Bool, bark: Int = 0) -> NSImage {
-        let key = "\(filled)-\(bark)-\(awake)"
+        let key = "\(filled)-\(bark)\(styleKey)"
         if let img = cache[key] { return img }
-        let symbol = NSImage(systemSymbolName: filled ? "dog.fill" : "dog", accessibilityDescription: nil) ?? NSImage()
+        let symbol = dogSymbol(filled: filled)
         let W = canvas.width
         let k = bark
         let img = NSImage(size: canvas, flipped: true) { _ in
@@ -77,16 +84,21 @@ enum BeagleIcon {
             }
             return true
         }
-        var align = symbol.alignmentRect
-        align.size.width = W
-        let baked = bake(img, alignment: align, mark: awake) // ボタンの中の縦の置き方は記号と同じ（横はキャンバス全体）
+        let baked = bake(img, alignment: alignment, mark: awake, bolt: battery?.charging == true && k == 0) // 吠えるコマは ⚡ を出さない（「ワン」の線と重なる）
         cache[key] = baked
         return baked
     }
 
+    /// ボタンの中の置き方（縦は記号 dog と同じ、横はキャンバス全体）。電池の絵でも同じ（位置が動かないように）。
+    static var alignment: NSRect {
+        var align = (NSImage(systemSymbolName: "dog", accessibilityDescription: nil) ?? NSImage()).alignmentRect
+        align.size.width = canvas.width
+        return align
+    }
+
     /// 描き方（drawingHandler）の絵を @1x・@2x のビットマップに焼いておく（コマを差し替えるたびに描き直さない）。
-    /// `mark`: ☕ の印（スリープさせない）を足す。
-    static func bake(_ img: NSImage, alignment: NSRect, mark: Bool = false) -> NSImage {
+    /// `mark`: ☕ の印（スリープさせない）を足す。`bolt`: ⚡ の印（充電中）を足す。
+    static func bake(_ img: NSImage, alignment: NSRect, mark: Bool = false, bolt: Bool = false) -> NSImage {
         let out = NSImage(size: canvas)
         for scale in [1, 2] {
             let w = Int(canvas.width) * scale, h = Int(canvas.height) * scale
@@ -97,6 +109,7 @@ enum BeagleIcon {
             NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
             img.draw(in: NSRect(origin: .zero, size: canvas))
             if mark { drawAwakeMark() }
+            if bolt { drawChargingMark() }
             NSGraphicsContext.restoreGraphicsState()
             out.addRepresentation(rep)
         }
@@ -117,6 +130,119 @@ extension BeagleIcon {
         handle.lineWidth = 0.9
         handle.appendArc(withCenter: NSPoint(x: 4.6, y: 3.6), radius: 1.0, startAngle: -90, endAngle: 90)
         handle.stroke()
+    }
+
+    /// ⚡ の印（充電中）：顔の前の余白（左 8pt）の上の方に 4×6.6pt の稲妻。☕ のカップ（足元）とは重ならない。
+    /// 吠えるコマでは描かない（「ワン」の線が余白に出るので）。座標は焼くときのキャンバス（左下が原点、左向きの絵）。
+    fileprivate static func drawChargingMark() {
+        NSColor.black.set()
+        let p = NSBezierPath()
+        p.move(to: NSPoint(x: 4.6, y: 16.4))
+        p.line(to: NSPoint(x: 1.3, y: 12.4))
+        p.line(to: NSPoint(x: 3.0, y: 12.4))
+        p.line(to: NSPoint(x: 2.2, y: 9.8))
+        p.line(to: NSPoint(x: 5.5, y: 13.8))
+        p.line(to: NSPoint(x: 3.8, y: 13.8))
+        p.close()
+        p.fill()
+    }
+
+    /// 体の高さ（右向きの絵の上から測った pt。記号の一番上の線〜足先の線）。電池の塗りはこの間を下から満たす。
+    static let bodyTop: CGFloat = 1, bodyBottom: CGFloat = 16
+    /// 塗りの段の数（体の縦を 0.5pt ずつ = @2x の 1 画素ずつ）。
+    static let fillSteps = Int((bodyBottom - bodyTop) * 2)
+
+    /// 犬の絵（22×17pt、右向き）。いつもは記号の dog / dog.fill。電池を見せているときは、輪郭（dog）に
+    /// 残量ぶんの塗り（dog.fill を下から切り取ったもの）を重ね、しょんぼりなら頭を下げる。吠える・走るコマもこれを元に作る。
+    static func dogSymbol(filled: Bool) -> NSImage {
+        guard let b = battery else {
+            return NSImage(systemSymbolName: filled ? "dog.fill" : "dog", accessibilityDescription: nil) ?? NSImage()
+        }
+        let outline = NSImage(systemSymbolName: "dog", accessibilityDescription: nil) ?? NSImage()
+        let solid = NSImage(systemSymbolName: "dog.fill", accessibilityDescription: nil) ?? NSImage()
+        let size = NSSize(width: dogWidth, height: 17)
+        let dog = NSRect(origin: .zero, size: size)
+        // 輪郭＋塗り（塗りは残量の線から下だけ）
+        func gauge(_ ctx: CGContext) {
+            outline.draw(in: dog)
+            guard b.fillSteps > 0 else { return }
+            let line = bodyBottom - CGFloat(b.fillSteps) * (bodyBottom - bodyTop) / CGFloat(max(b.steps, 1))
+            ctx.saveGState()
+            ctx.clip(to: CGRect(x: -1, y: b.fillSteps >= b.steps ? -1 : line, width: dogWidth + 2, height: 20))
+            solid.draw(in: dog)
+            ctx.restoreGState()
+        }
+        let flat = raster { ctx in gauge(ctx) }
+        guard b.droopy else { return flat }
+        // 傾ける絵は 16 倍のビットマップから描く（記号を傾けて描くと、ぼやけたビットマップにされる）
+        return raster { ctx in
+            droop(ctx) {
+                NSGraphicsContext.current?.imageInterpolation = .high
+                flat.draw(in: dog)
+            }
+        }
+    }
+
+    /// 犬の大きさ（22×17pt、上から測る座標）の絵を 16 倍のビットマップに描く。
+    private static func raster(_ draw: @escaping (CGContext) -> Void) -> NSImage {
+        let s = 16
+        let size = NSSize(width: dogWidth, height: 17)
+        let vector = NSImage(size: size, flipped: true) { _ in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            draw(ctx)
+            return true
+        }
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width) * s, pixelsHigh: Int(size.height) * s, bitsPerSample: 8,
+                                         samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return vector }
+        rep.size = size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        vector.draw(in: NSRect(origin: .zero, size: size))
+        NSGraphicsContext.restoreGraphicsState()
+        let img = NSImage(size: size)
+        img.addRepresentation(rep)
+        return img
+    }
+
+    /// しょんぼり：首から前・上（x ≥ hx, y ≤ hy）を首の付け根を軸に少し下へ傾けて縮め（鼻先・頭の上が下がる）、しっぽ（後ろ・上の小さな出っ張り）を潰して下げる。
+    /// 吠えるときの頭の上げ方と同じ切り分けなので、境目で体とつながる。座標は右向きの絵の上から測った pt。
+    private static func droop(_ ctx: CGContext, draw: () -> Void) {
+        let hx: CGFloat = 13, hy: CGFloat = 8, tx: CGFloat = 6.6, ty: CGFloat = 6.4
+        // 頭・しっぽ以外はそのまま
+        ctx.saveGState()
+        ctx.addRect(CGRect(x: -2, y: -2, width: dogWidth + 4, height: 21))
+        ctx.addRect(CGRect(x: hx, y: -2, width: dogWidth - hx + 2, height: hy + 2))
+        ctx.addRect(CGRect(x: -2, y: -2, width: tx + 2, height: ty + 2))
+        ctx.clip(using: .evenOdd)
+        draw()
+        ctx.restoreGState()
+        // 頭：首の付け根の高さ hy を軸に縦に縮め（頭の上が下がる）、前ほど下げる（y' = hy + (y − hy)·縮み + (x − hx)·傾き）
+        ctx.saveGState()
+        ctx.clip(to: CGRect(x: hx, y: -2, width: dogWidth - hx + 2, height: hy + 2))
+        let drop = droopDrop
+        ctx.translateBy(x: 0, y: hy)
+        ctx.concatenate(CGAffineTransform(a: 1, b: drop / (dogWidth - hx), c: 0, d: (hy - 1 - droopSquash) / (hy - 1), tx: 0, ty: -hx * drop / (dogWidth - hx)))
+        ctx.translateBy(x: 0, y: -hy)
+        draw()
+        ctx.restoreGState()
+        // しっぽ：付け根の高さ ty を軸に縦に潰す
+        ctx.saveGState()
+        ctx.clip(to: CGRect(x: -2, y: -2, width: tx + 2, height: ty + 2))
+        ctx.translateBy(x: 0, y: ty)
+        ctx.scaleBy(x: 1, y: droopTail)
+        ctx.translateBy(x: 0, y: -ty)
+        draw()
+        ctx.restoreGState()
+    }
+    /// しょんぼりの量（実寸の見本で決めた。これより強いと頭の形が崩れる）：鼻先が下がる量・頭の上が下がる量（pt）・しっぽの高さの倍率。
+    private static let droopDrop: CGFloat = 2.0, droopSquash: CGFloat = 1.2, droopTail: CGFloat = 0.3
+
+    /// 焼いた絵を捨てる（🔋 の絵が変わったとき。残量ごとの絵をため込まない）。
+    static func clearCaches() {
+        cache = [:]
+        runCache = [:]
+        cgCache = [:]
     }
 
     /// 未読の数の文字（数字の幅をそろえる：1→2 などで幅が変わってビーグルが横にずれないように）。
@@ -213,3 +339,95 @@ final class BeagleBarker {
         if let onFrame { onFrame() } else { item.button?.image = BeagleIcon.image(filled: filled) }
     }
 }
+
+#if DEBUG
+extension BeagleIcon {
+    /// 開発のみ：🔋 の絵の見本を PNG に書き出す（-batteryIconShots DIR。メニューバーの実寸 @2x と、確かめやすい 4 倍の一覧）。
+    /// 残量 0・15・50・82・100%、充電中かどうか、ライト・ダーク、走る機能のオン・オフ（オンはレイヤーで描く走るコマ）。
+    /// 1 枚の中は左から：通常・☕・未読あり・吠えるコマ 2・4（走るはオフ）／走るコマ 0〜3・☕（走るはオン）。設定・UserDefaults には触らない。
+    static func debugBatteryShots(outDir: String) -> [String] {
+        let saved = (awake, battery)
+        defer { awake = saved.0; battery = saved.1 }
+        try? FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
+        let scale: CGFloat = 2
+        let cell = NSSize(width: (canvas.width + 8) * scale, height: (canvas.height + 6) * scale)
+        var written: [String] = []
+        var rows: [(String, [CGImage], Bool)] = []
+        func strip(_ name: String, dark: Bool, runner: Bool, filledRef: Bool = false) -> [CGImage] {
+            var imgs: [(String, NSImage)] = []
+            awake = false
+            if runner {
+                for f in 0..<runFrames { imgs.append(("run\(f)", runImage(filled: false, frame: f))) }
+                awake = true
+                imgs.append(("run0a", runImage(filled: false, frame: 0)))
+            } else {
+                imgs.append(("still", image(filled: filledRef)))
+                awake = true
+                imgs.append(("awake", image(filled: filledRef)))
+                awake = false
+                imgs.append(("unread", image(filled: true)))
+                imgs.append(("bark2", image(filled: false, bark: 2)))
+                imgs.append(("bark4", image(filled: false, bark: 4)))
+            }
+            awake = false
+            return imgs.compactMap { tinted("shot-\(name)-\($0.0)\(styleKey)", $0.1, dark: dark, scale: scale) }
+        }
+        func write(_ images: [CGImage], dark: Bool, to path: String, magnify: Int = 1) {
+            let w = Int(cell.width) * images.count * magnify, h = Int(cell.height) * magnify
+            guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+            ctx.setFillColor(dark ? CGColor(gray: 0.13, alpha: 1) : CGColor(gray: 0.93, alpha: 1))
+            ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            ctx.interpolationQuality = .none
+            for (i, img) in images.enumerated() {
+                let m = CGFloat(magnify)
+                ctx.draw(img, in: CGRect(x: (CGFloat(i) * cell.width + 4 * scale) * m, y: 3 * scale * m,
+                                         width: CGFloat(img.width) * m, height: CGFloat(img.height) * m))
+            }
+            guard let out = ctx.makeImage(), let data = NSBitmapImageRep(cgImage: out).representation(using: .png, properties: [:]) else { return }
+            try? data.write(to: URL(fileURLWithPath: path))
+            written.append(path)
+        }
+        for dark in [false, true] {
+            for runner in [false, true] {
+                battery = nil
+                rows.append(("off", strip("off", dark: dark, runner: runner, filledRef: false), dark))
+                for level in [0, 15, 50, 82, 100] {
+                    for charging in [false, true] {
+                        let s = BatteryBeagleLogic.Status(percent: level, onAC: charging, isCharging: charging && level < 100)
+                        battery = BatteryBeagleLogic.look(s, steps: fillSteps)
+                        let name = String(format: "battery-%03d-%@-%@-%@", level, charging ? "charging" : "battery", dark ? "dark" : "light", runner ? "runner" : "still")
+                        let imgs = strip(name, dark: dark, runner: runner)
+                        write(imgs, dark: dark, to: (outDir as NSString).appendingPathComponent(name + ".png"))
+                        rows.append((name, imgs, dark))
+                    }
+                }
+            }
+        }
+        // 一覧（4 倍、行ごと）
+        let mag = 4
+        let rowW = Int(cell.width) * 5 * mag, rowH = Int(cell.height) * mag
+        if let ctx = CGContext(data: nil, width: rowW * 2, height: rowH * (rows.count / 2), bitsPerComponent: 8, bytesPerRow: 0,
+                               space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+            ctx.interpolationQuality = .none
+            let perCol = rows.count / 2
+            for (i, row) in rows.enumerated() {
+                let col = i / perCol, r = i % perCol
+                let y = CGFloat(rowH * (perCol - 1 - r))
+                ctx.setFillColor(row.2 ? CGColor(gray: 0.13, alpha: 1) : CGColor(gray: 0.93, alpha: 1))
+                ctx.fill(CGRect(x: CGFloat(rowW * col), y: y, width: CGFloat(rowW), height: CGFloat(rowH)))
+                for (j, img) in row.1.enumerated() {
+                    ctx.draw(img, in: CGRect(x: CGFloat(rowW * col) + (CGFloat(j) * cell.width + 4 * scale) * CGFloat(mag), y: y + 3 * scale * CGFloat(mag),
+                                             width: CGFloat(img.width * mag), height: CGFloat(img.height * mag)))
+                }
+            }
+            let path = (outDir as NSString).appendingPathComponent("contact-sheet-4x.png")
+            if let out = ctx.makeImage(), let data = NSBitmapImageRep(cgImage: out).representation(using: .png, properties: [:]) {
+                try? data.write(to: URL(fileURLWithPath: path))
+                written.append(path)
+            }
+        }
+        return written
+    }
+}
+#endif
