@@ -83,7 +83,7 @@ export default function MacAppCard() {
           background: "var(--mantine-color-green-filled)",
           color: "#fff",
           fontWeight: 600,
-          fontSize: 13,
+          fontSize: "0.8125rem",
           textDecoration: "none",
         }}
       >

@@ -125,7 +125,7 @@ export function DuplicateWarning({
             onClick={() => onReplyTo(d.postId, d.authorName)}
             data-cx="duplicate-reply"
             style={{
-              fontSize: 12,
+              fontSize: "0.75rem",
               fontWeight: 600,
               color: "var(--text-green)",
               padding: "2px 0",

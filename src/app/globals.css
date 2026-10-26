@@ -119,7 +119,8 @@ body {
 
 /*
  * Prevent iOS Safari from auto-zooming when an input/textarea is focused.
- * iOS zooms any field with font-size < 16px. Force 16px on mobile devices.
+ * iOS zooms any field with font-size < 16px. Keep at least 16px on mobile, and
+ * grow with the 文字サイズ setting (rem) above that.
  * Mantine sets font-size via .mantine-Input-input (higher specificity than a
  * bare tag selector), so target that class too — same specificity + later
  * order wins even with !important.
@@ -130,7 +131,7 @@ body {
   input,
   textarea,
   select {
-    font-size: 16px !important;
+    font-size: max(16px, 1rem) !important;
   }
 }
 

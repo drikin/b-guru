@@ -1396,7 +1396,7 @@ function FeedNewBadge() {
         background: "#fa5252",
         color: "#fff",
         borderRadius: 999,
-        fontSize: 10,
+        fontSize: "0.625rem",
         fontWeight: 700,
         lineHeight: "16px",
         textAlign: "center",
@@ -1950,7 +1950,7 @@ function PostCard({
                     border: `1px solid ${clubName && !isUnsetClub ? "#4ade80" : "#d0d7de"}`,
                     background: clubName && !isUnsetClub ? "#f0fdf4" : "transparent",
                     color: clubName && !isUnsetClub ? "#15803d" : "#6b7280",
-                    fontSize: 12.5,
+                    fontSize: "0.7812rem",
                     fontWeight: 600,
                     cursor: "pointer",
                   }}
@@ -2005,7 +2005,7 @@ function PostCard({
                 border: `1px solid ${isUnsetClub ? "#d0d7de" : "#4ade80"}`,
                 background: isUnsetClub ? "transparent" : "#f0fdf4",
                 color: isUnsetClub ? "#6b7280" : "#15803d",
-                fontSize: 12.5,
+                fontSize: "0.7812rem",
                 fontWeight: 600,
               }}
             >
@@ -2383,7 +2383,7 @@ function PostCard({
             size="xs"
             variant="subtle"
             color="blue"
-            leftSection={<span style={{ fontSize: 13 }}>💬</span>}
+            leftSection={<span style={{ fontSize: "0.8125rem" }}>💬</span>}
             onClick={() => onReply(post.id, post.authorName ?? "")}
           >
             返信{post.replyCount ? ` (${post.replyCount})` : ""}
@@ -3136,7 +3136,7 @@ function ProfileView({
         variant="subtle"
         size="xs"
         onClick={onClose}
-        leftSection={<span style={{ fontSize: 12 }}>←</span>}
+        leftSection={<span style={{ fontSize: "0.75rem" }}>←</span>}
         mb="xs"
         color="gray"
       >
@@ -3208,7 +3208,7 @@ function ProfileView({
                     }
                   }}
                   style={{
-                    fontSize: 13,
+                    fontSize: "0.8125rem",
                     color: "var(--text-green)",
                     textDecoration: "none",
                     display: "inline-flex",
@@ -3317,7 +3317,7 @@ function ProfileView({
               size="xs"
               fullWidth
               onClick={onLoadMore}
-              rightSection={<span style={{ fontSize: 12 }}>↓</span>}
+              rightSection={<span style={{ fontSize: "0.75rem" }}>↓</span>}
             >
               {loading ? "読み込み中…" : "過去の投稿を読み込む"}
             </Button>
@@ -10856,11 +10856,11 @@ export default function Home() {
                     borderRadius: 8,
                     color: "var(--text-primary)",
                     textDecoration: "none",
-                    fontSize: 14,
+                    fontSize: "0.875rem",
                     minWidth: 0,
                   }}
                 >
-                  <span style={{ fontSize: 16 }}>{lk.icon || "🔗"}</span>
+                  <span style={{ fontSize: "1rem" }}>{lk.icon || "🔗"}</span>
                   <span
                     style={{
                       flex: 1,
@@ -10871,7 +10871,7 @@ export default function Home() {
                   >
                     {lk.label}
                   </span>
-                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>↗</span>
+                  <span style={{ fontSize: "0.6875rem", color: "var(--text-muted)" }}>↗</span>
                 </a>
                 {isAdminAuth && (
                   <Group gap={2} wrap="nowrap" style={{ flexShrink: 0 }}>
@@ -10971,7 +10971,7 @@ export default function Home() {
                 variant="subtle"
                 size="xs"
                 color="green"
-                leftSection={<span style={{ fontSize: 16, lineHeight: 1 }}>+</span>}
+                leftSection={<span style={{ fontSize: "1rem", lineHeight: 1 }}>+</span>}
                 onClick={openAddLink}
                 style={{ justifyContent: "flex-start", marginTop: 4, fontWeight: 500 }}
               >
@@ -10992,7 +10992,7 @@ export default function Home() {
             padding: "10px 12px",
             borderRadius: 8,
             color: "var(--text-primary)",
-            fontSize: 14,
+            fontSize: "0.875rem",
             width: "100%",
           }}
         >
@@ -11026,7 +11026,7 @@ export default function Home() {
               <line x1="9" y1="20" x2="15" y2="20" />
               <line x1="12" y1="4" x2="12" y2="20" />
             </svg>
-            <span style={{ color: "var(--text-primary)", fontSize: 14, whiteSpace: "nowrap" }}>文字サイズ</span>
+            <span style={{ color: "var(--text-primary)", fontSize: "0.875rem", whiteSpace: "nowrap" }}>文字サイズ</span>
           </Group>
           <Group gap={6} wrap="nowrap" grow>
             {FONT_SIZE_OPTIONS.map((opt) => {
@@ -11047,7 +11047,7 @@ export default function Home() {
                     // 横並びが不揃いになるため、折り返しを禁止する。
                     whiteSpace: "nowrap",
                     lineHeight: 1,
-                    fontSize: 12,
+                    fontSize: "0.75rem",
                     fontWeight: active ? 700 : 500,
                     color: active ? "var(--text-on-green)" : "var(--text-secondary)",
                     background: active ? "var(--text-green)" : "var(--bg-subtle)",
@@ -11070,7 +11070,7 @@ export default function Home() {
         >
           <Group gap="sm" wrap="nowrap" align="center">
             <span style={{ lineHeight: 1 }}>👁</span>
-            <span style={{ color: "var(--text-primary)", fontSize: 14 }}>オート未読管理</span>
+            <span style={{ color: "var(--text-primary)", fontSize: "0.875rem" }}>オート未読管理</span>
           </Group>
           <Switch
             checked={autoUnreadOn}
@@ -11090,11 +11090,11 @@ export default function Home() {
             <Group gap="sm" wrap="nowrap" align="center" style={{ minWidth: 0 }}>
               <span style={{ lineHeight: 1 }}>🔔</span>
               <div style={{ minWidth: 0, lineHeight: 1.3 }}>
-                <div style={{ color: "var(--text-primary)", fontSize: 14, fontWeight: 500, whiteSpace: "nowrap" }}>
+                <div style={{ color: "var(--text-primary)", fontSize: "0.875rem", fontWeight: 500, whiteSpace: "nowrap" }}>
                   自動新着通知
                 </div>
                 {/iPad|iPhone|iPod/.test(navigator.userAgent) && !(window.matchMedia("(display-mode: standalone)").matches) && (
-                  <div style={{ color: "var(--text-muted)", fontSize: 11 }}>iOSはホーム画面に追加が必要</div>
+                  <div style={{ color: "var(--text-muted)", fontSize: "0.6875rem" }}>iOSはホーム画面に追加が必要</div>
                 )}
               </div>
             </Group>
@@ -11942,7 +11942,7 @@ export default function Home() {
                               <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
                             </svg>
                             {favoriteIds.size > 0 && (
-                              <span style={{ opacity: 0.6, fontSize: 11, fontWeight: 500 }}>
+                              <span style={{ opacity: 0.6, fontSize: "0.6875rem", fontWeight: 500 }}>
                                 {favoriteIds.size}
                               </span>
                             )}
@@ -11957,7 +11957,7 @@ export default function Home() {
                               <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
                             </svg>
                             {bookmarkIds.size > 0 && (
-                              <span style={{ opacity: 0.6, fontSize: 11, fontWeight: 500 }}>
+                              <span style={{ opacity: 0.6, fontSize: "0.6875rem", fontWeight: 500 }}>
                                 {bookmarkIds.size}
                               </span>
                             )}
@@ -11970,7 +11970,7 @@ export default function Home() {
                           <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
                             チャット
                             {onlineMembers.length > 0 && (
-                              <span style={{ opacity: 0.6, fontSize: 11, fontWeight: 500 }}>
+                              <span style={{ opacity: 0.6, fontSize: "0.6875rem", fontWeight: 500 }}>
                                 {onlineMembers.length}人在線
                               </span>
                             )}
@@ -11983,7 +11983,7 @@ export default function Home() {
                                   padding: "0 5px",
                                   background: "#e03131",
                                   color: "#fff",
-                                  fontSize: 11,
+                                  fontSize: "0.6875rem",
                                   fontWeight: 700,
                                   lineHeight: "18px",
                                   textAlign: "center",
@@ -12182,7 +12182,7 @@ export default function Home() {
                             border: mine ? "1px solid var(--border-green)" : "1px solid transparent",
                             borderRadius: mine ? "14px 14px 2px 14px" : "14px 14px 14px 2px",
                             padding: emojiOnly ? "2px 8px" : "6px 10px",
-                            fontSize: emojiOnly ? 38 : 13,
+                            fontSize: emojiOnly ? 38 : "0.8125rem",
                             lineHeight: emojiOnly ? 1.15 : 1.45,
                             whiteSpace: "pre-wrap" as const,
                             wordBreak: "break-word",
@@ -12322,10 +12322,10 @@ export default function Home() {
                                         {m.failed && (
                                           <>
                                             <Text size="xs" c="red.7">送信できませんでした</Text>
-                                            <UnstyledButton onClick={() => retryChat(m)} style={{ fontSize: 12, color: "var(--mantine-color-green-7)" }}>
+                                            <UnstyledButton onClick={() => retryChat(m)} style={{ fontSize: "0.75rem", color: "var(--mantine-color-green-7)" }}>
                                               再送
                                             </UnstyledButton>
-                                            <UnstyledButton onClick={() => discardChat(m)} style={{ fontSize: 12, color: "var(--mantine-color-dimmed)" }}>
+                                            <UnstyledButton onClick={() => discardChat(m)} style={{ fontSize: "0.75rem", color: "var(--mantine-color-dimmed)" }}>
                                               取り消す
                                             </UnstyledButton>
                                           </>
@@ -12779,7 +12779,7 @@ export default function Home() {
                     variant="subtle"
                     size="xs"
                     onClick={closeThread}
-                    leftSection={<span style={{ fontSize: 12 }}>←</span>}
+                    leftSection={<span style={{ fontSize: "0.75rem" }}>←</span>}
                     mb="xs"
                     color="gray"
                   >
@@ -13113,7 +13113,7 @@ export default function Home() {
                         size="xs"
                         fullWidth
                         onClick={loadMoreFeed}
-                        rightSection={<span style={{ fontSize: 12 }}>↓</span>}
+                        rightSection={<span style={{ fontSize: "0.75rem" }}>↓</span>}
                       >
                         過去の投稿を読み込む
                       </Button>
@@ -13415,7 +13415,7 @@ export default function Home() {
                       📮 ドリニュース
                     </Title>
                     {dnIsDrikin && (
-                      <Button size="sm" color="green" onClick={dnStartNew} leftSection={<span style={{ fontSize: 16 }}>＋</span>}>
+                      <Button size="sm" color="green" onClick={dnStartNew} leftSection={<span style={{ fontSize: "1rem" }}>＋</span>}>
                         新規作成
                       </Button>
                     )}
@@ -13622,7 +13622,7 @@ export default function Home() {
                   transform: "translateX(-50%)",
                   zIndex: 10000,
                   color: "rgba(255,255,255,0.85)",
-                  fontSize: 14,
+                  fontSize: "0.875rem",
                   pointerEvents: "none",
                   userSelect: "none",
                 }}
@@ -14376,7 +14376,7 @@ export default function Home() {
             color: "#fff",
             padding: "8px 12px",
             borderRadius: 8,
-            fontSize: 12,
+            fontSize: "0.75rem",
             lineHeight: 1.4,
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
             cursor: "pointer",
@@ -14464,7 +14464,7 @@ export default function Home() {
         }
         .bguru-bark-caption {
           margin-top: 14px;
-          font-size: 14px;
+          font-size: 0.875rem;
           font-weight: 600;
           color: var(--text-body);
           background: var(--bg-surface);
@@ -14526,7 +14526,7 @@ function ClubNavRow({
         width: "100%",
         padding: "7px 12px",
         borderRadius: 8,
-        fontSize: 13.5,
+        fontSize: "0.8438rem",
         color: "var(--text-primary)",
         background: active ? "var(--bg-tinted)" : "transparent",
         fontWeight: active ? 600 : 500,
@@ -14585,7 +14585,7 @@ function ClubNavRow({
           aria-hidden
           title={trend === "up" ? "直近24hの投稿数が前日より増加" : "直近24hの投稿数が前日より減少"}
           style={{
-            fontSize: 12,
+            fontSize: "0.75rem",
             lineHeight: 1,
             color: trend === "up" ? "#2f9e44" : "#e03131",
             flexShrink: 0,
@@ -14679,7 +14679,7 @@ function ClubChip({
         flexShrink: 0,
         padding: "5px 11px",
         borderRadius: 999,
-        fontSize: 13,
+        fontSize: "0.8125rem",
         lineHeight: 1.2,
         whiteSpace: "nowrap",
         border: `1px solid ${active ? "transparent" : "var(--border-default)"}`,
@@ -14694,7 +14694,7 @@ function ClubChip({
         <span
           aria-hidden
           style={{
-            fontSize: 11,
+            fontSize: "0.6875rem",
             opacity: active ? 0.85 : 0.55,
             fontVariantNumeric: "tabular-nums",
           }}

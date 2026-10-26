@@ -307,7 +307,7 @@ function AllMembers({ s, onReport, onBans }: { s: VoiceSnapshot; onBans: () => v
             padding: "0 8px",
             borderRadius: 14,
             background: "var(--bg-subtle)",
-            fontSize: 12,
+            fontSize: "0.75rem",
             fontWeight: 600,
             fontVariantNumeric: "tabular-nums",
           }}

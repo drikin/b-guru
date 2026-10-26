@@ -264,7 +264,7 @@ function HearPopover({ s, me, speaking }: { s: RoomSnapshot; me: RoomMember | nu
         ) : (
           <div style={{ display: "grid", gap: 6 }}>
             {list.map(({ m, v }) => (
-              <div key={m.userId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+              <div key={m.userId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.75rem" }}>
                 <span style={{ width: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {speaking.has(m.userId) ? "🔊 " : ""}
                   {m.name}

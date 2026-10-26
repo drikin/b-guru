@@ -270,7 +270,7 @@ export function ReactionBar({
               gap: 5,
               padding: compact ? "4px 9px" : "5px 11px",
               borderRadius: 999,
-              fontSize: 13,
+              fontSize: "0.8125rem",
               lineHeight: 1.4,
               border: `1px solid ${r.mine ? "var(--text-green)" : "var(--border-default)"}`,
               background: r.mine ? "var(--bg-tinted)" : "transparent",
@@ -391,7 +391,7 @@ export function ReactionBar({
                     type="file"
                     accept="image/png,image/gif,image/webp,image/jpeg"
                     onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                    style={{ fontSize: 12, width: "100%" }}
+                    style={{ fontSize: "0.75rem", width: "100%" }}
                     aria-label="絵文字の画像"
                   />
                   <input
@@ -403,7 +403,7 @@ export function ReactionBar({
                       width: "100%",
                       marginTop: 6,
                       padding: "4px 8px",
-                      fontSize: 12,
+                      fontSize: "0.75rem",
                       borderRadius: 6,
                       border: "1px solid var(--border-default)",
                       background: "transparent",
@@ -420,7 +420,7 @@ export function ReactionBar({
                       onClick={submitRegister}
                       disabled={busy || !file || !name.trim()}
                       style={{
-                        fontSize: 12,
+                        fontSize: "0.75rem",
                         padding: "4px 10px",
                         borderRadius: 6,
                         background: "var(--text-green)",
@@ -435,7 +435,7 @@ export function ReactionBar({
                         setRegisterOpen(false);
                         setError(null);
                       }}
-                      style={{ fontSize: 12, padding: "4px 10px", color: "var(--text-secondary)" }}
+                      style={{ fontSize: "0.75rem", padding: "4px 10px", color: "var(--text-secondary)" }}
                     >
                       キャンセル
                     </UnstyledButton>
@@ -445,7 +445,7 @@ export function ReactionBar({
                 <UnstyledButton
                   onClick={() => setRegisterOpen(true)}
                   data-cx="emoji-register"
-                  style={{ fontSize: 12, color: "var(--text-secondary)" }}
+                  style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}
                 >
                   ＋ カスタム絵文字を登録
                 </UnstyledButton>

@@ -267,7 +267,7 @@ function DmBubble({ m }: { m: DmMessage }) {
             border: mine ? "1px solid var(--border-green, var(--mantine-color-green-4))" : "1px solid transparent",
             borderRadius: mine ? "14px 14px 2px 14px" : "14px 14px 14px 2px",
             padding: "6px 10px",
-            fontSize: 13,
+            fontSize: "0.8125rem",
             lineHeight: 1.45,
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",

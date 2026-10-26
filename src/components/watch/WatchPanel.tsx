@@ -313,7 +313,7 @@ export function WatchPanel() {
           padding: "0 6px 0 10px",
           cursor: "grab",
           userSelect: "none",
-          fontSize: 12,
+          fontSize: "0.75rem",
           fontWeight: 600,
           borderBottom: "1px solid var(--mantine-color-default-border)",
         }}
