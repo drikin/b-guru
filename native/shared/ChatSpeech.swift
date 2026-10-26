@@ -8,6 +8,54 @@ import Foundation
 
 /// The words for one message, and the queue's rule — pure, so the tests can run them (BguruChatTests).
 enum ChatSpeech {
+    // MARK: 声（docs/offkai-spec.md「声の選び方」）
+
+    /// One Japanese voice on this device, as the chooser sees it (`quality`: 1 標準・2 拡張・3 プレミアム).
+    struct VoiceInfo: Equatable {
+        var id: String
+        var name: String
+        var language: String
+        var quality: Int
+        var novelty: Bool
+    }
+
+    /// The chosen voice's identifier (UserDefaults; none = 自動). Per device.
+    static let voiceKey = "chatVoice"
+    static let previewText = "みなさん、こんばんは。チャットを読み上げます。"
+    private static let knownVoices: Set<String> = ["O-ren", "Kyoko", "Otoya", "Hattori"]
+
+    /// 自動: quality → a well-known natural voice → ja-JP → the list's order. Novelty voices only when nothing
+    /// else is there. A chosen voice that is gone falls back to 自動.
+    static func pickVoice(_ voices: [VoiceInfo], preferred: String?) -> VoiceInfo? {
+        let ja = voices.filter { $0.language.hasPrefix("ja") }
+        if let preferred, let hit = ja.first(where: { $0.id == preferred }) { return hit }
+        func score(_ v: VoiceInfo) -> Int {
+            v.novelty ? 0 : v.quality * 10 + (knownVoices.contains(v.name) ? 2 : 0) + (v.language == "ja-JP" ? 1 : 0)
+        }
+        var best: VoiceInfo?
+        for v in ja where best.map({ score(v) > score($0) }) ?? true { best = v }
+        return best
+    }
+
+    /// This device's Japanese voices, best first (the chooser's list).
+    static func japaneseVoices() -> [VoiceInfo] {
+        AVSpeechSynthesisVoice.speechVoices()
+            .filter { $0.language.hasPrefix("ja") }
+            .map { v in
+                VoiceInfo(id: v.identifier, name: v.name, language: v.language,
+                          quality: v.quality == .premium ? 3 : v.quality == .enhanced ? 2 : 1,
+                          novelty: v.voiceTraits.contains(.isNoveltyVoice) || v.identifier.contains("eloquence"))
+            }
+            .sorted { ($0.novelty ? 1 : 0, -$0.quality, $0.name) < ($1.novelty ? 1 : 0, -$1.quality, $1.name) }
+    }
+
+    /// The voice to read with now (the chosen one, else 自動). nil: no Japanese voice (the system default).
+    static func currentVoice() -> AVSpeechSynthesisVoice? {
+        let chosen = UserDefaults.standard.string(forKey: voiceKey)
+        guard let v = pickVoice(japaneseVoices(), preferred: chosen) else { return AVSpeechSynthesisVoice(language: "ja-JP") }
+        return AVSpeechSynthesisVoice(identifier: v.id)
+    }
+
     /// Longer bodies are cut here and end in 「、以下略」.
     static let maxBodyLength = 80
     /// A message that waited this long is not read (do not read an old conversation on and on).
@@ -167,7 +215,6 @@ final class ChatSpeaker: NSObject {
     /// Moves on if the synthesizer never reports the current line finished (ChatSpeech.watchdog).
     private var watchdog: Task<Void, Never>?
     private var synth: AVSpeechSynthesizer?
-    private let voice = AVSpeechSynthesisVoice(language: "ja-JP")
 
     /// Waiting or being read now.
     var isBusy: Bool { current != nil || preparing || !queue.isEmpty }
@@ -244,7 +291,7 @@ final class ChatSpeaker: NSObject {
         if let id = item.authorId { lastAuthor = (id, Date()) } else { lastAuthor = nil }
         let s = synth ?? makeSynth()
         let u = AVSpeechUtterance(string: text)
-        u.voice = voice
+        u.voice = ChatSpeech.currentVoice() // 選んだ声・自動（その時点で入っている声。設定の変更もすぐ効く）
         current = u
         #if DEBUG
         NSLog("[offkai-read] speak (%d waiting): %@", queue.count, text)

@@ -167,6 +167,7 @@ struct ChatScreen: View {
                 Toggle("タイムラインの新着", isOn: $notifyTimeline)
                     .onChange(of: notifyTimeline) { _, on in PushCenter.shared.notifyTimeline = on }
             }
+            ChatVoiceMenu()
             Button("B-guru をブラウザで開く", systemImage: "safari") { Platform.open(APIClient.baseURL) }
             Button("ログアウト", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive, action: onSignOut)
         } label: {

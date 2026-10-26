@@ -191,6 +191,7 @@ private struct ChatHeader: View {
                         Toggle("\(Int((s * 100).rounded()))%", isOn: Binding(get: { TextScale.shared.scale == s }, set: { if $0 { TextScale.shared.set(s) } }))
                     }
                 }
+                ChatVoiceMenu()
                 Divider()
                 Picker("通知", selection: $settings.notifyMode) {
                     ForEach(AppSettings.NotifyMode.allCases) { Text($0.label).tag($0) }

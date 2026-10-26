@@ -127,10 +127,99 @@ function active(): boolean {
 /** 直前に読む順に並べた発言の人と時刻（同じ人が続いたら名前を省く）。 */
 let lastAuthor: { id: string; at: number } | null = null;
 
-/** 端末の中の日本語の声だけ（ネットの声は文を外へ送るので使わない）。まだ一覧が取れていなければ null。 */
+// ---- 声（docs/offkai-spec.md「声の選び方」）。端末の中の日本語の声だけ（ネットの声は文を外へ送るので使わない） ----
+
+type VoiceLike = { name: string; lang: string; localService: boolean };
+
+/** おもちゃの声（macOS の Eloquence・ノベルティ）。自動では選ばない（一覧には出す）。 */
+const NOVELTY = /^(Eddy|Flo|Grandma|Grandpa|Reed|Rocko|Sandy|Shelley|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Albert|Fred|Junior|Ralph|Kathy)\b/i;
+/** 名の通った自然な日本語の声（同じ品質なら先に）。 */
+const KNOWN = /\b(O-?ren|Kyoko|Otoya|Hattori|Haruka|Ayumi|Ichiro|Sayaka|Nanami|Keita)\b|Google|Microsoft/i;
+
+/** 声の品質（名前から。3 プレミアム・2 拡張・1 標準）。 */
+export function voiceQuality(name: string): number {
+  if (/premium|プレミアム/i.test(name)) return 3;
+  if (/enhanced|拡張|neural|natural/i.test(name)) return 2;
+  return 1;
+}
+
+export function isJapaneseLocal(v: VoiceLike): boolean {
+  return v.localService && /^ja([-_]|$)/i.test(v.lang);
+}
+
+/** 自動で選ぶ声: 品質 → 名の通った声 → ja-JP → 並び順。おもちゃの声は選ばない（それしか無ければそれ）。 */
+export function pickVoice<V extends VoiceLike>(voices: V[], preferred: string | null): V | null {
+  const ja = voices.filter(isJapaneseLocal);
+  if (preferred) {
+    const hit = ja.find((v) => v.name === preferred);
+    if (hit) return hit; // 選んだ声が消えたら自動に戻る
+  }
+  const score = (v: V) => (NOVELTY.test(v.name) ? 0 : voiceQuality(v.name) * 10 + (KNOWN.test(v.name) ? 2 : 0) + (v.lang === "ja-JP" ? 1 : 0));
+  let best: V | null = null;
+  for (const v of ja) if (!best || score(v) > score(best)) best = v;
+  return best;
+}
+
+const LS_VOICE_KEY = "bguru-tts-voice";
+let preferredVoice: string | null = null;
+try {
+  preferredVoice = localStorage.getItem(LS_VOICE_KEY) || null;
+} catch {
+  /* 既定の自動 */
+}
+/** 選んだ声の名前（null = 自動）。 */
+export function ttsVoiceName(): string | null {
+  return preferredVoice;
+}
+export function setTtsVoiceName(name: string | null): void {
+  preferredVoice = name || null;
+  try {
+    if (preferredVoice) localStorage.setItem(LS_VOICE_KEY, preferredVoice);
+    else localStorage.removeItem(LS_VOICE_KEY);
+  } catch {
+    /* 覚えられないだけ */
+  }
+  for (const l of subs) l();
+}
+
+/** 選択肢: この端末の日本語の声（品質の高い順）。 */
+export function japaneseVoices(): { name: string; quality: number; novelty: boolean }[] {
+  if (!supported()) return [];
+  return window.speechSynthesis
+    .getVoices()
+    .filter(isJapaneseLocal)
+    .map((v) => ({ name: v.name, quality: voiceQuality(v.name), novelty: NOVELTY.test(v.name) }))
+    .sort((a, b) => Number(a.novelty) - Number(b.novelty) || b.quality - a.quality || a.name.localeCompare(b.name));
+}
+
+/** 自動で選ばれる声の名前（設定の表示用）。 */
+export function autoVoiceName(): string | null {
+  return supported() ? (pickVoice(window.speechSynthesis.getVoices(), null)?.name ?? null) : null;
+}
+
+/** 声の一覧が変わった（入れた・最初に届いた）ときに呼ぶ。 */
+export function onVoicesChanged(l: () => void): () => void {
+  if (!supported()) return () => {};
+  window.speechSynthesis.addEventListener("voiceschanged", l);
+  return () => window.speechSynthesis.removeEventListener("voiceschanged", l);
+}
+
+export const PREVIEW_TEXT = "みなさん、こんばんは。チャットを読み上げます。";
+
+/** ▶ 試しに聞く（読んでいる途中のものは止める）。 */
+export function previewVoice(name: string | null): void {
+  if (!supported()) return;
+  const v = pickVoice(window.speechSynthesis.getVoices(), name);
+  if (!v) return;
+  stopAll();
+  const u = new SpeechSynthesisUtterance(PREVIEW_TEXT);
+  u.lang = "ja-JP";
+  u.voice = v;
+  window.speechSynthesis.speak(u);
+}
+
 function japaneseVoice(): SpeechSynthesisVoice | null {
-  const vs = window.speechSynthesis.getVoices();
-  return vs.find((v) => v.lang === "ja-JP" && v.localService) ?? vs.find((v) => v.lang.startsWith("ja") && v.localService) ?? null;
+  return pickVoice(window.speechSynthesis.getVoices(), preferredVoice);
 }
 
 let voicesWait = false;

@@ -76,6 +76,7 @@ import { POST_PERMALINK_ORIGIN, appendQuote, postPermalink, quoteText, splitPost
 import { splitChatUrls } from "@/lib/chat-links";
 import { netaCandidates, netaDefaultTitle } from "@/lib/neta-client";
 import MacAppCard from "@/components/MacAppCard";
+import TtsVoiceSetting from "@/components/TtsVoiceSetting";
 import AndroidAppCard from "@/components/AndroidAppCard";
 import { POLL_DURATIONS, POLL_LABEL_MAX, POLL_MAX_OPTIONS, POLL_MIN_OPTIONS, POLL_QUESTION_MAX, type PostPoll } from "@/lib/poll";
 import type { DuplicateCandidate } from "@/lib/duplicates";
@@ -11061,6 +11062,7 @@ export default function Home() {
             })}
           </Group>
         </Box>
+        <TtsVoiceSetting />
         {/* Auto unread management on/off — directly below dark mode, no separator */}
         <Group
           wrap="nowrap"

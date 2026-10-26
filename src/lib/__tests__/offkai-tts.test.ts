@@ -65,3 +65,26 @@ describe("呼び名（Swift・Android と同じ決まり）", () => {
     expect(speechText("山田太郎（Backspace）", "乾杯")).toBe("山田太郎さん、乾杯");
   });
 });
+
+describe("pickVoice（声の選び方）", () => {
+  const v = (name: string, lang = "ja-JP", localService = true) => ({ name, lang, localService });
+  it("picks the most natural local Japanese voice and skips novelty voices", async () => {
+    const { pickVoice } = await import("../offkai-tts");
+    const list = [v("Eddy (日本語（日本）)"), v("Kyoko"), v("Google 日本語", "ja-JP", false), v("Kyoko (Enhanced)"), v("Samantha", "en-US")];
+    expect(pickVoice(list, null)?.name).toBe("Kyoko (Enhanced)");
+    expect(pickVoice([...list, v("O-ren (Premium)")], null)?.name).toBe("O-ren (Premium)");
+    expect(pickVoice([v("Eddy (日本語（日本）)"), v("Kyoko")], null)?.name).toBe("Kyoko");
+    expect(pickVoice([v("Eddy (日本語（日本）)")], null)?.name).toBe("Eddy (日本語（日本）)"); // それしか無ければ
+    expect(pickVoice([v("Google 日本語", "ja-JP", false)], null)).toBeNull(); // ネットの声は使わない
+  });
+  it("uses the chosen voice, and falls back to auto when it is gone", async () => {
+    const { pickVoice } = await import("../offkai-tts");
+    const list = [v("Kyoko"), v("Kyoko (Enhanced)"), v("Flo (日本語（日本）)")];
+    expect(pickVoice(list, "Flo (日本語（日本）)")?.name).toBe("Flo (日本語（日本）)");
+    expect(pickVoice(list, "Otoya (Premium)")?.name).toBe("Kyoko (Enhanced)");
+  });
+  it("reads quality from the name", async () => {
+    const { voiceQuality } = await import("../offkai-tts");
+    expect([voiceQuality("O-ren (Premium)"), voiceQuality("Kyoko (拡張)"), voiceQuality("Kyoko")]).toEqual([3, 2, 1]);
+  });
+});

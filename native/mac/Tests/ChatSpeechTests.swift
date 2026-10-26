@@ -139,4 +139,25 @@ final class ChatSpeechTests: XCTestCase {
         XCTAssertNil(stale.index)
         XCTAssertEqual(stale.dropped, 2)
     }
+
+    // MARK: 声の選び方（docs/offkai-spec.md「声の選び方」）
+
+    private func v(_ id: String, _ name: String, q: Int = 1, novelty: Bool = false, lang: String = "ja-JP") -> ChatSpeech.VoiceInfo {
+        .init(id: id, name: name, language: lang, quality: q, novelty: novelty)
+    }
+
+    func testPickVoicePrefersQualityAndSkipsNovelty() {
+        let list = [v("eddy", "Eddy", novelty: true), v("kyoko", "Kyoko"), v("kyokoE", "Kyoko", q: 2), v("sam", "Samantha", q: 3, lang: "en-US")]
+        XCTAssertEqual(ChatSpeech.pickVoice(list, preferred: nil)?.id, "kyokoE")
+        XCTAssertEqual(ChatSpeech.pickVoice(list + [v("oren", "O-ren", q: 3)], preferred: nil)?.id, "oren")
+        XCTAssertEqual(ChatSpeech.pickVoice([v("eddy", "Eddy", novelty: true), v("kyoko", "Kyoko")], preferred: nil)?.id, "kyoko")
+        XCTAssertEqual(ChatSpeech.pickVoice([v("eddy", "Eddy", novelty: true)], preferred: nil)?.id, "eddy") // それしか無ければ
+        XCTAssertNil(ChatSpeech.pickVoice([v("sam", "Samantha", lang: "en-US")], preferred: nil))
+    }
+
+    func testPickVoiceUsesTheChosenOneUntilItIsGone() {
+        let list = [v("kyoko", "Kyoko"), v("kyokoE", "Kyoko", q: 2), v("flo", "Flo", novelty: true)]
+        XCTAssertEqual(ChatSpeech.pickVoice(list, preferred: "flo")?.id, "flo")
+        XCTAssertEqual(ChatSpeech.pickVoice(list, preferred: "gone")?.id, "kyokoE")
+    }
 }
