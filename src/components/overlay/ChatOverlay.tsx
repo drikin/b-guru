@@ -44,7 +44,7 @@ import { ShogiPanel } from "@/components/shogi/ShogiPanel";
 import { MinigamePanel } from "@/components/minigame/MinigamePanel";
 import { WatchPanel, useWatch } from "@/components/watch/WatchPanel";
 import { OffkaiPanel, OffkaiTtsToggle, useOffkai } from "@/components/offkai/OffkaiPanel";
-import { primeSpeech } from "@/lib/offkai-tts";
+import { chatTtsEnabled, primeSpeech, setChatTtsEnabled, subscribeTts } from "@/lib/offkai-tts";
 import { DmToggle } from "@/components/dm/DMPanel";
 import { RoomOverlayContent } from "@/components/RoomView";
 
@@ -204,7 +204,31 @@ export function OverlaySwitches() {
         </Tooltip>
       ))}
       <DmToggle />
+      <ChatTtsToggle />
     </div>
+  );
+}
+
+/** チャット欄の「🔈 読み上げ」（🍻 に関係なく、届いた発言を端末の声で読む。このブラウザだけ、既定はオフ）。 */
+function ChatTtsToggle() {
+  const on = useSyncExternalStore(subscribeTts, chatTtsEnabled, () => false);
+  if (typeof window !== "undefined" && !("speechSynthesis" in window)) return null;
+  return (
+    <Tooltip label={on ? "チャットの発言を読み上げています。押すと止めます" : "チャットの発言を読み上げる（この端末だけ）"} openDelay={400}>
+      <ActionIcon
+        size="md"
+        variant={on ? "filled" : "light"}
+        color="green"
+        aria-label="チャットを読み上げる"
+        aria-pressed={on}
+        data-cx="chat-tts-toggle"
+        onClick={() => setChatTtsEnabled(!on)}
+      >
+        <span aria-hidden style={{ fontSize: 15, lineHeight: 1 }}>
+          {on ? "🔈" : "🔇"}
+        </span>
+      </ActionIcon>
+    </Tooltip>
   );
 }
 

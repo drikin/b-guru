@@ -94,3 +94,24 @@ describe("読み上げの順番", () => {
     expect(spokenTexts.filter((u) => u.text).map((u) => u.text)).toEqual(["Aさん、一", "Aさん、三"]);
   });
 });
+
+describe("チャット欄の読み上げ・同じ人", () => {
+  it("🍻 に入っていなくても、チャット欄がオンなら読む。同じ人が 60 秒以内に続いたら名前を省く", async () => {
+    offkai.current = null;
+    offkai.audio = "idle";
+    const t = await load();
+    t.speakChat({ id: 1, authorId: "u1", authorName: "A", body: "一" });
+    expect(spokenTexts).toHaveLength(0); // 既定はオフ
+    t.setChatTtsEnabled(true);
+    t.speakChat({ id: 2, authorId: "u1", authorName: "A", body: "二" });
+    spokenTexts.filter((u) => u.text).at(-1)?.onend?.();
+    t.speakChat({ id: 3, authorId: "u1", authorName: "A", body: "三" });
+    vi.advanceTimersByTime(61_000);
+    spokenTexts.filter((u) => u.text).at(-1)?.onend?.();
+    t.speakChat({ id: 4, authorId: "u1", authorName: "A", body: "四" });
+    expect(spokenTexts.filter((u) => u.text).map((u) => u.text)).toEqual(["Aさん、二", "三", "Aさん、四"]);
+    t.setChatTtsEnabled(false);
+    t.speakChat({ id: 5, authorId: "u2", authorName: "B", body: "五" });
+    expect(spokenTexts.filter((u) => u.text)).toHaveLength(3);
+  });
+});

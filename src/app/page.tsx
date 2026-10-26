@@ -7128,7 +7128,8 @@ export default function Home() {
         // Club room: a speech bubble over the author on the map (📷 for photos only).
         roomChatBubble(msg.authorId, bubbleText(msg.body, msg.images?.length ?? 0));
         // 🍻 オフ会の音声に入っていれば読み上げる（自分の発言は読まない）。
-        if (!isMine && msg.kind !== "beagle_ai") speakChat(msg); // 🐶 の回答は会員の発言でなく長いので読まない
+        // チャットの読み上げ（🍻 を聞いているとき・チャット欄の 🔈 がオンのとき。自分と 🐶 の回答は読まない）。
+        if (!isMine && msg.kind !== "beagle_ai") speakChat(msg);
         if (chatViewRef.current) {
           setChatUnread(0);
           fetch("/api/chat/read", { method: "POST" }).catch(() => {});

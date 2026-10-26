@@ -1,6 +1,7 @@
-/* 🍻 オフ会: チャットの読み上げ（docs/offkai-spec.md「チャットの読み上げ」）。
- * 🍻 の音声に入っている（聞いている・話している）あいだ、届いたチャットの発言をブラウザの speechSynthesis で読む。
- * オンオフはこのブラウザだけ（localStorage、既定はオン）。サーバ・外部へは何も送らない。 */
+/* チャットの読み上げ（docs/offkai-spec.md「チャットの読み上げ」「チャット欄の読み上げ」「賢い読み方」）。
+ * 🍻 の音声に入っている（聞いている・話している）あいだ（🍻 のトグル、既定オン）、またはチャット欄の「🔈 読み上げ」が
+ * オンのあいだ（既定オフ）、届いたチャットの発言をブラウザの speechSynthesis で読む。オンオフはこのブラウザだけ。
+ * サーバ・外部へは何も送らない（端末の中の声だけ）。 */
 import { getSnapshot as getOffkai, subscribe as subscribeOffkai } from "./offkai-client";
 
 const LS_KEY = "bguru-offkai-tts";
@@ -9,21 +10,48 @@ export const MAX_CHARS = 80;
 /** 届いてからこれより古くなったものは読まない（追いつけないとき古い話を延々読まない）。 */
 export const STALE_MS = 2 * 60_000;
 
-/** 読み上げる文（純粋。テスト済み）。 */
-export function speechText(name: string | null | undefined, body: string | null | undefined, imageCount = 0): string | null {
-  const who = (name ?? "").trim();
+/** 名前のあとに「さん」を付けないもの。 */
+const HONORIFIC = /(さん|様|さま|氏|くん|君|ちゃん|先生)$/;
+/** 呼び名（「さん」付き。純粋。Swift・Android と同じ決まり — docs/offkai-spec.md「賢い読み方」）。 */
+export function callName(raw: string | null | undefined): string | null {
+  const base = (raw ?? "").replace(/\s+/g, " ").trim();
+  if (!base) return null;
+  // 1. 括弧の中を落とす  2. 先頭の @ を落として区切りで分ける  3. 文字か数字のある最初の部分
+  const s = base
+    .replace(/（[^）]*）|\([^)]*\)|【[^】]*】|\[[^\]]*\]|「[^」]*」|『[^』]*』|〔[^〕]*〕/g, " ")
+    .replace(/^[\s@＠]+/, "");
+  let name = s.split(/[\s　／/|｜・:：@＠～〜]+/).find((p) => /[\p{L}\p{N}]/u.test(p)) ?? "";
+  // 4. 長ければ先頭 6 文字  5. 何も残らなければ元の名前の先頭 6 文字
+  if (Array.from(name).length > 8) name = Array.from(name).slice(0, 6).join("");
+  if (!name) name = Array.from(base).slice(0, 6).join("").trim();
+  // 6. もう敬称で終わっていれば付けない
+  return HONORIFIC.test(name) ? name : `${name}さん`;
+}
+
+/** 読み上げる文（純粋。テスト済み）。`sameAuthor`: 直前に読んだのと同じ人（名前を省く）。 */
+export function speechText(
+  name: string | null | undefined,
+  body: string | null | undefined,
+  imageCount = 0,
+  sameAuthor = false
+): string | null {
+  const who = sameAuthor ? null : callName(name);
   let text = (body ?? "")
     .replace(/https?:\/\/[!-~]+/g, "リンク") // ASCII だけ（URL の直後の日本語まで「リンク」にしない。アプリと同じ）
     .replace(/\s+/g, " ")
     .trim();
   if (!text) {
     if (imageCount <= 0) return null;
-    return who ? `${who}さんが写真を送りました` : "写真が送られました";
+    if (sameAuthor) return "写真です";
+    return who ? `${who}が写真を送りました` : "写真が送られました";
   }
   const chars = Array.from(text);
   if (chars.length > MAX_CHARS) text = chars.slice(0, MAX_CHARS).join("").trimEnd() + "、以下略";
-  return who ? `${who}さん、${text}` : text;
+  return who ? `${who}、${text}` : text;
 }
+
+/** 同じ人が続いたとみなす間隔。 */
+export const SAME_AUTHOR_MS = 60_000;
 
 // ---- オンオフ（このブラウザだけ） ----
 
@@ -53,6 +81,29 @@ export function setTtsEnabled(on: boolean): void {
   for (const l of subs) l();
 }
 
+// チャット欄の「🔈 読み上げ」（🍻 に関係なく、いつでも。このブラウザだけ、既定はオフ）。
+const LS_CHAT_KEY = "bguru-chat-tts";
+let chatEnabled = false;
+try {
+  chatEnabled = localStorage.getItem(LS_CHAT_KEY) === "1";
+} catch {
+  /* 既定のオフ */
+}
+export function chatTtsEnabled(): boolean {
+  return chatEnabled;
+}
+export function setChatTtsEnabled(on: boolean): void {
+  chatEnabled = on;
+  try {
+    localStorage.setItem(LS_CHAT_KEY, on ? "1" : "0");
+  } catch {
+    /* 覚えられないだけ */
+  }
+  if (on) primeSpeech();
+  else stopAll(); // 読んでいる途中も止める（🍻 を聞いていれば次の発言からまた読む）
+  for (const l of subs) l();
+}
+
 // ---- 読む ----
 
 type Item = { id: number; text: string; at: number };
@@ -66,11 +117,15 @@ function supported(): boolean {
   return typeof window !== "undefined" && "speechSynthesis" in window;
 }
 
-/** 🍻 の音声に入っていて、オフ会が開いているか。 */
+/** 読むときか: チャット欄の読み上げがオン、または 🍻 の音声に入っていて 🍻 の読み上げがオン。 */
 function active(): boolean {
+  if (chatEnabled) return true;
   const s = getOffkai();
   return enabled && !!s.current && (s.audio === "listening" || s.audio === "speaking");
 }
+
+/** 直前に読む順に並べた発言の人と時刻（同じ人が続いたら名前を省く）。 */
+let lastAuthor: { id: string; at: number } | null = null;
 
 /** 端末の中の日本語の声だけ（ネットの声は文を外へ送るので使わない）。まだ一覧が取れていなければ null。 */
 function japaneseVoice(): SpeechSynthesisVoice | null {
@@ -136,10 +191,19 @@ export function primeSpeech(): void {
 }
 
 /** チャットに新しい発言が届いた（呼ぶ側で自分の発言・お知らせ・☗ カードは除く）。 */
-export function speakChat(msg: { id: number; authorName?: string | null; body?: string | null; images?: unknown[] | null }): void {
+export function speakChat(msg: {
+  id: number;
+  authorId?: string | null;
+  authorName?: string | null;
+  body?: string | null;
+  images?: unknown[] | null;
+}): void {
   if (!supported() || !active() || msg.id <= 0 || spoken.has(msg.id)) return;
-  const text = speechText(msg.authorName, msg.body, msg.images?.length ?? 0);
+  const now = Date.now();
+  const same = !!msg.authorId && lastAuthor?.id === msg.authorId && now - lastAuthor.at <= SAME_AUTHOR_MS;
+  const text = speechText(msg.authorName, msg.body, msg.images?.length ?? 0, same);
   if (!text) return;
+  if (msg.authorId) lastAuthor = { id: msg.authorId, at: now };
   spoken.add(msg.id);
   if (spoken.size > 500) spoken.delete(spoken.values().next().value as number);
   queue.push({ id: msg.id, text, at: Date.now() });
@@ -148,6 +212,7 @@ export function speakChat(msg: { id: number; authorName?: string | null; body?: 
 
 function stopAll(): void {
   queue.length = 0;
+  lastAuthor = null; // 次に読むときは名前から
   if (watchdog) clearTimeout(watchdog);
   watchdog = null;
   const was = current;
