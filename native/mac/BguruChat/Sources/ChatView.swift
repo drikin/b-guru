@@ -248,6 +248,7 @@ private struct ChatHeader: View {
                 if settings.menuBarTicker {
                     Toggle("　名前だけ（本文を出さない）", isOn: $settings.menuBarTickerNamesOnly)
                 }
+                KeepAwakeMenu(settings: settings)
                 Divider()
                 Button("B-guru をブラウザで開く") { NSWorkspace.shared.open(APIClient.baseURL) }
                 Button("アップデートを確認…") { Updater.shared.checkNow() }
@@ -604,6 +605,54 @@ private struct AssistantBannerRow: View {
             .padding(.vertical, 6)
             .background(Color.accentColor.opacity(0.12))
             Divider()
+        }
+    }
+}
+
+/// ⋯ の「☕ スリープさせない」：右クリックのメニューと同じ手動の入れ方と、自動の条件・電池の値（設定は手元だけ）。
+private struct KeepAwakeMenu: View {
+    @Bindable var settings: AppSettings
+    private var keep: KeepAwake { KeepAwake.shared }
+
+    var body: some View {
+        Menu(keep.isActive ? "☕ スリープさせない（入っています）" : "☕ スリープさせない") {
+            if let s = keep.summary {
+                Text(s)
+            } else if keep.decision.batteryLow {
+                Text("電池が少ないので入れません（電源につなぐと入ります）")
+            }
+            ForEach(KeepAwakeLogic.durations, id: \.self) { m in
+                Button(KeepAwakeLogic.durationLabel(m)) { keep.startManual(minutes: m) }
+            }
+            Divider()
+            Toggle("画面も消さない", isOn: $settings.keepAwakeDisplay)
+            Button("止める") { keep.stopManual() }.disabled(keep.manual == nil)
+            Divider()
+            Text("自動で入れる")
+            Toggle("🍻・ボイスルーム・部室の音声に入っているあいだ", isOn: $settings.keepAwakeAutoCall)
+            Toggle("📺 を再生しているあいだ", isOn: $settings.keepAwakeAutoWatch)
+            Toggle("選んだアプリが動いているあいだ", isOn: $settings.keepAwakeAutoApps)
+            Menu("　アプリを選ぶ（\(settings.keepAwakeApps.count)）") {
+                let chosen = settings.keepAwakeApps
+                // 選んであるが今は動いていないアプリも出す（外せるように）
+                ForEach(chosen.filter { id in !keep.runningApps.contains { $0.id == id } }, id: \.self) { id in
+                    Toggle(keep.appName(id), isOn: Binding(get: { true }, set: { _ in keep.toggleApp(id) }))
+                }
+                if chosen.contains(where: { id in !keep.runningApps.contains { $0.id == id } }) { Divider() }
+                Text("いま動いているアプリ")
+                ForEach(keep.runningApps, id: \.id) { app in
+                    Toggle(app.name, isOn: Binding(get: { chosen.contains(app.id) }, set: { _ in keep.toggleApp(app.id) }))
+                }
+            }
+            Toggle("電源につながっているあいだ", isOn: $settings.keepAwakeAutoPower)
+            Toggle("外部ディスプレイがあるあいだ", isOn: $settings.keepAwakeAutoDisplay)
+            if keep.hasBattery {
+                Divider()
+                Picker("電池がこれ以下なら止める", selection: $settings.keepAwakeBatteryThreshold) {
+                    ForEach(KeepAwakeLogic.thresholds, id: \.self) { Text("\($0)%").tag($0) }
+                }
+            }
+            Text("ふたを閉じる・スリープを選んだときは普通に眠ります")
         }
     }
 }

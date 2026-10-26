@@ -133,6 +133,38 @@ final class AppSettings {
         }
     }
     @ObservationIgnored var onRightShiftChange: ((Bool) -> Void)?
+    // ☕ スリープさせない（KeepAwake が Observation で見る。設定は手元だけ）。
+    /// 入っているあいだ画面も消さない。既定は切。
+    var keepAwakeDisplay: Bool {
+        didSet { guard keepAwakeDisplay != oldValue else { return }; UserDefaults.standard.set(keepAwakeDisplay, forKey: "keepAwakeDisplay") }
+    }
+    /// 自動：🍻・ボイスルーム・部室の音声に入っているあいだ。既定はオン。
+    var keepAwakeAutoCall: Bool {
+        didSet { guard keepAwakeAutoCall != oldValue else { return }; UserDefaults.standard.set(keepAwakeAutoCall, forKey: "keepAwakeAutoCall") }
+    }
+    /// 自動：📺 を再生しているあいだ。既定はオン。
+    var keepAwakeAutoWatch: Bool {
+        didSet { guard keepAwakeAutoWatch != oldValue else { return }; UserDefaults.standard.set(keepAwakeAutoWatch, forKey: "keepAwakeAutoWatch") }
+    }
+    /// 自動：選んだアプリ（bundle id）が動いているあいだ。既定は切。
+    var keepAwakeAutoApps: Bool {
+        didSet { guard keepAwakeAutoApps != oldValue else { return }; UserDefaults.standard.set(keepAwakeAutoApps, forKey: "keepAwakeAutoApps") }
+    }
+    var keepAwakeApps: [String] {
+        didSet { guard keepAwakeApps != oldValue else { return }; UserDefaults.standard.set(keepAwakeApps, forKey: "keepAwakeApps") }
+    }
+    /// 自動：電源につながっているあいだ。既定は切。
+    var keepAwakeAutoPower: Bool {
+        didSet { guard keepAwakeAutoPower != oldValue else { return }; UserDefaults.standard.set(keepAwakeAutoPower, forKey: "keepAwakeAutoPower") }
+    }
+    /// 自動：外部ディスプレイがあるあいだ。既定は切。
+    var keepAwakeAutoDisplay: Bool {
+        didSet { guard keepAwakeAutoDisplay != oldValue else { return }; UserDefaults.standard.set(keepAwakeAutoDisplay, forKey: "keepAwakeAutoDisplay") }
+    }
+    /// 電池で動いていて残りがこの値（%）以下になったら止める。既定は 20。
+    var keepAwakeBatteryThreshold: Int {
+        didSet { guard keepAwakeBatteryThreshold != oldValue else { return }; UserDefaults.standard.set(keepAwakeBatteryThreshold, forKey: "keepAwakeBatteryThreshold") }
+    }
 
     static let quietStartHour = 0
     static let quietEndHour = 7
@@ -157,6 +189,14 @@ final class AppSettings {
         menuBarRunnerGPU = d.bool(forKey: "menuBarRunnerGPU")
         aiTimelinePicks = d.bool(forKey: "aiTimelinePicks")
         rightShiftDoubleTap = d.object(forKey: "rightShiftDoubleTap") as? Bool ?? true
+        keepAwakeDisplay = d.bool(forKey: "keepAwakeDisplay")
+        keepAwakeAutoCall = d.object(forKey: "keepAwakeAutoCall") as? Bool ?? true
+        keepAwakeAutoWatch = d.object(forKey: "keepAwakeAutoWatch") as? Bool ?? true
+        keepAwakeAutoApps = d.bool(forKey: "keepAwakeAutoApps")
+        keepAwakeApps = d.stringArray(forKey: "keepAwakeApps") ?? []
+        keepAwakeAutoPower = d.bool(forKey: "keepAwakeAutoPower")
+        keepAwakeAutoDisplay = d.bool(forKey: "keepAwakeAutoDisplay")
+        keepAwakeBatteryThreshold = d.object(forKey: "keepAwakeBatteryThreshold") as? Int ?? KeepAwakeLogic.defaultThreshold
     }
 
     func isQuietNow(_ date: Date = Date()) -> Bool {

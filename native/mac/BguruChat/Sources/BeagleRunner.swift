@@ -27,7 +27,7 @@ extension BeagleIcon {
     /// 脚は描き足さず、記号の脚の部分だけを付け根から傾けて作る（胴・頭・しっぽは元のまま）。宙に浮くコマだけ犬ごと 1pt 上がる。
     /// 座標は右向きの絵の上から測った pt（犬は x 0〜22）。
     static func runImage(filled: Bool, frame k: Int) -> NSImage {
-        let key = "\(filled)-\(k)"
+        let key = "\(filled)-\(k)-\(awake)"
         if let img = runCache[key] { return img }
         let symbol = NSImage(systemSymbolName: filled ? "dog.fill" : "dog", accessibilityDescription: nil) ?? NSImage()
         let hi = hiRes(symbol)
@@ -65,7 +65,7 @@ extension BeagleIcon {
         }
         var align = symbol.alignmentRect
         align.size.width = W
-        let baked = bake(img, alignment: align)
+        let baked = bake(img, alignment: align, mark: awake)
         runCache[key] = baked
         return baked
     }
@@ -306,7 +306,7 @@ final class BeagleRunner {
             name = "still-\(filled)"; img = BeagleIcon.image(filled: filled)
         }
         ov.layer?.contentsScale = scale
-        ov.layer?.contents = BeagleIcon.tinted(name, img, dark: dark, scale: scale)
+        ov.layer?.contents = BeagleIcon.tinted(name + (BeagleIcon.awake ? "-awake" : ""), img, dark: dark, scale: scale)
         ov.alphaValue = button.appearsDisabled ? 0.5 : 1 // 接続していないときは淡く（ボタンの淡色表示と同じ）
     }
 

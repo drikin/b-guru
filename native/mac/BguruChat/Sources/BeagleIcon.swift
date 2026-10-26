@@ -14,10 +14,12 @@ enum BeagleIcon {
     static let canvas = NSSize(width: 30, height: 17)
     static let dogWidth: CGFloat = 22
     private static var cache: [String: NSImage] = [:]
+    /// ☕ スリープさせないが入っているあいだ、顔の前の足元に小さなカップの印を描く（どの絵にも。幅・位置は変わらない）。
+    static var awake = false
 
     /// `filled`: 未読あり（dog.fill）。`bark`: 0 = 通常、1〜4 = 吠えるコマ。
     static func image(filled: Bool, bark: Int = 0) -> NSImage {
-        let key = "\(filled)-\(bark)"
+        let key = "\(filled)-\(bark)-\(awake)"
         if let img = cache[key] { return img }
         let symbol = NSImage(systemSymbolName: filled ? "dog.fill" : "dog", accessibilityDescription: nil) ?? NSImage()
         let W = canvas.width
@@ -77,13 +79,14 @@ enum BeagleIcon {
         }
         var align = symbol.alignmentRect
         align.size.width = W
-        let baked = bake(img, alignment: align) // ボタンの中の縦の置き方は記号と同じ（横はキャンバス全体）
+        let baked = bake(img, alignment: align, mark: awake) // ボタンの中の縦の置き方は記号と同じ（横はキャンバス全体）
         cache[key] = baked
         return baked
     }
 
     /// 描き方（drawingHandler）の絵を @1x・@2x のビットマップに焼いておく（コマを差し替えるたびに描き直さない）。
-    static func bake(_ img: NSImage, alignment: NSRect) -> NSImage {
+    /// `mark`: ☕ の印（スリープさせない）を足す。
+    static func bake(_ img: NSImage, alignment: NSRect, mark: Bool = false) -> NSImage {
         let out = NSImage(size: canvas)
         for scale in [1, 2] {
             let w = Int(canvas.width) * scale, h = Int(canvas.height) * scale
@@ -93,6 +96,7 @@ enum BeagleIcon {
             NSGraphicsContext.saveGraphicsState()
             NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
             img.draw(in: NSRect(origin: .zero, size: canvas))
+            if mark { drawAwakeMark() }
             NSGraphicsContext.restoreGraphicsState()
             out.addRepresentation(rep)
         }
@@ -104,6 +108,17 @@ enum BeagleIcon {
 }
 
 extension BeagleIcon {
+    /// ☕ の印：顔の前の余白（左 8pt）の足元に 3.4×3pt のカップと取っ手。吠える線（余白の上・中ほど）とは重ならない。
+    /// 座標は焼くときのキャンバス（左下が原点、左向きの絵）。足先の線（下から 2pt）に置く。テンプレートのまま（黒の形だけ）。
+    fileprivate static func drawAwakeMark() {
+        NSColor.black.set()
+        NSBezierPath(roundedRect: NSRect(x: 1.2, y: 2, width: 3.4, height: 3), xRadius: 0.8, yRadius: 0.8).fill()
+        let handle = NSBezierPath()
+        handle.lineWidth = 0.9
+        handle.appendArc(withCenter: NSPoint(x: 4.6, y: 3.6), radius: 1.0, startAngle: -90, endAngle: 90)
+        handle.stroke()
+    }
+
     /// 未読の数の文字（数字の幅をそろえる：1→2 などで幅が変わってビーグルが横にずれないように）。
     static func countTitle(_ text: String) -> NSAttributedString {
         let size = NSFont.menuBarFont(ofSize: 0).pointSize

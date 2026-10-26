@@ -88,6 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         setupBarker()
+        setupKeepAwake()
         updateStatusIcon(unread: 0, mentions: 0, connection: .connecting)
         if !CommandLine.arguments.contains("-selftest") { setupCollapser(); setupTicker(); setupAIPicks(); setupAssistant() }
         settings.onDockChange = { [weak self] _ in self?.applyDockSetting() }
@@ -169,6 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             store.beagleTimeline = { [weak timeline] in timeline?.beagleNotes() ?? [] }
             self.store = store
             self.timeline = timeline
+            KeepAwake.shared.store = store
             panel = ChatPanel(store: store, timeline: timeline, onSignOut: {})
             wireAIPicks(timeline)
             if CommandLine.arguments.contains("-aiPicksNow") { startAIPicksDemo(timeline) }
@@ -393,6 +395,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         self.watchWindow = watchWindow
         store.watch.onModeChange = { [weak watchWindow] mode in watchWindow?.update(mode) }
         self.store = store
+        KeepAwake.shared.store = store
         store.start()
         Updater.shared.start(token: token)
         panel = ChatPanel(store: store, timeline: timeline, onSignOut: { [weak self] in self?.signOut() })
@@ -443,6 +446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         panel?.close()
         panel = nil
         store = nil
+        KeepAwake.shared.store = nil
         timeline = nil
         MediaCache.shared.token = nil
         Keychain.delete()
@@ -570,6 +574,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             menu.addItem(r)
         }
         addAssistantMenu(to: menu)
+        addKeepAwakeMenu(to: menu)
         let ver = NSMenuItem(title: "バージョン \(Updater.shared.currentVersion)（ベータ）", action: nil, keyEquivalent: "")
         ver.isEnabled = false
         menu.addItem(ver)
@@ -641,7 +646,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if runner?.drawsIcon == true { runner?.render() } // 淡色（接続していない）もレイヤーの絵に
         let state = connection == .offline ? "、オフライン" : ""
         let detail = mentions > 0 ? "、うちメンション \(mentions) 件" : ""
-        button.setAccessibilityLabel(unread > 0 ? "B-guru チャット、未読 \(unread) 件\(detail)\(state)" : "B-guru チャット\(state)")
+        let awake = KeepAwake.shared.summary.map { "、\($0)" } ?? "" // ☕ スリープさせない（理由と終わりの時刻）
+        button.setAccessibilityLabel(unread > 0 ? "B-guru チャット、未読 \(unread) 件\(detail)\(state)\(awake)" : "B-guru チャット\(state)\(awake)")
+        button.toolTip = KeepAwake.shared.summary.map { "☕ \($0)" }
         collapser?.beagleChanged()
         if settings.showInDock {
             NSApp.dockTile.badgeLabel = unread > 0 ? (mentions > 0 ? "@\(n)" : "\(n)") : nil
@@ -749,7 +756,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationWillTerminate(_ notification: Notification) {
         collapser?.disable() // 区切りを残さない
+        KeepAwake.shared.shutdown() // ☕ assertion を必ず外す
     }
+
+    // MARK: - ☕ スリープさせない
+
+    private func setupKeepAwake() {
+        if CommandLine.arguments.contains("-selftest") { return }
+        let k = KeepAwake.shared
+        k.onChange = { [weak self] in
+            guard let self else { return }
+            BeagleIcon.awake = k.isActive // ビーグルの足元の小さなカップ
+            self.updateStatusIcon(unread: self.store?.unreadCount ?? 0, mentions: self.store?.mentionCount ?? 0,
+                                  connection: self.store?.connection ?? .offline)
+            StatusBarDiag.note("スリープさせない: \(k.summary ?? "切")")
+        }
+        k.start()
+    }
+
+    /// 右クリックのメニューの「☕ スリープさせない」（下に：切るまで／30 分／1 時間／2 時間／4 時間／—／画面も消さない／止める）。
+    private func addKeepAwakeMenu(to menu: NSMenu) {
+        let k = KeepAwake.shared
+        let sub = NSMenu()
+        if let s = k.summary {
+            let i = NSMenuItem(title: s, action: nil, keyEquivalent: "")
+            i.isEnabled = false
+            sub.addItem(i)
+            sub.addItem(.separator())
+        } else if k.decision.batteryLow {
+            let i = NSMenuItem(title: "電池が少ないので入れません（電源につなぐと入ります）", action: nil, keyEquivalent: "")
+            i.isEnabled = false
+            sub.addItem(i)
+            sub.addItem(.separator())
+        }
+        for minutes in KeepAwakeLogic.durations {
+            let i = NSMenuItem(title: KeepAwakeLogic.durationLabel(minutes), action: #selector(keepAwakeStart(_:)), keyEquivalent: "")
+            i.target = self
+            i.tag = minutes ?? 0
+            // 切るまでで入っているときだけ ✓（時間を選んだときは上の行に終わりの時刻が出る）
+            if minutes == nil, let m = k.manual, m.until == nil { i.state = .on }
+            sub.addItem(i)
+        }
+        sub.addItem(.separator())
+        let display = NSMenuItem(title: "画面も消さない", action: #selector(toggleKeepAwakeDisplay), keyEquivalent: "")
+        display.target = self
+        display.state = settings.keepAwakeDisplay ? .on : .off
+        sub.addItem(display)
+        let stop = NSMenuItem(title: "止める", action: k.manual != nil ? #selector(keepAwakeStop) : nil, keyEquivalent: "")
+        stop.target = self
+        stop.isEnabled = k.manual != nil
+        sub.addItem(stop)
+        let parent = NSMenuItem(title: "☕ スリープさせない", action: nil, keyEquivalent: "")
+        parent.state = k.isActive ? .on : .off
+        parent.submenu = sub
+        menu.addItem(parent)
+    }
+
+    @objc private func keepAwakeStart(_ sender: NSMenuItem) { KeepAwake.shared.startManual(minutes: sender.tag == 0 ? nil : sender.tag) }
+    @objc private func keepAwakeStop() { KeepAwake.shared.stopManual() }
+    @objc private func toggleKeepAwakeDisplay() { settings.keepAwakeDisplay.toggle() }
 
     // MARK: - 右 ⇧ を 2 回でパネルを開閉
 
@@ -1211,6 +1276,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         for k in 0..<7 { store.debugReceive("連投 \(k + 1)", id: id + 100 + k, author: "連投さん") }
                     }
                 case "quit": NSApp.terminate(nil)
+                // ☕ スリープさせない: awake1m = 1 分だけ手動で入れる、awakeOn = 切るまで、awakeOff = 止める、awakeState = 今の様子をログへ。
+                case "awake1m": KeepAwake.shared.startManual(minutes: 1)
+                case "awakeOn": KeepAwake.shared.startManual(minutes: nil)
+                case "awakeOff": KeepAwake.shared.stopManual()
+                case "awakeState":
+                    let b = KeepAwake.battery()
+                    NSLog("[keepawake] state: %@ 電池 %@", KeepAwake.shared.summary ?? "入っていない",
+                          b.hasBattery ? "\(b.percent)%\(b.onAC ? "（電源）" : "")" : "なし")
                 case "awWrong": Assistant.shared.markWrong()
                 case "awRight": Assistant.shared.markRight()
                 case "awMute": self.muteAssistantApp(nil)
