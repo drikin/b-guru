@@ -23,7 +23,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
@@ -126,6 +129,13 @@ class OffkaiStore(private val api: ApiClient, private val app: Context, private 
     var album by mutableStateOf<OffkaiEvent?>(null); private set
     var albumPhotos by mutableStateOf<List<OffkaiPhoto>>(emptyList()); private set
     var albumLoading by mutableStateOf(false); private set
+    /** The album's `can_download`: 「⬇ まとめて保存」 is offered (took part, or an admin). */
+    var albumCanDownload by mutableStateOf(false); private set
+
+    /** 「⬇ まとめて保存」 in progress or just finished, for one event (the album shows it while it is that one). */
+    data class SaveState(val eventId: Long, val done: Int, val total: Int, val running: Boolean, val message: String? = null)
+    var save by mutableStateOf<SaveState?>(null); private set
+    private var saveJob: Job? = null
 
     var phase by mutableStateOf(Phase.IDLE); private set
     /** My mic is going out (I am the speaker and publishing). */
@@ -231,11 +241,13 @@ class OffkaiStore(private val api: ApiClient, private val app: Context, private 
         }
     }
 
-    private suspend fun allPhotos(id: Long): List<OffkaiPhoto> {
+    /** [canDownload]: the first page's `can_download` (the album's 「⬇ まとめて保存」). */
+    private suspend fun allPhotos(id: Long, canDownload: ((Boolean) -> Unit)? = null): List<OffkaiPhoto> {
         val out = ArrayList<OffkaiPhoto>()
         var after: Long? = null
         repeat(20) { // at most 2000 photos (100 a page)
             val r = api.offkaiPhotos(basePath, id, after)
+            if (after == null) canDownload?.invoke(r.canDownload)
             out += r.photos
             r.photos.firstOrNull { it.mine }?.let { learnMe(it.uploader.userId) }
             after = r.nextAfter ?: return out
@@ -455,11 +467,13 @@ class OffkaiStore(private val api: ApiClient, private val app: Context, private 
     fun openAlbum(e: OffkaiEvent) {
         album = e
         albumPhotos = emptyList()
-        if (demo) { albumPhotos = demoAlbums[e.id].orEmpty(); return }
+        albumCanDownload = false
+        if (save?.running == false) save = null // the last one's 「40 枚を保存しました」 is done with
+        if (demo) { albumPhotos = demoAlbums[e.id].orEmpty(); albumCanDownload = true; return }
         albumLoading = true
         scope.launch {
             try {
-                val list = allPhotos(e.id)
+                val list = allPhotos(e.id) { can -> if (album?.id == e.id) albumCanDownload = can }
                 if (album?.id == e.id) albumPhotos = list
             } catch (ex: CancellationException) { throw ex } catch (ex: Exception) {
                 if (album?.id == e.id) notice = OffkaiLogic.message(ex, "アルバムを開けませんでした")
@@ -467,7 +481,66 @@ class OffkaiStore(private val api: ApiClient, private val app: Context, private 
         }
     }
 
-    fun closeAlbum() { album = null; albumPhotos = emptyList(); albumLoading = false }
+    fun closeAlbum() { album = null; albumPhotos = emptyList(); albumLoading = false; albumCanDownload = false }
+
+    // MARK: ⬇ まとめて保存 (docs/offkai-spec.md「アルバムをまとめて保存」)
+
+    /** Saves the open album's photos into the gallery (Pictures/B-guru/<B-guru オフ会 日付 題>/), 3 at a time.
+     *  [askWrite]: Android 9 asks for the storage permission first (MainActivity, not registerForActivityResult).
+     *  Keeps going when the album is closed; the end is then a toast. */
+    fun saveAlbum(askWrite: (((Boolean) -> Unit) -> Unit)?) {
+        val e = album ?: return
+        val list = albumPhotos
+        if (list.isEmpty() || save?.running == true || !albumCanDownload) return
+        if (OffkaiAlbumSaver.needsWritePermission) {
+            if (askWrite == null) { notice = "写真を保存できません（ストレージへの保存を許可してください）"; return }
+            askWrite { ok ->
+                if (ok) startSave(e, list) else notice = "写真を保存できません（設定でストレージへの保存を許可してください）"
+            }
+            return
+        }
+        startSave(e, list)
+    }
+
+    fun cancelSave() { saveJob?.cancel() }
+
+    private fun startSave(e: OffkaiEvent, list: List<OffkaiPhoto>) {
+        if (save?.running == true) return
+        val folder = OffkaiAlbumNames.folder(e.title, e.startedAt)
+        val total = list.size
+        save = SaveState(e.id, 0, total, running = true)
+        var saved = 0
+        var failed = 0
+        saveJob = scope.launch {
+            val gate = Semaphore(3) // at most 3 downloads at once
+            try {
+                coroutineScope {
+                    list.forEachIndexed { i, p ->
+                        launch {
+                            val ok = gate.withPermit {
+                                try {
+                                    OffkaiAlbumSaver.save(app, folder, OffkaiAlbumNames.fileName(i, total, p.uploader.name, p.createdAt, p.url), p.url, p.createdAt)
+                                } catch (ex: CancellationException) { throw ex } catch (_: Exception) { false }
+                            }
+                            if (ok) saved++ else failed++
+                            save = SaveState(e.id, saved + failed, total, running = true)
+                        }
+                    }
+                }
+                finishSave(e.id, OffkaiAlbumNames.result(saved, failed))
+            } catch (ex: CancellationException) {
+                finishSave(e.id, OffkaiAlbumNames.stopped(saved))
+                throw ex
+            }
+        }
+    }
+
+    private fun finishSave(eventId: Long, message: String) {
+        val last = save
+        save = SaveState(eventId, last?.done ?: 0, last?.total ?: 0, running = false, message = message)
+        saveJob = null
+        if (album?.id != eventId) android.widget.Toast.makeText(app, "🍻 $message", android.widget.Toast.LENGTH_LONG).show()
+    }
 
     fun close() {
         stopReading()
