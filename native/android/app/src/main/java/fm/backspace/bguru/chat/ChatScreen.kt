@@ -1,6 +1,13 @@
 package fm.backspace.bguru.chat
 
 import android.content.ClipData
+import android.content.Context
+import android.media.AudioAttributes
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.speech.tts.TextToSpeech
+import java.util.Locale
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -12,6 +19,11 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.RadioButton
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -307,7 +319,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                         Text("🔈", fontSize = 18.sp, modifier = Modifier.semantics { contentDescription = "読み上げ中（タップで止める）" })
                     }
                     DMHeaderButton(store.dm)
-                    ChatMenu(onSignOut, readAloud = store.readAloud, onReadAloud = store::changeReadAloud)
+                    ChatMenu(onSignOut, readAloud = store.readAloud, onReadAloud = store::changeReadAloud, onVoiceChanged = store::readAloudVoiceChanged)
                 },
             )
         },
@@ -588,9 +600,10 @@ private fun StatusBadge(store: ChatStore) {
 }
 
 @Composable
-private fun ChatMenu(onSignOut: () -> Unit, readAloud: Boolean, onReadAloud: (Boolean) -> Unit) {
+private fun ChatMenu(onSignOut: () -> Unit, readAloud: Boolean, onReadAloud: (Boolean) -> Unit, onVoiceChanged: () -> Unit) {
     val context = LocalContext.current
     var open by remember { mutableStateOf(false) }
+    var choosingVoice by remember { mutableStateOf(false) }
     var notifyAll by remember { mutableStateOf(Push.notifyMode(context) == "all") }
     var quiet by remember { mutableStateOf(Push.quietHours(context)) }
     var timeline by remember { mutableStateOf(Push.notifyTimeline(context)) }
@@ -632,12 +645,123 @@ private fun ChatMenu(onSignOut: () -> Unit, readAloud: Boolean, onReadAloud: (Bo
             leadingIcon = { if (readAloud) Icon(Icons.Default.Check, null) else Spacer(Modifier.size(24.dp)) },
             onClick = { open = false; onReadAloud(!readAloud) },
         )
+        DropdownMenuItem(
+            text = { Text("🗣 読み上げの声…") },
+            leadingIcon = { Spacer(Modifier.size(24.dp)) },
+            onClick = { open = false; choosingVoice = true },
+        )
         HorizontalDivider()
         DropdownMenuItem(text = { Text("B-guru をブラウザで開く") }, onClick = {
             open = false
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(Net.BASE)))
         })
         DropdownMenuItem(text = { Text("ログアウト", color = MaterialTheme.colorScheme.error) }, onClick = { open = false; onSignOut() })
+    }
+    if (choosingVoice) ReadAloudVoiceDialog(onVoiceChanged) { choosingVoice = false }
+}
+
+/** 🗣 読み上げの声 (docs/offkai-spec.md「声の選び方」): 自動 + 端末内の日本語の声（★ = 高品質）と「▶ 試しに聞く」。
+ *  一覧と試し聞きはこのダイアログだけのエンジンで（読み上げのエンジンは止まっていることがある）。選ぶとすぐ保存。 */
+@Composable
+private fun ReadAloudVoiceDialog(onVoiceChanged: () -> Unit, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences(OffkaiReadAloud.PREFS, Context.MODE_PRIVATE) }
+    var saved by remember { mutableStateOf(prefs.getString(OffkaiVoices.PREF_KEY, "").orEmpty()) }
+    var engine by remember { mutableStateOf<TextToSpeech?>(null) }
+    /** null: まだ調べている。 */
+    var voices by remember { mutableStateOf<List<TtsVoice>?>(null) }
+    var failed by remember { mutableStateOf(false) }
+    DisposableEffect(Unit) {
+        val main = Handler(Looper.getMainLooper())
+        var alive = true
+        var created: TextToSpeech? = null
+        created = runCatching {
+            TextToSpeech(context.applicationContext) { status ->
+                main.post {
+                    val t = created
+                    if (!alive || t == null) return@post
+                    if (status != TextToSpeech.SUCCESS) { failed = true; return@post }
+                    runCatching { t.setLanguage(Locale.JAPANESE) }
+                    engine = t
+                    voices = runCatching { t.voices?.map { it.toTtsVoice() } }.getOrNull().orEmpty()
+                }
+            }
+        }.getOrNull()
+        if (created == null) failed = true
+        onDispose {
+            alive = false
+            runCatching { created?.stop() }
+            runCatching { created?.shutdown() }
+        }
+    }
+    val all = voices.orEmpty()
+    val choices = OffkaiVoices.choices(all)
+    // 選んだ声が消えていたら「自動」に印（読み上げも自動で読む）。
+    val current = if (voices != null && !OffkaiVoices.isAvailable(all, saved)) "" else saved
+    fun choose(name: String) {
+        saved = name
+        prefs.edit().putString(OffkaiVoices.PREF_KEY, name).apply()
+        onVoiceChanged()
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("🗣 読み上げの声") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                when {
+                    failed -> Text("この端末では日本語の読み上げを使えません", style = MaterialTheme.typography.bodyMedium)
+                    voices == null -> Text("声を調べています…", style = MaterialTheme.typography.bodyMedium)
+                    else -> {
+                        val autoName = OffkaiVoices.auto(all)?.let { "${OffkaiVoices.mark(it)}${it.name}" }
+                        VoiceRow("自動", autoName?.let { "いま: $it" } ?: "端末の日本語の声", current.isEmpty()) { choose("") }
+                        choices.forEach { v ->
+                            VoiceRow("${OffkaiVoices.mark(v)}${v.name}", null, current == v.name) { choose(v.name) }
+                        }
+                        if (OffkaiVoices.needsInstallHint(all)) {
+                            Text(
+                                OffkaiVoices.INSTALL_HINT,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("閉じる") } },
+        dismissButton = {
+            val t = engine
+            TextButton(enabled = t != null, onClick = {
+                if (t == null) return@TextButton
+                runCatching {
+                    val all2 = t.voices?.toList().orEmpty()
+                    val name = OffkaiVoices.pick(all2.map { it.toTtsVoice() }, current)?.name
+                    all2.firstOrNull { it.name == name }?.let { t.voice = it } ?: t.setLanguage(Locale.JAPANESE)
+                    t.setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    t.speak(OffkaiVoices.SAMPLE, TextToSpeech.QUEUE_FLUSH, Bundle(), "voice-sample")
+                }
+            }) { Text("▶ 試しに聞く") }
+        },
+    )
+}
+
+@Composable
+private fun VoiceRow(label: String, detail: String?, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().selectable(selected = selected, role = Role.RadioButton, onClick = onClick).padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Column(Modifier.padding(start = 8.dp)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            if (detail != null) Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 

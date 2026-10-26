@@ -45,6 +45,9 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         if (!on) reader.stop()
     }
 
+    /** 「🗣 読み上げの声」を選び直した（保存は済み）: 読み上げ中のエンジンにも付ける。 */
+    fun readAloudVoiceChanged() = reader.voiceChanged()
+
     var rows by mutableStateOf<List<ChatRow>>(emptyList()); private set
     var unreadCount by mutableIntStateOf(0); private set
     var onlineCount by mutableIntStateOf(0); private set

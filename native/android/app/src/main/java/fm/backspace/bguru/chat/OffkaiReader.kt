@@ -9,6 +9,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
 import java.util.Locale
 
 /*
@@ -110,6 +111,82 @@ object OffkaiReadAloud {
     }
 }
 
+/** 端末の日本語の声 1 つ（JVM で試せるよう Voice から写した形）。quality・latency は Voice の定数（100〜500）。 */
+data class TtsVoice(
+    val name: String,
+    /** Locale の言語（"ja"）。 */
+    val language: String,
+    val quality: Int,
+    val latency: Int,
+    val networkRequired: Boolean,
+    /** features に KEY_FEATURE_NOT_INSTALLED（データがまだ入っていない）。 */
+    val notInstalled: Boolean,
+)
+
+/** 声の選び方 (docs/offkai-spec.md「声の選び方」): 端末の日本語の声のうち、いちばん自然なもの。外へは何も送らない。
+ *  pure: JVM-tested in OffkaiVoicesTest. */
+object OffkaiVoices {
+    /** 選んだ声の名前（"" = 自動）。端末ごと。 */
+    const val PREF_KEY = "voice"
+    const val SAMPLE = "みなさん、こんばんは。チャットを読み上げます。"
+    const val INSTALL_HINT = "設定 › 音声出力（テキスト読み上げ）› Google の音声データで日本語を入れると自然になります"
+    /** Voice.QUALITY_HIGH（VERY_HIGH は 500）。これ以上に ★。 */
+    const val QUALITY_HIGH = 400
+
+    /** おもちゃの声（Eloquence／ノベルティ）: 自動では選ばない（選択肢には出す）。 */
+    private val NOVELTY = setOf("eddy", "flo", "grandma", "grandpa", "reed", "rocko", "sandy", "shelley", "bubbles", "boing", "jester", "whisper", "zarvox", "trinoids", "organ", "superstar", "wobble", "cellos", "bells", "albert")
+    private val WORDS = Regex("""[^a-z]+""")
+
+    fun isNovelty(name: String): Boolean {
+        val n = name.lowercase()
+        if (n.contains("bad news") || n.contains("badnews") || n.contains("good news") || n.contains("goodnews")) return true
+        return n.split(WORDS).any { it in NOVELTY }
+    }
+
+    /** 選べる声: 日本語・端末内（ネット不要）・入っているもの。品質の高い順 → 遅れの小さい順 → 名前。 */
+    fun choices(all: List<TtsVoice>): List<TtsVoice> =
+        all.filter { (it.language == "ja" || it.language == "jpn") && !it.networkRequired && !it.notInstalled }
+            .distinctBy { it.name }
+            .sortedWith(compareByDescending<TtsVoice> { it.quality }.thenBy { it.latency }.thenBy { it.name })
+
+    /** 自動: 選べる声のいちばん上（おもちゃの声は飛ばす）。null: 該当なし（エンジンの日本語の既定のまま）。 */
+    fun auto(all: List<TtsVoice>): TtsVoice? = choices(all).firstOrNull { !isNovelty(it.name) }
+
+    /** 使う声: 選んだ声 [saved] があればそれ、消えていたら（"" も）自動。 */
+    fun pick(all: List<TtsVoice>, saved: String?): TtsVoice? {
+        if (!saved.isNullOrEmpty()) choices(all).firstOrNull { it.name == saved }?.let { return it }
+        return auto(all)
+    }
+
+    /** 選んだ声が今も使えるか（消えていたら一覧では「自動」に印）。 */
+    fun isAvailable(all: List<TtsVoice>, saved: String?): Boolean =
+        !saved.isNullOrEmpty() && choices(all).any { it.name == saved }
+
+    /** 標準の声しか無い（または 1 つも無い）: 入れ方を一行で案内する。 */
+    fun needsInstallHint(all: List<TtsVoice>): Boolean = choices(all).none { it.quality >= QUALITY_HIGH }
+
+    /** 一覧の品質の印: 高品質・最高品質に ★。 */
+    fun mark(v: TtsVoice): String = if (v.quality >= QUALITY_HIGH) "★" else ""
+}
+
+/** Android の Voice → [TtsVoice]。 */
+fun Voice.toTtsVoice(): TtsVoice = TtsVoice(
+    name = name,
+    language = locale?.language.orEmpty(),
+    quality = quality,
+    latency = latency,
+    networkRequired = isNetworkConnectionRequired,
+    notInstalled = features?.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) == true,
+)
+
+/** [saved]（"" = 自動）の声を [t] に付ける。該当なし・失敗はエンジンの日本語の既定のまま。 */
+fun applyVoice(t: TextToSpeech, saved: String?) {
+    val voices = runCatching { t.voices?.toList() }.getOrNull() ?: return
+    val name = OffkaiVoices.pick(voices.map { it.toTtsVoice() }, saved)?.name ?: return
+    val v = voices.firstOrNull { it.name == name } ?: return
+    runCatching { t.voice = v }
+}
+
 /**
  * The phone's text-to-speech, one message at a time — one per ChatStore, shared by the chat's 「🔈 読み上げ」
  * and 🍻's 「🔈 チャットを読み上げる」 (so a message is never read twice). Main thread. The engine starts with
@@ -169,6 +246,15 @@ class ChatReader(private val app: Context, private val onUnavailable: (String) -
         runCatching { t.shutdown() }
     }
 
+    /** 「🗣 読み上げの声」が変わった: 動いているエンジンに次の発言から付ける（止まっていれば次に起こすとき）。 */
+    fun voiceChanged() {
+        val t = tts ?: return
+        if (ready) applyVoice(t, savedVoice())
+    }
+
+    private fun savedVoice(): String? =
+        app.getSharedPreferences(OffkaiReadAloud.PREFS, Context.MODE_PRIVATE).getString(OffkaiVoices.PREF_KEY, "")
+
     /** The switch was turned off or on: a missing voice may have been installed since — try again. */
     fun reset() {
         unavailable = false
@@ -189,6 +275,8 @@ class ChatReader(private val app: Context, private val onUnavailable: (String) -
         if (status != TextToSpeech.SUCCESS) { fail(); return }
         val lang = runCatching { t.setLanguage(Locale.JAPANESE) }.getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
         if (lang == TextToSpeech.LANG_MISSING_DATA || lang == TextToSpeech.LANG_NOT_SUPPORTED) { fail(); return }
+        // 声の選び方: 選んだ声（消えていたら自動 = 端末内のいちばん良い日本語の声）。
+        applyVoice(t, savedVoice())
         t.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(utteranceId: String?) {}
             override fun onDone(utteranceId: String?) = finished(utteranceId)
