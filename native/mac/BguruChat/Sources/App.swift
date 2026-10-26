@@ -508,11 +508,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         update.target = self
         update.isEnabled = Updater.shared.canCheck
         menu.addItem(update)
-        let collapse = NSMenuItem(title: "試験的：ほかのステータスバーアイコンを畳む", action: #selector(toggleCollapseSetting), keyEquivalent: "")
-        collapse.target = self
-        collapse.state = settings.collapseStatusItems ? .on : .off
-        menu.addItem(collapse)
-        if settings.collapseStatusItems {
+        if StatusBarCollapser.isSupported { // macOS 27 からは出さない
+            let collapse = NSMenuItem(title: "試験的：ほかのステータスバーアイコンを畳む", action: #selector(toggleCollapseSetting), keyEquivalent: "")
+            collapse.target = self
+            collapse.state = settings.collapseStatusItems ? .on : .off
+            menu.addItem(collapse)
+        }
+        if settings.collapseStatusItems && StatusBarCollapser.isSupported {
             let hover = NSMenuItem(title: "カーソルを乗せたら出す", action: #selector(toggleCollapseHover), keyEquivalent: "")
             hover.target = self
             hover.indentationLevel = 1
@@ -674,7 +676,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self?.collapser?.revealOnHover = on
             StatusBarDiag.note("カーソルを乗せたら出す: \(on ? "オン" : "オフ")")
         }
-        if settings.collapseStatusItems { applyCollapseSetting(true, userAction: false) }
+        if settings.collapseStatusItems {
+            if StatusBarCollapser.isSupported {
+                applyCollapseSetting(true, userAction: false)
+            } else {
+                StatusBarDiag.note("macOS 27 以降なので畳む機能をオフにした")
+                settings.collapseStatusItems = false // 区切りを置かない（onCollapseChange の後片付けは何もしない）
+                if !UserDefaults.standard.bool(forKey: "collapseRetiredNoticeShown") {
+                    UserDefaults.standard.set(true, forKey: "collapseRetiredNoticeShown")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.showCollapseRetiredNotice() }
+                }
+            }
+        }
         #if DEBUG
         if CommandLine.arguments.contains("-collapseTest") || CommandLine.arguments.contains("-tickerTest")
             || CommandLine.arguments.contains("-assistantTest") {
@@ -702,6 +715,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if userAction && firstTime {
             UserDefaults.standard.set(true, forKey: "collapseHintShown")
             DispatchQueue.main.async { self.showCollapseHint() }
+        }
+    }
+
+    /// macOS 27 で「畳む」をオフにしたことを 1 回だけ知らせる。
+    private func showCollapseRetiredNotice() {
+        let alert = NSAlert()
+        alert.messageText = "「ほかのステータスバーアイコンを畳む」をオフにしました"
+        alert.informativeText = "macOS 27 からは、メニューバーに入りきらないアイコンを macOS が « にしまうようになりました。"
+            + "要らないアイコンは「システム設定 › メニューバー」で外すか、⌘ を押しながらメニューバーの外へドラッグしてください。"
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "システム設定を開く")
+        NSApp.activate()
+        if alert.runModal() == .alertSecondButtonReturn,
+           let url = URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension") {
+            NSWorkspace.shared.open(url)
         }
     }
 

@@ -23,6 +23,11 @@ import AppKit
 final class StatusBarCollapser {
     enum Fit: String { case fits, overflow, dropped, unknown }
 
+    /// macOS 27 からは使わない（2026-10-26 オーナー判断）: 入りきらないアイコンは macOS 自身が « にしまい、要らないアイコンは
+    /// システム設定 › メニューバーで外せる。この機能は macOS の仕様にない動きに頼るうえ、畳むといつも « が出る。
+    /// 設定も出さず、オンだった人は起動時にオフにして 1 回だけ案内する（App.setupCollapser）。macOS 26 以前は今までどおり。
+    static var isSupported: Bool { ProcessInfo.processInfo.operatingSystemVersion.majorVersion < 27 }
+
     static let minLength: CGFloat = 16
     static let autosaveName = "bguruCollapseSeparator"
     /// 出したあと、この秒数で畳む（メニューバーの上にマウスがあるあいだ・ボタンを押しているあいだは待つ）。

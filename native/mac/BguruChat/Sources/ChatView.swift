@@ -202,9 +202,12 @@ private struct ChatHeader: View {
                 if settings.rightShiftDoubleTap && !RightShiftDoubleTap.canMonitorGlobally {
                     Button("　ほかのアプリが前でも使う（入力監視を許可…）") { RightShiftDoubleTap.requestGlobalAccess() }
                 }
-                Toggle("試験的：ほかのステータスバーアイコンを畳む", isOn: $settings.collapseStatusItems)
-                if settings.collapseStatusItems {
-                    Toggle("　カーソルを乗せたら出す", isOn: $settings.collapseRevealOnHover)
+                // macOS 27 からは出さない（StatusBarCollapser.isSupported）。
+                if StatusBarCollapser.isSupported {
+                    Toggle("試験的：ほかのステータスバーアイコンを畳む", isOn: $settings.collapseStatusItems)
+                    if settings.collapseStatusItems {
+                        Toggle("　カーソルを乗せたら出す", isOn: $settings.collapseRevealOnHover)
+                    }
                 }
                 Toggle("新着でビーグルが吠える", isOn: $settings.menuBarBark)
                 Toggle("負荷に合わせてビーグルが走る", isOn: $settings.menuBarRunner)
