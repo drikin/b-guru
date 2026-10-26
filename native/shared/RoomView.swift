@@ -218,6 +218,9 @@ struct RoomView: View {
             .overlay(alignment: .bottomTrailing) { DPad(room: room).padding(6) }
             #endif
             if let n = room.notice { Text(n).font(.app(.caption)).foregroundStyle(.secondary) }
+            #if os(macOS)
+            if room.voice.inRoom { VoiceHandoffNotice(handoff: room.voice.handoff, target: .room) }
+            #endif
         }
         .focusable()
         .focused($focused)
@@ -254,6 +257,14 @@ struct RoomView: View {
             .buttonStyle(.bordered)
             .tint(room.voice.micOn ? Color.accentGreen : .secondary)
             .disabled(room.voice.micBusy)
+            #if os(macOS)
+            if room.voice.inRoom {
+                VoiceHandoffButton(handoff: room.voice.handoff, target: .room, mic: room.voice.micOn) {
+                    Label("スマホで続ける", systemImage: "iphone").font(.app(.subheadline))
+                }
+                .buttonStyle(.bordered)
+            }
+            #endif
             Spacer(minLength: 4)
             if let z = room.zoneName {
                 Text(z + "にいます").font(.app(.caption, weight: .bold)).foregroundStyle(Color.accentGreen)

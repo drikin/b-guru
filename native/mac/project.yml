@@ -137,8 +137,10 @@ targets:
         # The camera takes a photo for a post or a chat message (「カメラで撮る」).
         NSCameraUsageDescription: タイムラインやチャットに付ける写真をその場で撮るときにカメラを使います。
         # Keep the voice room going with the screen off / in another app.
+        # remote-notification: 既読で知らせを消す (read_sync, a background push) runs without opening the app.
         UIBackgroundModes:
           - audio
+          - remote-notification
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fm.backspace.bguru.chat
@@ -180,3 +182,19 @@ targets:
         DEVELOPMENT_TEAM: F9349EVF2K
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "Apple Development"
+
+  # Unit tests of the pure logic (no app host): `xcodebuild test -scheme BguruChatTests`.
+  BguruChatTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests
+      - path: ../shared/ReadSync.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fm.backspace.bguru.chat.tests
+        SWIFT_STRICT_CONCURRENCY: complete
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        DEVELOPMENT_TEAM: ""

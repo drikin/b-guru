@@ -111,6 +111,14 @@ private struct OffkaiRunningView: View {
                     .disabled(offkai.busy)
                     .help("現地の 1 台だけが話します（後から押した人に切り替わります）")
                 }
+                #if os(macOS)
+                if offkai.audio == .listening {
+                    VoiceHandoffButton(handoff: offkai.handoff, target: .offkai, mic: offkai.speaking || offkai.iAmSpeaker) {
+                        pill("📱 スマホで続ける", filled: false)
+                    }
+                    .buttonStyle(.plain)
+                }
+                #endif
                 Spacer(minLength: 0)
                 if offkai.canEnd {
                     Button("終了") { confirmEnd = true }
@@ -129,6 +137,9 @@ private struct OffkaiRunningView: View {
             if let n = offkai.notice {
                 Text(n).font(.app(.caption2)).foregroundStyle(.secondary).lineLimit(2)
             }
+            #if os(macOS)
+            if offkai.audio != .off { VoiceHandoffNotice(handoff: offkai.handoff, target: .offkai, font: .app(.caption2)) }
+            #endif
         }
     }
 

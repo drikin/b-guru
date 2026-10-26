@@ -97,6 +97,8 @@ final class OffkaiStore {
     @ObservationIgnored var willListen: (@MainActor () async -> Void)?
     /// My users.user_id as the chat knows it (the room's identity is the same).
     @ObservationIgnored var myUserId: (@MainActor () -> String?)?
+    /// 「スマホで続ける」 (Mac; set by ChatStore).
+    @ObservationIgnored var handoff: VoiceHandoff?
 
     @ObservationIgnored private var room: Room?
     @ObservationIgnored private var observer: Observer?
@@ -413,6 +415,17 @@ final class OffkaiStore {
         if r.0 == 200, let e = (try? Self.decoder.decode(Token.self, from: r.1))?.event { take(e, force: true) }
     }
 
+    /// 「🎧 音声をこの端末で続ける」 tapped (voice_handoff): into the event's sound — as the speaker if the server
+    /// says it is me (the other device was speaking), else listening.
+    func continueHere() async {
+        await reload()
+        guard running != nil else { notice = "オフ会は終わっています"; return }
+        if iAmSpeaker, canControl { await startSpeaking(); return }
+        if audio == .off { await listen() }
+        // A tap at launch: who I am was not known until the room said so.
+        if iAmSpeaker, canControl, !speaking { await startSpeaking() }
+    }
+
     private struct Token: Decodable {
         var token: String?
         var url: String?
@@ -553,7 +566,13 @@ final class OffkaiStore {
 
     fileprivate func roomEnded(_ from: Room, _ error: LiveKitError?) {
         guard let room, room === from else { return }
-        if error != nil, running != nil { notice = "オフ会の音声が切れました" }
+        if error?.type == .duplicateIdentity {
+            // I went on listening / speaking on another device (one connection per identity). The speaker
+            // stays mine on the server, so nothing is released and nothing rejoins.
+            notice = VoiceStore.continuedElsewhere
+        } else if error != nil, running != nil {
+            notice = "オフ会の音声が切れました"
+        }
         Task { await teardown() }
     }
 

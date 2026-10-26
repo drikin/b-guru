@@ -22,6 +22,9 @@ struct VoiceBar: View {
                 if let notice = voice.notice {
                     Text(notice).font(.app(.caption)).foregroundStyle(.secondary)
                 }
+                #if os(macOS)
+                if voice.inRoom { VoiceHandoffNotice(handoff: voice.handoff, target: .voice) }
+                #endif
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -95,6 +98,12 @@ struct VoiceBar: View {
             MicButton(voice: voice)
             #if os(macOS)
             DeviceMenu(voice: voice)
+            // 「スマホで続ける」: the iPhone picks the call up from a notification (an icon: the row is full).
+            VoiceHandoffButton(handoff: voice.handoff, target: .voice, mic: voice.micOn) {
+                Label("スマホで続ける", systemImage: "iphone").labelStyle(.iconOnly).font(.app(.subheadline))
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
             #endif
             Button(role: .destructive) {
                 Task { await voice.leave() }

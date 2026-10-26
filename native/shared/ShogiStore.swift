@@ -460,14 +460,21 @@ final class ShogiStore {
         willOpen?()
         open = true
         selectedId = id
+        onShowingGame?(id)
         Task { await loadGame(id) }
     }
 
     func select(_ id: Int?) {
         selectedId = id
         notice = nil
-        if let id { Task { await loadGame(id) } }
+        if let id {
+            onShowingGame?(id)
+            Task { await loadGame(id) }
+        }
     }
+
+    /// A game came on the board (the iPhone removes its notification if the screen shows it).
+    @ObservationIgnored var onShowingGame: ((Int) -> Void)?
 
     // MARK: Actions
 

@@ -90,6 +90,9 @@ final class ChatStore {
     /// A post or comment was created somewhere (the Mac notifies new timeline posts).
     @ObservationIgnored var onPostCreated: (() -> Void)?
     var onBecameVisible: (() -> Void)?
+    /// The stream's `event: sync`: something was read on one of my devices (this one included) — the app
+    /// removes the notifications it covers.
+    @ObservationIgnored var onReadSync: ((ReadSync) -> Void)?
     /// A note from B-guru (kind "notice" — ☗ highlights, game results, 散財ダッシュ — or a ☗ game card) arrived or
     /// was rewritten while the panel was hidden. Room comings and goings included; the receiver filters. (Mac: menu bar ticker)
     @ObservationIgnored var onAnnouncement: ((ChatMessage) -> Void)?
@@ -126,6 +129,8 @@ final class ChatStore {
     /// チャットの上に機能を重ねる形 (ChatOverlay.swift): which features sit over the chat. Only used when
     /// the server has `chat_overlay` on for this member.
     let overlay: OverlayModel
+    /// 「スマホで続ける」 (VoiceHandoff.swift; the Mac shows the button).
+    let handoff: VoiceHandoff
 
     init(api: APIClient) {
         self.api = api
@@ -143,6 +148,10 @@ final class ChatStore {
         self.offkai = offkai
         let overlay = OverlayModel(room: room, shogi: shogi, minigame: minigame, watch: watch, offkai: offkai)
         self.overlay = overlay
+        let handoff = VoiceHandoff(api: api)
+        self.handoff = handoff
+        voice.handoff = handoff
+        offkai.handoff = handoff
         // The overlay: several over the chat at once, nobody leaves the room; an open from outside the switch
         // row (a push, a chat card, a link) switches it on and expands it.
         watch.willShow = { [weak overlay] floating in overlay?.watchWillShow(floating: floating) }
@@ -384,6 +393,9 @@ final class ChatStore {
             shogi.applyCommentary(ev.data)
         case "dm":
             dm.apply(ev.data)
+        case "sync":
+            // 既読で知らせを消す: read on some device of mine (ReadSync.swift).
+            if let sync = ReadSync(json: ev.data) { onReadSync?(sync) }
         case "voice":
             if let v = try? dec.decode(VoiceRoomInfo.self, from: ev.data) { voice.apply(v) }
         case "revoked":

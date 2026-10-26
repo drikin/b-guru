@@ -124,6 +124,7 @@ final class Session {
         MediaCache.shared.token = token
         s.start()
         observeSignOut(s)
+        PushCenter.shared.attach(s)
         PushCenter.shared.session = self
         PushCenter.shared.enable()
     }

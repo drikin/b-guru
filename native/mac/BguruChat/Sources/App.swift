@@ -25,6 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// first message to jump to when it is clicked.
     private var bundledCount = 0
     private var bundledFirstId: Int?
+    /// The newest message in the bundled 「新着」 (a read elsewhere up to it removes the notification).
+    private var bundledLastId: Int?
     /// 試験的：ほかのステータスバーアイコンを畳む（設定でオンにした人だけ）。
     private var collapser: StatusBarCollapser?
     /// メニューバーのティッカー（設定でオンにした人だけ）。
@@ -380,6 +382,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         store.shogi.onOffer = { [weak self] g in self?.notifyShogi(g, offer: true) }
         store.shogi.onMyTurn = { [weak self] g in self?.notifyShogi(g, offer: false) }
         store.dm.onIncoming = { [weak self] m, peer in self?.notifyDM(m, peer: peer) }
+        store.onReadSync = { [weak self] sync in self?.removeRead(sync) }
         // 📺 the player's own window (⧉): follows the mode.
         let watchWindow = WatchWindow(watch: store.watch)
         self.watchWindow = watchWindow
@@ -1257,6 +1260,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard settings.notifyMode == .all, !settings.isQuietNow() else { return }
         bundledCount += 1
         if bundledFirstId == nil { bundledFirstId = m.id }
+        bundledLastId = max(bundledLastId ?? m.id, m.id)
         bundledLine = "\(m.authorName ?? "誰か"): \(m.body)"
         bundlePostTask?.cancel()
         bundlePostTask = Task { @MainActor [weak self] in
@@ -1284,8 +1288,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         bundlePostTask?.cancel()
         bundledCount = 0
         bundledFirstId = nil
+        bundledLastId = nil
         bundledSounded = false
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["chat-new"])
+    }
+
+    /// 既読で知らせを消す: the stream's `event: sync` says something was read on one of my devices (the
+    /// iPhone, the web, this Mac): its notifications here go (ReadSync.matchesLocal), the bundled 「新着」 too
+    /// when everything in it was read.
+    private func removeRead(_ sync: ReadSync) {
+        if sync.clearsChatBundle(newestId: bundledLastId) { clearBundledNotification() }
+        let center = UNUserNotificationCenter.current()
+        center.getDeliveredNotifications { list in
+            let ids = list.map(\.request.identifier).filter(sync.matchesLocal)
+            if !ids.isEmpty { center.removeDeliveredNotifications(withIdentifiers: ids) }
+        }
     }
 
     #if DEBUG

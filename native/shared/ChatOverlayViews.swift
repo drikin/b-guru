@@ -342,12 +342,36 @@ private struct OverlayRoomMini: View {
                     Task { await room.setMic(!room.voice.micOn) }
                 }
                 .disabled(room.voice.micBusy)
+                #if os(macOS)
+                if room.voice.inRoom { OverlayHandoffButton(handoff: room.voice.handoff, target: .room, mic: room.voice.micOn) }
+                #endif
             } else {
                 OverlayPill(title: "入る", filled: Color.accentGreen) { overlay.enterRoom() }
             }
         }
+        #if os(macOS)
+        if room.voice.inRoom { VoiceHandoffNotice(handoff: room.voice.handoff, target: .room, font: .app(size: 11)) }
+        #endif
     }
 }
+
+#if os(macOS)
+/// 「スマホで続ける」 in a small window: an icon in the 📷 button's shape (the pills fill the row).
+private struct OverlayHandoffButton: View {
+    let handoff: VoiceHandoff?
+    let target: VoiceHandoff.Target
+    let mic: Bool
+
+    var body: some View {
+        VoiceHandoffButton(handoff: handoff, target: target, mic: mic) {
+            Image(systemName: "iphone").font(.app(size: 12)).frame(width: 36, height: 30)
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.18)))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+}
+#endif
 
 /// ☗: the game in one line (who, how many moves, whose turn), tap to see the board.
 private struct OverlayShogiMini: View {
@@ -422,7 +446,15 @@ private struct OverlayOffkaiMini: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("写真（広げる）")
+                #if os(macOS)
+                if offkai.audio == .listening {
+                    OverlayHandoffButton(handoff: offkai.handoff, target: .offkai, mic: offkai.speaking || offkai.iAmSpeaker)
+                }
+                #endif
             }
+            #if os(macOS)
+            if offkai.audio != .off { VoiceHandoffNotice(handoff: offkai.handoff, target: .offkai, font: .app(size: 11)) }
+            #endif
         } else {
             Text("いまは開かれていません").font(.app(size: 12)).foregroundStyle(.secondary)
             OverlayPill(title: "これまでのオフ会") { overlay.expand(.offkai) }

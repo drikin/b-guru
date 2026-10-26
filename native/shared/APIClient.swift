@@ -193,6 +193,13 @@ final class APIClient: Sendable {
 
     struct OK: Decodable, Sendable { var ok: Bool }
 
+    /// 「スマホで続ける」: POST /api/agent/voice/handoff { target: offkai | voice | room, mic } — the server sends
+    /// one notification to my phones that know it. Returns how many it went to (0 = none to continue on).
+    func voiceHandoff(target: String, mic: Bool) async throws -> Int {
+        struct Sent: Decodable { var sent: Int? }
+        return try await send(request("POST", "/api/agent/voice/handoff", json: ["target": target, "mic": mic]), as: Sent.self).sent ?? 0
+    }
+
     struct MuteResult: Decodable, Sendable { var ok: Bool; var muted: Bool? }
 
     func voiceReport(userId: String, reason: String) async throws {
@@ -257,13 +264,16 @@ final class APIClient: Sendable {
     /// APNs device token for this iPhone/iPad (hex). environment: "sandbox" | "production".
     func registerPush(deviceToken: String, environment: String, platform: String,
                       notifyMode: String = "all", quietHours: Bool = true, notifyTimeline: Bool? = nil,
-                      notifyShogi: Bool? = nil) async throws {
+                      notifyShogi: Bool? = nil, notifySync: Bool? = nil) async throws {
         struct OK: Decodable { var ok: Bool }
         var body: [String: Any] = ["token": deviceToken, "environment": environment, "platform": platform,
                                    "notify_mode": notifyMode, "quiet_hours": quietHours]
         if let notifyTimeline { body["notify_timeline"] = notifyTimeline }
         // ☗ 将棋 pushes (shogi_offer / shogi_turn) come only to apps that say they know them.
         if let notifyShogi { body["notify_shogi"] = notifyShogi }
+        // 既読で知らせを消す (read_sync) / 音声をスマホで続ける (voice_handoff): only to apps that know them
+        // (an older app would show a read_sync as an empty notification).
+        if let notifySync { body["notify_sync"] = notifySync }
         let _: OK = try await send(request("POST", "/api/agent/devices/push", json: body))
     }
 

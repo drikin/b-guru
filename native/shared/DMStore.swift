@@ -124,7 +124,10 @@ final class DMStore {
     /// What is open (nil = closed). iPhone: a sheet; Mac: over the chat.
     var route: Route? {
         didSet {
-            if case let .thread(p) = route, oldValue != route { Task { await load(p) } }
+            if case let .thread(p) = route, oldValue != route {
+                Task { await load(p) }
+                if appVisible { onShowing?(p.userId) }
+            }
             if route == .list, oldValue != .list { Task { await reload() } }
             if route == nil { thread = [] ; error = nil }
         }
@@ -136,8 +139,15 @@ final class DMStore {
     var error: String?
     /// The app is in front (iPhone: active scene; Mac: panel on screen) — read marks only then.
     var appVisible = true {
-        didSet { if appVisible, !oldValue { markSeen() } }
+        didSet {
+            if appVisible, !oldValue {
+                markSeen()
+                if let p = openPeer { onShowing?(p.userId) }
+            }
+        }
     }
+    /// That person's conversation came on screen (the iPhone removes its notification).
+    @ObservationIgnored var onShowing: ((String) -> Void)?
     /// A DM from someone arrived and is not on screen (the Mac posts a notification).
     @ObservationIgnored var onIncoming: ((DMMessage, DMPeer) -> Void)?
 

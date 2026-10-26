@@ -45,6 +45,16 @@ final class RoomStore {
         self.api = api
         self.voice = voice
         voice.onParticipantsChanged = { [weak self] in self?.applyProximity() }
+        voice.onContinuedElsewhere = { [weak self] in
+            guard let self, self.mode == .room else { return }
+            // The phone (same identity) is in the room now: step out here only. Telling the server (toText /
+            // listening off) would move or mute the phone, since the server's "me" is that phone now.
+            self.myWalk?.cancel()
+            self.myWalk = nil
+            self.mode = .text
+            self.notice = VoiceStore.continuedElsewhere
+            self.revision += 1
+        }
     }
 
     var me: RoomMember? { meId.flatMap { members[$0] } }
@@ -277,6 +287,15 @@ final class RoomStore {
             await voice.setMic(false)
             if let r = try? await api.roomAction(["action": "voice", "mic": false]), let m = r.member { received(m) }
         }
+    }
+
+    /// 「🎧 音声をこの端末で続ける」 tapped (voice_handoff): into the room with its sound on, the mic as the
+    /// other device had it.
+    func continueHere(mic: Bool) async {
+        notice = nil
+        if !listening { await setListening(true) }
+        if mode == .text { await enter() } else if !voice.inRoom { await voice.join() }
+        if mic, mode == .room { await setMic(true) }
     }
 
     func sendReaction(_ emoji: String, to: String? = nil) {

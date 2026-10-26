@@ -60,6 +60,11 @@ final class VoiceStore {
     /// The club room listens for changes in the call (people joining get their volume
     /// and permission at once).
     @ObservationIgnored var onParticipantsChanged: (() -> Void)?
+    /// The call went on on another device of mine (DUPLICATE_IDENTITY): the club room shows it too.
+    @ObservationIgnored var onContinuedElsewhere: (() -> Void)?
+    /// 「スマホで続ける」 (Mac; set by ChatStore).
+    @ObservationIgnored var handoff: VoiceHandoff?
+    static let continuedElsewhere = "別の端末で続けています"
     /// Last set of people allowed to receive my mic (participant sids), nil = everyone.
     @ObservationIgnored private var allowedSids: Set<String>?
     private var observer: Observer?
@@ -367,7 +372,13 @@ final class VoiceStore {
         FileHandle.standardError.write(Data("[voice] disconnected: \(String(describing: error))\n".utf8))
         #endif
         guard let room, room === from else { return } // late event from an earlier room
-        if error?.type == .participantRemoved {
+        if error?.type == .duplicateIdentity {
+            // The same member joined from another device (「スマホで続ける」, or simply opened it there):
+            // LiveKit lets one connection per identity, so this one was let go. Not a failure, and no rejoin
+            // (that would take it back from the other device).
+            notice = Self.continuedElsewhere
+            onContinuedElsewhere?()
+        } else if error?.type == .participantRemoved {
             notice = "ボイスルームから退出させられました"
         } else if error != nil {
             notice = "ボイスルームの接続が切れました"
