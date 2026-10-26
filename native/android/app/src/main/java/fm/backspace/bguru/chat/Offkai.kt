@@ -135,6 +135,25 @@ class OffkaiStore(private val api: ApiClient, private val app: Context) {
     /** Demo uploads: their pictures (no server to fetch them from). */
     var localPictures by mutableStateOf<Map<Long, ImageBitmap>>(emptyMap()); private set
 
+    /** 🔈 チャットを読み上げる: this phone's own switch (kept on the phone, on by default). */
+    var readChat by mutableStateOf(app.getSharedPreferences(OffkaiReadAloud.PREFS, Context.MODE_PRIVATE).getBoolean(OffkaiReadAloud.PREF_KEY, true)); private set
+    private val reader = OffkaiReader(app) { notice = it }
+
+    fun changeReadChat(on: Boolean) {
+        readChat = on
+        app.getSharedPreferences(OffkaiReadAloud.PREFS, Context.MODE_PRIVATE).edit().putBoolean(OffkaiReadAloud.PREF_KEY, on).apply()
+        reader.reset()
+        if (!on) reader.stop()
+    }
+
+    /** A chat message that just arrived over the stream (ChatStore.received): read aloud while this phone is
+     *  in the 🍻 audio (listening or speaking) and its switch is on. */
+    fun onChatArrived(m: ChatMessage, alreadyShown: Boolean) {
+        if (!readChat || !running || !listening) return
+        if (!OffkaiReadAloud.shouldRead(m, alreadyShown)) return
+        OffkaiReadAloud.speech(m)?.let(reader::enqueue)
+    }
+
     /** The GET's can_end for the current event (admins may end any). */
     private var serverCanEnd = false
     /** Who I am, from the chat (my own messages) when nothing here has said it yet. */
@@ -264,6 +283,7 @@ class OffkaiStore(private val api: ApiClient, private val app: Context) {
         if (intoArchive) archive = listOf(e.copy(photoCount = maxOf(e.photoCount, photos.size), cover = e.cover ?: photos.firstOrNull()?.url)) +
             archive.filterNot { it.id == e.id }
         photos = emptyList()
+        reader.stop()
         stopListening()
     }
 
@@ -451,6 +471,7 @@ class OffkaiStore(private val api: ApiClient, private val app: Context) {
     fun closeAlbum() { album = null; albumPhotos = emptyList(); albumLoading = false }
 
     fun close() {
+        reader.stop()
         stopListening()
         scope.cancel()
     }
@@ -557,6 +578,7 @@ class OffkaiStore(private val api: ApiClient, private val app: Context) {
         if (r != null) { r.disconnect(); r.release() }
         phase = Phase.IDLE
         micOn = false
+        if (!keepService) reader.stop() // out of the audio (keepService: back in at once to speak)
         if (!keepService && !demo) VoiceService.stop(app)
     }
 

@@ -247,6 +247,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         if (pauseJob?.isActive == true) return
         pauseJob = scope.launch {
             delay(PAUSE_GRACE_MS)
+            // 🍻 を聞いているあいだ（画面を消してポケットの中でも）はチャットの読み上げのためにつないだまま。
+            while (offkai.listening && offkai.readChat) delay(5_000)
             streamJob?.cancel()
             streamJob = null
             connection = Connection.CONNECTING
@@ -402,6 +404,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         // A quiet note (room comings and goings) or a ☗ game card: in the list, but no bubble, never unread.
         val quiet = m.isNotice || m.kind == "shogi"
         if (!alreadyShown && !quiet) room.onChat(m)
+        offkai.onChatArrived(m, alreadyShown) // 🍻 チャットの読み上げ (only new ones from the stream, never a reload)
         if (m.isAuthor || alreadyShown || quiet) return
         if (isVisible) markReadSoon() else unreadCount += 1
     }

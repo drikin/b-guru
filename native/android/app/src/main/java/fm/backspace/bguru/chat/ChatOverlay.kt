@@ -414,6 +414,7 @@ private fun OffkaiMini(offkai: OffkaiStore, onExpand: () -> Unit) {
                 }
                 if (offkai.canControl) PhotoButton(offkai, compact = true)
             }
+            ReadChatToggle(offkai, compact = true)
         } else {
             MiniLine("いまは開催していません（⤢ で始める・アルバム）")
         }

@@ -33,10 +33,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -58,9 +60,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -238,6 +242,7 @@ private fun RunningView(offkai: OffkaiStore, onOpen: (OffkaiPhoto) -> Unit) {
                 Text("終了", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
             }
         }
+        ReadChatToggle(offkai)
         offkai.notice?.let { n ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(n, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f, fill = false))
@@ -266,6 +271,25 @@ private fun RunningView(offkai: OffkaiStore, onOpen: (OffkaiPhoto) -> Unit) {
             confirmButton = { TextButton(onClick = { confirmTakeOver = false; speakNow() }) { Text("話す") } },
             dismissButton = { TextButton(onClick = { confirmTakeOver = false }) { Text("やめる") } },
         )
+    }
+}
+
+/** 🔈 チャットを読み上げる (this phone only, on by default): new chat messages are read aloud while this
+ *  phone is in the 🍻 audio. A checkbox row; [compact] for the small 🍻 window over the chat. */
+@Composable
+internal fun ReadChatToggle(offkai: OffkaiStore, compact: Boolean = false) {
+    val on = offkai.readChat
+    Row(
+        Modifier.toggleable(value = on, role = Role.Checkbox, onValueChange = { offkai.changeReadChat(it) })
+            .then(if (compact) Modifier.height(28.dp) else Modifier.height(32.dp)),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Box(Modifier.size(if (compact) 16.dp else 18.dp).scale(if (compact) 0.7f else 0.8f), contentAlignment = Alignment.Center) {
+            Checkbox(checked = on, onCheckedChange = null)
+        }
+        Text("🔈 チャットを読み上げる", fontSize = if (compact) 11.sp else 12.sp, maxLines = 1,
+            color = if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
