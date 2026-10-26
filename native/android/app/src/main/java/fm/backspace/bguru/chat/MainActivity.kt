@@ -6,14 +6,32 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
+import android.content.pm.PackageManager
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.LaunchedEffect
 
 class MainActivity : ComponentActivity() {
     /** voice_handoff with the mic on: RECORD_AUDIO asked here (the flow runs in ChatStore, not in a screen). */
+    /** The plain permission request (not registerForActivityResult: lint wants Fragment 1.3+ for that). */
     private var micAnswer: ((Boolean) -> Unit)? = null
-    private val micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        micAnswer?.invoke(granted)
+
+    private fun askMic(answer: (Boolean) -> Unit) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            answer(true)
+            return
+        }
+        micAnswer?.invoke(false)
+        micAnswer = answer
+        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), MIC_REQUEST)
+    }
+
+    @Deprecated("ActivityCompat.requestPermissions answers here")
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        @Suppress("DEPRECATION")
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != MIC_REQUEST) return
+        micAnswer?.invoke(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED)
         micAnswer = null
     }
 
@@ -127,13 +145,13 @@ class MainActivity : ComponentActivity() {
         VoiceHandoff.target(intent?.getStringExtra(Push.EXTRA_HANDOFF))?.let { target ->
             val mic = intent?.getBooleanExtra(Push.EXTRA_HANDOFF_MIC, false) == true
             intent?.removeExtra(Push.EXTRA_HANDOFF)
-            App.session(this).store?.continueVoiceHere(target, mic) { answer ->
-                micAnswer?.invoke(false)
-                micAnswer = answer
-                micPermission.launch(Manifest.permission.RECORD_AUDIO)
-            }
+            App.session(this).store?.continueVoiceHere(target, mic, ::askMic)
         }
         // The jukebox's playback notification.
         if (intent?.getBooleanExtra(JukeboxService.EXTRA_OPEN_JUKEBOX, false) == true) App.session(this).jukebox?.showTab = true
+    }
+
+    private companion object {
+        const val MIC_REQUEST = 7101
     }
 }
