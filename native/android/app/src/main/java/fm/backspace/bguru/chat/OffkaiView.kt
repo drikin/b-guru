@@ -44,6 +44,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -368,6 +369,7 @@ private fun AlbumView(offkai: OffkaiStore, e: OffkaiEvent, onOpen: (OffkaiPhoto)
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        AlbumSaveRow(offkai, e)
         offkai.notice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
         if (offkai.albumLoading && offkai.albumPhotos.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -375,6 +377,39 @@ private fun AlbumView(offkai: OffkaiStore, e: OffkaiEvent, onOpen: (OffkaiPhoto)
             PhotoGrid(offkai, offkai.albumPhotos, Modifier.weight(1f).fillMaxWidth(), followNewest = false, empty = "写真はありません", onOpen = onOpen)
         }
     }
+}
+
+/** 「⬇ まとめて保存（N 枚）」 (only when the server said can_download and there is a photo), then 「12 / 40」 with
+ *  中止, then 「40 枚を保存しました」. Saved into the gallery's Pictures/B-guru/<B-guru オフ会 日付 題>/. */
+@Composable
+private fun AlbumSaveRow(offkai: OffkaiStore, e: OffkaiEvent) {
+    val context = LocalContext.current
+    val s = offkai.save?.takeIf { it.eventId == e.id }
+    val count = offkai.albumPhotos.size
+    when {
+        s?.running == true -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(horizontal = 8.dp)) {
+            LinearProgressIndicator(progress = { if (s.total > 0) s.done.toFloat() / s.total else 0f }, modifier = Modifier.weight(1f))
+            Text("⬇ ${OffkaiAlbumNames.progress(s.done, s.total)}", style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { offkai.cancelSave() }) { Text("中止") }
+        }
+        else -> Column(Modifier.padding(horizontal = 8.dp)) {
+            if (offkai.albumCanDownload && count >= 1 && !offkai.albumLoading) {
+                OutlinedButton(onClick = { offkai.saveAlbum(context.mainActivity()?.let { a -> a::askWriteStorage }) },
+                    modifier = Modifier.height(34.dp)) { Text("⬇ まとめて保存（$count 枚）", fontSize = 13.sp) }
+            }
+            s?.message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+    }
+}
+
+private fun android.content.Context.mainActivity(): MainActivity? {
+    var c: android.content.Context? = this
+    while (c is android.content.ContextWrapper) {
+        if (c is MainActivity) return c
+        c = c.baseContext
+    }
+    return null
 }
 
 // MARK: photos

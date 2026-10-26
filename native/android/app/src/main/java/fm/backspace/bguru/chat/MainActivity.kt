@@ -26,13 +26,29 @@ class MainActivity : ComponentActivity() {
         ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), MIC_REQUEST)
     }
 
+    /** 🍻 ⬇ まとめて保存 on Android 9: writing into Pictures needs WRITE_EXTERNAL_STORAGE (10+ needs nothing). */
+    private var writeAnswer: ((Boolean) -> Unit)? = null
+
+    fun askWriteStorage(answer: (Boolean) -> Unit) {
+        if (!OffkaiAlbumSaver.needsWritePermission ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+            answer(true)
+            return
+        }
+        writeAnswer?.invoke(false)
+        writeAnswer = answer
+        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), WRITE_REQUEST)
+    }
+
     @Deprecated("ActivityCompat.requestPermissions answers here")
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         @Suppress("DEPRECATION")
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != MIC_REQUEST) return
-        micAnswer?.invoke(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED)
-        micAnswer = null
+        val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+        when (requestCode) {
+            MIC_REQUEST -> { micAnswer?.invoke(granted); micAnswer = null }
+            WRITE_REQUEST -> { writeAnswer?.invoke(granted); writeAnswer = null }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -153,5 +169,6 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val MIC_REQUEST = 7101
+        const val WRITE_REQUEST = 7102
     }
 }

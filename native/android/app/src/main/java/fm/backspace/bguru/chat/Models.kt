@@ -653,7 +653,8 @@ data class OffkaiPhoto(
 @Serializable data class OffkaiEventReply(val event: OffkaiEvent? = null)
 /** POST token / speak: the key to the room (speak also carries the event). */
 @Serializable data class OffkaiTokenReply(val event: OffkaiEvent? = null, val token: String = "", val url: String = "", val room: String = "", val canSpeak: Boolean = false)
-@Serializable data class OffkaiPhotosReply(val photos: List<OffkaiPhoto> = emptyList(), val nextAfter: Long? = null)
+/** `can_download`: this viewer may 「⬇ まとめて保存」 (took part in that event, or an admin). */
+@Serializable data class OffkaiPhotosReply(val photos: List<OffkaiPhoto> = emptyList(), val nextAfter: Long? = null, val canDownload: Boolean = false)
 /** The stream's `event: offkai`. */
 @Serializable data class OffkaiStreamData(
     val action: String = "",

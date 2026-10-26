@@ -6,6 +6,9 @@
     <!-- Whether the network is metered: video covers load only on Wi-Fi and the like (TimelineMedia.kt). -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 🍻 アルバムをまとめて保存: Android 9 writes into Pictures/B-guru/ with this (asked on the first save);
+         Android 10+ saves through MediaStore with no permission. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <!-- Voice room: the mic (asked for on the first unmute), audio routing to
          speaker / earpiece / Bluetooth, and a foreground service so a call keeps
