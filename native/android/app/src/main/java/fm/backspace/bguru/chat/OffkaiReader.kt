@@ -167,6 +167,11 @@ object OffkaiVoices {
 
     /** 一覧の品質の印: 高品質・最高品質に ★。 */
     fun mark(v: TtsVoice): String = if (v.quality >= QUALITY_HIGH) "★" else ""
+
+    /** 一覧に出す名前: Google の「ja-jp-x-jab-local」は「日本語の声 JAB」に（内部名のままだと読めない）。 */
+    fun label(v: TtsVoice): String =
+        Regex("^[a-z]{2,3}[-_][a-z]{2}[-_]x[-_]([a-z0-9]+)[-_](local|network)$", RegexOption.IGNORE_CASE)
+            .find(v.name)?.let { "日本語の声 ${it.groupValues[1].uppercase()}" } ?: v.name
 }
 
 /** Android の Voice → [TtsVoice]。 */

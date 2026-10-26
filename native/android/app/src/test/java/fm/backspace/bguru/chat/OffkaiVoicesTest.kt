@@ -67,4 +67,9 @@ class OffkaiVoicesTest {
         assertEquals("★", OffkaiVoices.mark(v("a", quality = 400)))
         assertEquals("", OffkaiVoices.mark(v("a", quality = 300)))
     }
+
+    @Test fun labelMakesGoogleNamesReadable() {
+        assertEquals("日本語の声 JAB", OffkaiVoices.label(v("ja-jp-x-jab-local")))
+        assertEquals("Kyoko", OffkaiVoices.label(v("Kyoko")))
+    }
 }

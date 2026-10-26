@@ -712,10 +712,10 @@ private fun ReadAloudVoiceDialog(onVoiceChanged: () -> Unit, onDismiss: () -> Un
                     failed -> Text("この端末では日本語の読み上げを使えません", style = MaterialTheme.typography.bodyMedium)
                     voices == null -> Text("声を調べています…", style = MaterialTheme.typography.bodyMedium)
                     else -> {
-                        val autoName = OffkaiVoices.auto(all)?.let { "${OffkaiVoices.mark(it)}${it.name}" }
+                        val autoName = OffkaiVoices.auto(all)?.let { "${OffkaiVoices.mark(it)}${OffkaiVoices.label(it)}" }
                         VoiceRow("自動", autoName?.let { "いま: $it" } ?: "端末の日本語の声", current.isEmpty()) { choose("") }
                         choices.forEach { v ->
-                            VoiceRow("${OffkaiVoices.mark(v)}${v.name}", null, current == v.name) { choose(v.name) }
+                            VoiceRow("${OffkaiVoices.mark(v)}${OffkaiVoices.label(v)}", null, current == v.name) { choose(v.name) }
                         }
                         if (OffkaiVoices.needsInstallHint(all)) {
                             Text(
