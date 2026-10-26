@@ -56,3 +56,13 @@ describe("zipFits", () => {
     expect(zipFits(400, 400 * 4 * 1024 * 1024)).toBe(true);
   });
 });
+
+describe("safeFilePart", () => {
+  it("drops unsafe and format characters and trims edges after cutting", async () => {
+    const { safeFilePart } = await import("../offkai");
+    expect(safeFilePart("a\\b/c:d*e?f\"g<h>i|j", 30)).toBe("abcdefghij");
+    expect(safeFilePart("ab\u202Ecd", 30)).toBe("abcd");
+    expect(safeFilePart("123456789012345 6789", 16)).toBe("123456789012345");
+    expect(safeFilePart(". .abc", 16)).toBe("abc");
+  });
+});

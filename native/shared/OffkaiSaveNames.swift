@@ -30,7 +30,9 @@ enum OffkaiSaveNames {
             scalars.append(s)
         }
         var out = String(String.UnicodeScalarView(scalars.prefix(max)))
-        while out.hasPrefix(".") { out.removeFirst() }
+        // 先頭の「.」と空白、切ったあとの末尾の空白を落とす（サーバと同じ）。
+        while out.hasPrefix(".") || out.hasPrefix(" ") { out.removeFirst() }
+        while out.hasSuffix(" ") { out.removeLast() }
         return out
     }
 

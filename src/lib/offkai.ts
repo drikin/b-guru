@@ -340,7 +340,7 @@ function jst(d: Date) {
 
 /** ファイル名に使える形（区切りや制御文字を落とし、短く）。 */
 export function safeFilePart(v: string, max = 24): string {
-  return [...v.replace(/[\u0000-\u001f\u007f\\/:*?"<>|]|\p{Cf}/gu, "").replace(/\s+/g, " ").trim()].slice(0, max).join("").replace(/^\.+/, "");
+  return [...v.replace(/[\u0000-\u001f\u007f\\/:*?"<>|]|\p{Cf}/gu, "").replace(/\s+/g, " ").trim()].slice(0, max).join("").replace(/^[. ]+| +$/g, "");
 }
 
 /** アルバムをまとめた zip（Web）。中の名前は「001_表示名_1930.jpg」、zip の名前は「B-guru オフ会 2026-10-26 題.zip」。 */

@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
@@ -41,7 +42,8 @@ object OffkaiAlbumNames {
     fun safePart(v: String, max: Int): String {
         val s = EDGES.replace(SPACES.replace(UNSAFE.replace(v, ""), " "), "")
         val cps = s.codePoints().limit(max.toLong()).toArray()
-        return String(cps, 0, cps.size).trimStart('.')
+        // 先頭の「.」と空白、切ったあとの末尾の空白を落とす（サーバと同じ）。
+        return String(cps, 0, cps.size).trimStart('.', ' ').trimEnd(' ')
     }
 
     /** 「B-guru オフ会 2026-10-26 題」 (the zip's name without `.zip`): the day it started, in Japan. */
@@ -98,7 +100,8 @@ object OffkaiAlbumSaver {
     suspend fun save(context: Context, folder: String, name: String, url: String, takenAt: String): Boolean {
         val bytes = download(url) ?: return false
         val taken = runCatching { Instant.parse(takenAt).toEpochMilli() }.getOrNull()
-        return withContext(Dispatchers.IO) {
+        // 書き始めたら中止でも書き切って数える（「N 枚は保存済み」が実際と合うように）。
+        return withContext(Dispatchers.IO + NonCancellable) {
             runCatching {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) writeMediaStore(context, folder, name, bytes, taken) else writeLegacy(context, folder, name, bytes)
             }.getOrDefault(false)

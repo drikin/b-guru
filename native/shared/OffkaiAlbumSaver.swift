@@ -89,6 +89,7 @@ final class OffkaiAlbumSaver {
         let folderName = OffkaiSaveNames.folderName(title: event.title, startedAt: event.started ?? Date())
         let scoped = parent.startAccessingSecurityScopedResource()
         defer { if scoped { parent.stopAccessingSecurityScopedResource() } }
+        if Task.isCancelled { phase = .idle; eventId = nil; return } // 選んでいる間に閉じた: 空のフォルダを作らない
         guard let folder = Self.makeFolder(in: parent, name: folderName) else {
             phase = .finished(message: "フォルダを作れませんでした（\(parent.lastPathComponent)）", folder: nil)
             return

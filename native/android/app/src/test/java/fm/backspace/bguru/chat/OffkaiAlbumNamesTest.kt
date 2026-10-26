@@ -20,6 +20,8 @@ class OffkaiAlbumNamesTest {
         // Separators and control characters dropped, spaces (also 全角) collapsed, trimmed.
         assertEquals("ドリキン mazzo", OffkaiAlbumNames.safePart("  ドリ\tキン / mazzo　 ", 16)) // (a tab is a control character: gone)
         assertEquals("abc", OffkaiAlbumNames.safePart("a\\b:c*?\"<>|\u0007\u007f", 16))
+        assertEquals("123456789012345", OffkaiAlbumNames.safePart("123456789012345 6789", 16)) // 末尾の空白を落とす
+        assertEquals("abc", OffkaiAlbumNames.safePart(". .abc", 16)) // 先頭の「.」と空白
         // At most 16 code points (an emoji is one, not two chars).
         assertEquals("🍻".repeat(16), OffkaiAlbumNames.safePart("🍻".repeat(20), 16))
         // Unicode format characters (Cf): U+202E would show 「gpj.exe」 backwards; U+200B / U+FEFF are invisible.

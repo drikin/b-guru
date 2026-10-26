@@ -234,9 +234,8 @@ final class OffkaiStore {
             var q = [URLQueryItem(name: "limit", value: "200")]
             if let after { q.append(URLQueryItem(name: "after", value: String(after))) }
             let r = await api.minigameRaw("GET", path: "\(path)/\(eventId)/photos", query: q)
-            guard r.0 == 200, let p = try? Self.decoder.decode(Page.self, from: r.1) else {
-                return out.isEmpty ? nil : (out, can ?? false)
-            }
+            // 途中のページで失敗したら全体を失敗にする（一部だけを見せたり保存したりしない。Android と同じ）。
+            guard r.0 == 200, let p = try? Self.decoder.decode(Page.self, from: r.1) else { return nil }
             out += p.photos
             if can == nil { can = p.canDownload ?? false }
             guard let n = p.nextAfter else { break }

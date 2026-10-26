@@ -12,6 +12,9 @@ final class OffkaiSaveNamesTests: XCTestCase {
     func testSafePartDropsForbiddenAndControl() {
         XCTAssertEqual(OffkaiSaveNames.safePart("a\\b/c:d*e?f\"g<h>i|j", max: 30), "abcdefghij")
         XCTAssertEqual(OffkaiSaveNames.safePart("x\u{0}y\u{1F}z\u{7F}", max: 30), "xyz")
+        // 切ったあとの末尾の空白、先頭の「.」と空白は落とす（サーバと同じ）
+        XCTAssertEqual(OffkaiSaveNames.safePart("123456789012345 6789", max: 16), "123456789012345")
+        XCTAssertEqual(OffkaiSaveNames.safePart(". .abc", max: 16), "abc")
     }
 
     func testSafePartDropsFormatCharacters() {

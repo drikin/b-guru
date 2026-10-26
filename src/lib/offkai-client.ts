@@ -266,6 +266,12 @@ export async function loadMorePhotos(): Promise<void> {
   set({ album: { ...snap.album, photos: [...snap.album.photos, ...b.photos.filter((p) => !snap.album!.photos.some((x) => x.id === p.id))], more: b.next_after } });
 }
 
+/** 聞いた・話した・写真を上げた: サーバはこの人を参加者として記録したので、開いている会のボタンもすぐ出す。 */
+function joined(): void {
+  const a = snap.album;
+  if (a && snap.current && a.event.id === snap.current.id && !a.canDownload) set({ album: { ...a, canDownload: true } });
+}
+
 /** アルバムをまとめた zip の場所（Web。参加した人・管理者だけ。docs/offkai-spec.md「アルバムをまとめて保存」）。 */
 export function albumZipUrl(eventId: number): string {
   return `/api/offkai/${eventId}/photos.zip`;
@@ -293,6 +299,7 @@ export async function uploadPhotos(files: File[], caption: string): Promise<bool
       if (snap.album && snap.current && snap.album.event.id === snap.current.id) {
         set({ album: { ...snap.album, photos: byId([...snap.album.photos, ...photos.filter((p) => !snap.album!.photos.some((x) => x.id === p.id))]) } });
       }
+      joined();
       return true;
     }
     fail({ status: r.status, body: d }, "写真を送れませんでした");
@@ -331,6 +338,7 @@ export async function listen(): Promise<void> {
   if (snap.audio !== "idle" || !snap.current) return;
   const r = await api("/token", { method: "POST" });
   if (r.status !== 200 || !r.body) return fail(r, "つながりませんでした");
+  joined();
   await connectWith(r.body as unknown as Tok, false);
 }
 
@@ -341,6 +349,7 @@ export async function speak(): Promise<void> {
   try {
     const r = await api("/speak", { method: "POST", json: { on: true } });
     if (r.status !== 200 || !r.body) return fail(r, "話せませんでした");
+    joined();
     takeCurrent((r.body as unknown as { event: EventDto }).event);
     if (!r.body.token) return fail({ status: 503, body: { error: "音声は今使えません" } }, "話せませんでした");
     await connectWith(r.body as unknown as Tok, true);
