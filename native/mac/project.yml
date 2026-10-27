@@ -186,6 +186,23 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "Apple Development"
 
+  # iPhone UI tests on the offline demo (BGURU_DEMO=1, nothing is sent):
+  #   xcodebuild test -scheme BguruChatiOSUITests -destination 'platform=iOS Simulator,name=<端末>'
+  BguruChatiOSUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    dependencies:
+      - target: BguruChatiOS
+    sources:
+      - path: ../ios/UITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: fm.backspace.bguru.chat.uitests
+        TEST_TARGET_NAME: BguruChatiOS
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_STRICT_CONCURRENCY: minimal
+
   # Unit tests of the pure logic (no app host): `xcodebuild test -scheme BguruChatTests`.
   BguruChatTests:
     type: bundle.unit-test

@@ -359,6 +359,7 @@ struct DialogFrame<Content: View>: View {
     let onCancel: () -> Void
     let onConfirm: () -> Void
     @ViewBuilder let content: () -> Content
+    @State private var contentHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -370,11 +371,15 @@ struct DialogFrame<Content: View>: View {
                     .accessibilityLabel("閉じる")
             }
             // As tall as its content (a short question is a short dialog); scrolls only when too tall.
-            ViewThatFits(in: .vertical) {
+            // One copy of the content: a ViewThatFits held two, and when the keyboard took the room
+            // it swapped the text box being typed in for the other copy — the keyboard closed again
+            // (iPhone 「編集」でキーボードが出ない, リュー 2026-10-27).
+            ScrollView {
                 content().frame(maxWidth: .infinity, alignment: .leading)
-                ScrollView { content().frame(maxWidth: .infinity, alignment: .leading) }
-                    .scrollBounceBehavior(.basedOnSize)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
             }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxHeight: contentHeight > 0 ? contentHeight : nil)
             if let error {
                 Text(error).font(.app(.callout)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
@@ -520,7 +525,10 @@ struct EditPostDialog: View {
                 }
             }
         }
-        .onAppear { actions.loadMembers() }
+        .onAppear {
+            actions.loadMembers()
+            focused = true // 「編集」 opens ready to type (the keyboard comes up with the sheet)
+        }
         .onDisappear { newAudio?.discard() } // sent or cancelled: the temporary copy goes
         .onChange(of: picks) { _, items in
             guard !items.isEmpty else { return }
