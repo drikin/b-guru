@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteCustomEmoji } from "@/lib/reactions";
 import { getSessionEmail } from "@/lib/session";
-import { isAdmin } from "@/lib/admin";
+import { EmojiError, removeCustomEmoji } from "@/lib/custom-emoji";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// DELETE /api/emojis/[id] — remove a custom emoji.
-// Allowed for its creator, or an admin. Reactions referencing it are deleted
-// with it (see deleteCustomEmoji) so no chip is left pointing at a dead image.
+// DELETE /api/emojis/[id] — remove a custom emoji. Any logged-in member (owner 2026-10-27
+// 「誰でもどこからでも絵文字を登録削除」; who deleted it is logged). Reactions referencing it are
+// deleted with it (see deleteCustomEmoji) so no chip is left pointing at a dead image.
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -19,24 +18,11 @@ export async function DELETE(
   }
 
   const { id } = await params;
-  const emojiId = Number(id);
-  if (!Number.isInteger(emojiId) || emojiId <= 0) {
-    return NextResponse.json({ error: "不正なID" }, { status: 400 });
-  }
-
   try {
-    await deleteCustomEmoji(emojiId, email, isAdmin(email));
+    await removeCustomEmoji(email, id);
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    if (e.message === "not_found") {
-      return NextResponse.json({ error: "絵文字が見つかりません" }, { status: 404 });
-    }
-    if (e.message === "forbidden") {
-      return NextResponse.json(
-        { error: "自分の登録した絵文字のみ削除できます" },
-        { status: 403 }
-      );
-    }
+    if (e instanceof EmojiError) return NextResponse.json({ error: e.message, code: e.code }, { status: e.status });
     console.error("emoji delete error:", e.message);
     return NextResponse.json({ error: "絵文字の削除に失敗しました" }, { status: 500 });
   }

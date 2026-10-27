@@ -353,7 +353,18 @@ const spec = {
       post: { summary: "ブックマーク（スコープ write か post・post なら枠 post_light）body {post_id, bookmarked?: true|false} → {apiVersion, bookmarked}。bookmarked を送れば冪等、無ければ切り替え", responses: { "200": { description: "OK" } } },
     },
     "/api/agent/emojis": {
-      get: { summary: "カスタム絵文字の一覧（スコープ read）→ {apiVersion, emojis:[{id, name, image_url}]}。登録は Web だけ", responses: { "200": { description: "OK" } } },
+      get: { summary: "カスタム絵文字の一覧（スコープ read）→ {apiVersion, emojis:[{id, name, image_url}]}", responses: { "200": { description: "OK" } } },
+      post: {
+        summary: "カスタム絵文字を登録（multipart: name＝英小文字・数字・_ 32 文字まで、image＝PNG/GIF/WebP/JPEG 256KB まで。スコープ chat・アプリの鍵だけ。誰でも）→ {apiVersion, emoji}",
+        responses: { "201": { description: "Created" }, "400": { description: "名前・画像が不正" }, "409": { description: "名前が使われている" }, "429": { description: "1 時間 20 回まで" } },
+      },
+    },
+    "/api/agent/emojis/{id}": {
+      delete: {
+        summary: "カスタム絵文字を消す（その絵文字のリアクションも消える。スコープ chat・アプリの鍵だけ。誰でも、誰が消したかは記録）→ {ok}",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+        responses: { "200": { description: "OK" }, "404": { description: "見つからない" }, "429": { description: "1 時間 20 回まで" } },
+      },
     },
     "/api/agent/search": {
       get: {

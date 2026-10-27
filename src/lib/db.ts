@@ -937,6 +937,15 @@ export async function initSchema() {
     ALTER TABLE beagle_reminders ADD COLUMN IF NOT EXISTS owner_name TEXT;
     CREATE INDEX IF NOT EXISTS idx_beagle_reminders_due ON beagle_reminders(next_at) WHERE active;
     CREATE INDEX IF NOT EXISTS idx_beagle_reminders_owner ON beagle_reminders(owner_email) WHERE active;
+    -- カスタム絵文字を誰が登録・削除したか（誰でも消せるので。lib/custom-emoji.ts）。
+    CREATE TABLE IF NOT EXISTS custom_emoji_log (
+      id SERIAL PRIMARY KEY,
+      action TEXT NOT NULL CHECK (action IN ('create', 'delete')),
+      emoji_name TEXT NOT NULL,
+      image_url TEXT,
+      by_email TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     CREATE TABLE IF NOT EXISTS offkai_participants (
       event_id INT NOT NULL REFERENCES offkai_events(id) ON DELETE CASCADE,
       email TEXT NOT NULL,

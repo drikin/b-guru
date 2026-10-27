@@ -283,6 +283,9 @@ export function agentCapabilities(
         bookmarks_set: can("post") || can("write"),
         favorites: app,
         custom_emoji_list: can("read") ? "/api/agent/emojis" : null,
+        // 登録（POST multipart: name・image）と削除（DELETE …/<id>）。誰でも（オーナー 2026-10-27）、アプリの鍵だけ。
+        custom_emoji_register: app && can("chat") ? "/api/agent/emojis" : null,
+        custom_emoji_delete: app && can("chat") ? "/api/agent/emojis/{id}" : null,
         club_select: app,
         club_change: app,
         mentions: can("read") ? "/api/agent/members" : null,

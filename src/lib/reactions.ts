@@ -238,25 +238,15 @@ export async function listCustomEmojis(): Promise<CustomEmoji[]> {
   }));
 }
 
-/** Delete a custom emoji. Only its creator (or an admin, checked by the route)
- *  may do this. Existing reactions referencing it are removed too — leaving
- *  them would render permanent broken chips. */
-export async function deleteCustomEmoji(
-  id: number,
-  requesterEmail: string,
-  isAdmin: boolean
-): Promise<void> {
-  const found = await pool.query(
-    `SELECT name, created_by FROM custom_emojis WHERE id = $1`,
-    [id]
-  );
+/** Delete a custom emoji — any member may (owner 2026-10-27; who did it is logged by
+ *  lib/custom-emoji.ts). Existing reactions referencing it are removed too — leaving
+ *  them would render permanent broken chips. Returns what was deleted. */
+export async function deleteCustomEmoji(id: number): Promise<{ name: string; imageUrl: string }> {
+  const found = await pool.query(`DELETE FROM custom_emojis WHERE id = $1 RETURNING name, image_url`, [id]);
   if (found.rows.length === 0) throw new Error("not_found");
-  if (!isAdmin && found.rows[0].created_by !== requesterEmail) {
-    throw new Error("forbidden");
-  }
   const name = found.rows[0].name;
-  await pool.query(`DELETE FROM custom_emojis WHERE id = $1`, [id]);
   await pool.query(`DELETE FROM reactions WHERE emoji = $1`, [`:${name}:`]);
+  return { name, imageUrl: found.rows[0].image_url };
 }
 
 /** Emit a chat message's current reactions on the live bus. Fire-and-forget. */
