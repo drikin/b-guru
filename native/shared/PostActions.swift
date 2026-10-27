@@ -179,6 +179,26 @@ extension APIClient {
         return try await perform(request("GET", path.hasPrefix("/api/") ? path : "/api/agent/emojis"), as: R.self).emojis
     }
 
+    /// カスタム絵文字の登録（capabilities `custom_emoji_register`）。誰でも（オーナー 2026-10-27）。
+    func registerCustomEmoji(path: String, name: String, image: CustomEmojiRules.Prepared) async throws -> CustomEmojiInfo {
+        struct R: Decodable { var emoji: CustomEmojiInfo }
+        let boundary = "bguru-\(UUID().uuidString)"
+        var req = request("POST", path.hasPrefix("/api/") ? path : "/api/agent/emojis")
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        req.httpBody = CustomEmojiRules.multipartBody(name: name, image: image, boundary: boundary)
+        #if DEBUG
+        if token == "demo" { req.setValue(name, forHTTPHeaderField: "X-Demo-Emoji") }
+        #endif
+        return try await perform(req, as: R.self).emoji
+    }
+
+    /// カスタム絵文字の削除（capabilities `custom_emoji_delete`、"{id}" を置き換える）。その絵文字のリアクションも消える。
+    func deleteCustomEmoji(path: String, id: Int) async throws {
+        struct R: Decodable { var ok: Bool? }
+        let p = path.hasPrefix("/api/") ? path.replacingOccurrences(of: "{id}", with: String(id)) : "/api/agent/emojis/\(id)"
+        _ = try await perform(request("DELETE", p), as: R.self)
+    }
+
     /// A video or a sound file (§11: one per upload, 100 MB). Streams the file from disk into
     /// a multipart body on disk (a 100 MB file is never held in memory). Returns its /api/media/… URL.
     func uploadMedia(file: URL, kind: MediaKind) async throws -> String {
@@ -728,6 +748,8 @@ final class DemoPostServer {
     static let clubs: [(String, String, String)] = [("chat", "雑談", "general"), ("pet", "ペット部", "hobby"), ("apple", "リンゴ部", "tech"),
                                                     ("improve", "機能改善", "general"), ("car", "クルマ部", "hobby"), ("camera", "カメラ部", "hobby")]
     static let emojis = ["beagle", "sanzai", "wan"]
+    /// デモで登録・削除したあとの一覧（id, name）。
+    private var demoEmojis: [(Int, String)] = DemoPostServer.emojis.enumerated().map { ($0.offset + 1, $0.element) }
 
     private func json(_ obj: Any, _ status: Int = 200) -> (Int, Data) {
         var o = obj as? [String: Any] ?? [:]
@@ -764,7 +786,18 @@ final class DemoPostServer {
         case ("GET", "clubs"):
             return json(["clubs": Self.clubs.map { ["key": $0.0, "name": $0.1, "category": $0.2] }])
         case ("GET", "emojis"):
-            return json(["emojis": Self.emojis.enumerated().map { ["id": $0.offset + 1, "name": $0.element, "image_url": TimelineDemoMedia.picture("emoji-\($0.element)", 96, 96, hue: CGFloat($0.offset) * 0.3)] }])
+            return json(["emojis": demoEmojis.map { ["id": $0.0, "name": $0.1, "image_url": TimelineDemoMedia.picture("emoji-\($0.1)", 96, 96, hue: CGFloat($0.0) * 0.3)] }])
+        case ("POST", "emojis"):
+            let name = req.value(forHTTPHeaderField: "X-Demo-Emoji") ?? ""
+            if demoEmojis.contains(where: { $0.1 == name }) { return json(["error": "その名前は既に使われています", "code": "name_taken"], 409) }
+            let id = (demoEmojis.map(\.0).max() ?? 0) + 1
+            demoEmojis.append((id, name))
+            return json(["emoji": ["id": id, "name": name, "image_url": TimelineDemoMedia.picture("emoji-\(name)", 96, 96, hue: CGFloat(id) * 0.3)]], 201)
+        case ("DELETE", "emojis"):
+            let id = Int(parts.last ?? "") ?? 0
+            guard demoEmojis.contains(where: { $0.0 == id }) else { return json(["error": "絵文字が見つかりません", "code": "not_found"], 404) }
+            demoEmojis.removeAll { $0.0 == id }
+            return json(["ok": true])
         case ("GET", "posts") where parts.count > 5 && parts[5] == "voters": // …/posts/7/poll/voters
             let id = Int(parts[3]) ?? 0
             guard let poll = polls[id] ?? post(id)?.poll else { return json(["error": "投票が見つかりません", "code": "not_found"], 404) }

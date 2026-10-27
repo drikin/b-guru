@@ -197,6 +197,7 @@ targets:
       - path: BguruChat/Sources/KeepAwakeLogic.swift
       - path: BguruChat/Sources/BatteryBeagleLogic.swift
       - path: ../shared/OffkaiSaveNames.swift
+      - path: ../shared/CustomEmojiRules.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fm.backspace.bguru.chat.tests

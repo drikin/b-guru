@@ -139,6 +139,9 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var bookmarksSet: Bool?
         var favorites: Bool?
         var customEmojiList: String?
+        /// カスタム絵文字の登録（POST multipart: name・image）と削除（DELETE …/{id}）。アプリの鍵だけ。無い（古いサーバ）なら出さない。
+        var customEmojiRegister: String?
+        var customEmojiDelete: String?
         var clubSelect: Bool?
         var clubChange: Bool?
         var mentions: String?

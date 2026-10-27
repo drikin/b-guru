@@ -155,7 +155,7 @@ struct PostHoverBar: View {
             if canReact {
                 ActionButton(systemImage: "face.smiling", text: nil, help: "リアクション") { actions.loadEmojis(); picking = true }
                     .popover(isPresented: $picking, arrowEdge: .bottom) {
-                        ReactionPicker { e in picking = false; onReact(e) }
+                        ReactionPicker(onPick: { e in picking = false; onReact(e) }, onClose: { picking = false })
                     }
             }
             if actions.canPin(post) {
@@ -906,10 +906,10 @@ struct PostActionPresenter: ViewModifier {
                     .environment(\.postClubs, timeline.clubList)
             }
             .panelDialog($actions.picker, detents: [.height(360)]) { req in
-                ReactionPicker { e in
+                ReactionPicker(onPick: { e in
                     actions.picker = nil
                     req.onPick(e)
-                }
+                }, onClose: { actions.picker = nil })
                 .padding(.top, 8)
             }
             .overlay(alignment: .bottom) {

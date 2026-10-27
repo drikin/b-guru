@@ -25,7 +25,10 @@ final class ChatStore {
     private(set) var highlightId: Int?
     private(set) var onlineCount = 0
     private(set) var connection: Connection = .connecting
-    private(set) var capabilities: Capabilities?
+    private(set) var capabilities: Capabilities? {
+        // カスタム絵文字の登録・削除（ピッカーの「＋ 登録」と長押し）はサーバが言うときだけ。
+        didSet { EmojiCatalog.shared.configure(api: api, posts: capabilities?.features?.posts) }
+    }
     /// The first full list has arrived (until then "empty" means "loading").
     private(set) var hasLoaded = false
     /// For @mention autocomplete (loaded once per launch).
@@ -821,7 +824,7 @@ final class ChatStore {
         let textOnly = ProcessInfo.processInfo.arguments.contains("-demoTextOnly") || env["BGURU_DEMO_TEXT_ONLY"] == "1"
         // -demoNoEdit: a key from before the operations' mark (post, but edit false): 「編集するには一度ログインし直してください」.
         let noEdit = ProcessInfo.processInfo.arguments.contains("-demoNoEdit") || env["BGURU_DEMO_NO_EDIT"] == "1"
-        let postOps = oldServer ? "" : #","edit":\#(!textOnly && !noEdit),"delete":\#(!noEdit),"edit_text_only":\#(textOnly && !noEdit),"whisper":true,"video":true,"audio":true,"max_media_mb":100,"poll":true,"poll_vote":true,"poll_edit":true,"pin":true,"pinned_list":true,"bookmarks":true,"bookmarks_set":true,"favorites":true,"custom_emoji_list":"/api/agent/emojis","club_select":true,"club_change":true,"mentions":"/api/agent/members","display":true,"include":["reactions","read","display"]"#
+        let postOps = oldServer ? "" : #","edit":\#(!textOnly && !noEdit),"delete":\#(!noEdit),"edit_text_only":\#(textOnly && !noEdit),"whisper":true,"video":true,"audio":true,"max_media_mb":100,"poll":true,"poll_vote":true,"poll_edit":true,"pin":true,"pinned_list":true,"bookmarks":true,"bookmarks_set":true,"favorites":true,"custom_emoji_list":"/api/agent/emojis","custom_emoji_register":"/api/agent/emojis","custom_emoji_delete":"/api/agent/emojis/{id}","club_select":true,"club_change":true,"mentions":"/api/agent/members","display":true,"include":["reactions","read","display"]"#
         // チャットの上に重ねる形 (on with BGURU_DEMO_OVERLAY=1 / -demoOverlay): 📺 too (BGURU_WATCH_FAKE_VIDEO=ID plays
         // one on this device only); BGURU_DEMO_OVERLAY_SHOW / _EXPAND set the windows (OverlayModel.debugApplyDemoEnv).
         let overlayOn = env["BGURU_DEMO_OVERLAY"] == "1" || ProcessInfo.processInfo.arguments.contains("-demoOverlay")
