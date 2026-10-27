@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
     const message = await sendChatMessage(ctx.email, checked.body, normalizeClientId(input?.client_id), checked.images);
     // 🐶 @ビーグル: アプリは端末内 AI が答えるかもしれないので、10 秒待ってまだ答えがなければサーバのビーグル
     // （新しい iPhone・Mac は雑談以外をすぐ POST beagle/ask で頼む）。lib/beagle-server.ts
-    scheduleBeagleAnswer(message, ctx.email, "app");
+    scheduleBeagleAnswer(message, ctx.email, ctx.appIssued ? "app" : "agent");
     // 送信者の DTO は is_author=true が確定しているので名前解決は不要（往復を増やさない）。
     const dto = toAgentChatDto(message, { userId: ctx.userId, mentionNames: new Set() });
     return { status: 201, body: { apiVersion: AGENT_API_VERSION, message: dto }, headers: {} };

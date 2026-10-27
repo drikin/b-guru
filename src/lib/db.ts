@@ -935,6 +935,8 @@ export async function initSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     ALTER TABLE beagle_reminders ADD COLUMN IF NOT EXISTS owner_name TEXT;
+    -- 時刻が来たら調べて答える予定（天気・ニュースなど。lib/beagle-reminders.ts）。
+    ALTER TABLE beagle_reminders ADD COLUMN IF NOT EXISTS task BOOLEAN NOT NULL DEFAULT false;
     CREATE INDEX IF NOT EXISTS idx_beagle_reminders_due ON beagle_reminders(next_at) WHERE active;
     CREATE INDEX IF NOT EXISTS idx_beagle_reminders_owner ON beagle_reminders(owner_email) WHERE active;
     -- カスタム絵文字を誰が登録・削除したか（誰でも消せるので。lib/custom-emoji.ts）。

@@ -12,6 +12,7 @@
  *   - BEAGLE_ONDEVICE_ENABLED で止められる（未設定＝誰にも出さない、メールのカンマ区切り、"1"＝全員）
  */
 import { pool } from "./db";
+import { asksBeagle, noteBeagleAnswered, stripBeagleCall } from "./beagle-call";
 import { SYSTEM_EMAIL } from "./posts";
 import { resolveDisplayNames } from "./display-name";
 import { emailToUserId } from "./user";
@@ -31,10 +32,8 @@ export function beagleOnDeviceEnabledFor(email: string | null | undefined): bool
   return featureEnabledFor(BEAGLE_ONDEVICE_FLAG, email);
 }
 
-/** 本文が @ビーグル を呼んでいるか（「@ビーグルズ」のように名前の一部なら呼んでいない）。 */
-export function asksBeagle(body: string): boolean {
-  return /@ビーグル(?![\p{L}\p{N}])/u.test(body);
-}
+/** 本文が @ビーグル を呼んでいるか（「@ビーグルズ」のように名前の一部なら呼んでいない。lib/beagle-call.ts）。 */
+export { asksBeagle, stripBeagleCall };
 
 /** 出す本文: URL を取り、@ を全角にして呼び出しにしない、空白を整え、500 字まで。空なら null。 */
 export function sanitizeBeagleAnswer(raw: unknown, maxChars: number = BEAGLE_AI_MAX_CHARS): string | null {
@@ -42,6 +41,8 @@ export function sanitizeBeagleAnswer(raw: unknown, maxChars: number = BEAGLE_AI_
   let t = plainText(raw)
     .replace(/https?:\/\/\S+/gi, "")
     .replace(/\bwww\.\S+/gi, "")
+    // 裸のドメイン（evil.example/login など。security-reviewer 2026-10-27）。
+    .replace(/\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|jp|io|dev|app|co|me|ai|info|xyz|ly|gg|tv|fm|link|site|top|biz|ru|cn)\b(?:\/\S*)?/gi, "")
     .replace(/@/g, "＠")
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
     .replace(/[ \t]+\n/g, "\n")
@@ -155,6 +156,7 @@ export async function postBeagleAiReply(input: {
       [row.id, input.questionId, question.body, body, input.email, app]
     );
     await client.query("COMMIT");
+    noteBeagleAnswered(String(question.author_email ?? input.email));
     const message = await mapChatRow(row, null, await emailToUserId(SYSTEM_EMAIL));
     const { isAuthor: _perReceiver, ...broadcast } = message;
     // push・メンション・未読なし（sendChatMessage を通さない。未読は getUnreadCount が kind で除く）。

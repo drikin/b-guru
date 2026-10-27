@@ -4,6 +4,7 @@
  *    返事はビーグルの返信（kind 'beagle_ai'、reply_to_id = 頼んだ発言）なので、ふつうの答え（lib/beagle-server.ts）とは重ならない。
  *  - 鳴らす: 20 秒ごとの見回り。本人だけは DM（lib/dm.ts sendSystemDm）、みんなはチャットにビーグルの発言として（頼んだ人の名前つき）。
  *  - BEAGLE_REMINDERS_ENABLED（featureEnabledFor）。 */
+import { isWeatherQuestion, placeIn } from "./beagle-lookup";
 import { pool } from "./db";
 import { SYSTEM_EMAIL } from "./posts";
 import { emitLive } from "./live";
@@ -12,7 +13,7 @@ import { resolveDisplayNames } from "./display-name";
 import { featureEnabledFor } from "./feature-flag";
 import { mapChatRow } from "./chat";
 import { sakuraChat, SAKURA_MODEL } from "./sakura";
-import { BEAGLE_NAME } from "./beagle-ondevice";
+import { BEAGLE_NAME, stripBeagleCall } from "./beagle-ondevice";
 import { isActiveMember, sendSystemDm } from "./dm";
 import { pushChatMessage } from "./push-notify";
 import {
@@ -28,6 +29,7 @@ import {
   repeatLabel,
   type Plan,
   type RepeatRule,
+  isLookupTask,
 } from "./beagle-reminder-time";
 
 export const BEAGLE_REMINDERS_FLAG = "BEAGLE_REMINDERS_ENABLED";
@@ -143,7 +145,7 @@ async function readWithAi(body: string, now: Date): Promise<unknown> {
     model: SAKURA_MODEL,
     messages: [
       { role: "system", content: AI_PROMPT },
-      { role: "user", content: `今（日本時間）: ${nowText}\n依頼: ${body.replace(/@ビーグル/g, "").trim().slice(0, 300)}` },
+      { role: "user", content: `今（日本時間）: ${nowText}\n依頼: ${stripBeagleCall(body).trim().slice(0, 300)}` },
     ],
     temperature: 0,
     max_tokens: 600,
@@ -157,6 +159,11 @@ async function readWithAi(body: string, now: Date): Promise<unknown> {
 
 async function create(requestId: number, email: string, plan: Plan, now: Date): Promise<string> {
   const me = email.toLowerCase();
+  // 時刻が来たら調べて答える予定（天気・ニュース）。天気は場所がないと調べられないので、作る前に聞く。
+  const task = isLookupTask(plan.text);
+  if (task && isWeatherQuestion(plan.text) && !placeIn(plan.text)) {
+    return "どこの天気か入れてほしいわん（例：「@ビーグル 15分後に東京の天気予報をみんなに教えて」）";
+  }
   const active = await pool.query(`SELECT count(*)::int AS n FROM beagle_reminders WHERE owner_email = $1 AND active`, [me]);
   if (active.rows[0].n + plan.fires.length > MAX_ACTIVE_PER_MEMBER) {
     return `予定は 1 人 ${MAX_ACTIVE_PER_MEMBER} 件までだわん。「@ビーグル リマインド一覧」から要らないものを取り消してほしいわん`;
@@ -185,9 +192,9 @@ async function create(requestId: number, email: string, plan: Plan, now: Date): 
     await client.query("BEGIN");
     for (const fire of plan.fires) {
       const r = await client.query(
-        `INSERT INTO beagle_reminders (owner_email, owner_name, audience, kind, text, next_at, repeat, event_at, group_id, request_msg_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
-        [me, ownerName, plan.audience, plan.kind, plan.text, fire, plan.kind === "repeat" ? JSON.stringify(plan.repeat) : null, plan.kind === "event" ? plan.eventAt : null, ids[0] ?? null, requestId]
+        `INSERT INTO beagle_reminders (owner_email, owner_name, audience, kind, text, next_at, repeat, event_at, group_id, request_msg_id, task)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+        [me, ownerName, plan.audience, plan.kind, plan.text, fire, plan.kind === "repeat" ? JSON.stringify(plan.repeat) : null, plan.kind === "event" ? plan.eventAt : null, ids[0] ?? null, requestId, task]
       );
       ids.push(r.rows[0].id);
     }
@@ -209,7 +216,8 @@ async function create(requestId: number, email: string, plan: Plan, now: Date): 
         ? `${durationLabel(plan.fires[0].getTime() - now.getTime())}後（${jstLabel(plan.fires[0], now)}）`
         : plan.fires.map((t) => jstLabel(t, now)).join("・");
   const icon = plan.kind === "timer" ? "⏲" : plan.kind === "event" ? "📅" : "⏰";
-  return `${icon} わかったわん！${when}に、${who}お知らせするわん${what}（番号 ${ids[0]}。取り消しは「@ビーグル リマインド取り消し ${ids[0]}」）`;
+  const verb = task ? "調べてお知らせするわん" : "お知らせするわん";
+  return `${icon} わかったわん！${when}に、${who}${verb}${what}（番号 ${ids[0]}。取り消しは「@ビーグル リマインド取り消し ${ids[0]}」）`;
 }
 
 function durationLabel(ms: number): string {
@@ -235,6 +243,7 @@ type Row = {
   repeat: RepeatRule | null;
   event_at: Date | null;
   group_id: number | null;
+  task: boolean;
 };
 
 async function listReply(email: string): Promise<string> {
@@ -303,6 +312,13 @@ export function fireText(x: { kind: Row["kind"]; audience: Row["audience"]; text
   return `⏰ リマインドだわん${x.text ? `：${x.text}` : "！"}${tail}`;
 }
 
+/** 調べものの予定の答え（頼んだ人と、頼まれた内容を必ず入れる）。 */
+export function taskText(x: { audience: Row["audience"]; text: string }, ownerName: string | null, answer: string, late: boolean): string {
+  const tail = late ? "（遅れてごめんわん）" : "";
+  if (x.audience === "everyone") return `📣 ${ownerName ?? "会員"}さんに頼まれた「${x.text}」だわん${tail}\n${answer}`;
+  return `⏰ 頼まれた「${x.text}」だわん${tail}\n${answer}`;
+}
+
 /** 時刻が来た予定を鳴らす（次の回へ進めてからコミットし、そのあと届ける。二重に鳴らさない）。 */
 export async function fireDue(now = new Date()): Promise<number> {
   const client = await pool.connect();
@@ -310,7 +326,7 @@ export async function fireDue(now = new Date()): Promise<number> {
   try {
     await client.query("BEGIN");
     const r = await client.query(
-      `SELECT id, owner_email, owner_name, audience, kind, text, next_at, repeat, event_at, group_id FROM beagle_reminders
+      `SELECT id, owner_email, owner_name, audience, kind, text, next_at, repeat, event_at, group_id, task FROM beagle_reminders
        WHERE active AND next_at <= $1 ORDER BY next_at LIMIT 50 FOR UPDATE SKIP LOCKED`,
       [now]
     );
@@ -340,16 +356,26 @@ export async function fireDue(now = new Date()): Promise<number> {
 async function deliver(x: Row, fire: Date, late: boolean): Promise<void> {
   // 会員でなくなった人・機能を止めた（フラグを外した）ときは鳴らさない。
   if (!beagleRemindersEnabledFor(x.owner_email) || !(await isActiveMember(x.owner_email))) return;
+  const ownerName = x.audience === "me" ? null : ((await nameOf(x.owner_email)) ?? x.owner_name ?? "会員");
+  // 調べものの予定は、そのときに調べて答える（調べられなかったら、ふつうのお知らせ＋一言）。
+  let body = fireText(x, fire, ownerName, late);
+  if (x.task) {
+    const { answerForTask } = await import("./beagle-server");
+    const answer = await answerForTask(x.text, x.audience === "me" ? 900 : 1500).catch((e: unknown) => {
+      console.error("[beagle-reminders] task:", (e as Error)?.message);
+      return null;
+    });
+    body = answer ? taskText(x, ownerName, answer, late) : `${body}（いまは調べられなかったわん）`;
+  }
   if (x.audience === "me") {
-    await sendSystemDm(x.owner_email, fireText(x, fire, null, late));
+    await sendSystemDm(x.owner_email, body);
     return;
   }
-  const body = fireText(x, fire, (await nameOf(x.owner_email)) ?? x.owner_name ?? "会員", late);
   const ins = await pool.query(
     `INSERT INTO chat_messages (author_email, author_name, body, kind)
      VALUES ($1, $2, $3, 'beagle_ai')
      RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind, reply_to_id`,
-    [SYSTEM_EMAIL, BEAGLE_NAME, body.slice(0, 1000)]
+    [SYSTEM_EMAIL, BEAGLE_NAME, body.slice(0, 2000)]
   );
   await broadcastChat(ins.rows[0]);
   // push はふつうのチャットと同じ（「新着すべて」の人だけ・静かな時間は送らない）。@ は全角にしてあるので誰も呼ばない。

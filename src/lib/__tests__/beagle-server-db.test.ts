@@ -8,14 +8,22 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 
 const calls: { messages: { role: string; content: string }[] }[] = [];
+const judge = { calls: 0, answer: '{"to_beagle": true}' };
 vi.mock("../sakura", () => ({
   SAKURA_MODEL: "gpt-oss-120b",
   sakuraChat: vi.fn(async (opts: { messages: { role: string; content: string }[] }) => {
+    if (opts.messages[0].content.includes("to_beagle")) {
+      judge.calls++;
+      return { content: judge.answer, model: "gpt-oss-120b" };
+    }
     calls.push(opts);
     return { content: "久留米は明日雨だわん https://x.example @誰か", model: "gpt-oss-120b" };
   }),
 }));
-vi.mock("../beagle-lookup", () => ({ lookupFor: vi.fn(async () => "久留米市 明日: 雨（Open-Meteo）") }));
+vi.mock("../beagle-lookup", async (orig) => ({
+  ...(await orig<typeof import("../beagle-lookup")>()),
+  lookupFor: vi.fn(async () => "久留米市 明日: 雨（Open-Meteo）"),
+}));
 
 const URL_ = process.env.BEAGLE_AI_TEST_DATABASE_URL;
 if (URL_) process.env.DATABASE_URL = URL_;
@@ -53,6 +61,9 @@ d("🐶 サーバのビーグル（DB）", () => {
     process.env.BEAGLE_SERVER_ENABLED = "1";
     process.env.BEAGLE_ONDEVICE_ENABLED = "1";
     calls.length = 0;
+    judge.calls = 0;
+    judge.answer = '{"to_beagle": true}';
+    delete process.env.BEAGLE_IMPLICIT_ENABLED;
     await sql(`DELETE FROM beagle_ai_log; DELETE FROM chat_messages; DELETE FROM posts`);
   });
 
@@ -105,5 +116,64 @@ d("🐶 サーバのビーグル（DB）", () => {
     expect(user).not.toContain("入室");
     expect(user).toMatch(/質問のあとの発言:\n・\d\d:\d\d みけ: 200g くらいだった気がする/);
     expect(user).toMatch(/今 \d\d:\d\d。ねこさんの質問: それの重さは？$/);
+  });
+
+  it("@ なし: ビーグルが答えた相手の続きは、判定してから答える", async () => {
+    const q1 = await say(A, "@ビーグル iPhone 18 Pro って何色がある？");
+    expect(await m.sv.answerBeagleQuestion(q1.id, A)).toBe(true);
+    const f = await say(A, "それの重さは？");
+    expect(await m.sv.answerBeagleQuestion(f.id, A, { implicit: true })).toBe(true);
+    expect(judge.calls).toBe(1);
+    const user = calls[1].messages.find((x) => x.role === "user")!.content;
+    expect(user).toContain("ビーグル（あなた）: 久留米は明日雨だわん");
+    expect(user).toMatch(/ねこさんの発言（@ なしで話しかけられた）: それの重さは？$/);
+    const log = await sql(`SELECT app FROM beagle_ai_log ORDER BY id`);
+    expect(log.rows.map((r) => r.app)).toEqual(["server:gpt-oss-120b", "server:gpt-oss-120b:implicit"]);
+  });
+
+  it("@ なし: 判定が違うと言えば黙る・ほかの人の発言や時間切れは判定もしない・止められる", async () => {
+    const q1 = await say(A, "@ビーグル 質問");
+    expect(await m.sv.answerBeagleQuestion(q1.id, A)).toBe(true);
+    // 答えた相手ではない人の発言（名前もない）→ 判定もしない
+    const b = await say(B, "それいいね");
+    expect(await m.sv.answerBeagleQuestion(b.id, B, { implicit: true })).toBe(false);
+    expect(judge.calls).toBe(0);
+    // 判定が false → 黙る
+    judge.answer = '{"to_beagle": false}';
+    const a2 = await say(A, "みけさんはどう思う？");
+    expect(await m.sv.answerBeagleQuestion(a2.id, A, { implicit: true })).toBe(false);
+    expect(judge.calls).toBe(1);
+    // 時間切れ（答えから 3 分より後）→ 判定もしない。名前で呼べば判定する
+    judge.answer = '{"to_beagle": true}';
+    await sql(`UPDATE chat_messages SET created_at = now() - interval '5 minutes' WHERE kind = 'beagle_ai'`);
+    const a3 = await say(A, "ところで今日寒いね");
+    expect(await m.sv.answerBeagleQuestion(a3.id, A, { implicit: true })).toBe(false);
+    expect(judge.calls).toBe(1);
+    const a4 = await say(B, "ねえビーグル、今日寒い？");
+    expect(await m.sv.answerBeagleQuestion(a4.id, B, { implicit: true })).toBe(true);
+    expect(judge.calls).toBe(2);
+    // フラグで止める・@ つきの発言は @ の道（implicit では答えない）
+    process.env.BEAGLE_IMPLICIT_ENABLED = "0";
+    const a5 = await say(B, "ビーグルありがとう");
+    expect(await m.sv.answerBeagleQuestion(a5.id, B, { implicit: true })).toBe(false);
+    delete process.env.BEAGLE_IMPLICIT_ENABLED;
+    const a6 = await say(B, "@ビーグル ありがとう");
+    expect(await m.sv.answerBeagleQuestion(a6.id, B, { implicit: true })).toBe(false);
+    expect(judge.calls).toBe(2);
+  });
+
+  it("@ なし: リマインドの依頼はリマインドの道へ・同じ人のまだ答えていない @ の質問があれば待つ", async () => {
+    process.env.BEAGLE_REMINDERS_ENABLED = "1";
+    process.env.DM_ENABLED = "1";
+    const r = await say(A, "ねえビーグル、3分後にカップ麺を教えて");
+    expect(await m.sv.answerBeagleQuestion(r.id, A, { implicit: true })).toBe(true);
+    const reply = await sql(`SELECT body FROM chat_messages WHERE reply_to_id = $1`, [r.id]);
+    expect(reply.rows[0].body).toMatch(/^⏲ わかったわん！3 分後/);
+    expect(calls.length).toBe(0); // ふつうの答え（AI）は作らない
+    // まだ答えていない @ の質問（アプリの 10 秒待ち）→ @ なしの続きは答えない
+    await say(B, "@ビーグル 質問");
+    const b2 = await say(B, "ビーグル、あと値段も");
+    expect(await m.sv.answerBeagleQuestion(b2.id, B, { implicit: true })).toBe(false);
+    await sql(`DELETE FROM beagle_reminders`);
   });
 });

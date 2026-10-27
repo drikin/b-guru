@@ -4,6 +4,7 @@
  *  - 「@ビーグル」の発言がリマインドの依頼らしいか・一覧・取り消し
  *  - 「N 分後」だけの短いタイマー（AI を通さず読む）
  *  - AI が返した JSON の確かめ（形・範囲） */
+import { stripBeagleCall } from "./beagle-call";
 
 const JST_MS = 9 * 3600_000;
 export const MIN_LEAD_MS = 10_000;
@@ -89,9 +90,15 @@ export function repeatLabel(rule: RepeatRule): string {
 
 // ---- 依頼の判定 ----
 
-const strip = (body: string) => body.replace(/@ビーグル(?![\p{L}\p{N}])/gu, " ").replace(/\s+/g, " ").trim();
+const strip = (body: string) => stripBeagleCall(body, " ").replace(/\s+/g, " ").trim();
 const TIME_WORD = /\d+\s*(秒|分|時間)\s*(後|経|た|で)|\d{1,2}\s*[:：]\s*\d{2}|\d{1,2}\s*時(?!間)|明日|明後日|あさって|今夜|今晩|今日|来週|\d{1,2}\s*[\/／]\s*\d{1,2}|\d{1,2}\s*月\s*\d{1,2}\s*日|[月火水木金土日]曜/;
-const ASK_WORD = /知らせ|教え|起こし|言って|呼んで|通知|リマインド/;
+const ASK_WORD = /知らせ|教え|起こし|言って|呼んで|通知|リマインド|送って|DM|ＤＭ/;
+
+/** 時刻が来たら調べて答える予定か（「15 分後に最新の天気予報をみんなに教えて」。文をそのまま出すのではなく、
+ *  そのときに天気・ニュースを調べて答える。2026-10-27 オーナー「見当違いの回答」）。 */
+export function isLookupTask(text: string): boolean {
+  return /天気|予報|気温|降水|ニュース|話題|まとめ|要約|調べ|トレンド/.test(text);
+}
 
 /** リマインドの依頼らしいか（AI に読ませる前のふるい。外れたらふつうの答えに回る）。 */
 export function looksLikeReminder(body: string): boolean {

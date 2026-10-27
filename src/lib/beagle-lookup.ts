@@ -2,6 +2,8 @@
  * 日本語版 Wikipedia。質問の言葉から先に調べて AI に渡す（AI に道具として渡すと、呼ばずに作り話をした）。
  * 外へ送るのは地名か調べる言葉だけ。アプリ側の native/shared/BeagleTools.swift と同じ決まり。 */
 
+import { stripBeagleCall } from "./beagle-call";
+
 const UA = "B-guru (bsm.backspace.fm)";
 const TIMEOUT_MS = 8000;
 
@@ -16,7 +18,12 @@ async function getJson(url: string): Promise<Record<string, unknown> | null> {
 }
 
 const WEATHER_RE = /天気|気温|雨|雪|予報|晴れ|寒い|暑い|傘/;
-const PLACE_STOP = ["天気予報", "降水確率", "天気", "気温", "予報", "明日", "今日", "明後日", "週末", "今週", "傘"];
+const PLACE_STOP = ["最新", "現在", "最近", "全国", "各地", "天気予報", "降水確率", "天気", "気温", "予報", "明日", "今日", "明後日", "週末", "今週", "傘"];
+
+/** 天気の質問か。 */
+export function isWeatherQuestion(q: string): boolean {
+  return WEATHER_RE.test(q);
+}
 
 /** 天気の質問の地名: 天気や日付ではない最初の言葉（漢字・カタカナ 2 字以上か、英字 3 字以上）。 */
 export function placeIn(q: string): string | null {
@@ -98,7 +105,7 @@ export async function lookupWikipedia(word: string): Promise<string> {
 
 /** 質問に要る調べものをして、その結果（要らなければ null）。 */
 export async function lookupFor(question: string): Promise<string | null> {
-  const q = question.replace(/@ビーグル/g, "");
+  const q = stripBeagleCall(question);
   if (WEATHER_RE.test(q)) {
     const place = placeIn(q);
     if (place) return lookupWeather(place, dayIn(q));

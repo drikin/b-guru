@@ -17,7 +17,10 @@ vi.mock("../sakura", () => ({
     return { content: aiReply, model: "gpt-oss-120b" };
   }),
 }));
-vi.mock("../beagle-lookup", () => ({ lookupFor: vi.fn(async () => null) }));
+vi.mock("../beagle-lookup", async (orig) => ({
+  ...(await orig<typeof import("../beagle-lookup")>()),
+  lookupFor: vi.fn(async (q: string) => (q.includes("東京") ? "東京都 今日: 晴れ 最高 21℃（Open-Meteo）" : null)),
+}));
 vi.mock("../push-notify", async (orig) => ({ ...(await orig<typeof import("../push-notify")>()), pushDm: vi.fn(async () => 0), pushChatMessage: vi.fn(async () => 0) }));
 
 const URL_ = process.env.BEAGLE_AI_TEST_DATABASE_URL;
@@ -150,6 +153,22 @@ d("🐶 ビーグルのリマインド（DB）", () => {
     expect((await ask(B, `@ビーグル リマインド取り消し ${rows[0].id}`)).reply).toMatch(/見つからなかった/);
     expect((await ask(A, `@ビーグル リマインド取り消し ${rows[0].id}`)).reply).toBe("取り消したわん（1 件）");
     expect((await sql(`SELECT count(*)::int AS n FROM beagle_reminders WHERE active`)).rows[0].n).toBe(0);
+  });
+
+  it("調べものの予定: 場所のない天気は聞き返し、時刻が来たらその場で調べて答える（文をそのまま出さない）", async () => {
+    const noPlace = await ask(A, "@ビーグル 15分後に最新の天気予報を教えて");
+    expect(noPlace.reply).toMatch(/どこの天気か入れてほしいわん/);
+    expect((await sql(`SELECT count(*)::int AS n FROM beagle_reminders`)).rows[0].n).toBe(0);
+    const ok = await ask(A, "@ビーグルさん 15分後に東京の天気予報を教えて");
+    expect(ok.reply).toMatch(/^⏲ わかったわん！15 分後（.+）に、ねこさんに調べてお知らせするわん：東京の天気予報/);
+    await sql(`UPDATE beagle_reminders SET next_at = now() - interval '5 seconds'`);
+    aiReply = "東京は晴れで最高 21℃ だわん（Open-Meteo）";
+    calls.length = 0;
+    expect(await m.r.fireDue()).toBe(1);
+    expect(calls[0].messages[1].content).toContain("調べた結果:\n東京都 今日: 晴れ 最高 21℃（Open-Meteo）");
+    expect(calls[0].messages[1].content).toMatch(/頼まれていたことの時刻になったので答える.*: 東京の天気予報$/);
+    const dm = await sql(`SELECT body FROM dm_messages`);
+    expect(dm.rows).toEqual([{ body: "⏰ 頼まれた「東京の天気予報」だわん\n東京は晴れで最高 21℃ だわん（Open-Meteo）" }]);
   });
 
   it("一覧・リマインドでない質問はふつうの答え・上限", async () => {
