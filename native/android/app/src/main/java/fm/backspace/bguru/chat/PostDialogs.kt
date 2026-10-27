@@ -7,6 +7,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -409,28 +410,55 @@ private fun PollDraftEditor(draft: PostDraft) {
 
 /** The reaction picker: 「よく使う」 12, then all, then the custom emoji (the web's ReactionBar).
  *  Used by timeline posts and the chat alike. */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun EmojiPickerSheet(onDismiss: () -> Unit, onPick: (String) -> Unit) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     @Suppress("UNUSED_VARIABLE") val v = EmojiCatalog.version // recompose when the custom list arrives
     val custom = EmojiCatalog.urls.entries.toList()
+    // カスタム絵文字の登録・削除: 誰でも（オーナー 2026-10-27）。サーバが capabilities で言うときだけ、デモでは出さない。
+    val store = App.session(LocalContext.current).store
+    val caps = store?.capabilities
+    val api = store?.takeIf { !it.demo }?.api
+    val registerPath = caps?.customEmojiRegisterPath?.takeIf { api != null }
+    val deletePath = caps?.customEmojiDeletePath?.takeIf { api != null }
+    var registering by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf<Pair<String, Long>?>(null) }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state) {
         LazyVerticalGrid(GridCells.Adaptive(46.dp), Modifier.fillMaxWidth().padding(horizontal = 12.dp).navigationBarsPadding()) {
             item(span = { GridItemSpan(maxLineSpan) }) { PickerHeader("よく使う") }
             items(EmojiSets.QUICK, key = { "q$it" }) { e -> EmojiCell(e, onPick) }
             item(span = { GridItemSpan(maxLineSpan) }) { PickerHeader("すべて") }
             items(EmojiSets.ALL, key = { "a$it" }) { e -> EmojiCell(e, onPick) }
-            if (custom.isNotEmpty()) {
-                item(span = { GridItemSpan(maxLineSpan) }) { PickerHeader("カスタム絵文字") }
+            if (custom.isNotEmpty() || registerPath != null) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PickerHeader(if (deletePath != null && custom.isNotEmpty()) "カスタム絵文字（長押しで削除）" else "カスタム絵文字")
+                        Spacer(Modifier.weight(1f))
+                        if (registerPath != null) TextButton(onClick = { registering = true }) { Text("＋ 登録", color = AccentGreen) }
+                    }
+                }
                 items(custom, key = { "c${it.key}" }) { (name, url) ->
-                    Box(Modifier.size(46.dp).clip(RoundedCornerShape(8.dp)).clickable { onPick(EmojiSets.customRef(name)) }
+                    val id = EmojiCatalog.ids[name]
+                    Box(Modifier.size(46.dp).clip(RoundedCornerShape(8.dp))
+                        .combinedClickable(
+                            onClick = { onPick(EmojiSets.customRef(name)) },
+                            onLongClick = if (deletePath != null && id != null) ({ deleting = name to id }) else null,
+                        )
                         .semantics { contentDescription = ":$name:" }, contentAlignment = Alignment.Center) {
                         RemoteImage(url, Modifier.size(30.dp), ContentScale.Fit, maxPx = 96) { Text(":$name:", fontSize = 9.sp, maxLines = 1) }
                     }
                 }
             }
             item(span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(16.dp)) }
+        }
+    }
+    if (registering && api != null && registerPath != null) {
+        CustomEmojiRegisterDialog(api, registerPath, caps?.customEmojiPath, onDismiss = { registering = false })
+    }
+    deleting?.let { (name, id) ->
+        if (api != null && deletePath != null) {
+            CustomEmojiDeleteDialog(api, deletePath, caps?.customEmojiPath, name, id, onDismiss = { deleting = null })
         }
     }
 }

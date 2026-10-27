@@ -186,6 +186,9 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val bookmarksSet: Boolean? = null,
         val favorites: Boolean? = null,
         val customEmojiList: String? = null,
+        /** カスタム絵文字の登録（POST multipart: name・image）と削除（DELETE …/{id}）。誰でも（オーナー 2026-10-27）、アプリの鍵だけ。 */
+        val customEmojiRegister: String? = null,
+        val customEmojiDelete: String? = null,
         val clubSelect: Boolean? = null,
         val clubChange: Boolean? = null,
         val mentions: String? = null,
@@ -244,6 +247,10 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val canFavorite get() = p?.favorites ?: false
     /** Only paths on our own server (the request carries the token). */
     val customEmojiPath get() = p?.customEmojiList?.takeIf { it.startsWith("/api/") }
+    /** ピッカーの「＋ 登録」: サーバが言うときだけ（自分のサーバのパスだけ）。 */
+    val customEmojiRegisterPath get() = p?.customEmojiRegister?.takeIf { it.startsWith("/api/") }
+    /** 長押しの「:name: を削除」: `{id}` を置き換えて DELETE。 */
+    val customEmojiDeletePath get() = p?.customEmojiDelete?.takeIf { it.startsWith("/api/") && it.contains("{id}") }
     val canSelectClub get() = p?.clubSelect ?: false
     val canChangeClub get() = p?.clubChange ?: false
     val mentionsPath get() = p?.mentions?.takeIf { it.startsWith("/api/") }
@@ -490,6 +497,7 @@ data class PostPoll(
 @Serializable data class MediaUploadResponse(val videoUrl: String? = null, val audioUrl: String? = null)
 @Serializable data class CustomEmoji(val id: Long = 0, val name: String, val imageUrl: String)
 @Serializable data class EmojisResponse(val emojis: List<CustomEmoji> = emptyList())
+@Serializable data class EmojiRegisterResponse(val emoji: CustomEmoji)
 
 @Serializable data class PostListResponse(val posts: List<Post> = emptyList(), val nextCursor: String? = null)
 @Serializable data class ThreadResponse(val post: Post, val replies: List<Post> = emptyList())
