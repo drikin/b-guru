@@ -94,12 +94,25 @@ d("🐶 ビーグルのリマインド（DB）", () => {
     const dev = await m.bg.postBeagleAiReply({ email: A, questionId: a.id, body: "ほかの答え" });
     expect(dev).toMatchObject({ ok: false, status: 409, code: "reminder" });
 
+    // 同じ発言をもう一度頼まれても（アプリの beagle/ask を何度も）作り直さない
+    expect(await m.r.handleReminderRequest({ id: a.id, body: "@ビーグル みんなに 3分後に教えて" }, A)).toBe(true);
+    expect((await sql(`SELECT count(*)::int AS n FROM beagle_reminders`)).rows[0].n).toBe(1);
     const row = (await sql(`SELECT id FROM beagle_reminders WHERE owner_email = $1`, [A])).rows[0];
     await sql(`UPDATE beagle_reminders SET next_at = now() - interval '5 seconds' WHERE id = $1`, [row.id]);
     expect(await m.r.fireDue()).toBe(1);
     expect(await m.r.fireDue()).toBe(0); // 二度は鳴らさない
     const dm = await sql(`SELECT sender_email, recipient_email, body FROM dm_messages`);
     expect(dm.rows).toEqual([{ sender_email: "system@backspace.fm", recipient_email: A, body: "⏲ 時間だわん：カップ麺" }]);
+    // ビーグルとの会話は開けて既読にできる（送ることはできない）
+    const dmMod = await import("../dm");
+    const sysId = await m.user.ensureUserId("system@backspace.fm");
+    const me = { email: A, userId: await m.user.ensureUserId(A) };
+    const conv = await dmMod.listDmMessages(me, sysId, {});
+    expect(conv.peer.name).toBe("ビーグル");
+    expect(conv.can_send).toBe(false);
+    expect(conv.messages).toHaveLength(1);
+    expect((await dmMod.markDmRead(me, sysId, conv.messages[0].id)).unread_count).toBe(0);
+    await expect(dmMod.sendDm(me, sysId, "ありがとう")).rejects.toMatchObject({ status: 404 });
   });
 
   it("全員向けの予定の事前のお知らせ: AI で読み、時刻ごとにチャットへ頼んだ人の名前つきで", async () => {
@@ -125,6 +138,13 @@ d("🐶 ビーグルのリマインド（DB）", () => {
     expect(chat.rows).toHaveLength(1);
     expect(chat.rows[0].author_name).toBe("ビーグル");
     expect(chat.rows[0].body).toMatch(/^📣 ねこさんからのお知らせだわん：明日予定があるわん（.+）：オフ会 ＠みけ/);
+
+    // 全員向けは同時に 3 件まで（繰り返しで毎日の投稿を積み上げない）
+    aiReply = JSON.stringify({ action: "create", kind: "repeat", audience: "everyone", text: "朝会", repeat: { freq: "daily", time: "09:00" } });
+    expect((await ask(A, "@ビーグル 毎日9時にみんなに朝会を知らせて")).reply).toMatch(/^⏰ わかったわん！毎日 09:00/);
+    expect((await ask(A, "@ビーグル 毎日9時にみんなに朝会を知らせて2")).reply).toMatch(/^⏰ わかったわん！/);
+    expect((await ask(A, "@ビーグル 毎日9時にみんなに朝会を知らせて3")).reply).toMatch(/同時に 3 件まで/);
+    await sql(`UPDATE beagle_reminders SET active = false WHERE kind = 'repeat'`);
 
     // 取り消しは自分のものだけ（番号でまとめて）
     expect((await ask(B, `@ビーグル リマインド取り消し ${rows[0].id}`)).reply).toMatch(/見つからなかった/);

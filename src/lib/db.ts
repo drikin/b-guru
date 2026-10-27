@@ -934,6 +934,7 @@ export async function initSchema() {
       fired_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    ALTER TABLE beagle_reminders ADD COLUMN IF NOT EXISTS owner_name TEXT;
     CREATE INDEX IF NOT EXISTS idx_beagle_reminders_due ON beagle_reminders(next_at) WHERE active;
     CREATE INDEX IF NOT EXISTS idx_beagle_reminders_owner ON beagle_reminders(owner_email) WHERE active;
     CREATE TABLE IF NOT EXISTS offkai_participants (

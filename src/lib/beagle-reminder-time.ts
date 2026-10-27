@@ -110,7 +110,8 @@ export function isListCommand(body: string): boolean {
 /** 「リマインド取り消し 12 13」「リマインド全部取り消し」→ 番号（all: 全部）。違えば null。 */
 export function parseCancel(body: string): { all: boolean; ids: number[] } | null {
   const t = strip(body);
-  if (!/(取り消|取消|キャンセル|削除)/.test(t) || !/(リマインド|リマインダー|タイマー|予定|お知らせ|番号|\d)/.test(t)) return null;
+  // 「投稿を削除するには」で予定が消えないよう、リマインドの言葉があるときだけ（security-reviewer 2026-10-27）。
+  if (!/(取り消|取消|キャンセル|削除)/.test(t) || !/(リマインド|リマインダー|タイマー|予定|お知らせ)/.test(t)) return null;
   const all = /(全部|すべて|全て|ぜんぶ)/.test(t);
   const ids = [...t.matchAll(/\d+/g)].map((m) => Number(m[0])).filter((n) => Number.isSafeInteger(n) && n > 0);
   if (!all && ids.length === 0) return null;
@@ -143,7 +144,7 @@ export function parseQuickTimer(body: string): { ms: number; text: string } | nu
 /** 鳴らすときの文: URL を外し、@ を全角に（誰も呼ばない）、改行をまとめ、100 文字まで。 */
 export function cleanText(v: unknown): string {
   if (typeof v !== "string") return "";
-  return [...v.replace(/https?:\/\/\S+/g, "").replace(/@/g, "＠").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim()]
+  return [...v.replace(/(https?:\/\/|www\.)\S+/gi, "").replace(/@/g, "＠").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim()]
     .slice(0, TEXT_MAX)
     .join("");
 }

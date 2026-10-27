@@ -129,11 +129,12 @@ export function peerDto(email: string, userId: string, names: Map<string, string
   return { user_id: userId, name: names.get(email) ?? null, avatar: gravatarUrl(email) };
 }
 
-/** 相手の user_id → 相手（自分・B-guru・知らない人は不可）。 */
-async function resolvePeer(actor: DmActor, peerId: unknown): Promise<{ email: string; userId: string }> {
+/** 相手の user_id → 相手（自分・B-guru・知らない人は不可）。`readOnly`: 読む・既読にするだけなら、ビーグル（B-guru の
+ *  システム、🐶 リマインドの DM）との会話も開ける（送ることはできない）。 */
+async function resolvePeer(actor: DmActor, peerId: unknown, readOnly = false): Promise<{ email: string; userId: string }> {
   if (!validPeerId(peerId)) throw new DmError(400, "invalid_request", "相手が不正です");
   const email = await userIdToEmail(peerId);
-  if (!email || normEmail(email) === SYSTEM_EMAIL) throw new DmError(404, "not_found", "相手が見つかりません");
+  if (!email || (normEmail(email) === SYSTEM_EMAIL && !readOnly)) throw new DmError(404, "not_found", "相手が見つかりません");
   if (normEmail(email) === normEmail(actor.email) || peerId === actor.userId) {
     throw new DmError(400, "invalid_request", "自分には送れません");
   }
@@ -234,7 +235,7 @@ export async function listDmMessages(
   peerId: unknown,
   opts: { before?: number; limit?: number } = {}
 ): Promise<{ peer: DmPeer; messages: DmMessageDto[]; unread_count: number; last_read_id: number; can_send: boolean }> {
-  const peer = await resolvePeer(actor, peerId);
+  const peer = await resolvePeer(actor, peerId, true);
   const me = normEmail(actor.email);
   const limit = Math.min(Math.max(opts.limit ?? DM_PAGE_LIMIT, 1), DM_PAGE_LIMIT);
   const [res, read, names, canSend] = await Promise.all([
@@ -250,7 +251,7 @@ export async function listDmMessages(
     ),
     pool.query(`SELECT last_read_id FROM dm_read_state WHERE email = $1 AND peer_email = $2`, [me, peer.email]),
     resolveDisplayNames([peer.email]),
-    peerCanReceive(peer.email),
+    peer.email === SYSTEM_EMAIL ? false : peerCanReceive(peer.email), // ビーグルへは送れない
   ]);
   const ids = new Map<string, string>([
     [me, actor.userId],
@@ -290,7 +291,7 @@ export async function getDmMessage(actor: DmActor, id: number): Promise<{ messag
 
 /** 既読を進める（単調）。自分のほかの端末にも知らせる。返り値は未読の合計。 */
 export async function markDmRead(actor: DmActor, peerId: unknown, lastReadId: unknown): Promise<{ unread_count: number }> {
-  const peer = await resolvePeer(actor, peerId);
+  const peer = await resolvePeer(actor, peerId, true);
   const n = Number(lastReadId);
   if (!Number.isInteger(n) || n < 0 || n > 2147483647) throw new DmError(400, "invalid_request", "last_read_id が不正です");
   const me = normEmail(actor.email);

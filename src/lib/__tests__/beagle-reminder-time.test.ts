@@ -71,6 +71,7 @@ describe("依頼の判定", () => {
     expect(parseCancel("@ビーグル リマインド取り消し 12 13")).toEqual({ all: false, ids: [12, 13] });
     expect(parseCancel("@ビーグル リマインド全部取り消し")).toEqual({ all: true, ids: [] });
     expect(parseCancel("@ビーグル 取り消しって何？")).toBeNull();
+    expect(parseCancel("@ビーグル 2 件の投稿を削除するには?")).toBeNull();
   });
   it("quick timers (no AI)", () => {
     expect(parseQuickTimer("@ビーグル 3分後に教えて")).toEqual({ ms: 180_000, text: "" });
@@ -84,6 +85,7 @@ describe("依頼の判定", () => {
   });
   it("cleanText drops URLs and mentions", () => {
     expect(cleanText("見て https://x.example/a @ドリキン さん")).toBe("見て ＠ドリキン さん");
+    expect(cleanText("見て HTTPS://X.example www.example.com だよ")).toBe("見て だよ");
     expect(cleanText("あ".repeat(150))).toHaveLength(100);
   });
 });

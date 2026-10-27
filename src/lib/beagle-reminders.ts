@@ -35,6 +35,8 @@ export const BEAGLE_REMINDERS_FLAG = "BEAGLE_REMINDERS_ENABLED";
 export const MAX_ACTIVE_PER_MEMBER = 20;
 /** 1 人が 1 日に作れる全員向け（予定の事前のお知らせは 1 つと数える）。 */
 export const MAX_EVERYONE_PER_DAY = 5;
+/** 1 人が同時に持てる全員向け（繰り返しで毎日の投稿を積み上げられないように。security-reviewer 2026-10-27）。 */
+export const MAX_EVERYONE_ACTIVE = 3;
 /** 1 人が 24 時間に頼める回数（一覧・取り消しも数える）。 */
 export const MAX_REQUESTS_PER_DAY = 30;
 /** 1 回きりの予定がこれ以上遅れたら鳴らさない（サーバが長く止まっていたとき）。 */
@@ -76,6 +78,13 @@ export function handleReminderRequest(message: { id: number; body: string }, ema
   const running = inFlight.get(message.id);
   if (running) return running;
   const p = (async () => {
+    // もう返事がある（ビーグルの答え・前の受け付け）発言では、作り直さない（beagle/ask を何度呼ばれても 1 回）。
+    const done = await pool.query(
+      `SELECT 1 FROM chat_messages WHERE reply_to_id = $1 AND kind = 'beagle_ai'
+       UNION ALL SELECT 1 FROM beagle_reminders WHERE request_msg_id = $1 LIMIT 1`,
+      [message.id]
+    );
+    if (done.rowCount) return true;
     const reply = await decide(message, email);
     if (reply == null) return false; // リマインドではなかった: ふつうの答えへ
     await postReply(message.id, reply);
@@ -159,16 +168,26 @@ async function create(requestId: number, email: string, plan: Plan, now: Date): 
       [me]
     );
     if (today.rows[0].n >= MAX_EVERYONE_PER_DAY) return `みんなへのお知らせは 1 日 ${MAX_EVERYONE_PER_DAY} 件までだわん`;
+    const live = await pool.query(
+      `SELECT count(DISTINCT COALESCE(group_id, id))::int AS n FROM beagle_reminders WHERE owner_email = $1 AND audience = 'everyone' AND active`,
+      [me]
+    );
+    if (live.rows[0].n >= MAX_EVERYONE_ACTIVE) return `みんなへのお知らせは同時に ${MAX_EVERYONE_ACTIVE} 件までだわん。「@ビーグル リマインド一覧」から取り消してほしいわん`;
   }
+  // 全員向けに出す「〇〇さん」: 表示名、なければ頼んだ発言の名前（誰の依頼かを必ず出す）。
+  const ownerName =
+    (await nameOf(me)) ??
+    ((await pool.query(`SELECT author_name FROM chat_messages WHERE id = $1`, [requestId])).rows[0]?.author_name as string | null) ??
+    null;
   const client = await pool.connect();
   const ids: number[] = [];
   try {
     await client.query("BEGIN");
     for (const fire of plan.fires) {
       const r = await client.query(
-        `INSERT INTO beagle_reminders (owner_email, audience, kind, text, next_at, repeat, event_at, group_id, request_msg_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-        [me, plan.audience, plan.kind, plan.text, fire, plan.kind === "repeat" ? JSON.stringify(plan.repeat) : null, plan.kind === "event" ? plan.eventAt : null, ids[0] ?? null, requestId]
+        `INSERT INTO beagle_reminders (owner_email, owner_name, audience, kind, text, next_at, repeat, event_at, group_id, request_msg_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+        [me, ownerName, plan.audience, plan.kind, plan.text, fire, plan.kind === "repeat" ? JSON.stringify(plan.repeat) : null, plan.kind === "event" ? plan.eventAt : null, ids[0] ?? null, requestId]
       );
       ids.push(r.rows[0].id);
     }
@@ -181,7 +200,7 @@ async function create(requestId: number, email: string, plan: Plan, now: Date): 
     client.release();
   }
   ensureReminderSweeper();
-  const who = plan.audience === "everyone" ? "みんなに" : `${(await nameOf(me)) ?? "あなた"}さんに`;
+  const who = plan.audience === "everyone" ? "みんなに" : `${ownerName ?? "あなた"}さんに`;
   const what = plan.text ? `：${plan.text}` : "";
   const when =
     plan.kind === "repeat"
@@ -208,6 +227,7 @@ async function nameOf(email: string): Promise<string | null> {
 type Row = {
   id: number;
   owner_email: string;
+  owner_name: string | null;
   audience: "me" | "everyone";
   kind: "timer" | "at" | "repeat" | "event";
   text: string;
@@ -290,7 +310,7 @@ export async function fireDue(now = new Date()): Promise<number> {
   try {
     await client.query("BEGIN");
     const r = await client.query(
-      `SELECT id, owner_email, audience, kind, text, next_at, repeat, event_at, group_id FROM beagle_reminders
+      `SELECT id, owner_email, owner_name, audience, kind, text, next_at, repeat, event_at, group_id FROM beagle_reminders
        WHERE active AND next_at <= $1 ORDER BY next_at LIMIT 50 FOR UPDATE SKIP LOCKED`,
       [now]
     );
@@ -318,12 +338,13 @@ export async function fireDue(now = new Date()): Promise<number> {
 }
 
 async function deliver(x: Row, fire: Date, late: boolean): Promise<void> {
-  if (!(await isActiveMember(x.owner_email))) return; // 会員でなくなった人の予定は鳴らさない
+  // 会員でなくなった人・機能を止めた（フラグを外した）ときは鳴らさない。
+  if (!beagleRemindersEnabledFor(x.owner_email) || !(await isActiveMember(x.owner_email))) return;
   if (x.audience === "me") {
     await sendSystemDm(x.owner_email, fireText(x, fire, null, late));
     return;
   }
-  const body = fireText(x, fire, await nameOf(x.owner_email), late);
+  const body = fireText(x, fire, (await nameOf(x.owner_email)) ?? x.owner_name ?? "会員", late);
   const ins = await pool.query(
     `INSERT INTO chat_messages (author_email, author_name, body, kind)
      VALUES ($1, $2, $3, 'beagle_ai')
