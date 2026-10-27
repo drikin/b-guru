@@ -58,6 +58,8 @@ struct MainPanelView: View {
                     .id(post.id)
                     .zIndex(3)
             }
+            // カスタム絵文字の登録（ピッカーの「＋ 登録」）もパネルの上に。registering はこの中だけが読む。
+            EmojiRegisterOverlay().zIndex(4)
         }
         // No mini player under the chat and the timeline (drikin 2026-10-20): the jukebox
         // tab, the media keys and Control Center play and pause.

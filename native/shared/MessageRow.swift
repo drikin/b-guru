@@ -188,10 +188,10 @@ struct MessageRow: View {
                     ActionButton(systemImage: nil, text: "❤️", help: "❤️ を付ける（ダブルクリックでも）") { onReact("❤️") }
                     ActionButton(systemImage: "face.smiling", text: nil, help: "リアクションを選ぶ") { pickerOpen = true }
                         .popover(isPresented: $pickerOpen, arrowEdge: .bottom) {
-                            ReactionPicker { emoji in
+                            ReactionPicker(onPick: { emoji in
                                 pickerOpen = false
                                 onReact(emoji)
-                            }
+                            }, onClose: { pickerOpen = false })
                             .presentationCompactAdaptation(.popover) // iPhone: stay a popover, not a full sheet
                         }
                 }
@@ -350,6 +350,13 @@ struct ActionButton: View {
 /// community's custom emoji (sent as ":name:"). The chat and the timeline use the same one.
 struct ReactionPicker: View {
     let onPick: (String) -> Void
+    /// ピッカーを閉じる（Mac の「＋ 登録」で使う）。nil ならポップオーバーとして閉じる。
+    var onClose: (() -> Void)? = nil
+    @Environment(\.dismiss) private var dismiss
+    /// 削除の確認を出している絵文字の名前。
+    @State private var deleting: String?
+    /// iPhone / iPad: 登録のシート。
+    @State private var registering = false
     /// The web's QUICK_EMOJIS, in its order (how often each is used).
     static let unicode = ["❤️", "👍", "🎉", "😂", "🙏", "🔥", "👏", "😮", "😢", "🤔", "💯", "✨"]
     /// The web's PICKER_EMOJIS.
@@ -372,17 +379,33 @@ struct ReactionPicker: View {
                 grid(Self.unicode)
                 Text("すべて").font(.app(.caption)).foregroundStyle(.secondary)
                 grid(Self.all)
-                let custom = EmojiCatalog.shared.names
-                if !custom.isEmpty {
-                    Text("カスタム絵文字").font(.app(.caption)).foregroundStyle(.secondary)
+                let catalog = EmojiCatalog.shared
+                let custom = catalog.names
+                if !custom.isEmpty || catalog.canRegister {
+                    HStack {
+                        Text("カスタム絵文字").font(.app(.caption)).foregroundStyle(.secondary)
+                        Spacer()
+                        if catalog.canRegister {
+                            Button(action: startRegister) { Text("＋ 登録").font(.app(.caption, weight: .semibold)) }
+                                .buttonStyle(.borderless)
+                                .help("カスタム絵文字を登録（誰でも）")
+                        }
+                    }
                     LazyVGrid(columns: cols, spacing: 4) {
                         ForEach(custom, id: \.self) { name in
                             Button { onPick(":\(name):") } label: {
                                 ReactionGlyph(emoji: ":\(name):", size: 24).frame(width: 30, height: 30)
                             }
                             .buttonStyle(.plain)
-                            .help(":\(name):")
+                            .help(catalog.canDelete(name) ? ":\(name):（右クリックで削除）" : ":\(name):")
                             .accessibilityLabel(":\(name):")
+                            // 誰でも消せる（オーナー 2026-10-27）。iPhone / iPad は長押し、Mac は右クリック。
+                            .contextMenu {
+                                if catalog.canDelete(name) {
+                                    Button(":\(name): を削除", systemImage: "trash", role: .destructive) { deleting = name }
+                                }
+                            }
+                            .accessibilityAction(named: ":\(name): を削除") { if catalog.canDelete(name) { deleting = name } }
                         }
                     }
                 }
@@ -390,6 +413,31 @@ struct ReactionPicker: View {
             .padding(10)
         }
         .frame(width: 270, height: 300)
+        .overlay {
+            if let deleting {
+                ZStack {
+                    Color.black.opacity(0.2).onTapGesture { self.deleting = nil }
+                    EmojiDeleteConfirm(name: deleting) { self.deleting = nil }.id(deleting)
+                }
+            }
+        }
+        #if os(iOS)
+        .sheet(isPresented: $registering) {
+            EmojiRegisterView { registering = false }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        #endif
+    }
+
+    /// iPhone / iPad: ピッカーの上にシート。Mac: ピッカーを閉じてパネルの上に（EmojiRegisterOverlay）。
+    private func startRegister() {
+        #if os(iOS)
+        registering = true
+        #else
+        EmojiCatalog.shared.registering = true
+        if let onClose { onClose() } else { dismiss() }
+        #endif
     }
 
     private func grid(_ emojis: [String]) -> some View {
@@ -546,31 +594,89 @@ struct ReactionGlyph: View {
 final class EmojiCatalog {
     static let shared = EmojiCatalog()
     private var urls: [String: URL] = [:]
+    /// 名前 → id（削除に使う）。id の無い一覧なら空。
+    private var ids: [String: Int] = [:]
     private var loaded = false
+    /// 登録・削除に使う（capabilities を読んだ ChatStore が入れる）。
+    @ObservationIgnored private var api: APIClient?
+    private(set) var listPath: String?
+    private(set) var registerPath: String?
+    private(set) var deletePath: String?
+    /// Mac: 登録のダイアログをパネルの上に出す（ピッカーのポップオーバーからファイルを選ぶと、
+    /// ポップオーバーが閉じて選んだ結果を受け取れないため）。
+    var registering = false
 
     func url(for name: String) -> URL? { urls[name] }
     var names: [String] { urls.keys.sorted() }
+
+    /// 誰でも登録できる（サーバが `custom_emoji_register` を返すときだけ。古いサーバでは出さない）。
+    var canRegister: Bool { api != nil && registerPath != nil }
+    /// 誰でも消せる（`custom_emoji_delete`）。id の分からない絵文字は消せない。
+    func canDelete(_ name: String) -> Bool { api != nil && deletePath != nil && ids[name] != nil }
+
+    func configure(api: APIClient, posts: Capabilities.PostFeatures?) {
+        self.api = api
+        listPath = posts?.customEmojiList
+        registerPath = posts?.customEmojiRegister
+        deletePath = posts?.customEmojiDelete
+    }
 
     /// GET /api/agent/emojis with the app's token (capabilities `custom_emoji_list`).
     func load(api: APIClient, path: String) async {
         guard !loaded, let list = try? await api.customEmojis(path: path) else { return }
         loaded = true
-        for e in list {
-            let base: URL? = e.imageUrl.hasPrefix("/") ? APIClient.baseURL : nil
-            if let u = URL(string: e.imageUrl, relativeTo: base) { urls[e.name] = u.absoluteURL }
-        }
+        replace(with: list)
     }
 
     func load() async {
-        guard !loaded else { return }
-        struct Item: Decodable { var name: String; var imageUrl: String }
-        struct List: Decodable { var emojis: [Item] }
-        guard let (data, _) = try? await URLSession.shared.data(from: APIClient.baseURL.appendingPathComponent("/api/emojis")),
-              let list = try? JSONDecoder().decode(List.self, from: data) else { return }
+        guard !loaded, let list = await fetchPublic() else { return }
         loaded = true
-        for e in list.emojis {
-            if let u = URL(string: e.imageUrl, relativeTo: APIClient.baseURL) { urls[e.name] = u.absoluteURL }
-        }
+        replace(with: list)
+    }
+
+    /// 登録・削除のあと: 一覧を読み直す（アプリの鍵で読めればそれ、だめなら公開の一覧）。
+    func reload() async {
+        var list: [CustomEmojiInfo]?
+        if let api, let listPath { list = try? await api.customEmojis(path: listPath) }
+        if list == nil { list = await fetchPublic() }
+        guard let list else { return }
+        loaded = true
+        replace(with: list)
+    }
+
+    /// 登録して一覧を読み直す。失敗はサーバの言葉で投げる（PostActionsModel.message で文に）。
+    func register(name: String, image: CustomEmojiRules.Prepared) async throws {
+        guard let api, let registerPath else { throw APIError.http(status: 400, code: nil, message: "このサーバでは登録できません") }
+        let e = try await api.registerCustomEmoji(path: registerPath, name: name, image: image)
+        add(e) // 読み直しが失敗しても、登録したものはすぐ選べるように
+        await reload()
+    }
+
+    /// 消して一覧を読み直す（その絵文字のリアクションもサーバで消える）。
+    func delete(name: String) async throws {
+        guard let api, let deletePath, let id = ids[name] else { throw APIError.http(status: 400, code: nil, message: "この絵文字は削除できません") }
+        try await api.deleteCustomEmoji(path: deletePath, id: id)
+        urls[name] = nil
+        ids[name] = nil
+        await reload()
+    }
+
+    private func fetchPublic() async -> [CustomEmojiInfo]? {
+        guard let (data, _) = try? await URLSession.shared.data(from: APIClient.baseURL.appendingPathComponent("/api/emojis")) else { return nil }
+        struct List: Decodable { var emojis: [CustomEmojiInfo] }
+        return (try? JSONDecoder().decode(List.self, from: data))?.emojis
+    }
+
+    private func replace(with list: [CustomEmojiInfo]) {
+        urls = [:]
+        ids = [:]
+        for e in list { add(e) }
+    }
+
+    private func add(_ e: CustomEmojiInfo) {
+        let base: URL? = e.imageUrl.hasPrefix("/") ? APIClient.baseURL : nil
+        if let u = URL(string: e.imageUrl, relativeTo: base) { urls[e.name] = u.absoluteURL }
+        if let id = e.id { ids[e.name] = id }
     }
 }
 
