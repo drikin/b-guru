@@ -3,7 +3,7 @@
  *
  *   DmToggle     チャットの上の行（☗・🎮 の隣）に「✉️」と未読の数。押すと DM の一覧。
  *   DmNameMenu   チャットの発言の名前・アイコンを押すと「DM を送る」。
- *   DmDrawer     右から出る DM の一覧／1 つの会話（24 時間以内のやりとり・入力欄）。
+ *   DmDrawer     右から出る DM の一覧／1 つの会話（30 日以内のやりとり・入力欄）。
  * DM_ENABLED の対象でない人には何も出さない（GET /api/dm が 404）。 */
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ActionIcon, Avatar, Badge, Box, Button, Drawer, Group, Indicator, Loader, Menu, ScrollArea, Stack, Text, Textarea, Tooltip, UnstyledButton } from "@mantine/core";
@@ -40,7 +40,7 @@ export function DmToggle() {
   }, [s.status]);
   if (s.status !== "enabled") return null;
   return (
-    <Tooltip label="DM（24 時間で消えます）" openDelay={400}>
+    <Tooltip label="DM（30 日で消えます）" openDelay={400}>
       <Indicator label={s.unread > 99 ? "99+" : s.unread} size={16} color="red" disabled={s.unread === 0} offset={4}>
         <ActionIcon
           size="md"
@@ -184,7 +184,7 @@ function DmList({ s }: { s: DmSnapshot }) {
         )}
       </ScrollArea>
       <Text size="xs" c="dimmed" ta="center" py={6}>
-        DM は 24 時間で消えます
+        DM は 30 日で消えます
       </Text>
     </>
   );
@@ -214,7 +214,7 @@ function DmThread({ s, peer }: { s: DmSnapshot; peer: DmPeer }) {
             </Group>
           ) : s.messages.length === 0 ? (
             <Text size="sm" c="dimmed" ta="center" py="lg">
-              {peer.name ?? "会員"} さんとの DM（24 時間で消えます）
+              {peer.name ?? "会員"} さんとの DM（30 日で消えます）
             </Text>
           ) : (
             s.messages.map((m) => <DmBubble key={m.client_id ?? m.id} m={m} />)
@@ -235,7 +235,7 @@ function DmThread({ s, peer }: { s: DmSnapshot; peer: DmPeer }) {
               minRows={1}
               maxRows={6}
               value={draft}
-              placeholder={`${peer.name ?? "会員"} さんへ（24 時間で消えます）`}
+              placeholder={`${peer.name ?? "会員"} さんへ（30 日で消えます）`}
               aria-label="DM の本文"
               error={draft.length > DM_MAX_BODY ? `${DM_MAX_BODY} 文字までです` : undefined}
               onChange={(e) => setDraft(e.currentTarget.value)}

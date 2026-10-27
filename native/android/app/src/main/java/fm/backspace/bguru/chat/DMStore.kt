@@ -91,7 +91,7 @@ object DMLogic {
         return rows + DMRow(m)
     }
 
-    /** Still within the TTL (24 h). An unparseable time is kept (the server sweeps anyway). */
+    /** Still within the TTL (ttl_hours, 30 days). An unparseable time is kept (the server sweeps anyway). */
     fun isFresh(createdAt: String, now: Instant, ttlHours: Int): Boolean {
         val t = runCatching { Instant.parse(createdAt) }.getOrNull() ?: return true
         return t.isAfter(now.minusSeconds(ttlHours * 3600L))
@@ -154,7 +154,7 @@ class DMStore(private val api: ApiClient) {
     var enabled by mutableStateOf(false); private set
     var canSendCap by mutableStateOf(false); private set
     var maxBody by mutableIntStateOf(1000); private set
-    var ttlHours by mutableIntStateOf(24); private set
+    var ttlHours by mutableIntStateOf(30 * 24); private set
     private var base = "/api/agent/dm"
 
     var conversations by mutableStateOf<List<DMConversation>>(emptyList()); private set
@@ -418,7 +418,7 @@ class DMStore(private val api: ApiClient) {
             m("mazzo", false, "さっきの将棋、いい勝負でしたね", 95),
             m("mazzo", true, "ありがとうございます！次は負けません", 90),
             m("mazzo", false, "Android 版の DM、試してます。届いてますか？", 6),
-            m("mazzo", false, "24 時間で消えるのはいいですね", 5),
+            m("mazzo", false, "1 か月で消えるのはいいですね", 5),
         )
         demoThreads["takuto"] = listOf(
             m("takuto", false, "通知の件、ありがとうございました", 300),
@@ -427,8 +427,8 @@ class DMStore(private val api: ApiClient) {
         demoThreads["NORIO TAKAHASHI"] = listOf(
             m("NORIO TAKAHASHI", true, "おはようございます。今日の配信、何時からでしたっけ？", 20 * 60),
             m("NORIO TAKAHASHI", false, "21 時からです！", 19 * 60),
-            // Past 24 h: hidden here too.
-            m("NORIO TAKAHASHI", false, "（これは 25 時間前なので見えないはず）", 25 * 60),
+            // Past 30 days: hidden here too.
+            m("NORIO TAKAHASHI", false, "（これは 31 日前なので見えないはず）", 31 * 24 * 60),
         )
         val peers = mapOf("mazzo" to 2, "takuto" to 0, "NORIO TAKAHASHI" to 0)
         conversations = DMLogic.freshConversations(peers.mapNotNull { (p, unread) ->

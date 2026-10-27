@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 // ✉️ 簡易 DM (server: src/lib/dm.ts, /api/agent/dm/**). 1:1 between members, text only,
-// gone after 24 h. Off unless capabilities' features.dm.enabled (DM_ENABLED on the server).
+// gone after 30 days (ttl_hours in capabilities). Off unless capabilities' features.dm.enabled (DM_ENABLED on the server).
 
 struct DMPeer: Codable, Hashable, Sendable, Identifiable {
     var userId: String
@@ -50,7 +50,8 @@ struct DMThreadResponse: Decodable, Sendable {
 
 /// The pure parts (tested by eye in the demo, and kept apart so the store stays small).
 enum DMLogic {
-    static let ttl: TimeInterval = 24 * 60 * 60
+    /// From capabilities' features.dm.ttl_hours (30 days since 2026-10-27; 24 h before).
+    nonisolated(unsafe) static var ttl: TimeInterval = 30 * 24 * 60 * 60
 
     nonisolated(unsafe) private static let isoFrac: ISO8601DateFormatter = { // read-only after setup (thread-safe for parsing)
         let f = ISO8601DateFormatter()
@@ -61,7 +62,7 @@ enum DMLogic {
 
     static func date(_ s: String) -> Date? { isoFrac.date(from: s) ?? iso.date(from: s) }
 
-    /// Gone after 24 h (messages still being sent stay).
+    /// Gone after the ttl (messages still being sent stay).
     static func pruned(_ list: [DMMessage], now: Date = Date()) -> [DMMessage] {
         list.filter { m in m.pending || m.failed || (date(m.createdAt).map { now.timeIntervalSince($0) < ttl } ?? true) }
     }
@@ -177,6 +178,7 @@ final class DMStore {
         enabled = on
         canSend = on && (f?.send ?? false)
         maxBody = f?.maxBody ?? 1000
+        if let h = f?.ttlHours, h > 0 { DMLogic.ttl = TimeInterval(h) * 3600 }
         if let p = f?.path, p.hasPrefix("/api/") { path = p }
         if !on { route = nil; conversations = []; unreadCount = 0 }
         if on, !wasOn {
@@ -375,12 +377,12 @@ final class DMStore {
             "mazzo": [m(1, "mazzo", "さっきの将棋、いい勝負でしたね", mine: false, 95),
                       m(2, "mazzo", "ありがとうございます！ 次は負けません", mine: true, 90),
                       m(5, "mazzo", "今夜の配信、見に行きます", mine: false, 6),
-                      m(6, "mazzo", "24 時間で消えるのはいいですね", mine: false, 5)],
+                      m(6, "mazzo", "1 か月で消えるのはいいですね", mine: false, 5)],
             "takuto": [m(3, "takuto", "レンズの件、あとで写真送りますね（DM は文字だけでした）", mine: false, 300),
                        m(4, "takuto", "了解です！", mine: true, 290)],
             "coban": [m(7, "coban", "昨日はありがとうございました", mine: true, 600)],
-            // more than 24 h ago: hidden
-            "りとる": [m(0, "りとる", "これは 25 時間前（見えない）", mine: false, 25 * 60)],
+            // more than 30 days ago: hidden
+            "りとる": [m(0, "りとる", "これは 31 日前（見えない）", mine: false, 31 * 24 * 60)],
         ]
         conversations = ["mazzo", "takuto", "coban", "りとる"].compactMap { id in
             guard let last = DMLogic.pruned(demoThreads[id] ?? []).last else { return nil }

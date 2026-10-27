@@ -104,7 +104,7 @@ fun DMOffer(onDM: (() -> Unit)?, content: @Composable () -> Unit) {
 fun DMOverlay(dm: DMStore) {
     val route = dm.route ?: return
     BackHandler { dm.back() }
-    // Hide what passes the 24 hours while it stays open (and on screen: back from the
+    // Hide what passes the ttl while it stays open (and on screen: back from the
     // background it prunes at once).
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(dm) {
@@ -131,7 +131,7 @@ private fun DMInbox(dm: DMStore) {
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             Text(
-                "DM は 24 時間で消えます。チャットで相手の名前やアイコンをタップすると送れます。",
+                "DM は 30 日で消えます。チャットで相手の名前やアイコンをタップすると送れます。",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
@@ -320,7 +320,7 @@ private fun DMComposer(dm: DMStore, draft: String, onDraft: (String) -> Unit, on
                         value = draft,
                         onValueChange = onDraft,
                         enabled = allowed,
-                        placeholder = { Text("DM（24 時間で消えます）") },
+                        placeholder = { Text("DM（30 日で消えます）") },
                         maxLines = 6,
                         shape = RoundedCornerShape(20.dp),
                         colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, disabledIndicatorColor = Color.Transparent),
@@ -332,7 +332,7 @@ private fun DMComposer(dm: DMStore, draft: String, onDraft: (String) -> Unit, on
                     }
                 }
                 Row {
-                    Text("DM は 24 時間で消えます", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.weight(1f))
+                    Text("DM は 30 日で消えます", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.weight(1f))
                     if (draft.length > dm.maxBody * 0.8) Text("${draft.length} / ${dm.maxBody}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 }
             }
@@ -343,7 +343,7 @@ private fun DMComposer(dm: DMStore, draft: String, onDraft: (String) -> Unit, on
 private val DM_HM = DateTimeFormatter.ofPattern("H:mm").withZone(ZoneId.systemDefault())
 private val DM_MDHM = DateTimeFormatter.ofPattern("M/d H:mm").withZone(ZoneId.systemDefault())
 
-/** "H:mm" today; "M/d H:mm" for yesterday's (the list), since DMs last 24 hours. */
+/** "H:mm" today; "M/d H:mm" for yesterday's (the list), for older ones (DMs last 30 days). */
 private fun dmTime(iso: String, withDay: Boolean): String = runCatching {
     val t = Instant.parse(iso)
     val zone = ZoneId.systemDefault()

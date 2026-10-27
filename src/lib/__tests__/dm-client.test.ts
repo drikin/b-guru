@@ -24,7 +24,7 @@ describe("reconcileDm", () => {
 });
 
 describe("pruneExpired", () => {
-  it("24 時間を過ぎたものを隠す（送信中は残す）", () => {
+  it("30 日を過ぎたものを隠す（送信中は残す）", () => {
     const now = Date.now();
     const old = msg(1, { created_at: new Date(now - DM_TTL_MS - 1000).toISOString() });
     const pending = msg(-1, { created_at: new Date(now - DM_TTL_MS - 1000).toISOString(), pending: true });

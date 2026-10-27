@@ -5,7 +5,7 @@
  *   openDmList() / openDm(peer) / closeDm()   一覧・1 つの会話を開く（チャットの上に重ねる）
  *   sendDmMessage()  楽観的に出して POST、client_id で突き合わせる（チャットと同じ考え方）
  *   applyDmEvent()   /api/posts/stream の `event: dm`（受け取る人ごとの DTO）
- * DM は 24 時間で消える: 期限を過ぎたものはここでも隠す。 */
+ * DM は 30 日で消える: 期限を過ぎたものはここでも隠す。 */
 import { newChatClientId } from "./chat-optimistic";
 
 export type DmPeer = { user_id: string; name: string | null; avatar: string | null };
@@ -24,7 +24,7 @@ export type DmMessage = {
 };
 export type DmConversation = { peer: DmPeer; last_message: DmMessage; unread_count: number };
 
-export const DM_TTL_MS = 24 * 60 * 60 * 1000;
+export const DM_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface DmSnapshot {
   status: "unknown" | "enabled" | "disabled";
@@ -66,7 +66,7 @@ export const getServerSnapshot = (): DmSnapshot => INITIAL;
 
 // ---- 純粋な部分（テストする） ----
 
-/** 24 時間を過ぎたものを落とす（送信中のものは残す）。 */
+/** 期限を過ぎたものを落とす（送信中のものは残す）。 */
 export function pruneExpired<T extends { created_at: string; pending?: boolean }>(list: T[], now = Date.now()): T[] {
   return list.filter((m) => m.pending || now - new Date(m.created_at).getTime() < DM_TTL_MS);
 }

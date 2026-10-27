@@ -1,4 +1,4 @@
-/* ✉️ 簡易 DM — 有料会員どうしの 1 対 1。テキストだけ、24 時間で消える（チャットと同じ考え方）。
+/* ✉️ 簡易 DM — 有料会員どうしの 1 対 1。テキストだけ、30 日で消える（2026-10-27 オーナー「DM だけ 1 か月に」。チャットは 24 時間のまま）。
  *
  *   - 表は dm_messages / dm_read_state（db.ts）。chat_messages は使わない。
  *   - 読めるのは当事者 2 人だけ。送り主は常にサーバの認証（セッション / アプリの鍵）から決める
@@ -23,8 +23,8 @@ export function dmEnabledFor(email: string | null | undefined): boolean {
 }
 
 /** DM は送ってからこの時間で消える。 */
-export const DM_TTL = "24 hours";
-export const DM_TTL_HOURS = 24;
+export const DM_TTL = "30 days";
+export const DM_TTL_HOURS = 30 * 24;
 /** 本文の上限（チャットと同じ）。 */
 export const DM_MAX_BODY = CHAT_BODY_LIMIT;
 /** 送信の上限（1 人あたり）。 */
@@ -171,7 +171,7 @@ export async function checkDmRate(email: string): Promise<{ allowed: boolean; re
   return { allowed: false, retryAfter: Math.max(1, Math.ceil((started + 3600_000 - Date.now()) / 1000)) };
 }
 
-/** 未読の合計（自分宛てで、相手ごとの既読より新しく、24 時間以内）。 */
+/** 未読の合計（自分宛てで、相手ごとの既読より新しく、30 日以内）。 */
 export async function getDmUnreadTotal(email: string): Promise<number> {
   const me = normEmail(email);
   const r = await pool.query(
@@ -229,7 +229,7 @@ export async function listDmConversations(actor: DmActor): Promise<{ conversatio
   return { conversations, unread_count: total };
 }
 
-/** 1 つの会話（古い→新しい、24 時間以内）。読むのは当事者だけ（自分が入っている行しか引かない）。 */
+/** 1 つの会話（古い→新しい、30 日以内）。読むのは当事者だけ（自分が入っている行しか引かない）。 */
 export async function listDmMessages(
   actor: DmActor,
   peerId: unknown,
@@ -414,17 +414,17 @@ export async function sendSystemDm(recipientEmail: string, rawBody: string): Pro
   return row.id;
 }
 
-/** 24 時間を過ぎた DM と、それより古い既読の記録を消す。消した DM の件数を返す。 */
+/** 30 日を過ぎた DM と、それより古い既読の記録を消す。消した DM の件数を返す。 */
 export async function purgeExpiredDm(): Promise<number> {
   const r = await pool.query(`DELETE FROM dm_messages WHERE created_at < now() - ($1::text)::interval`, [DM_TTL]);
-  // 既読の記録は、最後に動いてから 25 時間たてば指している DM はもう残っていない（消しても未読は変わらない）。
-  await pool.query(`DELETE FROM dm_read_state WHERE updated_at < now() - interval '25 hours'`);
+  // 既読の記録は、最後に動いてから期限＋1 時間たてば指している DM はもう残っていない（消しても未読は変わらない）。
+  await pool.query(`DELETE FROM dm_read_state WHERE updated_at < now() - ($1::text)::interval - interval '1 hour'`, [DM_TTL]);
   return r.rowCount ?? 0;
 }
 
 let dmSweeperStarted = false;
 /** 1 プロセスに 1 つの掃除（ensureChatSweeper と同じ形）。DM は時刻で消えるので、配信はしない
- *  （クライアントも 24 時間を過ぎたものは自分で隠す）。 */
+ *  （クライアントも期限を過ぎたものは自分で隠す。iPhone・Mac・Android は ttl_hours を読む）。 */
 export function ensureDmSweeper(): void {
   if (dmSweeperStarted) return;
   dmSweeperStarted = true;

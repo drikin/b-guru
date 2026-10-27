@@ -100,7 +100,7 @@ describe("機能フラグ DM_ENABLED", () => {
     expect(r.status).toBe(404);
   });
   it("capabilities の features.dm: 送れるのは chat スコープがあるときだけ", () => {
-    expect(dmCapability(true, ["read", "chat"])).toMatchObject({ enabled: true, send: true, path: "/api/agent/dm", max_body: 1000, ttl_hours: 24, rate_limit_per_hour: 60 });
+    expect(dmCapability(true, ["read", "chat"])).toMatchObject({ enabled: true, send: true, path: "/api/agent/dm", max_body: 1000, ttl_hours: 720, rate_limit_per_hour: 60 });
     expect(dmCapability(true, ["read"]).send).toBe(false);
     expect(dmCapability(false, ["chat"])).toMatchObject({ enabled: false, send: false });
   });

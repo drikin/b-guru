@@ -115,7 +115,7 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val bridgeVersion: Int? = null,
         val control: Boolean? = null,
     )
-    /** ✉️ 簡易 DM (1 対 1・テキストだけ・24 時間で消える), behind DM_ENABLED. `send` = this token may send (chat scope). */
+    /** ✉️ 簡易 DM (1 対 1・テキストだけ・30 日で消える), behind DM_ENABLED. `send` = this token may send (chat scope). */
     @Serializable data class DMFeatures(
         val enabled: Boolean? = null,
         val path: String? = null,
@@ -305,7 +305,7 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val dmEnabled get() = features?.dm?.enabled ?: false
     val canSendDM get() = dmEnabled && (features?.dm?.send ?: false)
     val dmMaxBody get() = features?.dm?.maxBody?.takeIf { it > 0 } ?: 1000
-    val dmTtlHours get() = features?.dm?.ttlHours?.takeIf { it > 0 } ?: 24
+    val dmTtlHours get() = features?.dm?.ttlHours?.takeIf { it > 0 } ?: (30 * 24)
     /** Only paths on our own server (the request carries the token). */
     val dmPath get() = features?.dm?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/dm"
     /** 「ネタ帳に送る」 is on for this token. */

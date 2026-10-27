@@ -1,5 +1,5 @@
 /* GET /api/agent/dm/messages/:id — ✉️ DM 1 件と相手（スコープ read）。通知の本文差し替え
- * （iPhone の Notification Service Extension・Android）が使う。当事者でなければ・24 時間を過ぎたら 404。 */
+ * （iPhone の Notification Service Extension・Android）が使う。当事者でなければ・30 日を過ぎたら 404。 */
 import { NextRequest } from "next/server";
 import { withAgent } from "@/lib/agent-auth";
 import { dmMessageApi } from "@/lib/dm-api";

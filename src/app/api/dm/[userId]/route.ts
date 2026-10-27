@@ -1,5 +1,5 @@
 /* /api/dm/:userId — ✉️ 簡易 DM の 1 つの会話（Web・ログイン必須）。
- *   GET  : 24 時間以内のやりとり・未読・相手
+ *   GET  : 30 日以内のやりとり・未読・相手
  *   POST : 送る { body, client_id? }（送り主はセッションの本人だけ）
  * 中身はアプリの /api/agent/dm/:userId と同じ lib/dm-api.ts。 */
 import { NextRequest } from "next/server";

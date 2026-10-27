@@ -11,7 +11,7 @@
  *  - 送り主はサーバが決める（本文に混ぜた from_id などは無視）
  *  - 相手が DM_ENABLED の対象外・ログインしていない → 403、本人が対象外 → 404
  *  - 1 時間 60 件まで（61 件目は 429）、本文の上限（1000 字）
- *  - 24 時間を過ぎたものは見えず、掃除で消える
+ *  - 30 日を過ぎたものは見えず、掃除で消える（2 日前のものは残る）
  *  - client_id の再送は 2 重に入れない、通知（pushDm）は相手へ 1 回
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
@@ -218,18 +218,24 @@ d("✉️ 簡易 DM（DB）", () => {
     expect(n.rows[0].c).toBe(1);
   });
 
-  it("24 時間を過ぎたものは見えず、掃除で消える（古い既読の記録も）", async () => {
+  it("30 日を過ぎたものは見えず、掃除で消える（2 日前は残る・古い既読の記録も消える）", async () => {
     const old = await m.dm.sendDm(a, b.userId, "むかし");
+    const days2 = await m.dm.sendDm(a, b.userId, "おととい");
     const fresh = await m.dm.sendDm(a, b.userId, "いま");
-    await sql(`UPDATE dm_messages SET created_at = now() - interval '25 hours' WHERE id = $1`, [old.id]);
-    await sql(`UPDATE dm_read_state SET updated_at = now() - interval '26 hours' WHERE email = $1`, [A]);
+    await sql(`UPDATE dm_messages SET created_at = now() - interval '31 days' WHERE id = $1`, [old.id]);
+    await sql(`UPDATE dm_messages SET created_at = now() - interval '2 days' WHERE id = $1`, [days2.id]);
+    await sql(`UPDATE dm_read_state SET updated_at = now() - interval '2 days' WHERE email = $1`, [A]);
+    await m.dm.purgeExpiredDm();
+    expect((await sql(`SELECT 1 FROM dm_read_state WHERE email = $1`, [A])).rowCount).toBe(1); // 2 日前の既読は残る
+    await sql(`UPDATE dm_read_state SET updated_at = now() - interval '30 days 2 hours' WHERE email = $1`, [A]);
     const t = await m.api.dmThreadApi(b, a.userId, new URLSearchParams());
-    expect((t.body.messages as { id: number }[]).map((x) => x.id)).toEqual([fresh.id]);
-    expect((await m.api.dmListApi(b)).body.unread_count).toBe(1);
+    expect((t.body.messages as { id: number }[]).map((x) => x.id)).toEqual([days2.id, fresh.id]);
+    expect((await m.api.dmListApi(b)).body.unread_count).toBe(2);
     expect((await m.api.dmMessageApi(b, String(old.id))).status).toBe(404);
     await m.dm.purgeExpiredDm();
     expect((await sql(`SELECT 1 FROM dm_messages WHERE id = $1`, [old.id])).rowCount).toBe(0);
     expect((await sql(`SELECT 1 FROM dm_messages WHERE id = $1`, [fresh.id])).rowCount).toBe(1);
+    expect((await sql(`SELECT 1 FROM dm_messages WHERE id = $1`, [days2.id])).rowCount).toBe(1);
     expect((await sql(`SELECT 1 FROM dm_read_state WHERE email = $1`, [A])).rowCount).toBe(0);
   });
 

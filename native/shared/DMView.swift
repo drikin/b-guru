@@ -31,7 +31,7 @@ struct DMBadgeButton: View {
                     }
             }
             .buttonStyle(.borderless)
-            .help("DM（24 時間で消えます）")
+            .help("DM（30 日で消えます）")
             .accessibilityLabel(dm.unreadCount > 0 ? "DM、未読 \(dm.unreadCount) 件" : "DM")
         }
     }
@@ -109,7 +109,7 @@ struct DMListView: View {
                     }
                 }
             }
-            Text("DM は 24 時間で消えます").font(.app(.caption2)).foregroundStyle(.tertiary).padding(.vertical, 6)
+            Text("DM は 30 日で消えます").font(.app(.caption2)).foregroundStyle(.tertiary).padding(.vertical, 6)
         }
     }
 
@@ -158,7 +158,7 @@ struct DMThreadView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 6) {
                         if dm.thread.isEmpty {
-                            Text(dm.loading ? "読み込み中…" : "\(peer.displayName) さんとの DM（24 時間で消えます）")
+                            Text(dm.loading ? "読み込み中…" : "\(peer.displayName) さんとの DM（30 日で消えます）")
                                 .font(.app(.callout)).foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity).padding(.top, 40)
                         }
@@ -207,7 +207,7 @@ struct DMThreadView: View {
                     .accessibilityLabel("送信")
                 }
                 HStack {
-                    Text("DM は 24 時間で消えます").font(.app(.caption2)).foregroundStyle(.tertiary)
+                    Text("DM は 30 日で消えます").font(.app(.caption2)).foregroundStyle(.tertiary)
                     Spacer()
                     if draft.count > dm.maxBody - 100 {
                         Text("\(draft.count)/\(dm.maxBody)").font(.app(.caption2))
