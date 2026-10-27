@@ -32,7 +32,11 @@ type ChatLiveMessage = { id: number } & Partial<ChatMessage>;
  * the first page themselves — we never push full post payloads, which keeps
  * consistency simple (client always reflects server state).
  */
-export const liveBus = new EventEmitter();
+// One bus for the whole server process. Next.js bundles instrumentation.ts (where the sweepers start)
+// separately from the route handlers, so a plain module-level emitter would be a different object there
+// and its events would never reach the SSE streams (🐶 reminders fired into it, 2026-10-27).
+const g = globalThis as unknown as { __bguruLiveBus?: EventEmitter };
+export const liveBus = (g.__bguruLiveBus ??= new EventEmitter());
 // Many concurrent SSE clients each hold a "change" listener; default cap (10)
 // would log MaxListenersExceededWarning and hint at a leak. We know listeners
 // are removed on disconnect, so raise the cap and leak-harden.

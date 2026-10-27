@@ -41,7 +41,7 @@ export const MAX_EVERYONE_ACTIVE = 3;
 export const MAX_REQUESTS_PER_DAY = 30;
 /** 1 回きりの予定がこれ以上遅れたら鳴らさない（サーバが長く止まっていたとき）。 */
 const DROP_LATE_MS = 12 * 3600_000;
-const SWEEP_MS = 20_000;
+const SWEEP_MS = 5_000;
 
 export function beagleRemindersEnabledFor(email: string | null | undefined): boolean {
   return featureEnabledFor(BEAGLE_REMINDERS_FLAG, email);
@@ -353,12 +353,13 @@ async function deliver(x: Row, fire: Date, late: boolean): Promise<void> {
   );
   await broadcastChat(ins.rows[0]);
   // push はふつうのチャットと同じ（「新着すべて」の人だけ・静かな時間は送らない）。@ は全角にしてあるので誰も呼ばない。
-  void pushChatMessage({ id: ins.rows[0].id, body }, SYSTEM_EMAIL).catch((e) => console.error("[beagle-reminders] push:", (e as Error)?.message));
+  // 頼んだ人にはメンションと同じ知らせ（オーナー 2026-10-27「頼んだ人だけ push」）。
+  void pushChatMessage({ id: ins.rows[0].id, body }, SYSTEM_EMAIL, [x.owner_email]).catch((e) => console.error("[beagle-reminders] push:", (e as Error)?.message));
 }
 
 const g = globalThis as unknown as { __beagleReminderSweeper?: ReturnType<typeof setInterval> };
 
-/** 20 秒ごとの見回り（起動時にも 1 回）。終えて 30 日たった予定は消す。 */
+/** 5 秒ごとの見回り（起動時にも 1 回）。終えて 30 日たった予定は消す。 */
 export function ensureReminderSweeper(): void {
   if (g.__beagleReminderSweeper) return;
   const tick = () => {

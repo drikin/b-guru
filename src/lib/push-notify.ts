@@ -156,7 +156,9 @@ export async function mentionedRecipients(body: string, authorEmail: string, own
   return owners.filter((e) => isMentionedIn(body, mentionNamesFor([names.get(e) ?? null], e)));
 }
 
-export async function pushChatMessage(m: { id: number; body: string }, authorEmail: string): Promise<number> {
+/** `alsoMention`: treated like an @mention (its own notification, also in quiet hours) — 🐶 a member's
+ *  「みんなに」 reminder reaches the one who asked it (owner 2026-10-27). */
+export async function pushChatMessage(m: { id: number; body: string }, authorEmail: string, alsoMention: string[] = []): Promise<number> {
   if (!pushEnabled()) return 0;
   const author = authorEmail.trim().toLowerCase();
   const owners = await pushDeviceOwners();
@@ -164,6 +166,7 @@ export async function pushChatMessage(m: { id: number; body: string }, authorEma
 
   // 1) @mentions: their own notification (bark), always — also in quiet hours.
   const mentioned = new Set(await mentionedRecipients(m.body, author, owners));
+  for (const e of alsoMention.map((x) => x.trim().toLowerCase())) if (owners.includes(e) && e !== author) mentioned.add(e);
   let sent = 0;
   const mentionTo = [...mentioned].filter((e) => !throttled(e, "chat_mention"));
   if (mentionTo.length) {

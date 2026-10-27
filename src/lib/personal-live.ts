@@ -36,7 +36,9 @@ export type SyncScope =
   | { scope: "shogi"; game_id: number }
   | { scope: "offkai"; event_id: number };
 
-export const personalBus = new EventEmitter();
+// Shared across bundles like lib/live.ts (instrumentation.ts runs in its own module graph).
+const g = globalThis as unknown as { __bguruPersonalBus?: EventEmitter };
+export const personalBus = (g.__bguruPersonalBus ??= new EventEmitter());
 personalBus.setMaxListeners(0);
 
 export function personalKey(email: string): string {
