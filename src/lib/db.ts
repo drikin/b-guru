@@ -918,6 +918,24 @@ export async function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_offkai_photos_event ON offkai_photos(event_id, id);
     -- 参加した人（始めた・聞いた／話した・写真を上げた）。アルバムのまとめて保存はこの人たちと管理者だけ（2026-10-26）。
     -- 記録を始める前の会は、始めた人と写真を上げた人で埋める（何度流しても同じ）。
+    -- 🐶 ビーグルのリマインド（lib/beagle-reminders.ts, docs/beagle-reminders-spec.md）。予定の事前のお知らせは時刻ごとに 1 行（group_id でまとめる）。
+    CREATE TABLE IF NOT EXISTS beagle_reminders (
+      id SERIAL PRIMARY KEY,
+      owner_email TEXT NOT NULL,
+      audience TEXT NOT NULL CHECK (audience IN ('me', 'everyone')),
+      kind TEXT NOT NULL CHECK (kind IN ('timer', 'at', 'repeat', 'event')),
+      text TEXT NOT NULL DEFAULT '',
+      next_at TIMESTAMPTZ NOT NULL,
+      repeat JSONB,
+      event_at TIMESTAMPTZ,
+      group_id INT,
+      request_msg_id INT,
+      active BOOLEAN NOT NULL DEFAULT true,
+      fired_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_beagle_reminders_due ON beagle_reminders(next_at) WHERE active;
+    CREATE INDEX IF NOT EXISTS idx_beagle_reminders_owner ON beagle_reminders(owner_email) WHERE active;
     CREATE TABLE IF NOT EXISTS offkai_participants (
       event_id INT NOT NULL REFERENCES offkai_events(id) ON DELETE CASCADE,
       email TEXT NOT NULL,

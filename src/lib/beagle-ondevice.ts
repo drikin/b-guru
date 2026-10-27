@@ -117,6 +117,12 @@ export async function postBeagleAiReply(input: {
       await client.query("ROLLBACK");
       return fail(400, "not_asking_beagle", "@ビーグル への質問ではありません");
     }
+    // リマインドの依頼はサーバのビーグルが受ける（lib/beagle-reminders.ts。端末内 AI の答えで枠を使わせない）。
+    const { isReminderRequest } = await import("./beagle-reminders");
+    if (isReminderRequest(String(question.body), input.email)) {
+      await client.query("ROLLBACK");
+      return fail(409, "reminder", "リマインドはサーバのビーグルが受けます");
+    }
     const counts = await client.query(
       `SELECT count(*) FILTER (WHERE lower(ai_by_email) = lower($1))::int AS mine, count(*)::int AS total
        FROM beagle_ai_log WHERE created_at >= now() - interval '24 hours'`,

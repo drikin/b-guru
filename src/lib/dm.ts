@@ -11,7 +11,7 @@
 import { pool } from "./db";
 import { gravatarUrl, SYSTEM_EMAIL } from "./posts";
 import { resolveDisplayNames } from "./display-name";
-import { emailToUserIds, userIdToEmail } from "./user";
+import { emailToUserIds, ensureUserId, userIdToEmail } from "./user";
 import { CHAT_BODY_LIMIT } from "./chat-optimistic";
 import { featureEnabledFor } from "./feature-flag";
 import { emitPersonal } from "./personal-live";
@@ -124,6 +124,8 @@ export function toDmDto(r: DmRow, viewerEmail: string, ids: Map<string, string>,
 }
 
 export function peerDto(email: string, userId: string, names: Map<string, string | null>): DmPeer {
+  // ビーグルからの DM（リマインド。lib/beagle-reminders.ts）は「ビーグル」と出す。
+  if (normEmail(email) === SYSTEM_EMAIL) return { user_id: userId, name: "ビーグル", avatar: gravatarUrl(email) };
   return { user_id: userId, name: names.get(email) ?? null, avatar: gravatarUrl(email) };
 }
 
@@ -385,6 +387,30 @@ async function insertDm(actor: DmActor, peerId: unknown, body: string, clientId:
   })();
   void pushDm(peer.email, row.id, actor.userId).catch((e) => console.error("dm push:", (e as Error)?.message));
   return mine;
+}
+
+/** ビーグルから 1 人へ（🐶 リマインド、docs/beagle-reminders-spec.md）。送り主は B-guru のシステム。相手の端末へ即時の知らせと push。
+ *  ビーグルへは返信できない（resolvePeer がシステムを断る）。 */
+export async function sendSystemDm(recipientEmail: string, rawBody: string): Promise<number | null> {
+  const to = normEmail(recipientEmail);
+  if (!dmEnabledFor(to)) return null;
+  const body = rawBody.slice(0, DM_MAX_BODY);
+  const ins = await pool.query(
+    `INSERT INTO dm_messages (sender_email, recipient_email, body) VALUES ($1, $2, $3)
+     RETURNING id, sender_email, recipient_email, body, created_at`,
+    [SYSTEM_EMAIL, to, body]
+  );
+  const row = ins.rows[0] as DmRow;
+  await ensureUserId(SYSTEM_EMAIL); // 端末が送り主を「ビーグル」として出すのに要る
+  const ids = await emailToUserIds([SYSTEM_EMAIL, to]);
+  const sysId = ids.get(SYSTEM_EMAIL) ?? "";
+  const unread = await getDmUnreadTotal(to).catch(() => null);
+  emitPersonal(to, {
+    type: "dm",
+    data: { action: "create", message: toDmDto(row, to, ids), peer: peerDto(SYSTEM_EMAIL, sysId, new Map()), ...(unread != null ? { unread_count: unread } : {}) },
+  });
+  void pushDm(to, row.id, sysId).catch((e) => console.error("dm push (beagle):", (e as Error)?.message));
+  return row.id;
 }
 
 /** 24 時間を過ぎた DM と、それより古い既読の記録を消す。消した DM の件数を返す。 */

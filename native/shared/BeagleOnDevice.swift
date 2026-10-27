@@ -31,7 +31,8 @@ enum BeagleOnDevice {
         let q = body.replacingOccurrences(of: "@" + name, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
         if q.isEmpty { return true }
         guard q.count <= 15 else { return false }
-        let asks = #"[?？]|何|なに|なん|誰|だれ|どう|どこ|いつ|なぜ|何で|教えて|まとめ|翻訳|訳し|調べ|計算|いくつ|何個|ください|して|天気|って"#
+        // リマインド・タイマー（「25分タイマー」「3分後」）はサーバのビーグルが受ける（docs/beagle-reminders-spec.md）。
+        let asks = #"[?？]|何|なに|なん|誰|だれ|どう|どこ|いつ|なぜ|何で|教えて|まとめ|翻訳|訳し|調べ|計算|いくつ|何個|ください|して|天気|って|リマインド|タイマー|アラーム|一覧|取り消|\d+\s*(秒|分|時間)|毎日|毎週|毎月|平日"#
         return q.range(of: asks, options: .regularExpression) == nil
     }
 

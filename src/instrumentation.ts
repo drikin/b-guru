@@ -22,6 +22,9 @@ export async function register() {
       // 動くように起動時に。security-reviewer 2026-10-24）。
       const { ensureDmSweeper } = await import("@/lib/dm");
       ensureDmSweeper();
+      // 🐶 ビーグルのリマインド: 止まっていた間に過ぎた予定も含めて鳴らす（20 秒ごと）。
+      const { ensureReminderSweeper } = await import("@/lib/beagle-reminders");
+      ensureReminderSweeper();
     } catch (e) {
       console.error("[bsm] initSchema failed:", e);
     }

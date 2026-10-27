@@ -19,6 +19,7 @@ import { mapChatRow } from "./chat";
 import { sakuraChat, SAKURA_MODEL } from "./sakura";
 import { asksBeagle, sanitizeBeagleAnswer, BEAGLE_AI_PER_MEMBER_DAY, BEAGLE_AI_GLOBAL_DAY, BEAGLE_NAME } from "./beagle-ondevice";
 import { lookupFor } from "./beagle-lookup";
+import { handleReminderRequest, isReminderRequest } from "./beagle-reminders";
 
 export const BEAGLE_SERVER_FLAG = "BEAGLE_SERVER_ENABLED";
 /** アプリからの質問を、端末内 AI に任せて待つ時間。 */
@@ -34,9 +35,12 @@ const inFlight = new Map<number, Promise<boolean>>();
 
 /** 送られたチャットが @ビーグル への質問なら、答える段取りをする（Web はすぐ、アプリは待ってから）。 */
 export function scheduleBeagleAnswer(message: { id: number; body: string }, askerEmail: string, from: "web" | "app"): void {
-  if (!beagleServerEnabledFor(askerEmail) || !asksBeagle(message.body)) return;
+  if (!asksBeagle(message.body)) return;
+  // 🐶 リマインド（lib/beagle-reminders.ts）はアプリからでもすぐ受ける（端末内 AI はリマインドに答えない）。
+  const reminder = isReminderRequest(message.body, askerEmail);
+  if (!reminder && !beagleServerEnabledFor(askerEmail)) return;
   const run = () => void answerBeagleQuestion(message.id, askerEmail).catch((e) => console.error("beagle server:", (e as Error)?.message));
-  if (from === "web") run();
+  if (from === "web" || reminder) run();
   else setTimeout(run, APP_WAIT_MS).unref?.();
 }
 
@@ -65,7 +69,6 @@ export async function answerBeagleQuestion(questionId: number, askerEmail: strin
 }
 
 async function doAnswer(questionId: number, askerEmail: string): Promise<boolean> {
-  if (!beagleServerEnabledFor(askerEmail)) return false;
   const q = await pool.query(
     `SELECT id, author_email, body, kind FROM chat_messages WHERE id = $1 AND created_at >= now() - interval '10 minutes'`,
     [questionId]
@@ -73,6 +76,9 @@ async function doAnswer(questionId: number, askerEmail: string): Promise<boolean
   const question = q.rows[0];
   if (!question || question.kind != null || !asksBeagle(String(question.body))) return false;
   if (String(question.author_email).toLowerCase() !== askerEmail.toLowerCase()) return false;
+  // リマインドの依頼ならこちらで受ける（リマインドでなかったら、ふつうに答える）。
+  if (await handleReminderRequest({ id: questionId, body: String(question.body) }, askerEmail)) return true;
+  if (!beagleServerEnabledFor(askerEmail)) return false;
   const answered = await pool.query(`SELECT 1 FROM chat_messages WHERE reply_to_id = $1 AND kind = 'beagle_ai'`, [questionId]);
   if (answered.rowCount) return false;
   const counts = await pool.query(
