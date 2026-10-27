@@ -393,6 +393,20 @@ class ApiClient(val token: String) : PostOpsApi {
 
     suspend fun customEmojis(path: String = "/api/agent/emojis"): List<CustomEmoji> = get<EmojisResponse>(path).emojis
 
+    /** カスタム絵文字の登録（multipart `name` + `image`）。失敗は ApiError.Http（code: invalid_name・too_large・name_taken・rate_limited）。 */
+    suspend fun registerCustomEmoji(path: String, name: String, image: ByteArray, mime: String): CustomEmoji {
+        val ext = if (mime == "image/gif") "gif" else "png"
+        val form = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("name", name)
+            .addFormDataPart("image", "emoji.$ext", image.toRequestBody(mime.toMediaType()))
+            .build()
+        val req = Request.Builder().url(Net.BASE + path).header("Authorization", "Bearer $token").post(form).build()
+        return decode<EmojiRegisterResponse>(send(req)).emoji
+    }
+
+    /** カスタム絵文字の削除（その絵文字のリアクションも消える）。`template` は capabilities の `…/{id}`。 */
+    suspend fun deleteCustomEmoji(template: String, id: Long) { send(request("DELETE", template.replace("{id}", "$id"))) }
+
     /** A video or a sound (multipart `video` / `audio`, one per call): /api/media/… URL. `body`
      *  streams the file (up to 100 MB), so the call has no overall time limit beyond 15 minutes. */
     suspend fun uploadMedia(field: String, fileName: String, body: okhttp3.RequestBody): String {

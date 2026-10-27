@@ -191,6 +191,9 @@ object EmojiCatalog {
 
     val names: List<String> get() = urls.keys.sorted()
 
+    /** name → id（エージェント API の一覧のときだけ。削除に使う）。 */
+    @Volatile var ids: Map<String, Long> = emptyMap(); private set
+
     /** Bumped when the list arrives (the picker recomposes). */
     var version by androidx.compose.runtime.mutableIntStateOf(0); private set
 
@@ -210,10 +213,11 @@ object EmojiCatalog {
 
     /** The agent API's list (with the token); falls back to [load] when it fails.
      *  Fetched again at most hourly: every return to the app used to refetch it. */
-    suspend fun load(api: ApiClient, path: String?) {
+    suspend fun load(api: ApiClient, path: String?, force: Boolean = false) {
         if (path == null) return load()
-        if (urls.isNotEmpty() && System.currentTimeMillis() - loadedAt < 60 * 60_000L) return
+        if (!force && urls.isNotEmpty() && System.currentTimeMillis() - loadedAt < 60 * 60_000L) return
         val list = runCatching { api.customEmojis(path) }.getOrNull() ?: return load()
+        ids = list.filter { it.id > 0 }.associate { it.name to it.id }
         set(LinkedHashMap(list.mapNotNull { e -> ApiClient.absolute(e.imageUrl)?.let { e.name to it } }.toMap()))
         loadedAt = System.currentTimeMillis()
     }
