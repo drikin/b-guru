@@ -191,6 +191,7 @@ export function ReactionBar({
   customEmojis,
   onToggle,
   onRegisterEmoji,
+  onDeleteEmoji,
   compact,
 }: {
   reactions: ReactionSummary[];
@@ -198,6 +199,8 @@ export function ReactionBar({
   onToggle: (emoji: string) => void;
   /** Register a new custom emoji. Omitted for viewers who cannot (logged out). */
   onRegisterEmoji?: (name: string, file: File) => Promise<void>;
+  /** Delete a custom emoji — any member (owner 2026-10-27). Omitted for viewers who cannot. */
+  onDeleteEmoji?: (id: number) => Promise<void>;
   /** Tighter spacing for chat bubbles. */
   compact?: boolean;
 }) {
@@ -208,6 +211,24 @@ export function ReactionBar({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // 「編集」: カスタム絵文字を押すと、リアクションではなく削除の確認を出す。
+  const [manage, setManage] = useState(false);
+  const [confirmDel, setConfirmDel] = useState<CustomEmoji | null>(null);
+  const [delError, setDelError] = useState<string | null>(null);
+
+  const deleteEmoji = async () => {
+    if (!onDeleteEmoji || !confirmDel) return;
+    setBusy(true);
+    setDelError(null);
+    try {
+      await onDeleteEmoji(confirmDel.id);
+      setConfirmDel(null);
+    } catch (e) {
+      setDelError((e as Error)?.message || "削除に失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const pick = (emoji: string) => {
     onToggle(emoji);
@@ -339,22 +360,78 @@ export function ReactionBar({
 
           {customEmojis.length > 0 && (
             <>
-              <Text size="xs" fw={700} c="dimmed" mb={6}>
-                カスタム
-              </Text>
+              <Group justify="space-between" mb={6} wrap="nowrap">
+                <Text size="xs" fw={700} c="dimmed">
+                  カスタム
+                </Text>
+                {onDeleteEmoji && (
+                  <UnstyledButton
+                    onClick={() => {
+                      setManage((v) => !v);
+                      setConfirmDel(null);
+                      setDelError(null);
+                    }}
+                    aria-pressed={manage}
+                    data-cx="emoji-manage"
+                    style={{ fontSize: "0.6875rem", color: manage ? "var(--text-green)" : "var(--text-secondary)", fontWeight: manage ? 700 : 400 }}
+                  >
+                    {manage ? "完了" : "編集"}
+                  </UnstyledButton>
+                )}
+              </Group>
+              {manage && !confirmDel && (
+                <Text size="xs" c="dimmed" mb={4}>
+                  消す絵文字を押してください
+                </Text>
+              )}
               <Group gap={2} mb="xs">
                 {customEmojis.map((c) => (
                   <UnstyledButton
                     key={`c-${c.id}`}
-                    onClick={() => pick(`:${c.name}:`)}
-                    aria-label={`:${c.name}: でリアクション`}
+                    onClick={() => (manage ? (setConfirmDel(c), setDelError(null)) : pick(`:${c.name}:`))}
+                    aria-label={manage ? `:${c.name}: を削除` : `:${c.name}: でリアクション`}
                     title={`:${c.name}:`}
-                    style={{ padding: 5, borderRadius: 6, lineHeight: 0 }}
+                    style={{
+                      padding: 5,
+                      borderRadius: 6,
+                      lineHeight: 0,
+                      position: "relative",
+                      outline: confirmDel?.id === c.id ? "2px solid var(--mantine-color-red-6)" : undefined,
+                    }}
                   >
                     <ReactionGlyph emoji={`:${c.name}:`} customEmojis={customEmojis} size={24} />
+                    {manage && (
+                      <span aria-hidden style={{ position: "absolute", top: -2, right: -2, fontSize: 10, lineHeight: "12px", width: 12, height: 12, borderRadius: 6, background: "var(--mantine-color-red-6)", color: "#fff", textAlign: "center" }}>
+                        ×
+                      </span>
+                    )}
                   </UnstyledButton>
                 ))}
               </Group>
+              {confirmDel && (
+                <Box mb="xs" p={6} style={{ borderRadius: 6, background: "var(--bg-subtle)" }}>
+                  <Text size="xs" mb={6}>
+                    :{confirmDel.name}: を削除すると、この絵文字のリアクションも全部消えます。削除しますか？
+                  </Text>
+                  {delError && (
+                    <Text size="xs" c="red" mb={4}>
+                      {delError}
+                    </Text>
+                  )}
+                  <Group gap={6}>
+                    <UnstyledButton
+                      onClick={deleteEmoji}
+                      disabled={busy}
+                      style={{ fontSize: "0.75rem", padding: "4px 10px", borderRadius: 6, background: "var(--mantine-color-red-6)", color: "#fff", opacity: busy ? 0.5 : 1 }}
+                    >
+                      {busy ? "削除中…" : "削除"}
+                    </UnstyledButton>
+                    <UnstyledButton onClick={() => setConfirmDel(null)} style={{ fontSize: "0.75rem", padding: "4px 10px", color: "var(--text-secondary)" }}>
+                      やめる
+                    </UnstyledButton>
+                  </Group>
+                </Box>
+              )}
             </>
           )}
 

@@ -9210,6 +9210,16 @@ export default function Home() {
     [postReactions, setPostReactions, myReactorName]
   );
 
+  const handleDeleteEmoji = useCallback(
+    async (id: number) => {
+      const r = await fetch(`/api/emojis/${id}`, { method: "DELETE" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "削除に失敗しました");
+      reloadCustomEmojis();
+    },
+    [reloadCustomEmojis]
+  );
+
   const handleRegisterEmoji = useCallback(
     async (name: string, file: File) => {
       const fd = new FormData();
@@ -9231,10 +9241,11 @@ export default function Home() {
         customEmojis={customEmojis}
         onToggle={(emoji) => handleToggleReaction(postId, emoji)}
         onRegisterEmoji={auth ? handleRegisterEmoji : undefined}
+        onDeleteEmoji={auth ? handleDeleteEmoji : undefined}
         compact={compact}
       />
     ),
-    [postReactions, customEmojis, handleToggleReaction, handleRegisterEmoji, auth]
+    [postReactions, customEmojis, handleToggleReaction, handleRegisterEmoji, handleDeleteEmoji, auth]
   );
 
   // ---- Reactions (chat) --------------------------------------------------
@@ -9284,10 +9295,11 @@ export default function Home() {
         customEmojis={customEmojis}
         onToggle={(emoji) => handleToggleChatReaction(messageId, emoji)}
         onRegisterEmoji={auth ? handleRegisterEmoji : undefined}
+        onDeleteEmoji={auth ? handleDeleteEmoji : undefined}
         compact
       />
     ),
-    [chatReactions, customEmojis, handleToggleChatReaction, handleRegisterEmoji, auth]
+    [chatReactions, customEmojis, handleToggleChatReaction, handleRegisterEmoji, handleDeleteEmoji, auth]
   );
 
   // Pin / unpin own post. The right-sidebar panel is the canonical home for

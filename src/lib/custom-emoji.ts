@@ -1,7 +1,7 @@
 /* カスタム絵文字の登録・削除（Web の /api/emojis と、アプリの /api/agent/emojis で同じ）。
  * 2026-10-27 オーナー「誰でもどこからでも絵文字を登録削除できるようにする」: 削除も誰でも（前は登録した本人と管理者だけ）。
  * 消すとその絵文字のリアクションも消えるので、誰が登録・削除したかを custom_emoji_log に残し、回数に枠を設ける。 */
-import { writeFile, mkdir } from "fs/promises";
+import { writeFile, mkdir, rm } from "fs/promises";
 import path from "path";
 import crypto from "crypto";
 import { pool } from "./db";
@@ -57,6 +57,7 @@ export async function registerCustomEmoji(email: string, rawName: unknown, file:
     await log("create", emoji.name, emoji.imageUrl, email);
     return emoji;
   } catch (e) {
+    await rm(path.join(dir, filename), { force: true }); // 登録できなかった画像は残さない
     const m = (e as Error).message;
     if (m === "invalid_name") throw new EmojiError(400, "invalid_name", "名前は英小文字・数字・_ のみ、32文字までです");
     if (m === "name_taken") throw new EmojiError(409, "name_taken", "その名前は既に使われています");
