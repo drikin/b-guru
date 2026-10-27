@@ -3,7 +3,7 @@
  * BEAGLE_AI_TEST_DATABASE_URL があるときだけ動く（使い捨ての DB）。
  *  - 自分の @ビーグル の質問に公式のビーグルとして 1 回だけ答える、記録に残る（上限は端末内 AI と共通）
  *  - 端末内 AI が先に答えていたら答えない、他人の質問・フラグなしは答えない
- *  - モデルに渡す文に、ビーグルの答え・ほかの @ビーグル の質問を入れない
+ *  - モデルに渡す文に、ビーグル自身の答え（「ビーグル（あなた）」）と前の質問を時刻つきで入れる（会話を続けるため）
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 
@@ -72,10 +72,10 @@ d("🐶 サーバのビーグル（DB）", () => {
     expect(ans.rows).toEqual([{ author_name: "ビーグル", body: "久留米は明日雨だわん  ＠誰か", ai_by_email: null, reply_to_id: q.id }]);
     const log = await sql(`SELECT ai_by_email, app FROM beagle_ai_log`);
     expect(log.rows).toEqual([{ ai_by_email: A, app: "server:gpt-oss-120b" }]);
-    // 渡した文: 調べた結果・チャットの流れ・質問者の名前と質問
+    // 渡した文: 調べた結果・直前の会話（時刻つき）・質問者の名前と質問
     const user = calls[0].messages.find((x) => x.role === "user")!.content;
     expect(user).toContain("調べた結果:\n久留米市 明日: 雨（Open-Meteo）");
-    expect(user).toContain("・みけ: 久留米って雨多いの？");
+    expect(user).toMatch(/・\d\d:\d\d みけ: 久留米って雨多いの？/);
     expect(user).toContain("ねこさんの質問: 明日の久留米の天気は？");
     expect(await m.sv.answerBeagleQuestion(q.id, A)).toBe(false); // 2 回目は答えない
     expect(calls.length).toBe(1);
@@ -92,15 +92,18 @@ d("🐶 サーバのビーグル（DB）", () => {
     expect(calls.length).toBe(0);
   });
 
-  it("ビーグルの答え・ほかの @ビーグル の質問は渡さない", async () => {
-    const q1 = await say(A, "@ビーグル さっきの質問");
-    await m.bg.postBeagleAiReply({ email: A, questionId: q1.id, body: "18Pro を使っているみたいだわん" });
-    await say(B, "ふつうの発言");
-    const q2 = await say(A, "@ビーグル 今の話題は？");
+  it("ビーグル自身の答えと前の質問も会話として渡す（続きの質問のため）", async () => {
+    const q1 = await say(A, "@ビーグル iPhone 18 Pro って何色がある？");
+    await m.bg.postBeagleAiReply({ email: A, questionId: q1.id, body: "コズミックオレンジと銀と紺だわん" });
+    await say(B, "オレンジいいよね");
+    await sql(`INSERT INTO chat_messages (author_email, body, kind) VALUES ($1, 'みけさんが入室', 'notice')`, [B]);
+    const q2 = await say(A, "@ビーグル それの重さは？");
+    await say(B, "200g くらいだった気がする");
     expect(await m.sv.answerBeagleQuestion(q2.id, A)).toBe(true);
     const user = calls[0].messages.find((x) => x.role === "user")!.content;
-    expect(user).toContain("・みけ: ふつうの発言");
-    expect(user).not.toContain("18Pro");
-    expect(user).not.toContain("さっきの質問");
+    expect(user).toMatch(/直前の会話[^\n]*\n・\d\d:\d\d ねこ（質問者）: @ビーグル iPhone 18 Pro って何色がある？\n・\d\d:\d\d ビーグル（あなた）: コズミックオレンジと銀と紺だわん\n・\d\d:\d\d みけ: オレンジいいよね$/m);
+    expect(user).not.toContain("入室");
+    expect(user).toMatch(/質問のあとの発言:\n・\d\d:\d\d みけ: 200g くらいだった気がする/);
+    expect(user).toMatch(/今 \d\d:\d\d。ねこさんの質問: それの重さは？$/);
   });
 });
