@@ -959,5 +959,48 @@ export async function initSchema() {
       UNION ALL
       SELECT event_id, lower(uploader_email), min(created_at) FROM offkai_photos GROUP BY event_id, lower(uploader_email)
       ON CONFLICT DO NOTHING;
+    -- 西田カメラ（lib/camera.ts）。B-guru のログイン・鍵とは別の表（招待した会員でない人も使うため）。
+    CREATE TABLE IF NOT EXISTS camera_invites (
+      email TEXT PRIMARY KEY,
+      invited_by TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      revoked_at TIMESTAMPTZ
+    );
+    CREATE TABLE IF NOT EXISTS camera_login_requests (
+      id SERIAL PRIMARY KEY,
+      email TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      ip TEXT,
+      attempts INT NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS idx_camera_login_email ON camera_login_requests(email, created_at DESC);
+    CREATE TABLE IF NOT EXISTS camera_tokens (
+      id SERIAL PRIMARY KEY,
+      token_hash TEXT NOT NULL UNIQUE,
+      email TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('member', 'guest')),
+      device_name TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_used_at TIMESTAMPTZ,
+      last_check TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ NOT NULL,
+      revoked_at TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS idx_camera_tokens_email ON camera_tokens(email) WHERE revoked_at IS NULL;
+    CREATE TABLE IF NOT EXISTS camera_log (
+      id SERIAL PRIMARY KEY,
+      email TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      preset TEXT,
+      prompt TEXT,
+      status TEXT NOT NULL,
+      ms INT NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_camera_log_created ON camera_log(created_at);
   `);
 }

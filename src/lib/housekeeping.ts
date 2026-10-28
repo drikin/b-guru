@@ -14,6 +14,7 @@
  */
 import { pool } from "./db";
 import { purgeOldVoiceLog } from "./voice";
+import { purgeCameraRows } from "./camera";
 
 const INTERVAL_MS = 60 * 60 * 1000; // hourly — expired rows are harmless, just clutter
 
@@ -58,7 +59,9 @@ export function ensureHousekeeping(): void {
       })
       .catch((e) => console.error("[bsm] housekeeping error:", (e as Error)?.message))
       .then(() => purgeOldVoiceLog())
-      .catch((e) => console.error("[bsm] voice log purge error:", (e as Error)?.message));
+      .catch((e) => console.error("[bsm] voice log purge error:", (e as Error)?.message))
+      .then(() => purgeCameraRows())
+      .catch((e) => console.error("[bsm] camera housekeeping error:", (e as Error)?.message));
   run();
   setInterval(run, INTERVAL_MS).unref?.();
 }
