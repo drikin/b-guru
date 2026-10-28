@@ -23,7 +23,7 @@ vi.mock("../mailgun", () => ({ sendEmail: (...a: unknown[]) => sendEmail(...(a a
 const hitLimit = vi.fn(async () => true);
 vi.mock("../login", () => ({ hitLimit: (...a: unknown[]) => hitLimit(...(a as [])) }));
 
-type RelayInit = { method: string; headers: Record<string, string>; body?: Buffer; onResponse?: () => void };
+type RelayInit = { method: string; headers: () => Record<string, string>; pool?: string; body?: Buffer; onResponse?: () => void };
 const relayHttp = vi.fn();
 vi.mock("../camera-relay", () => ({ relayHttp: (...a: unknown[]) => relayHttp(...a) }));
 
@@ -202,7 +202,7 @@ describe("runCameraEdit", () => {
     const out = await sharp({ create: { width: 8, height: 8, channels: 3, background: "#0f0" } }).jpeg().toBuffer();
     relayHttp.mockImplementation(async (url: string, init: RelayInit) => {
       expect(url).toBe("https://dk5090.example:8443/v1/edit");
-      const h = init.headers;
+      const h = init.headers();
       const body = init.body as Buffer;
       expect(h["X-PC-Sig"]).toBe(relaySignature("k".repeat(64), h["X-PC-User"], h["X-PC-Ts"], h["X-PC-Nonce"], body));
       expect(h["X-PC-User"]).not.toContain("@");
@@ -247,7 +247,8 @@ describe("runCameraEdit", () => {
         return { status: 200, headers: { "content-type": "image/jpeg" }, body: out };
       }
       expect(url).toBe("https://dk5090.example:8443/v1/status?job=job-abcdefgh");
-      const h = init.headers;
+      expect(init.pool).toBe("small");
+      const h = init.headers();
       expect(h["X-PC-Sig"]).toBe(
         relaySignature("k".repeat(64), h["X-PC-User"], h["X-PC-Ts"], h["X-PC-Nonce"], Buffer.alloc(0), "GET", "/v1/status?job=job-abcdefgh")
       );
@@ -262,11 +263,45 @@ describe("runCameraEdit", () => {
     expect(await cameraJobStatus({ ...me, email: "x@x.jp" }, "job-abcdefgh")).toEqual({ phase: "unknown" });
     expect(await cameraJobStatus(me, "job-zzzzzzzz")).toEqual({ phase: "unknown" });
     expect(relayHttp.mock.calls.length).toBe(calls);
+    // 同じ番号で他の人が加工しても、表示を奪えない
+    relayHttp.mockClear();
+    await new Promise((r) => setTimeout(r, 450));
+    expect(await cameraJobStatus(me, "job-abcdefgh")).toMatchObject({ phase: "queued" });
     onResponse?.();
     expect(await cameraJobStatus(me, "job-abcdefgh")).toEqual({ phase: "receiving" });
     finish();
     await editing;
     expect(await cameraJobStatus(me, "job-abcdefgh")).toEqual({ phase: "unknown" });
+  });
+
+  it("待ちの表示: 同時の問い合わせは dk5090 に 1 本だけ、1 秒 4 回を超えたら 429", async () => {
+    const finishers: (() => void)[] = [];
+    let statusCalls = 0;
+    const out = await sharp({ create: { width: 8, height: 8, channels: 3, background: "#0f0" } }).jpeg().toBuffer();
+    relayHttp.mockImplementation(async (url: string) => {
+      if (url.endsWith("/v1/edit")) {
+        await new Promise<void>((r) => finishers.push(r));
+        return { status: 200, headers: { "content-type": "image/jpeg" }, body: out };
+      }
+      statusCalls++;
+      await new Promise((r) => setTimeout(r, 50));
+      return { status: 200, headers: {}, body: Buffer.from('{"phase":"running","eta":2}') };
+    });
+    const me = { tokenId: 1, email: "r@x.jp", kind: "member" as const };
+    const editing = runCameraEdit(me, { image: photo, preset: "mandala", prompt: null, aspect: "4:3", seed: null, job: "job-ratelimit" });
+    await new Promise((r) => setTimeout(r, 30));
+    const all = await Promise.allSettled([1, 2, 3, 4, 5, 6].map(() => cameraJobStatus(me, "job-ratelimit")));
+    expect(statusCalls).toBe(1);
+    expect(all.filter((r) => r.status === "fulfilled")).toHaveLength(4);
+    expect(all.filter((r) => r.status === "rejected")[0]).toMatchObject({ reason: { status: 429 } });
+    // 同じ番号の 2 件目（別の人）は番号なしで動き、1 件目の表示は残る
+    const other = { tokenId: 2, email: "o@x.jp", kind: "member" as const };
+    const second = runCameraEdit(other, { image: photo, preset: "mandala", prompt: null, aspect: "4:3", seed: null, job: "job-ratelimit" });
+    await new Promise((r) => setTimeout(r, 1050));
+    expect(await cameraJobStatus(other, "job-ratelimit")).toEqual({ phase: "unknown" });
+    expect((await cameraJobStatus(me, "job-ratelimit")).phase).toBe("running");
+    finishers.forEach((f) => f());
+    await Promise.all([editing, second]);
   });
 });
 

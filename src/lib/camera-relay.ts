@@ -7,7 +7,12 @@ import http from "node:http";
 import https from "node:https";
 
 const AGENT_OPTS = { keepAlive: true, keepAliveMsecs: 10_000, maxSockets: 8, maxFreeSockets: 4, timeout: 30_000 };
-const agents = { "https:": new https.Agent(AGENT_OPTS), "http:": new http.Agent(AGENT_OPTS) };
+// 待ちの表示と接続づくりは別の小さな束で。どれだけ問い合わせが来ても、加工を送る接続は取り合わない。
+const SMALL_OPTS = { ...AGENT_OPTS, maxSockets: 2, maxFreeSockets: 2 };
+const agents = {
+  edit: { "https:": new https.Agent(AGENT_OPTS), "http:": new http.Agent(AGENT_OPTS) },
+  small: { "https:": new https.Agent(SMALL_OPTS), "http:": new http.Agent(SMALL_OPTS) },
+};
 
 export interface RelayResponse {
   status: number;
@@ -17,7 +22,10 @@ export interface RelayResponse {
 
 export interface RelayInit {
   method: "GET" | "POST";
-  headers?: Record<string, string>;
+  /** 関数なら送るたびに作る（やり直しは新しい nonce で署名し直す。同じ nonce だと dk5090 がリプレイとして断る）。 */
+  headers?: Record<string, string> | (() => Record<string, string>);
+  /** small: 待ちの表示・接続づくり用の束（加工の接続と分ける）。 */
+  pool?: "edit" | "small";
   body?: Buffer;
   timeoutMs: number;
   maxBytes: number;
@@ -40,8 +48,11 @@ function once(url: URL, init: RelayInit): Promise<RelayResponse> {
       url,
       {
         method: init.method,
-        agent: agents[url.protocol as "https:" | "http:"],
-        headers: { ...(init.headers ?? {}), ...(init.body ? { "Content-Length": String(init.body.length) } : {}) },
+        agent: agents[init.pool ?? "edit"][url.protocol as "https:" | "http:"],
+        headers: {
+          ...(typeof init.headers === "function" ? init.headers() : (init.headers ?? {})),
+          ...(init.body ? { "Content-Length": String(init.body.length) } : {}),
+        },
       },
       (res) => {
         init.onResponse?.();
@@ -90,8 +101,11 @@ export async function relayHttp(url: string, init: RelayInit): Promise<RelayResp
   }
 }
 
-/** 接続を先に作っておく（アプリがカメラを開いたとき）。失敗しても何もしない。 */
+let lastWarm = 0;
+
+/** 加工を送る接続を先に作っておく（アプリがカメラを開いたとき）。全体で 10 秒に 1 回まで。失敗しても何もしない。 */
 export function warmRelay(baseUrl: string | undefined): void {
-  if (!baseUrl) return;
+  if (!baseUrl || Date.now() - lastWarm < 10_000) return;
+  lastWarm = Date.now();
   relayHttp(`${baseUrl.replace(/\/+$/, "")}/healthz`, { method: "GET", timeoutMs: 5_000, maxBytes: 1024 }).catch(() => {});
 }

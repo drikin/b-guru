@@ -318,6 +318,8 @@ export async function verifyCameraToken(
       const now = await cameraEligibility(email).catch(() => null);
       if (now !== "member") await revoke();
       kind = "member";
+      // 会員になっていた: 次からは会員として 6 時間ごとの確認に回す（毎回 Ghost に聞かない）。
+      await pool.query(`UPDATE camera_tokens SET kind = 'member', last_check = now() WHERE id = $1`, [row.id]);
     }
   }
   const last = row.last_check ? new Date(row.last_check).getTime() : 0;
@@ -357,7 +359,13 @@ interface ActiveJob {
   email: string;
   stage: "sending" | "receiving";
   cache?: { at: number; value: CameraJobStatus };
+  /** dk5090 に聞いている最中の問い合わせ。同時に来た問い合わせはこれを待つ（1 件につき同時 1 本）。 */
+  asking?: Promise<CameraJobStatus>;
+  /** 待ちの表示の問い合わせの回数（1 秒ごと）。 */
+  window?: { at: number; n: number };
 }
+/** 待ちの表示の問い合わせは 1 件につき 1 秒 4 回まで（アプリは 0.6 秒ごと）。 */
+const STATUS_PER_SECOND = 4;
 const activeJobs = new Map<string, ActiveJob>();
 const JOB_ID = /^[0-9A-Za-z-]{8,64}$/;
 
@@ -457,12 +465,14 @@ export async function runCameraEdit(user: CameraUser, req: EditRequest): Promise
   }
   if (inFlight.has(user.email)) throw new CameraError(429, "busy", "前の加工が終わってからもう一度");
   inFlight.add(user.email);
-  if (req.job) activeJobs.set(req.job, { email: user.email, stage: "sending" });
+  // 同じ番号が使われていたら（他人の番号をまねた等）、番号なしとして扱う。人の表示を上書きしない。
+  const job = req.job && !activeJobs.has(req.job) ? req.job : null;
+  if (job) activeJobs.set(job, { email: user.email, stage: "sending" });
   try {
-    return await relayEdit(user, req, t0);
+    return await relayEdit(user, { ...req, job }, t0);
   } finally {
     inFlight.delete(user.email);
-    if (req.job) activeJobs.delete(req.job);
+    if (job) activeJobs.delete(job);
   }
 }
 
@@ -493,8 +503,20 @@ const PHASES = new Set(["preparing", "gpu", "queued", "running"]);
 export async function cameraJobStatus(user: CameraUser, job: string): Promise<CameraJobStatus> {
   const a = activeJobs.get(job);
   if (!a || a.email !== user.email) return { phase: "unknown" };
+  const now = Date.now();
+  if (!a.window || now - a.window.at >= 1000) a.window = { at: now, n: 0 };
+  if (++a.window.n > STATUS_PER_SECOND) throw new CameraError(429, "rate_limited", "問い合わせが多すぎます");
   if (a.stage === "receiving") return { phase: "receiving" };
-  if (a.cache && Date.now() - a.cache.at < 400) return a.cache.value;
+  if (a.cache && now - a.cache.at < 400) return a.cache.value;
+  if (!a.asking) {
+    a.asking = askJobStatus(user, job, a).finally(() => {
+      a.asking = undefined;
+    });
+  }
+  return a.asking;
+}
+
+async function askJobStatus(user: CameraUser, job: string, a: ActiveJob): Promise<CameraJobStatus> {
   const url = process.env.PROMPTCAM_RELAY_URL;
   const key = process.env.PROMPTCAM_RELAY_KEY;
   let value: CameraJobStatus = { phase: "sending" };
@@ -503,7 +525,8 @@ export async function cameraJobStatus(user: CameraUser, job: string): Promise<Ca
     try {
       const res = await relayHttp(`${url.replace(/\/+$/, "")}${path}`, {
         method: "GET",
-        headers: signedHeaders(key, user.email, Buffer.alloc(0), "GET", path),
+        pool: "small",
+        headers: () => signedHeaders(key, user.email, Buffer.alloc(0), "GET", path),
         timeoutMs: 5_000,
         maxBytes: 4096,
       });
@@ -552,7 +575,7 @@ async function relayEdit(user: CameraUser, req: EditRequest, t0: number): Promis
     try {
       res = await relayHttp(`${url.replace(/\/+$/, "")}/v1/edit`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...signedHeaders(key, user.email, body, "POST", "/v1/edit") },
+        headers: () => ({ "Content-Type": "application/json", ...signedHeaders(key, user.email, body, "POST", "/v1/edit") }),
         body,
         // dk5090 は GPU の確保に最大 60 秒・順番待ち 45 秒・加工数秒。それより長く待つ。
         timeoutMs: 115_000,
