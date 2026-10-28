@@ -158,6 +158,9 @@ describe("parseEditBody", () => {
   it("プリセットがあれば自由文は捨てる", () => {
     expect(parseEditBody({ image: img, preset: "mandala", prompt: "x" })).toMatchObject({ preset: "mandala", prompt: null });
   });
+  it("6 番目の未名景も受け付ける", () => {
+    expect(parseEditBody({ image: img, preset: "mimeikei" })).toMatchObject({ preset: "mimeikei", prompt: null });
+  });
   it("番号（job）は形が合うときだけ受け取る", () => {
     expect(parseEditBody({ image: img, preset: "mandala", job: "0F8B2C1E-AAAA-4BBB-8CCC-123456789ABC" }).job).toBe(
       "0F8B2C1E-AAAA-4BBB-8CCC-123456789ABC"

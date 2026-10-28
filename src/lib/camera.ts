@@ -44,7 +44,7 @@ export const CAMERA_LIMITS = {
 } as const;
 
 /** アプリに内蔵のプリセット（ios/PromptCam/Presets.swift と dk5090 の PRESETS と同じ id）。 */
-export const CAMERA_PRESET_IDS = ["mojigraph-1", "mojigraph-2", "mojigraph-3", "cover-rgb", "mandala"] as const;
+export const CAMERA_PRESET_IDS = ["mojigraph-1", "mojigraph-2", "mojigraph-3", "cover-rgb", "mandala", "mimeikei"] as const;
 
 export const CAMERA_FREE_TEXT_FLAG = "CAMERA_FREE_TEXT";
 const OWNER_EMAIL = "drikin@gmail.com";
