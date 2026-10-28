@@ -19,6 +19,7 @@ import { featureOnForAnyone, featureEnabledFor } from "./feature-flag";
 import { findMemberByEmail, GhostUnavailableError, isPaidMember } from "./ghost";
 import { hitLimit } from "./login";
 import { sendEmail } from "./mailgun";
+import { relayHttp, type RelayResponse } from "./camera-relay";
 
 export const CAMERA_CODE_TTL_MIN = 10;
 export const CAMERA_MAX_CODE_ATTEMPTS = 5;
@@ -30,7 +31,7 @@ export const CAMERA_RECHECK_HOURS = 6;
 export const CAMERA_GRACE_HOURS = 24;
 export const CAMERA_LOG_DAYS = 30;
 export const CAMERA_MAX_PROMPT = 1000;
-/** アプリが送る写真（base64 の JSON 全体）の上限。アプリは長辺 1536 の JPEG にしてから送る。 */
+/** アプリが送る写真（base64 の JSON 全体）の上限。アプリは約 2.4MP の JPEG にしてから送る（0.2.0 までは長辺 1536）。 */
 export const CAMERA_MAX_BODY = 12 * 1024 * 1024;
 
 export const CAMERA_LIMITS = {
@@ -286,7 +287,12 @@ export interface CameraUser {
 }
 
 /** Authorization: Bearer <カメラの鍵> を確かめる。使えなくなった人の鍵はここで失効させる。 */
-export async function verifyCameraToken(authHeader: string | null, ip: string | null): Promise<CameraUser> {
+export async function verifyCameraToken(
+  authHeader: string | null,
+  ip: string | null,
+  /** false: 使った日時と期限を延ばさない（待ちの表示の問い合わせは 1 秒に 1〜2 回来るので書き込まない）。 */
+  touch = true
+): Promise<CameraUser> {
   const m = /^Bearer\s+(\S+)$/i.exec((authHeader ?? "").trim());
   if (!m) throw new CameraError(401, "unauthorized", "ログインが必要です");
   if (await failuresExceeded(ip)) throw new CameraError(429, "rate_limited", TOO_MANY);
@@ -328,10 +334,12 @@ export async function verifyCameraToken(authHeader: string | null, ip: string | 
       }
     }
   }
-  await pool.query(
-    `UPDATE camera_tokens SET last_used_at = now(), expires_at = now() + make_interval(days => $2) WHERE id = $1`,
-    [row.id, CAMERA_TOKEN_SLIDING_DAYS]
-  );
+  if (touch) {
+    await pool.query(
+      `UPDATE camera_tokens SET last_used_at = now(), expires_at = now() + make_interval(days => $2) WHERE id = $1`,
+      [row.id, CAMERA_TOKEN_SLIDING_DAYS]
+    );
+  }
   return { tokenId: Number(row.id), email, kind };
 }
 
@@ -344,12 +352,23 @@ export async function revokeCameraToken(tokenId: number): Promise<void> {
 /** 1 人同時 1 件（pm2 は 1 プロセス）。 */
 const inFlight = new Set<string>();
 
+/** アプリがつけた番号 → 誰の加工か・どこまで進んだか。待ちの表示（/api/camera/status）に使う。 */
+interface ActiveJob {
+  email: string;
+  stage: "sending" | "receiving";
+  cache?: { at: number; value: CameraJobStatus };
+}
+const activeJobs = new Map<string, ActiveJob>();
+const JOB_ID = /^[0-9A-Za-z-]{8,64}$/;
+
 export interface EditRequest {
   image: Buffer;
   preset: string | null;
   prompt: string | null;
   aspect: string;
   seed: number | null;
+  /** アプリがつけた番号（待ちの表示用）。0.2.0 までのアプリは送らない。 */
+  job?: string | null;
 }
 
 /** アプリの JSON を読む（形の確認だけ。誰が何を使えるかは runCameraEdit）。 */
@@ -372,15 +391,25 @@ export function parseEditBody(raw: unknown): EditRequest {
     throw new CameraError(400, "bad_aspect", "縦横比が対応外です");
   }
   const seed = Number.isInteger(b.seed) && (b.seed as number) >= 0 && (b.seed as number) < 2 ** 31 ? (b.seed as number) : null;
-  return { image, preset: preset ?? null, prompt: preset ? null : prompt, aspect, seed };
+  const job = typeof b.job === "string" && JOB_ID.test(b.job) ? b.job : null;
+  return { image, preset: preset ?? null, prompt: preset ? null : prompt, aspect, seed, job };
 }
 
-/** 写真を描き直す: 形式の確認・向きを正す・長辺 1536・メタデータを落とした JPEG。細工したファイルを家に送らない。 */
+/** dk5090 は約 2MP で加工する。縦横比に切り抜く分を見て少し大きめに送る。 */
+const PHOTO_MAX_PIXELS = 2_400_000;
+const PHOTO_MAX_SIDE = 2048;
+
+/** 写真を描き直す: 形式の確認・向きを正す・約 2.4MP・メタデータを落とした JPEG。細工したファイルを家に送らない。 */
 export async function sanitizePhoto(buf: Buffer): Promise<Buffer> {
   try {
+    const meta = await sharp(buf, { limitInputPixels: 40_000_000 }).metadata();
+    const swap = (meta.orientation ?? 1) >= 5;
+    const w = (swap ? meta.height : meta.width) ?? 0;
+    const h = (swap ? meta.width : meta.height) ?? 0;
+    const scale = Math.min(1, Math.sqrt(PHOTO_MAX_PIXELS / Math.max(1, w * h)), PHOTO_MAX_SIDE / Math.max(1, w, h));
     return await sharp(buf, { limitInputPixels: 40_000_000, failOn: "error" })
       .rotate()
-      .resize({ width: 1536, height: 1536, fit: "inside", withoutEnlargement: true })
+      .resize({ width: Math.max(1, Math.round(w * scale)), height: Math.max(1, Math.round(h * scale)), fit: "inside", withoutEnlargement: true })
       .jpeg({ quality: 90 })
       .toBuffer();
   } catch {
@@ -389,8 +418,16 @@ export async function sanitizePhoto(buf: Buffer): Promise<Buffer> {
 }
 
 /** dk5090 に送る署名。dk5090 の promptcam_gateway.py の relay_signature と同じ並び。 */
-export function relaySignature(key: string, user: string, ts: string, nonce: string, body: Buffer): string {
-  const msg = ["POST", "/v1/edit", user, ts, nonce, sha256(body)].join("\n");
+export function relaySignature(
+  key: string,
+  user: string,
+  ts: string,
+  nonce: string,
+  body: Buffer,
+  method = "POST",
+  path = "/v1/edit"
+): string {
+  const msg = [method, path, user, ts, nonce, sha256(body)].join("\n");
   return crypto.createHmac("sha256", key).update(msg).digest("hex");
 }
 
@@ -420,11 +457,70 @@ export async function runCameraEdit(user: CameraUser, req: EditRequest): Promise
   }
   if (inFlight.has(user.email)) throw new CameraError(429, "busy", "前の加工が終わってからもう一度");
   inFlight.add(user.email);
+  if (req.job) activeJobs.set(req.job, { email: user.email, stage: "sending" });
   try {
     return await relayEdit(user, req, t0);
   } finally {
     inFlight.delete(user.email);
+    if (req.job) activeJobs.delete(req.job);
   }
+}
+
+/** dk5090 のログに残すのはメールそのものではなく、鍵を混ぜた短い印（候補のメールから逆算できない）。 */
+function userTagFor(key: string, email: string): string {
+  return crypto.createHmac("sha256", key).update(`camera-user:${email}`).digest("hex").slice(0, 12);
+}
+
+function signedHeaders(key: string, email: string, body: Buffer, method: string, path: string): Record<string, string> {
+  const user = userTagFor(key, email);
+  const ts = String(Math.floor(Date.now() / 1000));
+  const nonce = crypto.randomBytes(16).toString("hex");
+  return { "X-PC-User": user, "X-PC-Ts": ts, "X-PC-Nonce": nonce, "X-PC-Sig": relaySignature(key, user, ts, nonce, body, method, path) };
+}
+
+export interface CameraJobStatus {
+  /** sending（送っている）/ preparing / gpu（GPU の準備待ち）/ queued / running / receiving / unknown */
+  phase: string;
+  ahead?: number;
+  eta?: number;
+  typical?: number;
+  slow?: boolean;
+}
+
+const PHASES = new Set(["preparing", "gpu", "queued", "running"]);
+
+/** 自分の加工がいまどこか（アプリの待ちの表示）。dk5090 への問い合わせは 1 件につき 0.4 秒に 1 回まで。 */
+export async function cameraJobStatus(user: CameraUser, job: string): Promise<CameraJobStatus> {
+  const a = activeJobs.get(job);
+  if (!a || a.email !== user.email) return { phase: "unknown" };
+  if (a.stage === "receiving") return { phase: "receiving" };
+  if (a.cache && Date.now() - a.cache.at < 400) return a.cache.value;
+  const url = process.env.PROMPTCAM_RELAY_URL;
+  const key = process.env.PROMPTCAM_RELAY_KEY;
+  let value: CameraJobStatus = { phase: "sending" };
+  if (url && key && JOB_ID.test(job)) {
+    const path = `/v1/status?job=${job}`;
+    try {
+      const res = await relayHttp(`${url.replace(/\/+$/, "")}${path}`, {
+        method: "GET",
+        headers: signedHeaders(key, user.email, Buffer.alloc(0), "GET", path),
+        timeoutMs: 5_000,
+        maxBytes: 4096,
+      });
+      const j = res.status === 200 ? (JSON.parse(res.body.toString()) as Record<string, unknown>) : {};
+      if (typeof j.phase === "string" && PHASES.has(j.phase)) {
+        value = { phase: j.phase };
+        if (Number.isInteger(j.ahead)) value.ahead = Math.min(99, Math.max(0, j.ahead as number));
+        if (typeof j.eta === "number" && isFinite(j.eta)) value.eta = Math.min(600, Math.max(0, j.eta));
+        if (typeof j.typical === "number" && isFinite(j.typical)) value.typical = Math.min(600, Math.max(0, j.typical));
+        if (typeof j.slow === "boolean") value.slow = j.slow;
+      }
+    } catch {
+      /* 待ちの表示だけなので、届かなければ「送っている」のまま */
+    }
+  }
+  if (activeJobs.get(job) === a && a.stage === "sending") a.cache = { at: Date.now(), value };
+  return a.stage === "sending" ? value : { phase: "receiving" };
 }
 
 async function relayEdit(user: CameraUser, req: EditRequest, t0: number): Promise<EditResult> {
@@ -449,38 +545,33 @@ async function relayEdit(user: CameraUser, req: EditRequest, t0: number): Promis
         aspect: req.aspect,
         ...(req.preset ? { preset: req.preset } : { prompt: req.prompt }),
         ...(req.seed != null ? { seed: req.seed } : {}),
+        ...(req.job ? { job: req.job } : {}),
       })
     );
-    // dk5090 のログに残すのはメールそのものではなく、鍵を混ぜた短い印（候補のメールから逆算できない）。
-    const userTag = crypto.createHmac("sha256", key).update(`camera-user:${user.email}`).digest("hex").slice(0, 12);
-    const ts = String(Math.floor(Date.now() / 1000));
-    const nonce = crypto.randomBytes(16).toString("hex");
-    let res: Response;
+    let res: RelayResponse;
     try {
-      res = await fetch(`${url.replace(/\/+$/, "")}/v1/edit`, {
+      res = await relayHttp(`${url.replace(/\/+$/, "")}/v1/edit`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-PC-User": userTag,
-          "X-PC-Ts": ts,
-          "X-PC-Nonce": nonce,
-          "X-PC-Sig": relaySignature(key, userTag, ts, nonce, body),
-        },
+        headers: { "Content-Type": "application/json", ...signedHeaders(key, user.email, body, "POST", "/v1/edit") },
         body,
-        cache: "no-store",
         // dk5090 は GPU の確保に最大 60 秒・順番待ち 45 秒・加工数秒。それより長く待つ。
-        signal: AbortSignal.timeout(115_000),
+        timeoutMs: 115_000,
+        maxBytes: 20 * 1024 * 1024,
+        onResponse: () => {
+          const a = req.job ? activeJobs.get(req.job) : undefined;
+          if (a) a.stage = "receiving";
+        },
       });
     } catch (e) {
       console.error("[camera] relay:", (e as Error)?.message);
       await logEdit(user, req, "unreachable", Date.now() - t0);
       throw new CameraError(502, "unreachable", "加工サーバー（dk5090）につながりません。少し時間をおいて試してください");
     }
-    if (!res.ok) {
+    if (res.status < 200 || res.status >= 300) {
       let msg = `加工サーバーのエラー（${res.status}）`;
       let code = "relay_error";
       try {
-        const j = (await res.json()) as { message?: string; error?: string };
+        const j = JSON.parse(res.body.toString()) as { message?: string; error?: string };
         if (typeof j.message === "string") msg = j.message.slice(0, 200);
         if (typeof j.error === "string") code = j.error.slice(0, 40);
       } catch {
@@ -489,17 +580,17 @@ async function relayEdit(user: CameraUser, req: EditRequest, t0: number): Promis
       await logEdit(user, req, code, Date.now() - t0);
       throw new CameraError(res.status === 429 ? 429 : 502, code, msg);
     }
-    const type = res.headers.get("content-type") ?? "";
-    const jpeg = Buffer.from(await res.arrayBuffer());
-    if (!type.startsWith("image/jpeg") || jpeg.length > 20 * 1024 * 1024) {
+    const type = String(res.headers["content-type"] ?? "");
+    const jpeg = res.body;
+    if (!type.startsWith("image/jpeg")) {
       await logEdit(user, req, "bad_response", Date.now() - t0);
       throw new CameraError(502, "bad_response", "加工サーバーの答えがおかしいです");
     }
     await logEdit(user, req, "ok", Date.now() - t0);
     return {
       jpeg,
-      seed: (res.headers.get("x-seed") ?? "").replace(/\D/g, "").slice(0, 12),
-      elapsed: (res.headers.get("x-elapsed") ?? "").replace(/[^\d.]/g, "").slice(0, 8),
+      seed: String(res.headers["x-seed"] ?? "").replace(/\D/g, "").slice(0, 12),
+      elapsed: String(res.headers["x-elapsed"] ?? "").replace(/[^\d.]/g, "").slice(0, 8),
     };
   }
 }

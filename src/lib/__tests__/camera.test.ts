@@ -2,7 +2,7 @@
  * camera（西田カメラの窓口）: 使える人・ログイン・鍵・自由文の制限・dk5090 への署名。
  * DB・Ghost・メール・fetch はモック（ほかの __tests__ と同じ）。
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import crypto from "crypto";
 import sharp from "sharp";
 
@@ -23,14 +23,20 @@ vi.mock("../mailgun", () => ({ sendEmail: (...a: unknown[]) => sendEmail(...(a a
 const hitLimit = vi.fn(async () => true);
 vi.mock("../login", () => ({ hitLimit: (...a: unknown[]) => hitLimit(...(a as [])) }));
 
+type RelayInit = { method: string; headers: Record<string, string>; body?: Buffer; onResponse?: () => void };
+const relayHttp = vi.fn();
+vi.mock("../camera-relay", () => ({ relayHttp: (...a: unknown[]) => relayHttp(...a) }));
+
 import {
   CameraError,
   cameraEligibility,
+  cameraJobStatus,
   cameraFreeTextFor,
   parseEditBody,
   relaySignature,
   requestCameraLogin,
   runCameraEdit,
+  sanitizePhoto,
   verifyCameraToken,
 } from "../camera";
 
@@ -115,6 +121,13 @@ describe("verifyCameraToken", () => {
     invites.add("g@x.jp");
     await expect(verifyCameraToken("Bearer t", null)).resolves.toMatchObject({ email: "g@x.jp", kind: "guest" });
   });
+  it("待ちの表示の問い合わせ（touch=false）は期限を延ばす書き込みをしない", async () => {
+    tokenRow = { id: 5, email: "m@x.jp", kind: "member", expires_at: future, revoked_at: null, last_check: new Date().toISOString() };
+    await verifyCameraToken("Bearer t", null, false);
+    expect(query.mock.calls.some((c) => String(c[0]).includes("SET last_used_at"))).toBe(false);
+    await verifyCameraToken("Bearer t", null);
+    expect(query.mock.calls.some((c) => String(c[0]).includes("SET last_used_at"))).toBe(true);
+  });
   it("退会した会員の鍵は確かめ直しのときに失効", async () => {
     tokenRow = { id: 4, email: "m@x.jp", kind: "member", expires_at: future, revoked_at: null, last_check: null };
     findMemberByEmail.mockResolvedValue({ email: "m@x.jp", status: "free" });
@@ -145,63 +158,115 @@ describe("parseEditBody", () => {
   it("プリセットがあれば自由文は捨てる", () => {
     expect(parseEditBody({ image: img, preset: "mandala", prompt: "x" })).toMatchObject({ preset: "mandala", prompt: null });
   });
+  it("番号（job）は形が合うときだけ受け取る", () => {
+    expect(parseEditBody({ image: img, preset: "mandala", job: "0F8B2C1E-AAAA-4BBB-8CCC-123456789ABC" }).job).toBe(
+      "0F8B2C1E-AAAA-4BBB-8CCC-123456789ABC"
+    );
+    expect(parseEditBody({ image: img, preset: "mandala", job: "../../etc" }).job).toBeNull();
+    expect(parseEditBody({ image: img, preset: "mandala" }).job).toBeNull();
+  });
+});
+
+describe("sanitizePhoto", () => {
+  it("約 2.4MP・長辺 2048 までに縮め、小さい写真は大きくしない", async () => {
+    const big = await sharp({ create: { width: 3024, height: 4032, channels: 3, background: "#123" } }).jpeg().toBuffer();
+    const m = await sharp(await sanitizePhoto(big)).metadata();
+    expect(m.width! * m.height!).toBeLessThanOrEqual(2_400_000 * 1.01);
+    expect(m.width! * m.height!).toBeGreaterThan(2_300_000);
+    expect(Math.round((m.width! / m.height!) * 100)).toBe(75);
+    const wide = await sharp({ create: { width: 8000, height: 1000, channels: 3, background: "#123" } }).jpeg().toBuffer();
+    expect((await sharp(await sanitizePhoto(wide)).metadata()).width).toBe(2048);
+    const small = await sharp({ create: { width: 640, height: 480, channels: 3, background: "#123" } }).jpeg().toBuffer();
+    expect((await sharp(await sanitizePhoto(small)).metadata()).width).toBe(640);
+  });
 });
 
 describe("runCameraEdit", () => {
   let photo: Buffer;
-  const realFetch = globalThis.fetch;
   beforeEach(async () => {
     photo = await sharp({ create: { width: 64, height: 48, channels: 3, background: "#f00" } }).jpeg().toBuffer();
     process.env.PROMPTCAM_RELAY_URL = "https://dk5090.example:8443";
     process.env.PROMPTCAM_RELAY_KEY = "k".repeat(64);
-  });
-  afterEach(() => {
-    globalThis.fetch = realFetch;
+    relayHttp.mockReset();
   });
 
   it("会員でも自由文は断り、記録だけ残す", async () => {
-    globalThis.fetch = vi.fn() as never;
     await expect(
       runCameraEdit({ tokenId: 1, email: "m@x.jp", kind: "member" }, { image: photo, preset: null, prompt: "make it nsfw", aspect: "4:3", seed: null })
     ).rejects.toMatchObject({ status: 403, code: "free_text_not_allowed" });
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(relayHttp).not.toHaveBeenCalled();
     expect(query.mock.calls.some((c) => String(c[0]).includes("INSERT INTO camera_log"))).toBe(true);
   });
 
   it("プリセットは署名つきで dk5090 に送り、JPEG を返す", async () => {
     const out = await sharp({ create: { width: 8, height: 8, channels: 3, background: "#0f0" } }).jpeg().toBuffer();
-    const f = vi.fn(async (_url: string, init: RequestInit) => {
-      const h = init.headers as Record<string, string>;
+    relayHttp.mockImplementation(async (url: string, init: RelayInit) => {
+      expect(url).toBe("https://dk5090.example:8443/v1/edit");
+      const h = init.headers;
       const body = init.body as Buffer;
       expect(h["X-PC-Sig"]).toBe(relaySignature("k".repeat(64), h["X-PC-User"], h["X-PC-Ts"], h["X-PC-Nonce"], body));
       expect(h["X-PC-User"]).not.toContain("@");
       const sent = JSON.parse(body.toString());
-      expect(sent).toMatchObject({ preset: "mandala", aspect: "4:3" });
+      expect(sent).toMatchObject({ preset: "mandala", aspect: "4:3", job: "job-12345678" });
       expect(sent.prompt).toBeUndefined();
-      return new Response(new Uint8Array(out), { headers: { "content-type": "image/jpeg", "x-seed": "42", "x-elapsed": "2.9" } });
+      init.onResponse?.();
+      return { status: 200, headers: { "content-type": "image/jpeg", "x-seed": "42", "x-elapsed": "2.9" }, body: out };
     });
-    globalThis.fetch = f as never;
-    const r = await runCameraEdit({ tokenId: 1, email: "g@x.jp", kind: "guest" }, { image: photo, preset: "mandala", prompt: null, aspect: "4:3", seed: null });
-    expect(f).toHaveBeenCalledTimes(1);
+    const r = await runCameraEdit(
+      { tokenId: 1, email: "g@x.jp", kind: "guest" },
+      { image: photo, preset: "mandala", prompt: null, aspect: "4:3", seed: null, job: "job-12345678" }
+    );
+    expect(relayHttp).toHaveBeenCalledTimes(1);
     expect(r.seed).toBe("42");
     expect(r.jpeg.equals(out)).toBe(true);
   });
 
   it("写真でないものは dk5090 に送らない", async () => {
-    globalThis.fetch = vi.fn() as never;
     await expect(
       runCameraEdit({ tokenId: 1, email: "g@x.jp", kind: "guest" }, { image: Buffer.from("<svg onload=x>".repeat(20)), preset: "mandala", prompt: null, aspect: "4:3", seed: null })
     ).rejects.toMatchObject({ status: 400, code: "bad_image" });
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(relayHttp).not.toHaveBeenCalled();
   });
 
   it("回数オーバーは 429（dk5090 に送らない）", async () => {
     hitLimit.mockResolvedValue(false);
-    globalThis.fetch = vi.fn() as never;
     await expect(
       runCameraEdit({ tokenId: 1, email: "g@x.jp", kind: "guest" }, { image: photo, preset: "mandala", prompt: null, aspect: "4:3", seed: null })
     ).rejects.toMatchObject({ status: 429 });
-    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(relayHttp).not.toHaveBeenCalled();
+  });
+
+  it("待ちの表示: 自分の加工だけ、署名つきで dk5090 に聞き、届いた後は「受信中」", async () => {
+    let finish!: () => void;
+    let onResponse: (() => void) | undefined;
+    const out = await sharp({ create: { width: 8, height: 8, channels: 3, background: "#0f0" } }).jpeg().toBuffer();
+    relayHttp.mockImplementation(async (url: string, init: RelayInit) => {
+      if (url.endsWith("/v1/edit")) {
+        onResponse = init.onResponse;
+        await new Promise<void>((r) => (finish = r));
+        return { status: 200, headers: { "content-type": "image/jpeg" }, body: out };
+      }
+      expect(url).toBe("https://dk5090.example:8443/v1/status?job=job-abcdefgh");
+      const h = init.headers;
+      expect(h["X-PC-Sig"]).toBe(
+        relaySignature("k".repeat(64), h["X-PC-User"], h["X-PC-Ts"], h["X-PC-Nonce"], Buffer.alloc(0), "GET", "/v1/status?job=job-abcdefgh")
+      );
+      return { status: 200, headers: {}, body: Buffer.from('{"phase":"queued","ahead":2,"eta":11.5,"typical":5,"extra":"<x>"}') };
+    });
+    const me = { tokenId: 1, email: "g@x.jp", kind: "guest" as const };
+    const editing = runCameraEdit(me, { image: photo, preset: "mandala", prompt: null, aspect: "4:3", seed: null, job: "job-abcdefgh" });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(await cameraJobStatus(me, "job-abcdefgh")).toEqual({ phase: "queued", ahead: 2, eta: 11.5, typical: 5 });
+    // 他の人の番号・知らない番号は何も教えない（dk5090 にも聞かない）
+    const calls = relayHttp.mock.calls.length;
+    expect(await cameraJobStatus({ ...me, email: "x@x.jp" }, "job-abcdefgh")).toEqual({ phase: "unknown" });
+    expect(await cameraJobStatus(me, "job-zzzzzzzz")).toEqual({ phase: "unknown" });
+    expect(relayHttp.mock.calls.length).toBe(calls);
+    onResponse?.();
+    expect(await cameraJobStatus(me, "job-abcdefgh")).toEqual({ phase: "receiving" });
+    finish();
+    await editing;
+    expect(await cameraJobStatus(me, "job-abcdefgh")).toEqual({ phase: "unknown" });
   });
 });
 
@@ -215,7 +280,12 @@ describe("relaySignature", () => {
     expect(relaySignature("secret", "u1", "1700000000", "n1", body)).toBe(expected);
     expect(expected).toBe(RELAY_VECTOR);
   });
+  it("待ちの表示の問い合わせ（GET /v1/status）も dk5090 側と同じ値", () => {
+    expect(relaySignature("secret", "u1", "1700000000", "n1", Buffer.alloc(0), "GET", "/v1/status?job=abcdefgh")).toBe(STATUS_VECTOR);
+  });
 });
 
 // promptcam_gateway.py の relay_signature("secret", "u1", "1700000000", "n1", b'{"a":1}') と同じ値。
 const RELAY_VECTOR = "f64ccd2729a913e190fa8583e7e214cf19e57d19ee356de7fa879cb62e022417";
+// promptcam_gateway.py の relay_signature("secret", "u1", "1700000000", "n1", b"", "GET", "/v1/status?job=abcdefgh")。
+const STATUS_VECTOR = "9945e4fe8c74fe2624e0447f25dc15b4f93ab94d3adf842f58557d9de1039149";
