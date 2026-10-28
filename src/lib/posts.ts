@@ -463,7 +463,10 @@ export async function listPosts(options?: {
         ? `(${hideSql} OR (p.club IS NOT NULL AND NOT EXISTS (SELECT 1 FROM clubs c WHERE c.key = p.club)))`
         : `(p.club IS NOT NULL AND NOT EXISTS (SELECT 1 FROM clubs c WHERE c.key = p.club))`;
     }
-    if (hideSql) clubSql += ` AND (p.club IS NULL OR NOT (${hideSql}))`;
+    // The viewer's own posts always show (drikin 2026-10-28: an own post auto-filed into a hidden
+    // club vanished from the poster's timeline).
+    const ownSql = viewerEmail ? ` OR p.author_email = $1` : "";
+    if (hideSql) clubSql += ` AND (p.club IS NULL${ownSql} OR NOT (${hideSql}))`;
   }
 
   // last_activity = max(post.created_at, newest reply.created_at). Repeated from

@@ -18,6 +18,8 @@ class PostOpsTest {
         override suspend fun setFavorite(userId: String, on: Boolean) = answer("setFavorite:$on", on)
         override suspend fun togglePin(id: Long) = answer("togglePin", true)
         override suspend fun setClub(id: Long, key: String?) = answer("setClub", key)
+        override suspend fun hiddenClubs(path: String) = answer("hiddenClubs", setOf("car"))
+        override suspend fun setClubHidden(path: String, club: String, hidden: Boolean) = answer("setClubHidden:$club:$hidden", hidden)
         override suspend fun vote(id: Long, optionId: Long): PostPoll? = answer("vote", null)
         override suspend fun togglePostReaction(id: Long, emoji: String) = answer("react", PostReactionToggle(true, listOf(PostReactionToggle.Count(emoji, 1))))
     }
@@ -32,6 +34,47 @@ class PostOpsTest {
         val s = TimelineStore(ApiClient("test"), fake, Dispatchers.Unconfined)
         s.testPosts(listOf(a, b, mine))
         return s
+    }
+
+    private fun clubStore(fake: PostOpsApi): TimelineStore {
+        val s = store(fake)
+        s.testClubs(mapOf("apple" to "リンゴ部", "car" to "クルマ部"))
+        s.capabilities = ApiJson.decodeFromString("""{"features":{"posts":{"club_visibility":"/api/agent/clubs/visibility"}}}""")
+        return s
+    }
+
+    // 部活の表示（2026-10-28）
+    @Test fun clubVisibilityLoadsAndSaves() {
+        val fake = FakeOps(error = null)
+        val s = clubStore(fake)
+        s.loadHiddenClubs()
+        assertEquals(setOf("car"), s.hiddenClubs)
+        assertEquals(listOf("apple" to "リンゴ部", "car" to "クルマ部", "__unset__" to "未設定"), s.clubVisibilityRows())
+        s.setClubHidden("apple", true)
+        s.setClubHidden("car", false)
+        assertEquals(setOf("apple"), s.hiddenClubs)
+        assertEquals(listOf("hiddenClubs", "setClubHidden:apple:true", "setClubHidden:car:false"), fake.calls)
+        assertNull(s.clubVisibilityError)
+    }
+
+    @Test fun clubVisibilityGoesBackOnFailure() {
+        val ok = FakeOps(error = null)
+        val s = clubStore(ok)
+        s.loadHiddenClubs()
+        val bad = FakeOps()
+        val s2 = clubStore(bad)
+        s2.loadHiddenClubs()
+        assertNull(s2.hiddenClubs) // could not read: no switches to flip
+        assertEquals("この操作はできません", s2.clubVisibilityError)
+        assertEquals(setOf("car"), s.hiddenClubs)
+    }
+
+    @Test fun clubVisibilityNeedsTheServer() {
+        val fake = FakeOps(error = null)
+        val s = store(fake) // an older server: no club_visibility
+        s.loadHiddenClubs()
+        assertNull(s.hiddenClubs)
+        assertEquals(emptyList<String>(), fake.calls)
     }
 
     @Test fun bookmarkGoesBackOnFailure() {

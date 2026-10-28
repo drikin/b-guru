@@ -103,6 +103,9 @@ interface PostOpsApi {
     suspend fun setFavorite(userId: String, on: Boolean): Boolean
     suspend fun togglePin(id: Long): Boolean
     suspend fun setClub(id: Long, key: String?): String?
+    /** 部活の表示・非表示（capabilities `club_visibility`）。 */
+    suspend fun hiddenClubs(path: String): Set<String>
+    suspend fun setClubHidden(path: String, club: String, hidden: Boolean): Boolean
     suspend fun vote(id: Long, optionId: Long): PostPoll?
     suspend fun togglePostReaction(id: Long, emoji: String): PostReactionToggle
 }
@@ -390,6 +393,11 @@ class ApiClient(val token: String) : PostOpsApi {
     /** Idempotent: POST adds, DELETE removes. Returns the new state. */
     override suspend fun setFavorite(userId: String, on: Boolean): Boolean =
         decode<FavoriteResponse>(send(request(if (on) "POST" else "DELETE", "/api/agent/favorites", buildJsonObject { put("user_id", userId) }))).favorited
+
+    override suspend fun hiddenClubs(path: String): Set<String> = get<HiddenClubsResponse>(path).hidden.toSet()
+
+    override suspend fun setClubHidden(path: String, club: String, hidden: Boolean): Boolean =
+        decode<ClubHiddenResponse>(send(request("PUT", path, buildJsonObject { put("club", club); put("hidden", hidden) }))).hidden
 
     suspend fun customEmojis(path: String = "/api/agent/emojis"): List<CustomEmoji> = get<EmojisResponse>(path).emojis
 

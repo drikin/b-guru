@@ -1,17 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionEmail } from "@/lib/session";
 import { getHiddenClubs, setClubHidden } from "@/lib/club-visibility";
-import { CLUB_UNSET } from "@/lib/club-catalog";
-import { isActiveClubKey } from "@/lib/club-store";
+import { isValidClubKey } from "@/lib/club-visibility-api";
 
 const NO_CACHE = { "Cache-Control": "no-store, no-cache, must-revalidate" };
-
-// DB の active な部活（admin が後から追加した部活も含む）か「未設定」。静的 seed の
-// allClubs() はサーバーでは追加分を知らないので使わない。表示に戻す側は、削除済み
-// 部活の行も消せるよう検証しない。
-const isValidClubKey = async (key: string, hidden: boolean) =>
-  key === CLUB_UNSET ||
-  (/^[a-z0-9_-]{1,40}$/.test(key) && (!hidden || (await isActiveClubKey(key))));
 
 export const dynamic = "force-dynamic";
 

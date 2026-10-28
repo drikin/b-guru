@@ -191,6 +191,8 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val customEmojiDelete: String? = null,
         val clubSelect: Boolean? = null,
         val clubChange: Boolean? = null,
+        /** 部活の表示・非表示（GET で隠している部活、PUT { club, hidden }）。無い（古いサーバ）なら出さない。 */
+        val clubVisibility: String? = null,
         val mentions: String? = null,
     )
     @Serializable data class ChatFeatures(
@@ -253,6 +255,7 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val customEmojiDeletePath get() = p?.customEmojiDelete?.takeIf { it.startsWith("/api/") && it.contains("{id}") }
     val canSelectClub get() = p?.clubSelect ?: false
     val canChangeClub get() = p?.clubChange ?: false
+    val clubVisibilityPath get() = p?.clubVisibility?.takeIf { it.startsWith("/api/") }
     val mentionsPath get() = p?.mentions?.takeIf { it.startsWith("/api/") }
     /** Voice room is on for this member (server configured + in the rollout). */
     val voiceEnabled get() = features?.voice?.enabled ?: false
@@ -504,6 +507,8 @@ data class PostPoll(
 @Serializable data class PublishResponse(val post: Post)
 @Serializable data class UploadResponse(val urls: List<String> = emptyList())
 @Serializable data class ClubInfo(val key: String, val name: String)
+@Serializable data class HiddenClubsResponse(val hidden: List<String> = emptyList())
+@Serializable data class ClubHiddenResponse(val club: String = "", val hidden: Boolean = false)
 @Serializable data class ClubsResponse(val clubs: List<ClubInfo> = emptyList())
 /** POST /api/agent/reactions answers without `mine`; the app fills it in. */
 @Serializable data class PostReactionToggle(val added: Boolean = false, val reactions: List<Count> = emptyList()) {

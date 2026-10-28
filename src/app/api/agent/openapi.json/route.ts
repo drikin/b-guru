@@ -383,6 +383,17 @@ const spec = {
         responses: { "200": { description: "OK" } },
       },
     },
+    "/api/agent/clubs/visibility": {
+      get: {
+        summary: "自分が隠している部活（\"__unset__\" は未設定）。隠した部活のほかの人の投稿はタイムラインに出ない（自分の投稿は出る）",
+        responses: { "200": { description: "{apiVersion, hidden: string[]}" } },
+      },
+      put: {
+        summary: "部活を隠す・戻す（アプリの鍵だけ）",
+        requestBody: { content: { "application/json": { schema: { type: "object", properties: { club: { type: "string" }, hidden: { type: "boolean" } }, required: ["club", "hidden"] } } } },
+        responses: { "200": { description: "{apiVersion, club, hidden}" }, "400": { description: "不正な部活キー" } },
+      },
+    },
     "/api/agent/notifications": {
       get: {
         summary: "自身の通知",

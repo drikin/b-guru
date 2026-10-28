@@ -97,16 +97,20 @@ struct TimelineScreen: View {
     /// ピン留め・ブックマーク・お気に入りの人 (only those the server offers).
     @ViewBuilder private var listsMenu: some View {
         let kinds = actions.lists
-        if !kinds.isEmpty {
+        if !kinds.isEmpty || actions.clubVisibilityPath != nil {
             Menu {
                 ForEach(kinds) { k in
                     Button(k.title, systemImage: k.systemImage) { actions.list = k }
+                }
+                if actions.clubVisibilityPath != nil {
+                    Divider()
+                    Button("部活の表示…", systemImage: "eye") { actions.clubVisibility = ClubVisibilityRequest() }
                 }
             } label: {
                 Image(systemName: "list.bullet")
             }
             .menuIndicator(.hidden)
-            .accessibilityLabel("一覧（ピン留め・ブックマーク・お気に入りの人）")
+            .accessibilityLabel("一覧（ピン留め・ブックマーク・お気に入りの人）と部活の表示")
         }
     }
 
@@ -129,6 +133,7 @@ struct TimelineScreen: View {
         case "pins": actions.list = .pinned
         case "bookmarks": actions.list = .bookmarks
         case "favorites": actions.list = .favorites
+        case "clubs": actions.clubVisibility = ClubVisibilityRequest()
         case "compose": composing = true
         case "toast": if let p = timeline.posts.first(where: { $0.id == 4 }) { actions.toggleBookmark(p) }
         case "thread": open(120)
@@ -170,7 +175,7 @@ struct TimelineScreen: View {
                 listsMenu
                     .menuStyle(.borderlessButton)
                     .fixedSize()
-                    .help("ピン留め・ブックマーク・お気に入りの人")
+                    .help("ピン留め・ブックマーク・お気に入りの人・部活の表示")
                 Button { Task { await timeline.refresh(full: true) } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless)
                     .keyboardShortcut("r", modifiers: .command)

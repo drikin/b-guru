@@ -376,6 +376,52 @@ class TimelineStore(
     var listFailed by mutableStateOf<String?>(null); private set
 
     /** filter: "pinned" | "bm" | "fav". */
+    /** 部活の表示: the clubs this member hides ("__unset__" = 未設定); null while loading. */
+    var hiddenClubs by mutableStateOf<Set<String>?>(null); private set
+    var clubVisibilityError by mutableStateOf<String?>(null); private set
+    private var clubVisibilityChanged = false
+    /** The demo starts with 機能改善 hidden (and saves nothing). */
+    private var demoHidden = setOf("improve")
+
+    /** The rows of 部活の表示: the clubs, then 未設定. */
+    fun clubVisibilityRows(): kotlin.collections.List<Pair<String, String>> = clubs.toList() + ("__unset__" to "未設定")
+
+    fun loadHiddenClubs() {
+        hiddenClubs = null
+        clubVisibilityError = null
+        clubVisibilityChanged = false
+        if (demo) { hiddenClubs = demoHidden; return }
+        val path = capabilities?.clubVisibilityPath ?: return
+        scope.launch {
+            if (clubs.isEmpty()) loadClubs()
+            try { hiddenClubs = ops.hiddenClubs(path) } catch (e: Exception) { clubVisibilityError = PostActions.errorText(e, "読み込めませんでした") }
+        }
+    }
+
+    /** Shown at once; put back with the error when the server says no. */
+    fun setClubHidden(key: String, hidden: Boolean) {
+        val before = hiddenClubs ?: return
+        hiddenClubs = if (hidden) before + key else before - key
+        clubVisibilityError = null
+        if (demo) { demoHidden = hiddenClubs!!; return }
+        val path = capabilities?.clubVisibilityPath ?: return
+        scope.launch {
+            try {
+                ops.setClubHidden(path, key, hidden)
+                clubVisibilityChanged = true
+            } catch (e: Exception) {
+                hiddenClubs = before
+                clubVisibilityError = PostActions.errorText(e, "保存できませんでした")
+            }
+        }
+    }
+
+    /** Closed: the timeline follows the new setting. */
+    fun closeClubVisibility() {
+        dialog = null
+        if (clubVisibilityChanged) { clubVisibilityChanged = false; refreshAsync() }
+    }
+
     fun loadList(filter: String) {
         listPosts = null
         listFailed = null
@@ -420,6 +466,7 @@ class TimelineStore(
 
     /** Tests only: start from these posts. */
     internal fun testPosts(list: List<Post>) { posts = list; hasLoaded = true }
+    internal fun testClubs(c: Map<String, String>) { clubs = c }
 
     /** Debug only: sample timeline for offline UI checks. */
     /** Demo only (`--ez demo_overlay true`): a post with a YouTube card on top, for 「📺 みんなで見る」 from the timeline. */
@@ -514,6 +561,7 @@ class TimelineStore(
             "pins" -> dialog = PostDialog.List("pinned")
             "pins_empty" -> { posts = posts.map { it.copy(pinnedAt = null) }; pinned = emptyList(); dialog = PostDialog.List("pinned") }
             "bookmarks" -> dialog = PostDialog.List("bm")
+            "clubs" -> dialog = PostDialog.ClubVisibility
             "compose_poll" -> dialog = PostDialog.Compose("poll")
             "compose_mention" -> dialog = PostDialog.Compose("mention")
             "compose_media" -> dialog = PostDialog.Compose("media")

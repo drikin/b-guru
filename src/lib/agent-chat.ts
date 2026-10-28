@@ -288,6 +288,8 @@ export function agentCapabilities(
         custom_emoji_delete: app && can("chat") ? "/api/agent/emojis/{id}" : null,
         club_select: app,
         club_change: app,
+        // 部活の表示・非表示（GET は読むだけ、PUT { club, hidden } はアプリの鍵だけ）。2026-10-28
+        club_visibility: app ? "/api/agent/clubs/visibility" : null,
         mentions: can("read") ? "/api/agent/members" : null,
       },
       stream: {

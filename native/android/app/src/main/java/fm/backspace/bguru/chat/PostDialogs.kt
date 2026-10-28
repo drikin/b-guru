@@ -54,6 +54,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -104,6 +105,8 @@ sealed interface PostDialog {
     data class Club(val post: Post) : PostDialog
     /** "pinned" | "bm" | "fav". */
     data class List(val filter: String) : PostDialog
+    /** 部活の表示. */
+    data object ClubVisibility : PostDialog
 }
 
 /** The Snackbar's message; `undo` = tap it to take the change back (5 seconds). */
@@ -127,6 +130,7 @@ fun PostDialogHost(timeline: TimelineStore, capabilities: Capabilities?, onOpenT
         is PostDialog.PollVoters -> PollVotersDialog(timeline, d.post)
         is PostDialog.Club -> ClubDialog(timeline, d.post)
         is PostDialog.List -> PostListSheet(timeline, d.filter, onOpenThread)
+        PostDialog.ClubVisibility -> ClubVisibilitySheet(timeline)
     }
 }
 
@@ -504,6 +508,41 @@ private fun PostListSheet(timeline: TimelineStore, filter: String, onOpenThread:
                             onClick = { timeline.dialog = null; onOpenThread(p.parentId ?: p.id) }, memberNames = timeline.memberNames)
                         HorizontalDivider()
                     }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+// MARK: 部活の表示
+
+/** 部活ごとの表示・非表示（Web の「部活の表示」と同じ設定。サーバに保存されて端末をまたぐ）。
+ *  2026-10-28 ドリキン「ネイティブアプリで部活ごとの表示非表示がコントロールできない」. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ClubVisibilitySheet(timeline: TimelineStore) {
+    LaunchedEffect(Unit) { timeline.loadHiddenClubs() }
+    ModalBottomSheet(onDismissRequest = { timeline.closeClubVisibility() }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
+            Text("部活の表示", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            Text("オフにした部活の投稿はタイムラインに出ません（自分の投稿は出ます）。Web と同じ設定です。",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            timeline.clubVisibilityError?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            }
+            val hidden = timeline.hiddenClubs
+            if (hidden == null) {
+                if (timeline.clubVisibilityError == null) CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally).padding(24.dp))
+            } else LazyColumn(Modifier.fillMaxWidth()) {
+                items(timeline.clubVisibilityRows(), key = { it.first }) { (key, name) ->
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(name, Modifier.weight(1f))
+                        Switch(checked = key !in hidden, onCheckedChange = { on -> timeline.setClubHidden(key, !on) },
+                            modifier = Modifier.semantics { contentDescription = "$name を表示" })
+                    }
+                    HorizontalDivider()
                 }
             }
             Spacer(Modifier.height(12.dp))

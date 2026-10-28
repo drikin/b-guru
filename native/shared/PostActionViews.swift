@@ -913,6 +913,9 @@ struct PostActionPresenter: ViewModifier {
                     .environment(\.postActions, actions)
                     .environment(\.postClubs, timeline.clubList)
             }
+            .panelDialog($actions.clubVisibility) { _ in
+                if let path = actions.clubVisibilityPath { ClubVisibilityDialog(path: path, timeline: timeline) }
+            }
             .panelDialog($actions.picker, detents: [.height(360)]) { req in
                 ReactionPicker(onPick: { e in
                     actions.picker = nil

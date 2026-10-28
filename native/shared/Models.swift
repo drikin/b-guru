@@ -144,6 +144,8 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var customEmojiDelete: String?
         var clubSelect: Bool?
         var clubChange: Bool?
+        /// 部活の表示・非表示（GET で隠している部活、PUT { club, hidden }）。無い（古いサーバ）なら出さない。
+        var clubVisibility: String?
         var mentions: String?
     }
     struct RoomFeatures: Decodable, Sendable, Equatable {

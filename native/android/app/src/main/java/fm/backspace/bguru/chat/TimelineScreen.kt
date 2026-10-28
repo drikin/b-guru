@@ -166,11 +166,16 @@ fun TimelineScreen(
                             if (capabilities?.canBookmark == true) add("bm" to "🔖 ブックマーク")
                             if (capabilities?.canFavorite == true) add("fav" to "☆ お気に入りの人の投稿")
                         }
-                        if (lists.isNotEmpty()) Box {
-                            IconButton(onClick = { listsMenu = true }) { Text("📌", fontSize = 18.sp, modifier = Modifier.semantics { contentDescription = "ピン留め・ブックマーク" }) }
+                        val canClubs = capabilities?.clubVisibilityPath != null
+                        if (lists.isNotEmpty() || canClubs) Box {
+                            IconButton(onClick = { listsMenu = true }) { Text("📌", fontSize = 18.sp, modifier = Modifier.semantics { contentDescription = "ピン留め・ブックマーク・部活の表示" }) }
                             DropdownMenu(listsMenu, onDismissRequest = { listsMenu = false }) {
                                 lists.forEach { (f, label) ->
                                     DropdownMenuItem(text = { Text(label) }, onClick = { listsMenu = false; timeline.dialog = PostDialog.List(f) })
+                                }
+                                if (canClubs) {
+                                    HorizontalDivider()
+                                    DropdownMenuItem(text = { Text("👁 部活の表示…") }, onClick = { listsMenu = false; timeline.dialog = PostDialog.ClubVisibility })
                                 }
                             }
                         }

@@ -174,6 +174,17 @@ extension APIClient {
         _ = try await perform(request(on ? "POST" : "DELETE", "/api/agent/favorites", json: ["user_id": userId]), as: R.self)
     }
 
+    /// 部活の表示・非表示（capabilities `club_visibility`）: 隠している部活のキー（"__unset__" は未設定）。
+    func hiddenClubs(path: String) async throws -> Set<String> {
+        struct R: Decodable { var hidden: [String] }
+        return Set(try await perform(request("GET", path), as: R.self).hidden)
+    }
+
+    func setClubHidden(path: String, club: String, hidden: Bool) async throws {
+        struct R: Decodable { var hidden: Bool }
+        _ = try await perform(request("PUT", path, json: ["club": club, "hidden": hidden]), as: R.self)
+    }
+
     func customEmojis(path: String) async throws -> [CustomEmojiInfo] {
         struct R: Decodable { var emojis: [CustomEmojiInfo] }
         return try await perform(request("GET", path.hasPrefix("/api/") ? path : "/api/agent/emojis"), as: R.self).emojis
@@ -438,6 +449,8 @@ final class PostActionsModel {
     var pollVoters: Post?
     var picker: ReactionPickRequest?
     var list: PostListKind?
+    /// 「部活の表示」 dialog.
+    var clubVisibility: ClubVisibilityRequest?
     var composing = false
     private(set) var toast: ActionToast?
     private(set) var lastChange: PostChange?
@@ -476,6 +489,7 @@ final class PostActionsModel {
     var canAudio: Bool { features?.audio == true }
     var maxMediaMB: Int { features?.maxMediaMb ?? 100 }
     var canMention: Bool { features?.mentions != nil }
+    var clubVisibilityPath: String? { features?.clubVisibility.flatMap { $0.hasPrefix("/api/") ? $0 : nil } }
     var customEmojiPath: String? { features?.customEmojiList }
     var lists: [PostListKind] {
         PostListKind.allCases.filter {
@@ -740,6 +754,8 @@ final class DemoPostServer {
     weak var timeline: TimelineStore?
     private var bookmarks = Set<Int>()
     private var favorites = Set<String>()
+    /// 部活の表示: the demo starts with クルマ部 hidden.
+    private(set) var hiddenClubs: Set<String> = ["car"]
     private var polls: [Int: PostPoll] = [:]
     private var nextId = 50_000
     /// `-demoActionFail` / BGURU_DEMO_ACTION_FAIL=1: every change fails like a busy server (429).
@@ -783,6 +799,13 @@ final class DemoPostServer {
         switch (method, parts.dropFirst(2).first ?? "") {
         case ("GET", "members"):
             return json(["members": TimelineDemoMedia.members.map { ["user_id": $0, "name": $0, "avatar": NSNull()] }])
+        case ("GET", "clubs") where parts.last == "visibility":
+            return json(["hidden": hiddenClubs.sorted()])
+        case ("PUT", "clubs") where parts.last == "visibility":
+            guard let key = body["club"] as? String, !key.isEmpty else { return json(["error": "不正な部活キーです", "code": "invalid_request"], 400) }
+            let h = body["hidden"] as? Bool == true
+            if h { hiddenClubs.insert(key) } else { hiddenClubs.remove(key) }
+            return json(["club": key, "hidden": h])
         case ("GET", "clubs"):
             return json(["clubs": Self.clubs.map { ["key": $0.0, "name": $0.1, "category": $0.2] }])
         case ("GET", "emojis"):
