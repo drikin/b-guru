@@ -169,13 +169,12 @@ export async function requestCameraLogin(email: string, ip: string | null): Prom
   if (!(await hitLimit(`camera-mail:${email}`, CAMERA_LIMITS.mailPerEmail))) {
     throw new CameraError(429, "rate_limited", TOO_MANY);
   }
-  let kind: CameraKind | null;
-  try {
-    kind = await cameraEligibility(email);
-  } catch (e) {
-    console.error("[camera] eligibility:", (e as Error)?.message);
-    throw new CameraError(502, "membership_unavailable", "会員情報を確認できません。しばらくしてから再試行してください");
-  }
+  // 確認とメールは返事のあとで行う: 使える人かどうかで返事の速さ・中身が変わらないように。
+  void sendCameraCode(email, ip).catch((e) => console.error("[camera] login mail:", (e as Error)?.message));
+}
+
+async function sendCameraCode(email: string, ip: string | null): Promise<void> {
+  const kind = await cameraEligibility(email);
   if (!kind) return;
 
   await pool.query(
@@ -190,12 +189,7 @@ export async function requestCameraLogin(email: string, ip: string | null): Prom
   );
   const id = Number(ins.rows[0].id);
   await pool.query(`UPDATE camera_login_requests SET code_hash = $2 WHERE id = $1`, [id, sha256(`${id}:${code}`)]);
-  try {
-    await sendEmail({ to: email, ...loginMail(code) });
-  } catch (e) {
-    console.error("[camera] mail send failed:", (e as Error)?.message);
-    throw new CameraError(502, "mail_failed", "メールを送れませんでした。しばらくしてから再試行してください");
-  }
+  await sendEmail({ to: email, ...loginMail(code) });
 }
 
 async function failuresExceeded(ip: string | null): Promise<boolean> {
@@ -242,19 +236,21 @@ export async function verifyCameraLogin(
   );
   const row = r.rows[0];
   if (!row) throw await fail();
-  if (Number(row.attempts) >= CAMERA_MAX_CODE_ATTEMPTS) {
-    throw await fail("入力の回数が上限に達しました。もう一度メールを送ってください");
-  }
+  // 回数は照合の前に数える（同時に何通送られても 5 回を超えない）。
+  const counted = await pool.query(
+    `UPDATE camera_login_requests SET attempts = attempts + 1
+      WHERE id = $1 AND used_at IS NULL AND expires_at > now() AND attempts < $2 RETURNING id`,
+    [row.id, CAMERA_MAX_CODE_ATTEMPTS]
+  );
+  if (!counted.rows[0]) throw await fail("入力の回数が上限に達しました。もう一度メールを送ってください");
   const expected = Buffer.from(String(row.code_hash), "hex");
   const got = Buffer.from(sha256(`${row.id}:${code}`), "hex");
   if (expected.length !== got.length || !crypto.timingSafeEqual(expected, got)) {
-    await pool.query(`UPDATE camera_login_requests SET attempts = attempts + 1 WHERE id = $1`, [row.id]);
     throw await fail("コードが違います");
   }
   const used = await pool.query(
-    `UPDATE camera_login_requests SET used_at = now()
-      WHERE id = $1 AND used_at IS NULL AND expires_at > now() AND attempts < $2 RETURNING id`,
-    [row.id, CAMERA_MAX_CODE_ATTEMPTS]
+    `UPDATE camera_login_requests SET used_at = now() WHERE id = $1 AND used_at IS NULL RETURNING id`,
+    [row.id]
   );
   if (!used.rows[0]) throw await fail();
 
@@ -423,6 +419,15 @@ export async function runCameraEdit(user: CameraUser, req: EditRequest): Promise
     throw new CameraError(403, "free_text_not_allowed", "自由入力はまだ使えません。プリセットを選んでください");
   }
   if (inFlight.has(user.email)) throw new CameraError(429, "busy", "前の加工が終わってからもう一度");
+  inFlight.add(user.email);
+  try {
+    return await relayEdit(user, req, t0);
+  } finally {
+    inFlight.delete(user.email);
+  }
+}
+
+async function relayEdit(user: CameraUser, req: EditRequest, t0: number): Promise<EditResult> {
   const ok =
     (await hitLimit(`camera-edit-h:${user.email}`, CAMERA_LIMITS.editPerHour)) &&
     (await hitLimit(`camera-edit-d:${user.email}`, CAMERA_LIMITS.editPerDay)) &&
@@ -436,8 +441,7 @@ export async function runCameraEdit(user: CameraUser, req: EditRequest): Promise
   const key = process.env.PROMPTCAM_RELAY_KEY;
   if (!url || !key) throw new CameraError(503, "not_configured", "加工サーバーにつながりません（設定がありません）");
 
-  inFlight.add(user.email);
-  try {
+  {
     const photo = await sanitizePhoto(req.image);
     const body = Buffer.from(
       JSON.stringify({
@@ -447,8 +451,8 @@ export async function runCameraEdit(user: CameraUser, req: EditRequest): Promise
         ...(req.seed != null ? { seed: req.seed } : {}),
       })
     );
-    // dk5090 のログに残すのはメールそのものではなく短い印。
-    const userTag = sha256(`camera:${user.email}`).slice(0, 12);
+    // dk5090 のログに残すのはメールそのものではなく、鍵を混ぜた短い印（候補のメールから逆算できない）。
+    const userTag = crypto.createHmac("sha256", key).update(`camera-user:${user.email}`).digest("hex").slice(0, 12);
     const ts = String(Math.floor(Date.now() / 1000));
     const nonce = crypto.randomBytes(16).toString("hex");
     let res: Response;
@@ -464,7 +468,8 @@ export async function runCameraEdit(user: CameraUser, req: EditRequest): Promise
         },
         body,
         cache: "no-store",
-        signal: AbortSignal.timeout(90_000),
+        // dk5090 は GPU の確保に最大 60 秒・順番待ち 45 秒・加工数秒。それより長く待つ。
+        signal: AbortSignal.timeout(115_000),
       });
     } catch (e) {
       console.error("[camera] relay:", (e as Error)?.message);
@@ -496,8 +501,6 @@ export async function runCameraEdit(user: CameraUser, req: EditRequest): Promise
       seed: (res.headers.get("x-seed") ?? "").replace(/\D/g, "").slice(0, 12),
       elapsed: (res.headers.get("x-elapsed") ?? "").replace(/[^\d.]/g, "").slice(0, 8),
     };
-  } finally {
-    inFlight.delete(user.email);
   }
 }
 

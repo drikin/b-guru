@@ -71,12 +71,14 @@ describe("requestCameraLogin", () => {
   it("使えない人にはメールを送らない（返事は同じ）", async () => {
     findMemberByEmail.mockResolvedValue(null);
     await requestCameraLogin("nobody@x.jp", "1.2.3.4");
+    await new Promise((r) => setTimeout(r, 10));
     expect(sendEmail).not.toHaveBeenCalled();
   });
   it("招待された会員でない人にはコードを送る（B-guru のログイン表は使わない）", async () => {
     findMemberByEmail.mockResolvedValue(null);
     invites.add("guest@x.jp");
     await requestCameraLogin("guest@x.jp", "1.2.3.4");
+    await new Promise((r) => setTimeout(r, 10));
     expect(sendEmail).toHaveBeenCalledTimes(1);
     const sqls = query.mock.calls.map((c) => String(c[0]));
     expect(sqls.some((s) => s.includes("login_requests") && !s.includes("camera_login_requests"))).toBe(false);
@@ -84,6 +86,15 @@ describe("requestCameraLogin", () => {
   it("回数オーバーは 429", async () => {
     hitLimit.mockResolvedValueOnce(false);
     await expect(requestCameraLogin("a@x.jp", "1.2.3.4")).rejects.toMatchObject({ status: 429 });
+  });
+});
+
+describe("requestCameraLogin の返事", () => {
+  it("Ghost に届かなくても、使える人かどうかで返事を変えない", async () => {
+    findMemberByEmail.mockRejectedValue(new Error("down"));
+    await expect(requestCameraLogin("x@x.jp", "1.2.3.4")).resolves.toBeUndefined();
+    invites.add("g@x.jp");
+    await expect(requestCameraLogin("g@x.jp", "1.2.3.4")).resolves.toBeUndefined();
   });
 });
 

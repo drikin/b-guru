@@ -5,7 +5,7 @@ import { NO_CACHE, cameraErrorResponse, readJson } from "../_lib";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 130;
 
 /** 写真を加工する: 鍵を確かめ、写真を描き直して dk5090 に頼み、JPEG を返す。写真も結果も保存しない。 */
 export async function POST(req: NextRequest) {
