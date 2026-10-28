@@ -14,7 +14,7 @@ vi.mock("../ghost", async (orig) => ({
   GhostUnavailableError: ((await (orig as () => Promise<Record<string, unknown>>)()) as { GhostUnavailableError: unknown })
     .GhostUnavailableError,
   findMemberByEmail: (...a: unknown[]) => findMemberByEmail(...(a as [string])),
-  isPaidMember: (m: any) => m.status === "paid",
+  isPaidMember: (m: { status: string }) => m.status === "paid",
 }));
 
 const sendEmail = vi.fn(async () => ({ message: "ok" }));
