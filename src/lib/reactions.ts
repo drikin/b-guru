@@ -134,6 +134,19 @@ export async function toggleReaction(
   };
 }
 
+/* A reactor's name, with the same fallback as everywhere else (lib/display-name.ts):
+ * user_profiles.display_name, then the name on their latest timeline post, then the
+ * email — an email-shaped value is cut at the '@'. Without the post name, members who
+ * never set a display name showed as their email's local part (drikin 2026-10-30).
+ * Expects `r` = reactions and `up` = user_profiles joined on r.user_email. */
+const REACTOR_NAME_SQL = `(SELECT CASE WHEN n LIKE '%@%' THEN split_part(n, '@', 1) ELSE n END
+     FROM (SELECT COALESCE(
+                    NULLIF(btrim(up.display_name), ''),
+                    (SELECT NULLIF(btrim(p.author_name), '') FROM posts p
+                      WHERE p.author_email = r.user_email
+                      ORDER BY p.created_at DESC LIMIT 1),
+                    r.user_email) AS n) x)`;
+
 /**
  * Reactions for many targets at once, keyed by target id.
  *
@@ -155,14 +168,8 @@ export async function getReactions(
             BOOL_OR(user_email = $3) AS mine,
             (ARRAY_AGG(
                -- Resolve to a display name, not an email: the tooltip shows
-               -- these to other members (drikin 2026-09-25). Same fallback as
-               -- post authors — user_profiles.display_name wins, then the
-               -- stored name, and an email-shaped value is cut at the '@'.
-               CASE
-                 WHEN COALESCE(up.display_name, r.user_email) LIKE '%@%'
-                 THEN split_part(COALESCE(up.display_name, r.user_email), '@', 1)
-                 ELSE COALESCE(up.display_name, r.user_email)
-               END
+               -- these to other members (drikin 2026-09-25).
+               ${REACTOR_NAME_SQL}
                ORDER BY r.created_at
              ))[1:${REACTOR_LIMIT}] AS reactors
        FROM reactions r
@@ -257,11 +264,7 @@ export async function broadcastChatReactions(messageId: number): Promise<void> {
               COUNT(*)::int AS count,
               ARRAY_AGG(u.user_id ORDER BY r.created_at) FILTER (WHERE u.user_id IS NOT NULL) AS user_ids,
               (ARRAY_AGG(
-                 CASE
-                   WHEN COALESCE(up.display_name, r.user_email) LIKE '%@%'
-                   THEN split_part(COALESCE(up.display_name, r.user_email), '@', 1)
-                   ELSE COALESCE(up.display_name, r.user_email)
-                 END
+                 ${REACTOR_NAME_SQL}
                  ORDER BY r.created_at
                ))[1:${REACTOR_LIMIT}] AS reactors
          FROM reactions r
