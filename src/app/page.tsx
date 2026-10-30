@@ -78,6 +78,7 @@ import { netaCandidates, netaDefaultTitle } from "@/lib/neta-client";
 import MacAppCard from "@/components/MacAppCard";
 import TtsVoiceSetting from "@/components/TtsVoiceSetting";
 import AndroidAppCard from "@/components/AndroidAppCard";
+import MutedWordsModal from "@/components/MutedWordsModal";
 import { POLL_DURATIONS, POLL_LABEL_MAX, POLL_MAX_OPTIONS, POLL_MIN_OPTIONS, POLL_QUESTION_MAX, type PostPoll } from "@/lib/poll";
 import type { DuplicateCandidate } from "@/lib/duplicates";
 import { DuplicateWarning } from "@/components/DuplicateWarning";
@@ -6605,6 +6606,7 @@ export default function Home() {
   }>({ clubs: [], categories: [] });
   const [, setCatalogTick] = useState(0); // ライブカタログ反映後の再レンダー用
   const [clubManagerOpen, setClubManagerOpen] = useState(false); // admin「部活管理」モーダル
+  const [mutedWordsOpen, setMutedWordsOpen] = useState(false); // NG ワード（本人の設定、drikin 2026-10-29）
 
   const loadClubCounts = useCallback(() => {
     fetch("/api/clubs/counts", { cache: "no-store" })
@@ -10844,6 +10846,7 @@ export default function Home() {
               </Fragment>
             ))}
             <ClubNavRow label="未設定" activity={clubActivityUnset} trend={clubTrendUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} hidden={hiddenClubs.has(CLUB_UNSET)} onToggleHidden={() => toggleClubHidden(CLUB_UNSET)} />
+            <MutedWordsNavRow onClick={() => setMutedWordsOpen(true)} />
 
             {/* Admin-managed external-link bookmarks */}
             {menuLinks.map((lk) => (
@@ -12091,6 +12094,7 @@ export default function Home() {
                     />
                   ))}
                   <ClubChip label="未設定" active={clubFilter === CLUB_UNSET} onClick={() => selectClub(CLUB_UNSET)} />
+                  <ClubChip label="NG ワード…" active={false} onClick={() => setMutedWordsOpen(true)} />
                 </Box>
               )}
 
@@ -14495,6 +14499,14 @@ export default function Home() {
         clubs={clubCatalogState.clubs}
         onChanged={loadClubCatalog}
       />
+      <MutedWordsModal
+        opened={mutedWordsOpen}
+        onClose={() => setMutedWordsOpen(false)}
+        onChanged={() => {
+          loadFeed(undefined, searchQueryRef.current.trim() || undefined);
+          loadersRef.current?.loadHot();
+        }}
+      />
 </AppShell>
   );
 }
@@ -14666,6 +14678,38 @@ function PinIcon({ size, filled }: { size: number; filled?: boolean }) {
 /** モバイル部活バーの1チップ。横スクロールで並べる前提なので、幅は内容に任せて
  *  折り返さない（`flexShrink: 0`）。選択中は緑の塗りで、左サイドバーの
  *  `ClubNavRow` と同じ「緑 = 選択中」の語彙を保つ。 */
+/** 左の部活の一覧の下: NG ワードの設定を開く（drikin 2026-10-29）。 */
+function MutedWordsNavRow({ onClick }: { onClick: () => void }) {
+  return (
+    <UnstyledButton
+      onClick={onClick}
+      className="club-nav-row"
+      title="この言葉を含む投稿をタイムラインに出さない"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        width: "100%",
+        padding: "7px 12px",
+        borderRadius: 8,
+        fontSize: "0.8438rem",
+        color: "var(--text-secondary)",
+        fontWeight: 500,
+        marginTop: 6,
+        marginBottom: 2,
+      }}
+    >
+      <span style={{ display: "inline-flex", width: 17, justifyContent: "center", flexShrink: 0 }}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <circle cx="12" cy="12" r="9" />
+          <line x1="5.6" y1="5.6" x2="18.4" y2="18.4" />
+        </svg>
+      </span>
+      <span style={{ flex: 1 }}>NG ワード…</span>
+    </UnstyledButton>
+  );
+}
+
 function ClubChip({
   label,
   activity,
