@@ -196,7 +196,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             Capabilities.PostFeatures(read = true, publish = true, upload = true, reactions = true, maxImages = 5,
                 edit = true, delete = true, editTextOnly = false, whisper = true, video = true, audio = true, maxMediaMb = 100,
                 poll = true, pollVote = true, pollEdit = true, pin = true, pinnedList = true, bookmarks = true, favorites = true,
-                customEmojiList = "/api/agent/emojis", clubSelect = true, clubChange = true, clubVisibility = "/api/agent/clubs/visibility", mentions = "/api/agent/members"),
+                customEmojiList = "/api/agent/emojis", clubSelect = true, clubChange = true, clubVisibility = "/api/agent/clubs/visibility", mutedWords = "/api/agent/muted-words", mentions = "/api/agent/members"),
             room = Capabilities.RoomFeatures(enabled = withRoom),
             jukebox = Capabilities.JukeboxFeatures(enabled = true),
             neta = Capabilities.NetaFeatures(enabled = true, path = "/api/agent/neta", site = "https://neta.backspace.fm"),

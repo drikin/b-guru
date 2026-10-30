@@ -185,6 +185,17 @@ extension APIClient {
         _ = try await perform(request("PUT", path, json: ["club": club, "hidden": hidden]), as: R.self)
     }
 
+    /// NG ワード（capabilities `muted_words`）: 今の一覧と上限。
+    func mutedWords(path: String) async throws -> MutedWordsInfo {
+        try await perform(request("GET", path), as: MutedWordsInfo.self)
+    }
+
+    /// 一覧ごと置き換える。サーバがそろえた形（NFKC・小文字・重複なし）が返る。
+    func setMutedWords(path: String, words: [String]) async throws -> [String] {
+        struct R: Decodable { var words: [String] }
+        return try await perform(request("PUT", path, json: ["words": words]), as: R.self).words
+    }
+
     func customEmojis(path: String) async throws -> [CustomEmojiInfo] {
         struct R: Decodable { var emojis: [CustomEmojiInfo] }
         return try await perform(request("GET", path.hasPrefix("/api/") ? path : "/api/agent/emojis"), as: R.self).emojis
@@ -451,6 +462,8 @@ final class PostActionsModel {
     var list: PostListKind?
     /// 「部活の表示」 dialog.
     var clubVisibility: ClubVisibilityRequest?
+    /// 「NG ワード」 dialog.
+    var mutedWords: MutedWordsRequest?
     var composing = false
     private(set) var toast: ActionToast?
     private(set) var lastChange: PostChange?
@@ -490,6 +503,7 @@ final class PostActionsModel {
     var maxMediaMB: Int { features?.maxMediaMb ?? 100 }
     var canMention: Bool { features?.mentions != nil }
     var clubVisibilityPath: String? { features?.clubVisibility.flatMap { $0.hasPrefix("/api/") ? $0 : nil } }
+    var mutedWordsPath: String? { features?.mutedWords.flatMap { $0.hasPrefix("/api/") ? $0 : nil } }
     var customEmojiPath: String? { features?.customEmojiList }
     var lists: [PostListKind] {
         PostListKind.allCases.filter {
@@ -756,6 +770,8 @@ final class DemoPostServer {
     private var favorites = Set<String>()
     /// 部活の表示: the demo starts with クルマ部 hidden.
     private(set) var hiddenClubs: Set<String> = ["car"]
+    /// NG ワード: the demo starts with one.
+    private(set) var mutedWords: [String] = ["ネタバレ"]
     private var polls: [Int: PostPoll] = [:]
     private var nextId = 50_000
     /// `-demoActionFail` / BGURU_DEMO_ACTION_FAIL=1: every change fails like a busy server (429).
@@ -806,6 +822,18 @@ final class DemoPostServer {
             let h = body["hidden"] as? Bool == true
             if h { hiddenClubs.insert(key) } else { hiddenClubs.remove(key) }
             return json(["club": key, "hidden": h])
+        case ("GET", "muted-words"):
+            return json(["words": mutedWords, "max": 50, "maxLength": 40])
+        case ("PUT", "muted-words"):
+            guard let words = body["words"] as? [String] else { return json(["error": "words は文字列の配列です", "code": "invalid_request"], 400) }
+            var out: [String] = []
+            for w in words {
+                let n = w.precomposedStringWithCompatibilityMapping.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                if !n.isEmpty && !out.contains(n) { out.append(n) }
+            }
+            if out.count > 50 { return json(["error": "NG ワードは 50 個までです", "code": "invalid_request"], 400) }
+            mutedWords = out
+            return json(["words": out])
         case ("GET", "clubs"):
             return json(["clubs": Self.clubs.map { ["key": $0.0, "name": $0.1, "category": $0.2] }])
         case ("GET", "emojis"):

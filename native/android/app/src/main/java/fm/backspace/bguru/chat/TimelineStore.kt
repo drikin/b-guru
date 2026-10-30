@@ -416,6 +416,69 @@ class TimelineStore(
         }
     }
 
+    /** NG ワード: this member's words (the server's form); null while loading. */
+    var mutedWords by mutableStateOf<kotlin.collections.List<String>?>(null); private set
+    var mutedWordsMax by mutableStateOf(50); private set
+    var mutedWordsMaxLength by mutableStateOf(40); private set
+    var mutedWordsError by mutableStateOf<String?>(null); private set
+    var mutedWordsBusy by mutableStateOf(false); private set
+    private var mutedWordsChanged = false
+    /** The demo starts with one word (and saves nothing). */
+    private var demoMuted = listOf("ネタバレ")
+
+    fun loadMutedWords() {
+        mutedWords = null
+        mutedWordsError = null
+        mutedWordsChanged = false
+        if (demo) { mutedWords = demoMuted; return }
+        val path = capabilities?.mutedWordsPath ?: return
+        scope.launch {
+            try {
+                val r = ops.mutedWords(path)
+                mutedWordsMax = r.max; mutedWordsMaxLength = r.maxLength; mutedWords = r.words
+            } catch (e: Exception) { mutedWordsError = PostActions.errorText(e, "読み込めませんでした") }
+        }
+    }
+
+    /** Adds a word; true when saved (the field is cleared). */
+    suspend fun addMutedWord(raw: String): Boolean {
+        val w = raw.trim()
+        val now = mutedWords ?: return false
+        if (w.isEmpty()) return false
+        return saveMutedWords(now + w)
+    }
+
+    fun removeMutedWord(w: String) {
+        val now = mutedWords ?: return
+        scope.launch { saveMutedWords(now - w) }
+    }
+
+    private suspend fun saveMutedWords(next: kotlin.collections.List<String>): Boolean {
+        mutedWordsError = null
+        if (demo) {
+            demoMuted = next.map { java.text.Normalizer.normalize(it, java.text.Normalizer.Form.NFKC).lowercase().trim() }.filter { it.isNotEmpty() }.distinct()
+            mutedWords = demoMuted
+            return true
+        }
+        val path = capabilities?.mutedWordsPath ?: return false
+        mutedWordsBusy = true
+        return try {
+            mutedWords = ops.setMutedWords(path, next)
+            mutedWordsChanged = true
+            true
+        } catch (e: Exception) {
+            mutedWordsError = PostActions.errorText(e, "保存できませんでした")
+            false
+        } finally {
+            mutedWordsBusy = false
+        }
+    }
+
+    fun closeMutedWords() {
+        dialog = null
+        if (mutedWordsChanged) { mutedWordsChanged = false; refreshAsync() }
+    }
+
     /** Closed: the timeline follows the new setting. */
     fun closeClubVisibility() {
         dialog = null
@@ -562,6 +625,7 @@ class TimelineStore(
             "pins_empty" -> { posts = posts.map { it.copy(pinnedAt = null) }; pinned = emptyList(); dialog = PostDialog.List("pinned") }
             "bookmarks" -> dialog = PostDialog.List("bm")
             "clubs" -> dialog = PostDialog.ClubVisibility
+            "muted" -> dialog = PostDialog.MutedWords
             "compose_poll" -> dialog = PostDialog.Compose("poll")
             "compose_mention" -> dialog = PostDialog.Compose("mention")
             "compose_media" -> dialog = PostDialog.Compose("media")

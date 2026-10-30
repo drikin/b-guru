@@ -21,7 +21,7 @@ final class ClubVisibilityUITests: XCTestCase {
 
     func testMenuOpensTheSetting() {
         let app = launch()
-        let menu = app.buttons["一覧（ピン留め・ブックマーク・お気に入りの人）と部活の表示"]
+        let menu = app.buttons["一覧（ピン留め・ブックマーク・お気に入りの人）と表示の設定"]
         XCTAssertTrue(menu.waitForExistence(timeout: 8), "no lists menu on the timeline")
         menu.tap()
         let item = app.buttons["部活の表示…"]
@@ -49,7 +49,7 @@ final class ClubVisibilityUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["部活の表示"].waitForNonExistence(timeout: 4))
 
         // Opened again: the saved state (from the demo server), not the first one.
-        app.buttons["一覧（ピン留め・ブックマーク・お気に入りの人）と部活の表示"].tap()
+        app.buttons["一覧（ピン留め・ブックマーク・お気に入りの人）と表示の設定"].tap()
         app.buttons["部活の表示…"].tap()
         XCTAssertTrue(app.switches["club-apple"].waitForExistence(timeout: 4))
         XCTAssertTrue(waitValue(app.switches["club-apple"], "0"))

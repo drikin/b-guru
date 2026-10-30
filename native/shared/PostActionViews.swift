@@ -916,6 +916,9 @@ struct PostActionPresenter: ViewModifier {
             .panelDialog($actions.clubVisibility) { _ in
                 if let path = actions.clubVisibilityPath { ClubVisibilityDialog(path: path, timeline: timeline) }
             }
+            .panelDialog($actions.mutedWords) { _ in
+                if let path = actions.mutedWordsPath { MutedWordsDialog(path: path, timeline: timeline) }
+            }
             .panelDialog($actions.picker, detents: [.height(360)]) { req in
                 ReactionPicker(onPick: { e in
                     actions.picker = nil

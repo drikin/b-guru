@@ -38,6 +38,8 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -91,6 +93,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.text.input.ImeAction
 import kotlinx.coroutines.launch
 
 /** The operation dialog on screen (TimelineStore.dialog): one at a time, over the list or a thread. */
@@ -107,6 +110,7 @@ sealed interface PostDialog {
     data class List(val filter: String) : PostDialog
     /** 部活の表示. */
     data object ClubVisibility : PostDialog
+    data object MutedWords : PostDialog
 }
 
 /** The Snackbar's message; `undo` = tap it to take the change back (5 seconds). */
@@ -131,6 +135,7 @@ fun PostDialogHost(timeline: TimelineStore, capabilities: Capabilities?, onOpenT
         is PostDialog.Club -> ClubDialog(timeline, d.post)
         is PostDialog.List -> PostListSheet(timeline, d.filter, onOpenThread)
         PostDialog.ClubVisibility -> ClubVisibilitySheet(timeline)
+        PostDialog.MutedWords -> MutedWordsSheet(timeline)
     }
 }
 
@@ -543,6 +548,66 @@ private fun ClubVisibilitySheet(timeline: TimelineStore) {
                             modifier = Modifier.semantics { contentDescription = "$name を表示" })
                     }
                     HorizontalDivider()
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
+    }
+}
+
+/** NG ワード（Web と同じ設定。サーバに保存されて端末をまたぐ）。言葉を含むほかの人の投稿・返信は
+ *  タイムラインに出ず、知らせも来ない（自分の投稿は出る）。2026-10-29 ドリキン。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MutedWordsSheet(timeline: TimelineStore) {
+    LaunchedEffect(Unit) { timeline.loadMutedWords() }
+    val scope = rememberCoroutineScope()
+    var draft by remember { mutableStateOf("") }
+    ModalBottomSheet(onDismissRequest = { timeline.closeMutedWords() }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding()) {
+            Text("NG ワード", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            Text("ここに入れた言葉を含む投稿・返信はタイムラインに出ず、知らせも来ません（自分の投稿は出ます）。大文字小文字・全角半角は区別しません。Web と同じ設定です。",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            val words = timeline.mutedWords
+            val full = words != null && words.size >= timeline.mutedWordsMax
+            fun add() {
+                scope.launch { if (timeline.addMutedWord(draft)) draft = "" }
+            }
+            if (words != null) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it.take(timeline.mutedWordsMaxLength) },
+                    placeholder = { Text("言葉を入力") },
+                    singleLine = true,
+                    enabled = !timeline.mutedWordsBusy && !full,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { add() }),
+                    modifier = Modifier.weight(1f).semantics { contentDescription = "NG ワードを入力" },
+                )
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = { add() }, enabled = !timeline.mutedWordsBusy && !full && draft.isNotBlank()) { Text("追加") }
+            }
+            timeline.mutedWordsError?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+            }
+            if (words == null) {
+                if (timeline.mutedWordsError == null) CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally).padding(24.dp))
+            } else if (words.isEmpty()) {
+                Text("まだありません", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.CenterHorizontally).padding(24.dp))
+            } else LazyColumn(Modifier.fillMaxWidth()) {
+                items(words, key = { it }) { w ->
+                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(w, Modifier.weight(1f))
+                        IconButton(onClick = { timeline.removeMutedWord(w) }, enabled = !timeline.mutedWordsBusy) {
+                            Icon(Icons.Default.Close, "「$w」を消す")
+                        }
+                    }
+                    HorizontalDivider()
+                }
+                item {
+                    Text("${words.size} / ${timeline.mutedWordsMax} 個", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
                 }
             }
             Spacer(Modifier.height(12.dp))

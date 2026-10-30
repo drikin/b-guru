@@ -97,20 +97,23 @@ struct TimelineScreen: View {
     /// ピン留め・ブックマーク・お気に入りの人 (only those the server offers).
     @ViewBuilder private var listsMenu: some View {
         let kinds = actions.lists
-        if !kinds.isEmpty || actions.clubVisibilityPath != nil {
+        if !kinds.isEmpty || actions.clubVisibilityPath != nil || actions.mutedWordsPath != nil {
             Menu {
                 ForEach(kinds) { k in
                     Button(k.title, systemImage: k.systemImage) { actions.list = k }
                 }
+                if actions.clubVisibilityPath != nil || actions.mutedWordsPath != nil { Divider() }
                 if actions.clubVisibilityPath != nil {
-                    Divider()
                     Button("部活の表示…", systemImage: "eye") { actions.clubVisibility = ClubVisibilityRequest() }
+                }
+                if actions.mutedWordsPath != nil {
+                    Button("NG ワード…", systemImage: "nosign") { actions.mutedWords = MutedWordsRequest() }
                 }
             } label: {
                 Image(systemName: "list.bullet")
             }
             .menuIndicator(.hidden)
-            .accessibilityLabel("一覧（ピン留め・ブックマーク・お気に入りの人）と部活の表示")
+            .accessibilityLabel("一覧（ピン留め・ブックマーク・お気に入りの人）と表示の設定")
         }
     }
 
@@ -134,6 +137,7 @@ struct TimelineScreen: View {
         case "bookmarks": actions.list = .bookmarks
         case "favorites": actions.list = .favorites
         case "clubs": actions.clubVisibility = ClubVisibilityRequest()
+        case "muted": actions.mutedWords = MutedWordsRequest()
         case "compose": composing = true
         case "toast": if let p = timeline.posts.first(where: { $0.id == 4 }) { actions.toggleBookmark(p) }
         case "thread": open(120)

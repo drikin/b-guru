@@ -20,6 +20,8 @@ class PostOpsTest {
         override suspend fun setClub(id: Long, key: String?) = answer("setClub", key)
         override suspend fun hiddenClubs(path: String) = answer("hiddenClubs", setOf("car"))
         override suspend fun setClubHidden(path: String, club: String, hidden: Boolean) = answer("setClubHidden:$club:$hidden", hidden)
+        override suspend fun mutedWords(path: String) = answer("mutedWords", MutedWordsResponse(listOf("ネタバレ"), 50, 40))
+        override suspend fun setMutedWords(path: String, words: List<String>) = answer("setMutedWords:${words.joinToString(",")}", words.map { it.lowercase() })
         override suspend fun vote(id: Long, optionId: Long): PostPoll? = answer("vote", null)
         override suspend fun togglePostReaction(id: Long, emoji: String) = answer("react", PostReactionToggle(true, listOf(PostReactionToggle.Count(emoji, 1))))
     }
@@ -74,6 +76,47 @@ class PostOpsTest {
         val s = store(fake) // an older server: no club_visibility
         s.loadHiddenClubs()
         assertNull(s.hiddenClubs)
+        assertEquals(emptyList<String>(), fake.calls)
+    }
+
+    // NG ワード（2026-10-29）
+    private fun mutedStore(fake: PostOpsApi): TimelineStore {
+        val s = store(fake)
+        s.capabilities = ApiJson.decodeFromString("""{"features":{"posts":{"muted_words":"/api/agent/muted-words"}}}""")
+        return s
+    }
+
+    @Test fun mutedWordsLoadAddAndRemove() {
+        val fake = FakeOps(error = null)
+        val s = mutedStore(fake)
+        s.loadMutedWords()
+        assertEquals(listOf("ネタバレ"), s.mutedWords)
+        assertTrue(kotlinx.coroutines.runBlocking { s.addMutedWord("  ABC ") })
+        assertEquals(listOf("ネタバレ", "abc"), s.mutedWords) // the server's form
+        assertTrue(!kotlinx.coroutines.runBlocking { s.addMutedWord("   ") }) // nothing to add
+        s.removeMutedWord("ネタバレ")
+        assertEquals(listOf("abc"), s.mutedWords)
+        assertEquals(listOf("mutedWords", "setMutedWords:ネタバレ,ABC", "setMutedWords:abc"), fake.calls)
+        assertNull(s.mutedWordsError)
+    }
+
+    @Test fun mutedWordsKeepTheListOnFailure() {
+        val ok = FakeOps(error = null)
+        val s = mutedStore(ok)
+        s.loadMutedWords()
+        val bad = FakeOps()
+        val s2 = mutedStore(bad)
+        s2.loadMutedWords()
+        assertNull(s2.mutedWords) // could not read: nothing to change
+        assertEquals("この操作はできません", s2.mutedWordsError)
+        assertEquals(listOf("ネタバレ"), s.mutedWords)
+    }
+
+    @Test fun mutedWordsNeedTheServer() {
+        val fake = FakeOps(error = null)
+        val s = store(fake) // an older server: no muted_words
+        s.loadMutedWords()
+        assertNull(s.mutedWords)
         assertEquals(emptyList<String>(), fake.calls)
     }
 
