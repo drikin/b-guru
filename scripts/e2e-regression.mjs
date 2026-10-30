@@ -2395,12 +2395,19 @@ console.log("\n6k. Reactions on posts");
         const t = document.querySelector('[data-cx="reaction-who"]');
         if (!t) return null;
         const txt = t.textContent.trim();
-        return { txt, hasAt: /@/.test(txt), hasCount: /\\d+人/.test(txt) };
+        // 吹き出しが折り返す（でででん 2026-10-30: 既定の nowrap で長い名前の列が端で切れた）
+        const ws = t.parentElement ? getComputedStyle(t.parentElement).whiteSpace : null;
+        return { txt, hasAt: /@/.test(txt), hasCount: /\\d+人/.test(txt), ws };
       })()`);
       check(
         "hovering a reaction shows who reacted",
         !!who && who.hasCount && who.txt.length > 2,
         who ? `tooltip="${who.txt}"` : "tooltip did not open"
+      );
+      check(
+        "the reaction tooltip wraps long name lists (not white-space: nowrap)",
+        !!who && who.ws !== "nowrap",
+        who ? `white-space=${who.ws}` : "n/a"
       );
       check(
         "the reactor list shows names, not email addresses",
