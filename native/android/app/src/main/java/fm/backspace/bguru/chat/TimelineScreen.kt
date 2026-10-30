@@ -14,6 +14,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.Arrangement
@@ -479,18 +480,38 @@ fun PostRow(
 /** The menu items that need the timeline store (always there when signed in or in the demo). */
 private val OPS_ITEMS = setOf(PostActions.Item.BOOKMARK, PostActions.Item.FAVORITE, PostActions.Item.REACT, PostActions.Item.PIN, PostActions.Item.CLUB, PostActions.Item.EDIT, PostActions.Item.DELETE)
 
-/** Full screen, swipe between images, pinch to zoom. */
+/** Full screen, swipe between images, pinch to zoom, swipe down to close (like the iPhone app;
+ *  drikin 2026-10-30). */
 @Composable
 fun ImageViewer(images: List<String>, start: Int, onClose: () -> Unit) {
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
+        // How far the picture is pulled down (px); the background fades with it.
+        var dragY by remember { mutableStateOf(0f) }
+        val back by androidx.compose.animation.core.animateFloatAsState(dragY, label = "pull")
+        val shown = if (dragY == 0f) back else dragY
+        val closeAt = with(androidx.compose.ui.platform.LocalDensity.current) { 100.dp.toPx() }
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 1f - (shown / (closeAt * 4)).coerceAtMost(0.7f)))) {
             val pager = rememberPagerState(initialPage = start) { images.size }
             HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
                 var scale by remember { mutableStateOf(1f) }
                 val state = rememberTransformableState { zoom, _, _ -> scale = (scale * zoom).coerceIn(1f, 5f) }
-                RemoteImage(images[page], maxPx = 2048, modifier = Modifier.fillMaxSize().transformable(state).graphicsLayer(scaleX = scale, scaleY = scale)
-                    .pointerInput(Unit) { detectTapGestures(onDoubleTap = { scale = if (scale > 1f) 1f else 2.5f }) },
-                    contentScale = ContentScale.Fit) { CircularProgressIndicator(Modifier.align(Alignment.Center)) }
+                val pull = Modifier.pointerInput(scale > 1f) {
+                    // At 1× a downward drag pulls the picture; far enough on release closes it.
+                    if (scale > 1f) return@pointerInput
+                    detectVerticalDragGestures(
+                        onDragEnd = { if (dragY > closeAt) onClose() else dragY = 0f },
+                        onDragCancel = { dragY = 0f },
+                    ) { change, amount -> change.consume(); dragY = (dragY + amount).coerceAtLeast(0f) }
+                }
+                val s = 1f - (shown / (closeAt * 15)).coerceAtMost(0.15f)
+                // The pull sits on the whole page, so it also works while the picture is loading.
+                Box(Modifier.fillMaxSize().then(pull).graphicsLayer(scaleX = s, scaleY = s, translationY = shown), contentAlignment = Alignment.Center) {
+                    RemoteImage(images[page], maxPx = 2048, modifier = Modifier.fillMaxSize()
+                        .transformable(state, canPan = { scale > 1f })
+                        .graphicsLayer(scaleX = scale, scaleY = scale)
+                        .pointerInput(Unit) { detectTapGestures(onDoubleTap = { scale = if (scale > 1f) 1f else 2.5f }) },
+                        contentScale = ContentScale.Fit) { CircularProgressIndicator() }
+                }
             }
             IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp)) {
                 Icon(Icons.Default.Close, "閉じる", tint = Color.White)

@@ -2139,6 +2139,7 @@ function PostCard({
               // Resized, EXIF-free copies (lib/media-variants.ts): the card is at
               // most 360 px wide, so 640w covers 1x/2x phones and 1280w big 2x
               // screens. The lightbox (onPreview) still opens the 2048 px copy.
+              data-cx="post-image"
               src={mediaSized(src, 640)}
               srcSet={mediaSrcSet(src)}
               sizes={post.images.length === 1 ? "(max-width: 420px) 100vw, 360px" : "(max-width: 600px) 50vw, 300px"}
@@ -5158,6 +5159,9 @@ export default function Home() {
   const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [previewScale, setPreviewScale] = useState(1);
   const [previewPan, setPreviewPan] = useState({ x: 0, y: 0 });
+  // How far the picture has been pulled down (swipe down closes it, like the apps'
+  // photo viewers; drikin 2026-10-30). 0 while not pulling.
+  const [previewDrag, setPreviewDrag] = useState(0);
   // Pinch / pan / swipe gesture bookkeeping for the lightbox.
   const lbPointers = useRef(new Map<number, { x: number; y: number }>());
   const lbGesture = useRef({
@@ -5167,7 +5171,7 @@ export default function Home() {
     startY: 0,
     startT: 0,
     startPan: { x: 0, y: 0 },
-    mode: "none" as "none" | "pinch" | "pan" | "tap",
+    mode: "none" as "none" | "pinch" | "pan" | "tap" | "dismiss",
   });
   // Open the full-screen lightbox, remembering the surrounding image group so
   // keyboard arrows / swipes can switch between images.
@@ -5175,6 +5179,7 @@ export default function Home() {
     setPreviewImages(group && group.length ? group : [src]);
     setPreviewScale(1);
     setPreviewPan({ x: 0, y: 0 });
+    setPreviewDrag(0);
     setPreviewImage(src);
   }, []);
   const navigatePreview = useCallback(
@@ -13509,11 +13514,13 @@ export default function Home() {
       {/* Full-screen image lightbox (arrow keys / swipe switch images, pinch zoom & pan) */}
       {previewImage && (
         <div
+          data-cx="lightbox"
           style={{
             position: "fixed",
             inset: 0,
             zIndex: 9999,
-            background: "rgba(0,0,0,0.94)",
+            // Fades as the picture is pulled down.
+            background: `rgba(0,0,0,${0.94 * (1 - Math.min(previewDrag / 400, 0.7))})`,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -13557,6 +13564,16 @@ export default function Home() {
               const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
               const ns = Math.min(6, Math.max(1, (g.startScale * dist) / g.startDist));
               setPreviewScale(ns);
+            } else if (g.mode === "tap" && lbPointers.current.size === 1) {
+              // At 1×, a mostly-downward drag pulls the picture to close it.
+              const dx = x - g.startX;
+              const dy = y - g.startY;
+              if (dy > 12 && dy > Math.abs(dx)) {
+                g.mode = "dismiss";
+                setPreviewDrag(dy);
+              }
+            } else if (g.mode === "dismiss") {
+              setPreviewDrag(Math.max(0, y - g.startY));
             } else if (g.mode === "pan") {
               setPreviewPan({
                 x: g.startPan.x + (x - g.startX),
@@ -13579,6 +13596,11 @@ export default function Home() {
                   setPreviewImage(null);
                 }
               }
+              if (g.mode === "dismiss") {
+                // Far enough, or a quick flick: close. Otherwise it springs back.
+                if (dy > 100 || (dy > 40 && dt < 300)) setPreviewImage(null);
+                else setPreviewDrag(0);
+              }
               if (g.mode === "pan") {
                 const maxX = Math.max(0, ((previewScale - 1) * window.innerWidth) / 2);
                 const maxY = Math.max(0, ((previewScale - 1) * window.innerHeight) / 2);
@@ -13594,6 +13616,7 @@ export default function Home() {
           onPointerCancel={() => {
             lbPointers.current.clear();
             lbGesture.current.mode = "none";
+            setPreviewDrag(0);
           }}
         >
           {/* Close button */}
@@ -13677,7 +13700,7 @@ export default function Home() {
               display: "block",
               userSelect: "none",
               WebkitUserSelect: "none",
-              transform: `translate(${previewPan.x}px, ${previewPan.y}px) scale(${previewScale})`,
+              transform: `translate(${previewPan.x}px, ${previewPan.y + previewDrag}px) scale(${previewScale * (1 - Math.min(previewDrag / 1500, 0.15))})`,
               transition: lbPointers.current.size > 0 ? "none" : "transform 0.18s ease",
               cursor: previewScale > 1 ? "grab" : "zoom-in",
             }}

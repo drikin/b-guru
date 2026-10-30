@@ -118,7 +118,7 @@ struct TimelineScreen: View {
     }
 
     #if DEBUG
-    /// Dev only: `-demoAction edit|delete|pollEdit|pollVoters|picker|pins|bookmarks|compose|composePoll|toast`
+    /// Dev only: `-demoAction edit|delete|pollEdit|pollVoters|picker|pins|bookmarks|compose|composePoll|toast|image`
     /// (BGURU_DEMO_ACTION on iPhone) opens that screen of the offline demo at once.
     private func debugOpenAction() async {
         let a = CommandLine.arguments
@@ -141,6 +141,7 @@ struct TimelineScreen: View {
         case "compose": composing = true
         case "toast": if let p = timeline.posts.first(where: { $0.id == 4 }) { actions.toggleBookmark(p) }
         case "thread": open(120)
+        case "image": if let p = timeline.posts.first(where: { !($0.images ?? []).isEmpty }) { viewing = ImageViewerItem(images: p.images ?? [], index: 0) }
         default: break
         }
     }
@@ -604,7 +605,7 @@ struct PostRow: View, Equatable {
     }
 }
 
-/// Full screen, swipe between images, pinch to zoom.
+/// Full screen, swipe between images, pinch to zoom, swipe down to close (iPhone).
 struct ImageViewer: View {
     let item: ImageViewerItem
     /// Set when laid over a view (the Mac); otherwise it was presented and dismisses.
@@ -615,11 +616,13 @@ struct ImageViewer: View {
         if let onClose { onClose() } else { environmentDismiss() }
     }
     @State private var index = 0
+    /// How far the picture is pulled down (iPhone: swipe down closes it, like Photos; drikin 2026-10-30).
+    @State private var dragY: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
             #if os(iOS)
-            Color.black.ignoresSafeArea()
+            Color.black.opacity(1 - min(dragY / 400, 0.7)).ignoresSafeArea()
             #else
             // A click outside the picture closes it, as does Esc (Ryu 2026-10-18).
             Color.black.ignoresSafeArea()
@@ -629,10 +632,15 @@ struct ImageViewer: View {
             #if os(iOS)
             TabView(selection: $index) {
                 ForEach(Array(item.images.enumerated()), id: \.offset) { i, path in
-                    ZoomableImage(path: path).tag(i)
+                    ZoomableImage(path: path, onPull: { dragY = $0 }, onRelease: { y, v in
+                        // Far enough, or a quick flick: close. Otherwise it springs back.
+                        if y > 100 || v > 800 { dismiss() } else { withAnimation(.spring(duration: 0.25)) { dragY = 0 } }
+                    }).tag(i)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: item.images.count > 1 ? .automatic : .never))
+            .offset(y: dragY)
+            .scaleEffect(1 - min(dragY / 1500, 0.15))
             #else
             if item.images.indices.contains(index) {
                 // Centred; the empty space around it lets clicks through to the background.
@@ -693,6 +701,9 @@ struct ImageViewer: View {
 /// （ドリキン 2026-10-27「画像の中心しか拡大できない」）。等倍のあいだの横スワイプは TabView の次の写真へ。
 private struct ZoomableImage: UIViewRepresentable {
     let path: String
+    /// A downward pull at 1×: how far (points), then the release (distance, downward speed).
+    var onPull: (CGFloat) -> Void = { _ in }
+    var onRelease: (CGFloat, CGFloat) -> Void = { _, _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -705,16 +716,40 @@ private struct ZoomableImage: UIViewRepresentable {
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.doubleTap(_:)))
         tap.numberOfTapsRequired = 2
         v.addGestureRecognizer(tap)
+        let pull = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.pull(_:)))
+        pull.delegate = context.coordinator
+        v.addGestureRecognizer(pull)
+        context.coordinator.parent = self
         return v
     }
 
     func updateUIView(_ v: ZoomScrollView, context: Context) {
         context.coordinator.host?.rootView = MediaImage(path: path, contentMode: .fit, maxPixel: 2560)
+        context.coordinator.parent = self
     }
 
     @MainActor
-    final class Coordinator: NSObject, UIScrollViewDelegate {
+    final class Coordinator: NSObject, UIScrollViewDelegate, UIGestureRecognizerDelegate {
         var host: UIHostingController<MediaImage>?
+        var parent: ZoomableImage?
+
+        /// Only a mostly-downward drag at 1× pulls (sideways goes to the next picture, zoomed pans).
+        func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+            guard let pan = g as? UIPanGestureRecognizer, let v = pan.view as? ZoomScrollView else { return true }
+            guard v.zoomScale <= 1 else { return false }
+            let s = pan.velocity(in: v)
+            return s.y > 0 && s.y > abs(s.x)
+        }
+
+        @objc func pull(_ g: UIPanGestureRecognizer) {
+            let y = max(0, g.translation(in: g.view).y)
+            switch g.state {
+            case .changed: parent?.onPull(y)
+            case .ended: parent?.onRelease(y, g.velocity(in: g.view).y)
+            case .cancelled, .failed: parent?.onRelease(0, 0)
+            default: break
+            }
+        }
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? { (scrollView as? ZoomScrollView)?.content }
 

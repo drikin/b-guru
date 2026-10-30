@@ -2427,6 +2427,46 @@ console.log("\n6k. Reactions on posts");
     await page.waitForTimeout(1500);
   }
 
+  // The image lightbox closes with a swipe down; a short pull springs back
+  // (drikin 2026-10-30). Mouse drags drive the same pointer handlers as touch.
+  {
+    const img = await page.evaluate(`(() => {
+      const el = document.querySelector('[data-cx="post-image"]');
+      if (!el) return null;
+      el.scrollIntoView({ block: "center" });
+      return true;
+    })()`);
+    if (!img) {
+      console.log("  (skip) no post image in the feed for the lightbox swipe check");
+    } else {
+      await page.waitForTimeout(500);
+      await page.evaluate(`document.querySelector('[data-cx="post-image"]').click()`);
+      await page.waitForTimeout(800);
+      const open = () => page.evaluate(`!!document.querySelector('[data-cx="lightbox"]')`);
+      const vp = page.viewportSize() ?? { width: 1280, height: 800 };
+      const cx = vp.width / 2, cy = vp.height * 0.35;
+      const drag = async (dy) => {
+        await page.mouse.move(cx, cy);
+        await page.mouse.down();
+        for (let i = 1; i <= 8; i++) {
+          await page.mouse.move(cx, cy + (dy * i) / 8);
+          await page.waitForTimeout(60);
+        }
+        await page.mouse.up();
+        await page.waitForTimeout(500);
+      };
+      const opened = await open();
+      check("tapping a post image opens the lightbox", opened);
+      if (opened) {
+        await drag(30);
+        check("a short pull down leaves the lightbox open", await open());
+        await drag(260);
+        check("a swipe down closes the lightbox", !(await open()));
+      }
+      if (await open()) await page.keyboard.press("Escape");
+    }
+  }
+
   // The picker must open and offer more than the heart.
   await page.evaluate(`document.querySelector('[data-cx="reaction-add"]')?.click()`);
   await page.waitForTimeout(1200);
