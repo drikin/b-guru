@@ -18,6 +18,7 @@ import { minigameEnabledFor } from "@/lib/minigame";
 import { watchEnabledFor } from "@/lib/watch";
 import { ensureOffkaiSweeper, offkaiEnabledFor } from "@/lib/offkai";
 import { dmEnabledFor, ensureDmSweeper } from "@/lib/dm";
+import { isMutedFor } from "@/lib/muted-words";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -97,6 +98,23 @@ export async function GET(req: NextRequest) {
           } catch {
             // stream closed
           }
+          return;
+        }
+        // NG ワード (2026-10-29): a new post or comment this member's timeline hides is not
+        // announced (the web counts these for the NEW badge). One lookup per create, only for
+        // members with words.
+        if (event.type === "post" && event.action === "create" && email) {
+          const ev = event;
+          void isMutedFor(email, [ev.postId])
+            .catch(() => false)
+            .then((muted) => {
+              if (muted || disconnected) return;
+              try {
+                controller.enqueue(encoder.encode(`event: post\ndata: ${JSON.stringify(ev)}\n\n`));
+              } catch {
+                // stream closed
+              }
+            });
           return;
         }
         try {
