@@ -6,6 +6,7 @@ import { resolveDisplayNames, cleanDisplayName } from "./display-name";
 import { emailToUserId, emailToUserIds } from "./user";
 import { emitPersonal } from "./personal-live";
 import { pushPersonalNotification, syncRead } from "./push-notify";
+import { isMutedFor } from "./muted-words";
 
 /**
  * A notification as serialized to the client.
@@ -47,7 +48,12 @@ export async function createNotification(input: {
   postId?: number | null;
   replyId?: number | null;
   text: string;
-}): Promise<Notification> {
+}): Promise<Notification | null> {
+  // NG ワード (drikin 2026-10-29): a reply/mention about a post hidden from the recipient's
+  // timeline (the reply itself or the post it answers) is not made at all — no list entry, no push.
+  if ((input.type === "reply" || input.type === "mention") && (await isMutedFor(input.userEmail, [input.replyId, input.postId]))) {
+    return null;
+  }
   // De-duplicate: if an identical unread notification already exists, skip.
   const dup = await pool.query(
     `SELECT id FROM notifications

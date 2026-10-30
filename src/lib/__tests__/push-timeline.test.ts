@@ -25,6 +25,11 @@ vi.mock("../push-devices", () => ({
   removePushDevice: async () => {},
 }));
 
+// NG ワードで隠れる人は外す（2026-10-29）。ここでは「mw-」で始まる人に隠れることにする。
+vi.mock("../muted-words", () => ({
+  mutedRecipients: async (_postId: number, emails: string[]) => new Set(emails.filter((e) => e.startsWith("mw-"))),
+}));
+
 import { pushNewPost, buildPushPayload, __resetThrottleForTests } from "../push-notify";
 
 const who = (token: string) => devices.find((d) => d.apnsToken === token)?.email.split("@")[0];
@@ -59,6 +64,12 @@ describe("タイムラインの新着投稿のプッシュ", () => {
     devices = [dev("drikin@x.com", true, true), dev("nori@x.com", true, false)];
     await pushNewPost(5, "someone@x.com");
     expect(sent.map((s) => who(s.token))).toEqual(["nori"]);
+  });
+
+  it("NG ワードで隠れる人には送らない（その人の 20 秒の枠も使わない）", async () => {
+    devices = [dev("drikin@x.com", true), dev("mw-nori@x.com", true)];
+    await pushNewPost(8, "someone@x.com");
+    expect(sent.map((s) => who(s.token))).toEqual(["drikin"]);
   });
 
   it("同じ人へは 20 秒に 1 回", async () => {

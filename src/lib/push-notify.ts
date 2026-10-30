@@ -15,6 +15,7 @@ import { activePushDevices, markPushSent, pushDeviceOwners, removePushDevice, ty
 import { isMentionedIn, mentionNamesFor } from "./chat-mention";
 import { resolveDisplayNames } from "./display-name";
 import { emitPersonal, type SyncScope } from "./personal-live";
+import { mutedRecipients } from "./muted-words";
 
 export type PushKind =
   | "chat_mention" | "chat_new" | "reply" | "timeline_new" | "shogi_offer" | "shogi_turn" | "dm" | "offkai_start"
@@ -214,7 +215,11 @@ export async function pushNewPost(postId: number, authorEmail: string): Promise<
   const devices = (await activePushDevices(null)).filter(
     (d) => d.notifyTimeline && d.email !== author && !(quiet && d.quietHours)
   );
-  const recipients = [...new Set(devices.map((d) => d.email))].filter((e) => !throttled(e, "timeline_new"));
+  const candidates = [...new Set(devices.map((d) => d.email))];
+  // NG ワード (2026-10-29): not to members whose timeline hides this post. Checked before the
+  // throttle so a hidden post does not use up someone's slot.
+  const muted = await mutedRecipients(postId, candidates);
+  const recipients = candidates.filter((e) => !muted.has(e) && !throttled(e, "timeline_new"));
   if (recipients.length === 0) return 0;
   const allowed = new Set(recipients);
   return deliver(

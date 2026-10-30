@@ -3,12 +3,14 @@
 import { pool } from "@/lib/db";
 import { POST_SELECT, mapRow, type FeedPost } from "@/lib/posts";
 import type { AgentContext } from "@/lib/agent-auth";
+import { noMutedWordSql } from "@/lib/muted-words";
 
 export async function listPostsSince(
   ctx: AgentContext,
   sinceId: number,
   limit: number,
-  hiddenClubs: string[]
+  hiddenClubs: string[],
+  mutedWords: string[] = []
 ): Promise<FeedPost[]> {
   // POST_SELECT は $1 を見ている人のメールとして使う（2026-10-28 まで $1 が sinceId で、SQL も
   // 「SELECT SELECT」・GROUP BY なしで毎回失敗していた）。
@@ -24,11 +26,17 @@ export async function listPostsSince(
           .join(",")}))`
       : "";
   if (hiddenClubs.length > 0) params.push(...hiddenClubs);
+  // NG ワード（2026-10-29）: 含むほかの人の投稿は出さない。
+  let mutedSql = "";
+  if (mutedWords.length > 0) {
+    params.push(mutedWords);
+    mutedSql = ` AND (p.author_email = $1 OR ${noMutedWordSql("p.text", `$${params.length}`)})`;
+  }
   const r = await pool.query(
     `${POST_SELECT}
        WHERE p.parent_id IS NULL AND p.is_whisper IS NOT TRUE
          AND ${laExpr} > (SELECT ${la("p2")} FROM posts p2 WHERE p2.id = $2)
-         ${hiddenSql}
+         ${hiddenSql}${mutedSql}
        GROUP BY p.id
        ORDER BY ${laExpr} DESC
        LIMIT $3`,

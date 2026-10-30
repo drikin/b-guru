@@ -7,6 +7,7 @@ import { listPosts } from "@/lib/posts";
 import { listPostsSince } from "@/lib/agent-posts-since";
 import { pool } from "@/lib/db";
 import { getHiddenClubs } from "@/lib/club-visibility";
+import { getMutedWords } from "@/lib/muted-words";
 import { getFavoriteEmails } from "@/lib/favorites";
 import { getBookmarkedPostIds } from "@/lib/bookmarks";
 import { userIdToEmail } from "@/lib/user";
@@ -38,7 +39,7 @@ export async function GET(req: NextRequest) {
     //   （共通 helper・MCP get_posts と単一正本）。
     if (!cursor && Number.isInteger(sinceIdRaw) && sinceIdRaw > 0) {
       const hiddenArr = Array.from(await getHiddenClubs(ctx.email));
-      const posts = await listPostsSince(ctx, sinceIdRaw, limit, hiddenArr);
+      const posts = await listPostsSince(ctx, sinceIdRaw, limit, hiddenArr, await getMutedWords(ctx.email));
       const extras = await timelineExtras(posts, ctx.email, include);
       return {
         status: 200,
@@ -67,6 +68,7 @@ export async function GET(req: NextRequest) {
       search: search ?? undefined,
       club: club ?? undefined,
       excludeClubs: Array.from(hiddenSet),
+      mutedWords: await getMutedWords(ctx.email),
       favoriteAuthors,
       bookmarkedIds,
       viewerEmail: ctx.email,

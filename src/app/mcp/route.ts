@@ -28,6 +28,7 @@ import {
 import { clientIp } from "@/lib/client-ip";
 import { listPosts, getPostThread } from "@/lib/posts";
 import { getHiddenClubs } from "@/lib/club-visibility";
+import { getMutedWords } from "@/lib/muted-words";
 import { getFavoriteEmails } from "@/lib/favorites";
 import { getBookmarkedPostIds } from "@/lib/bookmarks";
 import { userIdToEmail } from "@/lib/user";
@@ -154,7 +155,7 @@ function buildServer(ctx: AgentContext) {
         const rawSince = typeof args.since_id === "number" ? args.since_id : NaN;
         if (Number.isInteger(rawSince) && rawSince > 0) {
           const hiddenArr = Array.from(await getHiddenClubs(c.email));
-          return { apiVersion: 1, posts: (await listPostsSince(c, rawSince, limit, hiddenArr)).map(asAgentPostDto), next_cursor: null, has_more: true };
+          return { apiVersion: 1, posts: (await listPostsSince(c, rawSince, limit, hiddenArr, await getMutedWords(c.email))).map(asAgentPostDto), next_cursor: null, has_more: true };
         }
         const authorEmail = args.author_user_id ? await userIdToEmail(args.author_user_id) : undefined;
         if (args.author_user_id && !authorEmail) {
@@ -167,6 +168,7 @@ function buildServer(ctx: AgentContext) {
           search,
           club: args.club,
           excludeClubs: Array.from(hiddenSet),
+          mutedWords: await getMutedWords(c.email),
           favoriteAuthors,
           bookmarkedIds,
           viewerEmail: c.email,
@@ -194,7 +196,7 @@ function buildServer(ctx: AgentContext) {
     },
     async (args) => {
       const out = await withTool(req_of(ctx), "read", "get_thread", async (c) => {
-        const { post, replies } = await getPostThread(args.post_id, c.email);
+        const { post, replies } = await getPostThread(args.post_id, c.email, await getMutedWords(c.email));
         if (!post) return { error: "投稿が見つかりません", code: "not_found" };
         return { apiVersion: 1, post: agentPostDto(post), replies: replies.map(agentPostDto) };
       });
@@ -222,6 +224,7 @@ function buildServer(ctx: AgentContext) {
         const posts = await listPosts({
           search: q,
           excludeClubs: Array.from(hiddenSet),
+          mutedWords: await getMutedWords(c.email),
           viewerEmail: c.email,
           before: args.cursor || undefined,
           limit,

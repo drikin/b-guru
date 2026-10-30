@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPostThread } from "@/lib/posts";
 import { getSessionEmail } from "@/lib/session";
+import { getMutedWords } from "@/lib/muted-words";
 import { deleteOwnPost, editOwnPost } from "@/lib/post-actions";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +29,7 @@ export async function GET(
   const postId = await getPostId(params);
   if (postId === null) return NextResponse.json({ error: "不正な投稿ID" }, { status: 400, headers: NO_CACHE });
 
-  const { post, replies } = await getPostThread(postId, email);
+  const { post, replies } = await getPostThread(postId, email, await getMutedWords(email));
   if (!post) return NextResponse.json({ error: "投稿が見つかりません" }, { status: 404, headers: NO_CACHE });
   return NextResponse.json({ post, replies }, { headers: NO_CACHE });
 }

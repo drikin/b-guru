@@ -1,6 +1,7 @@
 /* GET /api/agent/posts/:id — スレッド1本（ルート + 返信）。スコープ read。 */
 import { NextRequest } from "next/server";
 import { getPostThread } from "@/lib/posts";
+import { getMutedWords } from "@/lib/muted-words";
 import { withAgent, type AgentContext } from "@/lib/agent-auth";
 import { deleteOwnPost, editOwnPost } from "@/lib/post-actions";
 import { agentUpdatePost, agentDeletePost, editScope } from "@/lib/agent-write";
@@ -18,7 +19,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     if (!Number.isInteger(id) || id <= 0) {
       return { status: 404, body: { error: "投稿が見つかりません", code: "not_found" }, headers: {} };
     }
-    const { post, replies } = await getPostThread(id, ctx.email);
+    const { post, replies } = await getPostThread(id, ctx.email, await getMutedWords(ctx.email));
     if (!post) {
       return { status: 404, body: { error: "投稿が見つかりません", code: "not_found" }, headers: {} };
     }

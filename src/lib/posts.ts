@@ -1,6 +1,7 @@
 /* Feed posts library: DB CRUD + image + URL preview helpers */
 import crypto from "crypto";
 import { pool } from "./db";
+import { noMutedWordSql } from "./muted-words";
 import { fetchUrlPreview, UrlPreview } from "./urlpreview";
 import { emitLive } from "./live";
 import { invalidateOnPostChange, sharedCache } from "./shared-cache";
@@ -344,6 +345,12 @@ function rebuildPoll(pj: any): PostPoll | null {
   });
 }
 
+/** ` AND (own OR no NG word)` for a query whose $1 is the viewer and whose $n is the words. */
+function viewerMutedSql(words: string[], viewerEmail: string, n: number): string {
+  if (words.length === 0) return "";
+  return ` AND (${viewerEmail ? "p.author_email = $1 OR " : ""}${noMutedWordSql("p.text", `$${n}`)})`;
+}
+
 /** Fetch root posts newest first (optionally filtered), each with its direct
  *  replies embedded (chronological) so the timeline can render them inline
  *  "inserted between the author's cards". */
@@ -368,6 +375,9 @@ export async function listPosts(options?: {
   /** Hide root posts whose club is in this set (per-user club visibility,
    *  drikin 2026-10-02). Empty/absent = show everything. */
   excludeClubs?: string[];
+  /** The viewer's NG words (lib/muted-words.ts, normalized): other people's root posts and
+   *  replies containing one are left out. Empty/absent = no filter. */
+  mutedWords?: string[];
   /** Restrict root posts to authors in this set (お気に入り timeline).
    *  Empty/absent = no restriction. Combined with club/search/cursor. */
   favoriteAuthors?: string[];
@@ -468,6 +478,15 @@ export async function listPosts(options?: {
     const ownSql = viewerEmail ? ` OR p.author_email = $1` : "";
     if (hideSql) clubSql += ` AND (p.club IS NULL${ownSql} OR NOT (${hideSql}))`;
   }
+  // NG ワード (drikin 2026-10-29): applies everywhere (club taps, profiles, search, bookmarks too);
+  // the viewer's own posts always show.
+  const muted = options?.mutedWords ?? [];
+  let mutedParam = "";
+  if (muted.length > 0) {
+    searchParams.push(muted);
+    mutedParam = `$${searchParams.length}`;
+    clubSql += ` AND (${viewerEmail ? "p.author_email = $1 OR " : ""}${noMutedWordSql("p.text", mutedParam)})`;
+  }
 
   // last_activity = max(post.created_at, newest reply.created_at). Repeated from
   // POST_SELECT so we can filter (cursor) and sort by it.
@@ -512,10 +531,10 @@ export async function listPosts(options?: {
   const ids = posts.map((p) => p.id);
   const replyRes = await pool.query(
     `${POST_SELECT}
-     WHERE p.parent_id = ANY($2::int[])
+     WHERE p.parent_id = ANY($2::int[])${viewerMutedSql(muted, viewerEmail, 3)}
      GROUP BY p.id
      ORDER BY p.created_at ASC`,
-    [viewerEmail, ids]
+    muted.length > 0 ? [viewerEmail, ids, muted] : [viewerEmail, ids]
   );
   const repliesByParent = new Map<number, FeedPost[]>();
   for (const r of replyRes.rows) {
@@ -539,13 +558,16 @@ export async function listPosts(options?: {
  */
 export async function getPostThread(
   id: number,
-  viewerEmail: string
+  viewerEmail: string,
+  /** The viewer's NG words: other people's replies containing one are left out. The opened post
+   *  itself is returned (it was asked for by id). */
+  mutedWords: string[] = []
 ): Promise<{ post: FeedPost | null; replies: FeedPost[] }> {
   const [postRes, replyRes] = await Promise.all([
     pool.query(`${POST_SELECT} WHERE p.id = $2 GROUP BY p.id LIMIT 1`, [viewerEmail, id]),
     pool.query(
-      `${POST_SELECT} WHERE p.parent_id = $2 GROUP BY p.id ORDER BY p.created_at ASC`,
-      [viewerEmail, id]
+      `${POST_SELECT} WHERE p.parent_id = $2${viewerMutedSql(mutedWords, viewerEmail, 3)} GROUP BY p.id ORDER BY p.created_at ASC`,
+      mutedWords.length > 0 ? [viewerEmail, id, mutedWords] : [viewerEmail, id]
     ),
   ]);
 
@@ -603,16 +625,17 @@ const hotRanking = invalidateOnPostChange(sharedCache(HOT_TTL_MS, computeHotRank
 
 export async function listHotTopics(
   viewerEmail: string,
-  limit = 5
+  limit = 5,
+  mutedWords: string[] = []
 ): Promise<FeedPost[]> {
   const ranked = (await hotRanking.get()).slice(0, Math.max(0, Math.min(limit, HOT_RANK_LIMIT)));
   if (ranked.length === 0) return [];
   const ids = ranked.map((r) => r.id);
   const res = await pool.query(
     `${POST_SELECT}
-     WHERE p.id = ANY($2::int[]) AND p.parent_id IS NULL
+     WHERE p.id = ANY($2::int[]) AND p.parent_id IS NULL${viewerMutedSql(mutedWords, viewerEmail, 3)}
      GROUP BY p.id`,
-    [viewerEmail, ids]
+    mutedWords.length > 0 ? [viewerEmail, ids, mutedWords] : [viewerEmail, ids]
   );
   const byId = new Map<number, FeedPost>(res.rows.map((r: { id: number }) => [r.id, mapRow(r)]));
   const posts: FeedPost[] = [];

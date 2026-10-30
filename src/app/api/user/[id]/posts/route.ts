@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listPosts } from "@/lib/posts";
 import { getSessionEmail } from "@/lib/session";
+import { getMutedWords } from "@/lib/muted-words";
 import { resolveEmailSegment } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const limit = Number.isInteger(rawLimit) ? Math.min(Math.max(rawLimit, 1), 50) : 30;
 
   try {
-    const posts = await listPosts({ viewerEmail: me, author: email, before, limit });
+    const posts = await listPosts({ viewerEmail: me, author: email, before, limit, mutedWords: await getMutedWords(me) });
     return NextResponse.json(
       { posts, hasMore: posts.length === limit },
       { headers: NO_CACHE }

@@ -394,6 +394,17 @@ const spec = {
         responses: { "200": { description: "{apiVersion, club, hidden}" }, "400": { description: "不正な部活キー" } },
       },
     },
+    "/api/agent/muted-words": {
+      get: {
+        summary: "自分の NG ワード（NFKC・小文字にそろえた形）。含むほかの人の投稿・返信はタイムラインに出ず、知らせも来ない（自分の投稿は出る）",
+        responses: { "200": { description: "{apiVersion, words: string[], max, maxLength}" } },
+      },
+      put: {
+        summary: "NG ワードを一覧ごと置き換える（アプリの鍵だけ）",
+        requestBody: { content: { "application/json": { schema: { type: "object", properties: { words: { type: "array", items: { type: "string" } } }, required: ["words"] } } } },
+        responses: { "200": { description: "{apiVersion, words}" }, "400": { description: "多すぎる・長すぎる" } },
+      },
+    },
     "/api/agent/notifications": {
       get: {
         summary: "自身の通知",

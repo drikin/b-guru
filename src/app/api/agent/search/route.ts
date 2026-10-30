@@ -2,6 +2,7 @@
 import { NextRequest } from "next/server";
 import { listPosts } from "@/lib/posts";
 import { getHiddenClubs } from "@/lib/club-visibility";
+import { getMutedWords } from "@/lib/muted-words";
 import { withAgent, sanitizeLikePattern } from "@/lib/agent-auth";
 import { NO_CACHE } from "../_lib";
 import { agentPostDto } from "@/lib/agent-post-dto";
@@ -26,6 +27,7 @@ export async function GET(req: NextRequest) {
     const posts = await listPosts({
       search: q,
       excludeClubs: Array.from(hiddenSet),
+      mutedWords: await getMutedWords(ctx.email),
       viewerEmail: ctx.email,
       before: cursor,
       limit,

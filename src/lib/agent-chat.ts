@@ -290,6 +290,8 @@ export function agentCapabilities(
         club_change: app,
         // 部活の表示・非表示（GET は読むだけ、PUT { club, hidden } はアプリの鍵だけ）。2026-10-28
         club_visibility: app ? "/api/agent/clubs/visibility" : null,
+        // NG ワード（GET は読むだけ、PUT { words } はアプリの鍵だけ）。2026-10-29
+        muted_words: app ? "/api/agent/muted-words" : null,
         mentions: can("read") ? "/api/agent/members" : null,
       },
       stream: {

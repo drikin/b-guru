@@ -146,11 +146,11 @@ d("段階 3 の操作（DB）", () => {
     it("capabilities: アプリの鍵だけ edit・外部の post だけの鍵は edit も delete も無い・write は本文だけ", async () => {
       const { GET } = await import("@/app/api/agent/capabilities/route");
       const caps = async (t: string) => (await (await GET(req("http://x/api/agent/capabilities", t))).json()).features.posts;
-      expect(await caps(appToken)).toMatchObject({ edit: true, delete: true, edit_text_only: false, pin: true, poll: true, video: true, favorites: true, club_change: true, bookmarks_set: true, club_visibility: "/api/agent/clubs/visibility" });
+      expect(await caps(appToken)).toMatchObject({ edit: true, delete: true, edit_text_only: false, pin: true, poll: true, video: true, favorites: true, club_change: true, bookmarks_set: true, club_visibility: "/api/agent/clubs/visibility", muted_words: "/api/agent/muted-words" });
       // 外部の鍵は今までできたことだけ（新しい操作は false）
       expect(await caps(extPostToken)).toMatchObject({
         edit: false, delete: false, edit_text_only: false, whisper: true, bookmarks: true,
-        video: false, audio: false, poll: false, poll_vote: false, poll_edit: false, pin: false, favorites: false, club_select: false, club_change: false, club_visibility: null,
+        video: false, audio: false, poll: false, poll_vote: false, poll_edit: false, pin: false, favorites: false, club_select: false, club_change: false, club_visibility: null, muted_words: null,
       });
       expect(await caps(writeToken)).toMatchObject({ edit: false, delete: true, edit_text_only: true, pin: false, poll_vote: false, favorites: false });
     });

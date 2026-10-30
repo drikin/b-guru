@@ -426,6 +426,16 @@ export async function initSchema() {
       PRIMARY KEY (email, club_key)
     );
 
+    -- Per-user NG words (drikin 2026-10-29): posts and replies whose text contains one of the
+    -- viewer's words never show on that viewer's timeline (own posts always show), and no
+    -- notification is made for them. Stored normalized (NFKC + lower, lib/muted-words.ts).
+    CREATE TABLE IF NOT EXISTS muted_words (
+      email TEXT NOT NULL,
+      word TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (email, word)
+    );
+
     -- Per-user club pins (snize 2026-10-17): pinned clubs stay at the top of
     -- the sidebar in pin order (pinned_at) instead of moving with activity.
     -- One row per (email, club) only when pinned. Independent of club_visibility.

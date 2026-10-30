@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listPosts, listHotTopics } from "@/lib/posts";
 import { getHiddenClubs } from "@/lib/club-visibility";
+import { getMutedWords } from "@/lib/muted-words";
 import { getReadIdsForPosts } from "@/lib/read-state-server";
 import { findMemberByEmail } from "@/lib/ghost";
 import { getSessionEmail } from "@/lib/session";
@@ -46,7 +47,7 @@ export async function GET(req: NextRequest) {
   try {
     if (hot) {
       // Hot topics: top N most-commented root posts in the last 7 days.
-      const posts = await listHotTopics(email, Math.min(limit, 5));
+      const posts = await listHotTopics(email, Math.min(limit, 5), await getMutedWords(email));
       return NextResponse.json({ posts }, { headers: NO_CACHE });
     }
     // Per-user hidden clubs (drikin 2026-10-02): always resolved SERVER-side
@@ -64,6 +65,7 @@ export async function GET(req: NextRequest) {
       search: search ?? undefined,
       club: club ?? undefined,
       excludeClubs: Array.from(hiddenSet),
+      mutedWords: await getMutedWords(email),
       favoriteAuthors,
       bookmarkedIds,
       viewerEmail: email,
