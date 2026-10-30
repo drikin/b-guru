@@ -2382,13 +2382,17 @@ console.log("\n6k. Reactions on posts");
       const chip = [...(card?.querySelectorAll('[data-reaction]') ?? [])]
         .find(c => c.getAttribute('data-reaction') === '❤️');
       if (!chip) return null;
+      // On screen first: a mouse move off the viewport hovers nothing (the post can sit
+      // below the fold when newer posts are taller).
+      chip.scrollIntoView({ block: "center" });
       const r = chip.getBoundingClientRect();
       if (r.width === 0) return null;
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, top: Math.round(r.top) };
     })()`);
     if (!hoverBox) {
       check("hovering a reaction shows who reacted", false, "chip not on screen after reload");
     } else {
+      await page.waitForTimeout(300);
       await page.mouse.move(hoverBox.x, hoverBox.y);
       await page.waitForTimeout(1200);
       const who = await page.evaluate(`(() => {
