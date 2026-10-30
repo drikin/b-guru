@@ -265,9 +265,13 @@ export function ReactionBar({
         // ないですか？」). A Mantine Tooltip rather than the native `title` attribute:
         // `title` takes ~1s to appear, cannot be styled, and renders as a plain
         // OS tooltip that ignores the app's theme.
+        // `multiline`: Mantine's tooltip is `white-space: nowrap` by default, so the names ran
+        // past the 260px box and were cut off at the edge (でででん 2026-10-30: 13 人の 🎉 で
+        // 6 人目までしか見えない).
         <Tooltip
           key={r.emoji}
           withArrow
+          multiline
           openDelay={120}
           label={
             <ReactionWhoList

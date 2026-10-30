@@ -2322,11 +2322,16 @@ console.log("\n6k. Reactions on posts");
     const tipCount = m ? Number(m[1]) : null;
     // 「他N人」も読む（切られていることの明示）
     const hiddenM = text.match(/他(\\d+)人/);
+    // 名前が吹き出しの外にはみ出して切れていない（でででん 2026-10-30: Mantine の Tooltip は既定で
+    // 折り返さず、13 人の 🎉 が 6 人目までしか見えなかった）
+    const box = tip.parentElement;
+    const clipped = !!box && (getComputedStyle(box).whiteSpace === 'nowrap' || tip.scrollWidth > box.clientWidth + 1);
     return {
       chipCount,
       tipCount,
       hidden: hiddenM ? Number(hiddenM[1]) : 0,
       names: (text.match(/、/g) || []).length + 1,
+      clipped,
     };
   })()`);
   check(
@@ -2337,6 +2342,11 @@ console.log("\n6k. Reactions on posts");
         ? `skipped: ${countMatch.reason}`
         : `chip=${countMatch.chipCount} tooltip=${countMatch.tipCount} hidden=${countMatch.hidden} names=${countMatch.names}`
       : "n/a"
+  );
+  check(
+    "the reactor names wrap inside the tooltip (not cut off)",
+    !!countMatch && (countMatch.skip || countMatch.clipped === false),
+    countMatch ? (countMatch.skip ? `skipped: ${countMatch.reason}` : `clipped=${countMatch.clipped} names=${countMatch.names}`) : "n/a"
   );
   // 切られている場合は「他N人」で補う（黙って少なく出さない）
   check(
