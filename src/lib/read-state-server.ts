@@ -12,6 +12,7 @@
  */
 
 import { pool } from "./db";
+import { getMutedWords, noMutedWordSql } from "./muted-words";
 import { MAX_READ_BATCH, normalizeReadIds } from "./read-state";
 
 /**
@@ -100,15 +101,18 @@ export async function getUnreadReplyCounts(
   if (!email || rootIds.length === 0) return out;
   const clean = normalizeReadIds(rootIds);
   if (clean.length === 0) return out;
+  // NG ワード（2026-10-29）: 隠れる返信は開いても見えないので数えない。
+  const words = await getMutedWords(email);
   const res = await pool.query(
     `SELECT p.parent_id, count(*)::int AS n
      FROM posts p
      WHERE p.parent_id = ANY($2::int[])
        AND lower(p.author_email) <> lower($1)
        AND p.is_whisper IS NOT TRUE
-       AND NOT EXISTS (SELECT 1 FROM post_read_state r WHERE r.email = $1 AND r.post_id = p.id)
+       AND NOT EXISTS (SELECT 1 FROM post_read_state r WHERE r.email = $1 AND r.post_id = p.id)${words.length > 0 ? `
+       AND ${noMutedWordSql("p.text", "$3")}` : ""}
      GROUP BY p.parent_id`,
-    [email, clean]
+    words.length > 0 ? [email, clean, words] : [email, clean]
   );
   for (const r of res.rows as { parent_id: number; n: number }[]) out.set(r.parent_id, r.n);
   return out;

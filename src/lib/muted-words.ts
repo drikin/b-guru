@@ -40,6 +40,8 @@ export async function setMutedWords(email: string, words: string[]): Promise<str
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // 同じ人の保存は 1 つずつ（同時の 2 回で一覧の和が残り、上限を超えないように）。
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('muted_words:' || $1))", [email]);
     await client.query(`DELETE FROM muted_words WHERE email = $1 AND NOT (word = ANY($2::text[]))`, [email, words]);
     for (const w of words) {
       await client.query(`INSERT INTO muted_words (email, word, created_at) VALUES ($1, $2, clock_timestamp()) ON CONFLICT DO NOTHING`, [email, w]);
@@ -54,15 +56,21 @@ export async function setMutedWords(email: string, words: string[]): Promise<str
   return getMutedWords(email);
 }
 
-/** SQL: `textExpr` が `wordsParam`（text[]）のどれも含まない。 */
+/** SQL: 本文を比べる形に（NFKC・小文字・空白を 1 つに）。言葉の側（normalizeMutedWord）と同じ。 */
+function normalizedTextSql(textExpr: string): string {
+  return `regexp_replace(lower(normalize(COALESCE(${textExpr}, ''), NFKC)), '\\s+', ' ', 'g')`;
+}
+
+/** SQL: `textExpr` が `wordsParam`（text[]）のどれも含まない。本文の正規化は 1 行 1 回（OFFSET 0 で
+ *  言葉ごとに計算し直させない。50 語・1.2 万件で 1.7 秒 → 0.1 秒、レビューで計測）。 */
 export function noMutedWordSql(textExpr: string, wordsParam: string): string {
-  return `NOT EXISTS (SELECT 1 FROM unnest(${wordsParam}::text[]) mw WHERE strpos(lower(normalize(COALESCE(${textExpr}, ''), NFKC)), mw) > 0)`;
+  return `NOT EXISTS (SELECT 1 FROM (SELECT ${normalizedTextSql(textExpr)} AS t OFFSET 0) mt, unnest(${wordsParam}::text[]) mw WHERE strpos(mt.t, mw) > 0)`;
 }
 
 /** JS 側の同じ判定（テストと、すでに読んだ本文に使う）。 */
 export function containsMutedWord(text: string, words: string[]): boolean {
   if (words.length === 0) return false;
-  const t = text.normalize("NFKC").toLowerCase();
+  const t = text.normalize("NFKC").toLowerCase().replace(/\s+/g, " ");
   return words.some((w) => t.includes(w));
 }
 
@@ -90,7 +98,7 @@ export async function mutedRecipients(postId: number, emails: string[]): Promise
   const r = await pool.query(
     `SELECT DISTINCT mw.email FROM muted_words mw JOIN posts p ON p.id = $1
       WHERE mw.email = ANY($2::text[]) AND mw.email <> p.author_email
-        AND strpos(lower(normalize(COALESCE(p.text, ''), NFKC)), mw.word) > 0`,
+        AND strpos(${normalizedTextSql("p.text")}, mw.word) > 0`,
     [postId, emails]
   );
   return new Set(r.rows.map((x) => x.email as string));

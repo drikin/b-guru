@@ -22,6 +22,7 @@ type Mods = {
   mw: typeof import("../muted-words");
   since: typeof import("../agent-posts-since");
   notif: typeof import("../notifications");
+  rs: typeof import("../read-state-server");
 };
 let m: Mods;
 const stamp = Date.now();
@@ -45,6 +46,7 @@ d("NG ワード（DB）", () => {
       mw: await import("../muted-words"),
       since: await import("../agent-posts-since"),
       notif: await import("../notifications"),
+      rs: await import("../read-state-server"),
     };
     await sql(`CREATE TABLE IF NOT EXISTS drinews_articles (id SERIAL PRIMARY KEY, author_email TEXT NOT NULL DEFAULT '',
       title TEXT NOT NULL DEFAULT '', body_md TEXT NOT NULL DEFAULT '', body_html TEXT NOT NULL DEFAULT '',
@@ -108,6 +110,43 @@ d("NG ワード（DB）", () => {
     // ほかの人には今までどおり全部
     const other = await m.posts.getPostThread(root, OTHER, await m.mw.getMutedWords(OTHER));
     expect(other.replies.map((x) => x.id)).toEqual([bad, ok, mine]);
+  });
+
+  it("本文の空白・改行の揺れでも当たる", async () => {
+    await m.mw.setMutedWords(ME, ["foo bar"]);
+    const nl = await post(OTHER, "x foo\nbar y");
+    const two = await post(OTHER, "x FOO  bar y");
+    const ok = await post(OTHER, "foobar");
+    const { web } = await views();
+    const ids = web.map((p) => p.id);
+    expect(ids).not.toContain(nl);
+    expect(ids).not.toContain(two);
+    expect(ids).toContain(ok);
+    expect(m.mw.containsMutedWord("x foo\nbar", ["foo bar"])).toBe(true);
+  });
+
+  it("未読の返信の数に隠れる返信を入れない", async () => {
+    await m.mw.setMutedWords(ME, ["ネタバレ"]);
+    const root = await post(ME, "映画みた");
+    await post(OTHER, "ネタバレだけど", root);
+    await post(OTHER, "よかったね", root);
+    const counts = await m.rs.getUnreadReplyCounts(ME, [root]);
+    expect(counts.get(root)).toBe(1);
+    await m.mw.setMutedWords(ME, []);
+    expect((await m.rs.getUnreadReplyCounts(ME, [root])).get(root)).toBe(2);
+  });
+
+  it("50 語でも組み合わせた条件で SQL が通る（プロフィール・注目も）", async () => {
+    const words = Array.from({ length: 50 }, (_, i) => `w${i}x`);
+    await m.mw.setMutedWords(ME, words);
+    const bad = await post(OTHER, "zz w7x zz");
+    const ok = await post(OTHER, "clean");
+    const got = await m.mw.getMutedWords(ME);
+    expect(got).toHaveLength(50);
+    const prof = await m.posts.listPosts({ viewerEmail: ME, author: OTHER, mutedWords: got, excludeClubs: ["apple", "__unset__"], search: "", before: new Date(Date.now() + 60_000).toISOString(), limit: 50 });
+    expect(prof.map((p) => p.id)).toEqual(expect.arrayContaining([ok]));
+    expect(prof.map((p) => p.id)).not.toContain(bad);
+    await m.posts.listHotTopics(ME, 5, got); // SQL が通ること
   });
 
   it("検索にも出ない", async () => {
