@@ -144,7 +144,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     override func sendEvent(_ event: NSEvent) {
         // The cheap tracker first; the view lookup only once a swipe has fired (it ran on
         // every scroll event and made all scrolling heavier — drikin 2026-10-19).
-        if event.type == .scrollWheel, let step = swipe.handle(event), !overSidewaysScroller(event) {
+        if event.type == .scrollWheel, let step = swipe.handle(event), !overSidewaysScroller(event), !overWebTimeline(event) {
             // 📰 → 💬 → 📻 (the tabs' order), one step per swipe (drikin 2026-10-19: with three
             // tabs the swipe only went between the first two).
             var order: [MainTab] = [.timeline, .chat]
@@ -162,6 +162,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         }
         // Mouse back button (button 4 = number 3): thread → timeline.
         if event.type == .otherMouseDown, event.buttonNumber == 3, pin.timelineShown {
+            if AppSettings.shared.webTimeline { WebTimeline.shared.goBack(); return }
             NotificationCenter.default.post(name: .timelineBack, object: nil)
             return
         }
@@ -197,14 +198,14 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
     /// to move through, so it leaves) nor with a picture open (← is the previous picture there).
     /// Without a thread open it does nothing.
     func leftArrowLeavesThread(_ event: NSEvent) -> Bool {
-        pin.timelineShown && leftArrowAllowed(event)
+        pin.timelineShown && !AppSettings.shared.webTimeline && leftArrowAllowed(event)
     }
 
     /// How far Space (a page, less a little), ⇧Space (back) and J / K (a third of a page) scroll the
     /// timeline; nil when the key is not for it (another tab alone, text being typed, a picture open,
     /// a sheet in front, other modifiers).
     func timelineScrollPages(_ event: NSEvent) -> CGFloat? {
-        guard pin.timelineShown, store.netaPost == nil, ImageViewerOverlay.open == 0, !Self.isTyping(firstResponder) else { return nil }
+        guard pin.timelineShown, !AppSettings.shared.webTimeline, store.netaPost == nil, ImageViewerOverlay.open == 0, !Self.isTyping(firstResponder) else { return nil }
         let mods = event.modifierFlags.intersection([.command, .option, .control, .shift])
         switch (event.keyCode, mods) {
         case (49, []): return 0.85
@@ -227,7 +228,14 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         guard ImageViewerOverlay.open == 0,
               event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return false }
         if let text = firstResponder as? NSText, !text.string.isEmpty { return false }
+        if WebTimeline.shared.owns(firstResponder as? NSView) { return false } // Web の入力欄・画像では Web の ←
         return true
+    }
+
+    /// Web 版のタイムラインの上の横スワイプは Web のもの（部活の列・画像の送り）。
+    private func overWebTimeline(_ event: NSEvent) -> Bool {
+        guard AppSettings.shared.webTimeline, let content = contentView else { return false }
+        return WebTimeline.shared.owns(content.hitTest(content.convert(event.locationInWindow, from: nil)))
     }
 
     /// Image bytes on the general pasteboard when it holds an image and no text

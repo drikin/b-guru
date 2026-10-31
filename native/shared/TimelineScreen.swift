@@ -934,7 +934,7 @@ private struct OpenThreadWhenShown: ViewModifier {
 }
 
 /// Disabled while the timeline is not the page showing (reads the environment itself).
-private struct DisabledOffScreen: ViewModifier {
+struct DisabledOffScreen: ViewModifier {
     @Environment(\.screenVisibility) private var visibility
     private var onScreen: Bool { visibility?.timeline ?? true }
     func body(content: Content) -> some View { content.disabled(!onScreen) }

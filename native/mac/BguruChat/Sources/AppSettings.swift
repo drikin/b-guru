@@ -133,6 +133,14 @@ final class AppSettings {
         }
     }
     @ObservationIgnored var onAIPicksChange: ((Bool) -> Void)?
+    /// パネルの 📰 を Web 版のタイムラインにする（試験的、WebTimeline）。既定は切。
+    var webTimeline: Bool {
+        didSet {
+            guard webTimeline != oldValue else { return }
+            UserDefaults.standard.set(webTimeline, forKey: "webTimeline")
+            if !webTimeline { WebTimeline.shared.tearDown(forgetLogin: false) }
+        }
+    }
     /// 右 ⇧ を素早く 2 回押すとパネルを開閉する（ほかのアプリが前でも。それには入力監視の許可が要る）。既定はオン。
     var rightShiftDoubleTap: Bool {
         didSet {
@@ -198,6 +206,7 @@ final class AppSettings {
         assistantExcluded = d.stringArray(forKey: "assistantExcluded") ?? Assistant.defaultExcluded
         menuBarRunnerGPU = d.bool(forKey: "menuBarRunnerGPU")
         aiTimelinePicks = d.bool(forKey: "aiTimelinePicks")
+        webTimeline = d.bool(forKey: "webTimeline")
         rightShiftDoubleTap = d.object(forKey: "rightShiftDoubleTap") as? Bool ?? true
         keepAwakeDisplay = d.bool(forKey: "keepAwakeDisplay")
         keepAwakeAutoCall = d.object(forKey: "keepAwakeAutoCall") as? Bool ?? true

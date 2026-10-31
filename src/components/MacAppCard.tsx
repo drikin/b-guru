@@ -5,6 +5,7 @@
  * - × で閉じたらこのブラウザでは出さない。新しい版が出たらまた出す */
 import { useEffect, useState } from "react";
 import { Anchor, CloseButton, Group, Paper, Stack, Text } from "@mantine/core";
+import { inMacApp } from "@/lib/mac-app-client";
 
 type Info = { available: boolean; version?: string; size?: number; minimumSystemVersion?: string };
 
@@ -20,7 +21,7 @@ export default function MacAppCard() {
   const [hidden, setHidden] = useState(true);
 
   useEffect(() => {
-    if (!isMacDesktop()) return;
+    if (!isMacDesktop() || inMacApp()) return; // アプリの中（Web 版タイムライン）では案内しない
     let alive = true;
     fetch("/api/download/mac/info", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))

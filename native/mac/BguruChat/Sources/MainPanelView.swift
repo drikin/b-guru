@@ -165,7 +165,8 @@ private struct PanelTabWatcher: View {
                        jukebox: seen && pin.tab == .jukebox, room: seen && pin.chatShown)
         // Every minute only while the timeline can be seen (the tab stays built when hidden,
         // so appearing / disappearing said nothing about that).
-        if visibility.timeline { timeline.startPolling() } else { timeline.stopPolling() }
+        // Web 版のタイムラインのときは Web が自分で新着を取る。
+        if visibility.timeline && !AppSettings.shared.webTimeline { timeline.startPolling() } else { timeline.stopPolling() }
     }
 
     @State private var restoredChatScreen = false
@@ -214,7 +215,23 @@ private struct PanelTabWatcher: View {
             .onChange(of: chatScreen, initial: true) { _, s in if restoredChatScreen { PanelMemory.saveChatScreen(s) } }
             .onChange(of: store.shogi.enabled, initial: true) { _, _ in restoreChatScreen() }
             .onChange(of: store.minigame.enabled, initial: true) { _, _ in restoreChatScreen() }
-            .onChange(of: timeline.openThread) { _, id in if id != nil { pin.tab = .timeline } }
+            .onChange(of: timeline.openThread, initial: true) { _, id in
+                guard let id else { return }
+                pin.tab = .timeline
+                // Web 版のタイムラインでは Web の #/post/<id> で開く（ネイティブの画面は作っていない）。
+                if AppSettings.shared.webTimeline {
+                    WebTimeline.shared.open(post: id)
+                    timeline.openThread = nil
+                }
+            }
+            .onChange(of: AppSettings.shared.webTimeline) { _, _ in updateVisibility() }
+            .onAppear {
+                WebTimeline.shared.onOpenChat = { [weak pin, weak store] mention, game in
+                    pin?.tab = .chat
+                    if let mention { store?.pendingQuote = mention }
+                    if let game, store?.shogi.enabled == true { store?.shogi.openGame(game) }
+                }
+            }
     }
 }
 
@@ -275,9 +292,16 @@ private struct TimelineTab: View, @MainActor Equatable {
     let onSignOut: () -> Void
     static func == (a: Self, b: Self) -> Bool { a.store === b.store && a.timeline === b.timeline && a.pin === b.pin }
     var body: some View {
-        TimelineScreen(timeline: timeline, capabilities: store.capabilities,
-                       tabPicker: PanelTabSwitch(store: store, pin: pin, pane: .timeline), onReconnect: onSignOut)
-            .background(.regularMaterial)
+        if AppSettings.shared.webTimeline {
+            WebTimelineScreen(tabPicker: PanelTabSwitch(store: store, pin: pin, pane: .timeline))
+                .background(.regularMaterial)
+                // ネイティブの一覧は出さないが、新着の知らせ・ビーグルの材料に一度だけ読む。
+                .task { if timeline.posts.isEmpty { await timeline.refresh() } }
+        } else {
+            TimelineScreen(timeline: timeline, capabilities: store.capabilities,
+                           tabPicker: PanelTabSwitch(store: store, pin: pin, pane: .timeline), onReconnect: onSignOut)
+                .background(.regularMaterial)
+        }
     }
 }
 

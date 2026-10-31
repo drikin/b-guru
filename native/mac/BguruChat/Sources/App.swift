@@ -372,6 +372,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
             #endif
         } else {
+            // 前のログアウトで消しきれなかった Web 版タイムラインのログインも消す。
+            WebTimeline.shared.tearDown(forgetLogin: true)
             showLogin()
         }
     }
@@ -458,6 +460,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         timeline = nil
         MediaCache.shared.token = nil
         Keychain.delete()
+        WebTimeline.shared.tearDown(forgetLogin: true)
         Updater.shared.stop()
         if revoke, let token { Task { await APIClient(token: token).revokeSelf() } }
         updateStatusIcon(unread: 0, mentions: 0, connection: .offline)
@@ -594,6 +597,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             r.indentationLevel = 1
             menu.addItem(r)
         }
+        let webTL = NSMenuItem(title: "タイムラインを Web 版で表示（試験的）", action: #selector(toggleWebTimeline), keyEquivalent: "")
+        webTL.target = self
+        webTL.state = settings.webTimeline ? .on : .off
+        webTL.toolTip = "Web と同じ機能が使えます。初回は Web へのログイン（メールの 6 桁のコード）が要ります"
+        menu.addItem(webTL)
         addAssistantMenu(to: menu)
         addKeepAwakeMenu(to: menu)
         let ver = NSMenuItem(title: "バージョン \(Updater.shared.currentVersion)（ベータ）", action: nil, keyEquivalent: "")
@@ -618,6 +626,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc private func toggleRunnerGPU() { settings.menuBarRunnerGPU.toggle() }
     @objc private func toggleBattery() { settings.menuBarBattery.toggle() }
     @objc private func toggleAIPicks() { settings.aiTimelinePicks.toggle() }
+    @objc private func toggleWebTimeline() { settings.webTimeline.toggle() }
     @objc private func toggleTickerNames() { settings.menuBarTickerNamesOnly.toggle() }
     @objc private func toggleRightShift() { settings.rightShiftDoubleTap.toggle() }
     @objc private func allowRightShiftGlobal() { RightShiftDoubleTap.requestGlobalAccess() }
@@ -723,7 +732,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         #if DEBUG
         if CommandLine.arguments.contains("-collapseTest") || CommandLine.arguments.contains("-tickerTest")
-            || CommandLine.arguments.contains("-assistantTest") {
+            || CommandLine.arguments.contains("-assistantTest") || CommandLine.arguments.contains("-webTimelineTest") {
             StatusBarDiag.forced = true
             StatusBarDiag.enabled = true
             startDebugCommands()
@@ -1361,6 +1370,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 case "hidePanel": self.panel?.dismiss()
                 default:
                     if cmd.hasPrefix("aw:") { AssistantTestWindows.shared.command(cmd) }
+                    // Web 版のタイムライン：webjs:<JS> を評価して結果をログへ、webpost:<id> は知らせから開くのと同じ道。
+                    if cmd.hasPrefix("webjs:") { WebTimeline.shared.debugEval(String(cmd.dropFirst("webjs:".count))) }
+                    if cmd.hasPrefix("webpost:"), let id = Int(cmd.dropFirst("webpost:".count)) { self.timeline?.openThread = id }
                     if cmd.hasPrefix("awForceKind:") { Assistant.shared.debugForceKind = String(cmd.dropFirst("awForceKind:".count)) }
                 }
             }

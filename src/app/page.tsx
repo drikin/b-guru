@@ -78,6 +78,7 @@ import { netaCandidates, netaDefaultTitle } from "@/lib/neta-client";
 import MacAppCard from "@/components/MacAppCard";
 import TtsVoiceSetting from "@/components/TtsVoiceSetting";
 import AndroidAppCard from "@/components/AndroidAppCard";
+import { askMacApp, inMacApp } from "@/lib/mac-app-client";
 import MutedWordsModal from "@/components/MutedWordsModal";
 import { POLL_DURATIONS, POLL_LABEL_MAX, POLL_MAX_OPTIONS, POLL_MIN_OPTIONS, POLL_QUESTION_MAX, type PostPoll } from "@/lib/poll";
 import type { DuplicateCandidate } from "@/lib/duplicates";
@@ -5669,6 +5670,10 @@ export default function Home() {
   // replaces the old "wave" (👋) feature: the bubble sits where the wave
   // animation used to float, and clicking an online member opens the chat.
   const [chatView, setChatView] = useState(false);
+  // Mac アプリの中の Web 版タイムライン（試験的、ドリキン 2026-10-31）: チャットはアプリのものを使う。
+  //   上部の「チャット」は出さず、チャットを開く操作（将棋・在線の人・ボイスの知らせ等）はアプリに頼む。
+  const [macApp, setMacApp] = useState(false);
+  useEffect(() => setMacApp(inMacApp()), []);
   // ---- お気に入り (Instagram-style favorite authors) ----
   //   viewer 個人の状態。Set<authorId(user_id)>。SSE ブロードキャスト対象外
   //   （他ユーザーに影響しない）なので取得は初回 + トグル後のサーバー同期のみ。
@@ -5855,6 +5860,7 @@ export default function Home() {
       } catch {
         /* ignore */
       }
+      if (askMacApp({ type: "openChat", shogiGameId: gameId })) return; // Mac アプリの中: アプリの ☗ で開く
       openChat();
       openShogiGame(gameId);
     };
@@ -5865,6 +5871,7 @@ export default function Home() {
   const openChatMention = useCallback(
     (name: string) => {
       const token = mentionToken(name);
+      if (askMacApp({ type: "openChat", mention: token })) return; // Mac アプリの中: アプリのチャットの入力欄へ
       setChatText(token);
       setChatMention(name);
       chatViewRef.current = true;
@@ -10093,11 +10100,17 @@ export default function Home() {
   // recover without a reload. `chatView` alone decides what the main column shows;
   // navigating away (thread/search/profile) renders its own view on top of it.
   const showChatView = chatView;
+  useEffect(() => {
+    if (!macApp || !chatView) return;
+    chatViewRef.current = false;
+    setChatView(false);
+    askMacApp({ type: "openChat" });
+  }, [macApp, chatView]);
 
   // Mobile swipe-to-switch-tabs: gate + gesture. Only on the home feed root
   // with the tab bar visible, and never while the image lightbox is open.
   const swipeGateRef = useRef(false);
-  swipeGateRef.current = showNavTabs && !previewImage;
+  swipeGateRef.current = showNavTabs && !previewImage && !macApp; // Mac アプリの中ではチャットへ流さない
   useEffect(() => {
     if (typeof window === "undefined") return;
     // Horizontal swipe to switch タイムライン ⇄ チャット.
@@ -12019,7 +12032,7 @@ export default function Home() {
                         ),
                         value: "chat",
                       },
-                    ]}
+                    ].filter((t) => !(macApp && t.value === "chat"))}
                   />
                 </Box>
               )}
