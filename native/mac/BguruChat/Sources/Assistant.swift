@@ -825,6 +825,22 @@ final class Assistant {
         return Double(g1.intersection(g2).count) / Double(max(1, g1.union(g2).count)) >= 0.8
     }
 
+    /// 理由の頭のアプリ名を外す。知らせは「アプリ名：理由」なので、AI が「Discordから〇〇」と書くと
+    /// 「Discord：Discordから〇〇」と 2 回出ていた（ドリキン 2026-10-30「冗長」）。外すと短すぎるときはそのまま。
+    nonisolated static func dropAppName(_ reason: String, app: String) -> String {
+        let name = app.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return reason }
+        var t = reason.trimmingCharacters(in: .whitespaces)
+        guard let r = t.range(of: name, options: [.caseInsensitive, .anchored, .widthInsensitive]) else { return reason }
+        t = String(t[r.upperBound...]).trimmingCharacters(in: .whitespaces)
+        // 名前のすぐ後ろのつなぎ（「から」「で」「に」「の」「：」など）も外す。長いものから
+        for joint in ["からの", "にて", "から", "より", "上で", "では", "で", "に", "の", "が", "は", "：", ":", "、", "-", "—"] where t.hasPrefix(joint) {
+            t = String(t.dropFirst(joint.count)).trimmingCharacters(in: .whitespaces)
+            break
+        }
+        return normalize(t).count < 3 ? reason : t
+    }
+
     /// 「関係ない」と書いてあるのに意味ありになっているか。
     nonisolated static func reasonContradicts(_ reason: String) -> Bool {
         ["関係ない", "関係なし", "関連なし", "関連がない", "無関係", "不要", "意味なし", "意味のない", "対象外", "該当しない"].contains { reason.contains($0) }
@@ -918,6 +934,7 @@ final class Assistant {
     「〇〇さん」の〇〇が持ち主の名前・呼び名でなければ、持ち主宛てではありません。
     ニュース・速報・運勢・占いの中に出てくる「完了」「エラー」は、持ち主の作業の完了やエラーではありません（天気やニュースを選ぶ）。
     「違う」と言われた例に似た変化は、関係のない種類を選んでください。
+    何が起きたかには、アプリ名を書かないでください（知らせではアプリ名を別に出します）。
     """
 
     private func judge(app: String, title: String, added: [String], newWindow: Bool) async -> Judgement? {
@@ -944,7 +961,7 @@ final class Assistant {
                 #endif
                 var meaningful = kindValue.meaningful
                 let text = added.joined(separator: " ")
-                var reason = AIPicks.cleanNote(r.content.reason)
+                var reason = Self.dropAppName(AIPicks.cleanNote(r.content.reason), app: app)
                 // 持ち主宛て：名前か @ があるときだけ。依頼・承認：ほかの人が宛先と明示されていれば見送る
                 if kindValue == .持ち主宛てのメッセージ, !Self.addressesOwner(text, names: ownerNames()) { meaningful = false }
                 if kindValue == .承認や確認の依頼 || kindValue == .持ち主宛てのメッセージ,
@@ -1037,6 +1054,11 @@ final class Assistant {
         check("強い手がかり（Build succeeded）", hasStrongEvidence("Build succeeded"), true)
         check("強い手がかりなし（処理中）", hasStrongEvidence("プロジェクトの状況：処理中です（12:01 更新）"), false)
         check("強い手がかりなし（お願い）", hasStrongEvidence("明日の会議資料お願いします"), false)
+        check("理由の頭のアプリ名（から）", dropAppName("Discordから新着メッセージ", app: "Discord") == "新着メッセージ", true)
+        check("理由の頭のアプリ名（の・空白）", dropAppName("discord の DM が届いた", app: "Discord") == "DM が届いた", true)
+        check("理由の頭のアプリ名（：）", dropAppName("Xcode：ビルドが失敗", app: "Xcode") == "ビルドが失敗", true)
+        check("途中のアプリ名は残す", dropAppName("ビルドが Xcode で失敗", app: "Xcode") == "ビルドが Xcode で失敗", true)
+        check("外すと短すぎるならそのまま", dropAppName("Discordから", app: "Discord") == "Discordから", true)
         check("@名前が後ろの文とつながっても持ち主宛て", addressesOwner("@ドリキン明日の配信の件、確認お願いします", names: names), true)
         check("@名前が後ろの文とつながってもほかの人ではない", addressesOther("@ドリキン明日の配信の件、確認お願いします", names: names), false)
         check("進み具合", looksLikeProgress("プロジェクトの状況：処理中です（12:01 更新）"), true)
