@@ -1094,7 +1094,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         add(a.weekSummary, nil)
         if !a.recent.isEmpty {
             sub.addItem(.separator())
-            add("最近の知らせ（違う・合ってたを選ぶ）", nil)
+            add("最近の知らせ（AI の推測。違う・合ってたを選ぶ）", nil)
             let f = DateFormatter()
             f.dateFormat = "H:mm"
             let namesOnly = settings.menuBarTickerNamesOnly

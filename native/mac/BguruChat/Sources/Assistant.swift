@@ -560,11 +560,13 @@ final class Assistant {
     /// 最近の知らせからこのアプリの分を除く（「このアプリは知らせない」のあと）。
     func forgetRecent(app: String) { recent.removeAll { $0.app == app } }
 
-    // MARK: - 知らせの文（「名前だけ」・共有中・配信中はアプリ名だけ。AI の推測の印つき）
+    // MARK: - 知らせの文（「名前だけ」・共有中・配信中はアプリ名だけ）
+    // メニューバーは狭いので「（推測）」は付けない（2026-10-30、アプリ名の重なりを直したときに一緒に短く）。AI の推測であることは 🐶 と、
+    // メニューの「最近の知らせ」・パネルの 1 行のヘルプで伝える。
 
     func tickerText(_ n: Notice, namesOnly: Bool) -> String {
-        if namesOnly || Self.sharingOrStreamingLikely() { return "🐶 \(AIPicks.short(n.app, 14))：変化がありました（推測）" }
-        return "🐶 \(AIPicks.short(n.app, 14))：\(AIPicks.short(n.reason, 30))（推測）"
+        if namesOnly || Self.sharingOrStreamingLikely() { return "🐶 \(AIPicks.short(n.app, 14))に変化" }
+        return "🐶 \(AIPicks.short(n.app, 14))：\(AIPicks.short(n.reason, 30))"
     }
 
     /// 画面共有・配信中らしいか（判定できる範囲：会議アプリが前面、配信アプリが起動している）。
@@ -825,6 +827,30 @@ final class Assistant {
         return Double(g1.intersection(g2).count) / Double(max(1, g1.union(g2).count)) >= 0.8
     }
 
+    /// 決まりで知らせたときの文：決まり文句でなく、手がかりになった画面の行そのもの（短く）。
+    /// 「完了・失敗などの文字が出ました」では何が起きたか分からなかった（ドリキン 2026-10-30）。
+    nonisolated static func ruleReason(_ line: String?, fallback: String) -> String {
+        let t = (line ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalize(t).count < 3 ? fallback : AIPicks.short(t, 30)
+    }
+
+    /// 知らせの文を短くする：頭のアプリ名と、末尾の決まり文句（「〜の通知が出ました」「〜しました」）を外す。
+    /// 端末の AI は「レンダリング完了の通知が出ました」のように書きがちだった（2026-10-30 の試し）。
+    nonisolated static func tidyReason(_ reason: String, app: String) -> String {
+        var t = dropAppName(reason, app: app).replacingOccurrences(of: " / ", with: "") // AI が行のつなぎ（" / "）まで写すことがある
+        // 1 文目だけ（「アップロードに失敗しました。ネットワークを確認してください」→ 1 文目）
+        if let r = t.range(of: "。"), normalize(String(t[..<r.lowerBound])).count >= 3 { t = String(t[..<r.lowerBound]) }
+        let tails: [(String, String)] = [("の通知が出ました", ""), ("の通知が出た", ""), ("の通知が届きました", ""), ("の通知です", ""), ("の通知", ""),
+                                         ("が表示されました", ""), ("が表示された", ""), ("されました", ""), ("しました", ""),
+                                         ("が届きました", "が届いた"), ("が来ました", "が来た"), ("がありました", "あり")]
+        for (tail, to) in tails where t.hasSuffix(tail) {
+            let cut = String(t.dropLast(tail.count)) + to
+            if normalize(cut).count >= 3 { t = cut }
+            break
+        }
+        return t
+    }
+
     /// 理由の頭のアプリ名を外す。知らせは「アプリ名：理由」なので、AI が「Discordから〇〇」と書くと
     /// 「Discord：Discordから〇〇」と 2 回出ていた（ドリキン 2026-10-30「冗長」）。外すと短すぎるときはそのまま。
     nonisolated static func dropAppName(_ reason: String, app: String) -> String {
@@ -934,7 +960,8 @@ final class Assistant {
     「〇〇さん」の〇〇が持ち主の名前・呼び名でなければ、持ち主宛てではありません。
     ニュース・速報・運勢・占いの中に出てくる「完了」「エラー」は、持ち主の作業の完了やエラーではありません（天気やニュースを選ぶ）。
     「違う」と言われた例に似た変化は、関係のない種類を選んでください。
-    何が起きたかには、アプリ名を書かないでください（知らせではアプリ名を別に出します）。
+    何が起きたかは、知らせにそのまま出ます。だれから・何が、が分かるように具体的に、短い言い切りで書いてください（「〜しました」「新しいメッセージ」だけ、は避ける）。
+    アプリ名は書かないでください（知らせではアプリ名を別に出します）。
     """
 
     private func judge(app: String, title: String, added: [String], newWindow: Bool) async -> Judgement? {
@@ -961,7 +988,7 @@ final class Assistant {
                 #endif
                 var meaningful = kindValue.meaningful
                 let text = added.joined(separator: " ")
-                var reason = Self.dropAppName(AIPicks.cleanNote(r.content.reason), app: app)
+                var reason = Self.tidyReason(AIPicks.cleanNote(r.content.reason), app: app)
                 // 持ち主宛て：名前か @ があるときだけ。依頼・承認：ほかの人が宛先と明示されていれば見送る
                 if kindValue == .持ち主宛てのメッセージ, !Self.addressesOwner(text, names: ownerNames()) { meaningful = false }
                 if kindValue == .承認や確認の依頼 || kindValue == .持ち主宛てのメッセージ,
@@ -977,10 +1004,13 @@ final class Assistant {
                 let ownerNoBroadcast = Self.addressesOwner(text, names: ownerNames(), broadcast: false)
                 if !meaningful, Self.overridableKinds.contains(kindName), !Self.looksLikeAd(text),
                    (!Self.addressesOther(text, names: ownerNames()) || ownerNoBroadcast) {
+                    let names = ownerNames()
                     if ownerNoBroadcast {
-                        meaningful = true; byRule = true; reason = "あなた宛てらしい文字が出ました"
+                        meaningful = true; byRule = true
+                        reason = Self.ruleReason(added.first { Self.addressesOwner($0, names: names, broadcast: false) }, fallback: "あなた宛てらしい文字")
                     } else if Self.strongEvidenceInShortLine(added) {
-                        meaningful = true; byRule = true; reason = "完了・失敗などの文字が出ました"
+                        meaningful = true; byRule = true
+                        reason = Self.ruleReason(added.first { $0.count <= 40 && Self.hasStrongEvidence($0) }, fallback: "完了・失敗などの文字")
                     }
                 }
                 // 進み具合（「〜中です」「45%」「更新」）だけの文字は、完了・失敗などの強い手がかりが無ければ知らせない
@@ -1057,6 +1087,12 @@ final class Assistant {
         check("理由の頭のアプリ名（から）", dropAppName("Discordから新着メッセージ", app: "Discord") == "新着メッセージ", true)
         check("理由の頭のアプリ名（の・空白）", dropAppName("discord の DM が届いた", app: "Discord") == "DM が届いた", true)
         check("理由の頭のアプリ名（：）", dropAppName("Xcode：ビルドが失敗", app: "Xcode") == "ビルドが失敗", true)
+        check("決まりの文は画面の行", ruleReason("Build succeeded", fallback: "x") == "Build succeeded", true)
+        check("決まりの文：行がなければ決まり文句", ruleReason(nil, fallback: "完了・失敗などの文字") == "完了・失敗などの文字", true)
+        check("末尾の決まり文句（の通知が出ました）", tidyReason("レンダリング完了の通知が出ました", app: "Final Cut Pro") == "レンダリング完了", true)
+        check("末尾の決まり文句（しました）", tidyReason("Discordからビルドが完了しました", app: "Discord") == "ビルドが完了", true)
+        check("末尾（が届きました）", tidyReason("コバンさんから DM が届きました", app: "Discord") == "コバンさんから DM が届いた", true)
+        check("1 文目だけ・行のつなぎを外す", tidyReason("アップロードに失敗しました。ネット / ワークを確認してください", app: "X") == "アップロードに失敗", true)
         check("途中のアプリ名は残す", dropAppName("ビルドが Xcode で失敗", app: "Xcode") == "ビルドが Xcode で失敗", true)
         check("外すと短すぎるならそのまま", dropAppName("Discordから", app: "Discord") == "Discordから", true)
         check("@名前が後ろの文とつながっても持ち主宛て", addressesOwner("@ドリキン明日の配信の件、確認お願いします", names: names), true)

@@ -599,7 +599,7 @@ private struct AssistantBannerRow: View {
                     Text(banner.text).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain)
-                .help("クリックで \(n.app) を前に出す")
+                .help("AI の推測です。クリックで \(n.app) を前に出す")
                 Button { banner.current = nil } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.borderless)
                     .help("閉じる")

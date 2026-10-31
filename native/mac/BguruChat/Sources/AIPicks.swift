@@ -343,7 +343,7 @@ final class AIPicks {
 
     // MARK: - 小物
 
-    static func short(_ s: String, _ limit: Int) -> String {
+    nonisolated static func short(_ s: String, _ limit: Int) -> String {
         let one = s.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).joined(separator: " ")
         return one.count > limit ? String(one.prefix(limit)) + "…" : one
     }
