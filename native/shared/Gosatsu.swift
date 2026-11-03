@@ -3,6 +3,8 @@ import Foundation
 /// 五撮 Vol.1（ドリキンフィルター第 1 弾）を端末の中でかける（drikin 2026-11-03: チャットのカメラで撮った写真に、
 /// かけるかどうかを選んで）。正本は西田カメラの dk5090 側（~/Dev/promptcam/server/promptcam_gateway.py の
 /// `gosatsu_stats` / `gosatsu_plan` / `gosatsu_filter`、ffmpeg のフィルタ）で、ここはそれを同じ計算で写したもの。
+/// 西田カメラ側は単独で進化させ、こちらへはときどき取り込む（ドリキン 2026-11-03）。取り込むときは Kotlin 版
+/// （android/.../Gosatsu.kt）も同じに揃える。
 /// 段ごとに ffmpeg と同じところで 8 bit に丸めるので、粒子の乱数以外はほぼ同じ画素になる（Mac の単体テストで照合）。
 ///
 /// 1. 写真ごとの土台合わせ（`plan`）: 黒白・彩度・最細部を測って、どのカメラでも同じ土台へ。

@@ -11,6 +11,7 @@ import kotlin.math.sqrt
  *  かけるかどうかを選んで）。正本は西田カメラの dk5090 側（~/Dev/promptcam/server/promptcam_gateway.py の
  *  `gosatsu_stats` / `gosatsu_plan` / `gosatsu_filter`、ffmpeg のフィルタ）で、ここは native/shared/Gosatsu.swift を
  *  1 行ずつ写したもの（丸め・切り捨ての場所まで同じ）。Android のクラスは使わない（JVM の単体テストで ffmpeg と照合）。
+ *  西田カメラ側は単独で進化させ、こちらへはときどき取り込む（ドリキン 2026-11-03）。取り込むときは Swift 版も同じに揃える。
  *
  *  1. 写真ごとの土台合わせ（`plan`）: 黒白・彩度・最細部を測って、どのカメラでも同じ土台へ。
  *  2. 共通の味つけ（`render`）: 色、3 段の解像感（ノイズは上げず強い輪郭は頭打ち＝縁取りなし）、
