@@ -12,6 +12,17 @@ final class GosatsuTests: XCTestCase {
         XCTAssertEqual([0, 100, 200, 216, 217, 230, 240, 255].map { hl[$0] }, [0, 0, 0, 0, 5, 86, 153, 255])
     }
 
+    /// ffmpeg の huesaturation（8 bit の整数計算）と同じ値になる（Swift の >> の優先順位で一度 0 倍になっていた）。
+    func testHueSaturationMatchesFFmpeg() {
+        func run(_ colors: Gosatsu.HueColors, _ sat: Float) -> [[UInt8]] {
+            var img = Gosatsu.Planes(rgba: [60, 180, 70, 255, 200, 120, 80, 255, 90, 90, 200, 255, 128, 128, 128, 255], width: 4, height: 1)
+            Gosatsu.hueSaturation(&img, saturation: sat, colors: colors)
+            return (0..<4).map { [img.r[$0], img.g[$0], img.b[$0]] }
+        }
+        XCTAssertEqual(run(.green, -0.15), [[63, 175, 72], [200, 120, 80], [90, 90, 200], [128, 128, 128]])
+        XCTAssertEqual(run([.red, .yellow], 0.06), [[60, 180, 70], [201, 120, 79], [90, 90, 200], [128, 128, 128]])
+    }
+
     /// ffmpeg の gblur（1 段の再帰フィルタ）と同じ値になる。
     func testBlurMatchesFFmpeg() {
         let p: [UInt8] = [121, 66, 189, 242, 33, 6, 240, 132, 119, 98, 240, 243, 203, 77, 118, 77, 199, 7, 32, 81, 21, 154, 15, 137,

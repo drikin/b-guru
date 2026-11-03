@@ -302,7 +302,8 @@ enum Gosatsu {
             let nr = Int((Int64(ir) * m[0][0] + Int64(ig) * m[1][0] + Int64(ib) * m[2][0]) >> 16)
             let ng = Int((Int64(ir) * m[0][1] + Int64(ig) * m[1][1] + Int64(ib) * m[2][1]) >> 16)
             let nb = Int((Int64(ir) * m[0][2] + Int64(ig) * m[1][2] + Int64(ib) * m[2][2]) >> 16)
-            func lerp(_ v0: Int, _ v1: Int) -> UInt8 { UInt8(clamping: v0 + ((((v1 - v0) * f) + 128) * 257 >> 16)) }
+            // FAST_DIV255。Swift の >> は * より先に計算されるので括弧が要る。
+            func lerp(_ v0: Int, _ v1: Int) -> UInt8 { UInt8(clamping: v0 + (((((v1 - v0) * f) + 128) * 257) >> 16)) }
             img.r[i] = lerp(ir, nr)
             img.g[i] = lerp(ig, ng)
             img.b[i] = lerp(ib, nb)
