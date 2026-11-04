@@ -94,6 +94,22 @@ enum KeepAwakeLogic {
         return wasLow ? b.percent < threshold + hysteresis : b.percent <= threshold
     }
 
+    // 手動の記録（"keepAwakeManual": 切るまで = 0、時間指定 = 終わりの時刻の秒）。
+    static let manualKey = "keepAwakeManual"
+
+    static func saveManual(_ m: KeepAwakeLogic.Manual?, defaults d: UserDefaults = .standard) {
+        if let m { d.set(m.until?.timeIntervalSince1970 ?? 0, forKey: manualKey) } else { d.removeObject(forKey: manualKey) }
+    }
+
+    /// 起動時に戻す手動。時間指定で時刻が過ぎていれば忘れて nil。
+    static func loadManual(defaults d: UserDefaults = .standard, now: Date = Date()) -> KeepAwakeLogic.Manual? {
+        guard let t = d.object(forKey: manualKey) as? Double else { return nil }
+        if t == 0 { return KeepAwakeLogic.Manual(until: nil) }
+        let until = Date(timeIntervalSince1970: t)
+        guard until > now else { d.removeObject(forKey: manualKey); return nil }
+        return KeepAwakeLogic.Manual(until: until)
+    }
+
     static func decide(_ input: Input) -> Decision {
         var d = Decision()
         var manual = input.manual

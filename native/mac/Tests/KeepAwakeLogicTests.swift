@@ -161,4 +161,23 @@ final class KeepAwakeLogicTests: XCTestCase {
     func testDurationLabels() {
         XCTAssertEqual(KeepAwakeLogic.durations.map(KeepAwakeLogic.durationLabel), ["切るまで", "30 分", "1 時間", "2 時間", "4 時間"])
     }
+
+    // 手動は再起動・更新のあとも戻す（ドリキン 2026-11-04）
+    func testManualIsRememberedAcrossLaunches() {
+        let d = UserDefaults(suiteName: "KeepAwakeLogicTests")!
+        d.removePersistentDomain(forName: "KeepAwakeLogicTests")
+        XCTAssertNil(KeepAwakeLogic.loadManual(defaults: d, now: now))
+        KeepAwakeLogic.saveManual(.init(until: nil), defaults: d)
+        XCTAssertEqual(KeepAwakeLogic.loadManual(defaults: d, now: now), .init(until: nil))
+        let later = now.addingTimeInterval(3600)
+        KeepAwakeLogic.saveManual(.init(until: later), defaults: d)
+        XCTAssertEqual(KeepAwakeLogic.loadManual(defaults: d, now: now)?.until?.timeIntervalSince1970, later.timeIntervalSince1970)
+        // 時刻が過ぎていれば戻さず、記録も消す
+        XCTAssertNil(KeepAwakeLogic.loadManual(defaults: d, now: later.addingTimeInterval(1)))
+        XCTAssertNil(d.object(forKey: KeepAwakeLogic.manualKey))
+        KeepAwakeLogic.saveManual(.init(until: nil), defaults: d)
+        KeepAwakeLogic.saveManual(nil, defaults: d)
+        XCTAssertNil(KeepAwakeLogic.loadManual(defaults: d, now: now))
+        d.removePersistentDomain(forName: "KeepAwakeLogicTests")
+    }
 }

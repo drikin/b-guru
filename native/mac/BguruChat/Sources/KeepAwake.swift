@@ -10,14 +10,18 @@ import UserNotifications
 ///   PreventUserIdleDisplaySleep）。ふたを閉じる・スリープを選ぶ・電源ボタンでは普通に眠る。サンドボックスのまま、追加の許可なし。
 /// - 様子が変わったときだけ決め直す（定期的には起きない）: 設定と 🍻・通話・📺 は Observation、電池は IOPS の知らせ、
 ///   アプリは NSWorkspace の起動・終了、画面は画面の構成の変更、手動の終わりはその時刻のタイマー。
-/// - 手動は覚えない（アプリを終了したら必ず止める。次に起動しても入らない）。設定は手元だけ（UserDefaults）。
+/// - 手動は覚える（ドリキン 2026-11-04「再起動したりアップデートしても覚えておく」）: アプリの終了で assertion は外すが、
+///   次に起動したら同じ手動に戻す（時間指定は時刻が過ぎていれば戻さない）。「止める」・電池で止めたときは忘れる。設定は手元だけ（UserDefaults）。
 @MainActor
 @Observable
 final class KeepAwake {
     static let shared = KeepAwake()
 
-    /// 手動（nil = 入れていない）。
-    private(set) var manual: KeepAwakeLogic.Manual?
+    /// 手動（nil = 入れていない）。変わったら UserDefaults に残す（再起動・更新のあとに戻す）。
+    private(set) var manual: KeepAwakeLogic.Manual? {
+        didSet { if manual != oldValue, !shuttingDown { KeepAwakeLogic.saveManual(manual) } }
+    }
+    @ObservationIgnored private var shuttingDown = false
     /// 最後に決めた結果。
     private(set) var decision = KeepAwakeLogic.Decision()
     /// いま動いているアプリ（⋯ の設定で選ぶ。Dock に出る普通のアプリだけ、名前順）。
@@ -53,6 +57,10 @@ final class KeepAwake {
     func start() {
         guard !started else { return }
         started = true
+        if let m = KeepAwakeLogic.loadManual() {
+            manual = m
+            StatusBarDiag.note("スリープさせない: 前回の手動を戻した（\(KeepAwakeLogic.manualLabel(m))）")
+        }
         // 電池・電源の変化（残りの % が変わったときも来る）。登録した run loop（メイン）で呼ばれる。
         if let src = IOPSNotificationCreateRunLoopSource({ _ in
             MainActor.assumeIsolated {
@@ -95,10 +103,11 @@ final class KeepAwake {
         update()
     }
 
-    /// アプリの終了：必ず外す。
+    /// アプリの終了：assertion は必ず外す（手動の記録は残し、次の起動で戻す）。
     func shutdown() {
         endTimer?.invalidate()
         endTimer = nil
+        shuttingDown = true
         manual = nil
         setAssertion(&systemAssertion, type: "PreventUserIdleSystemSleep", on: false, name: "")
         setAssertion(&displayAssertion, type: "PreventUserIdleDisplaySleep", on: false, name: "")
