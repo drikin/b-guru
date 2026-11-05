@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var hotKey: HotKey?
     /// 右 ⇧ を 2 回でパネルを開閉（設定、既定はオン）。
     private var rightShift: RightShiftDoubleTap?
+    private var hotCorner: HotCorner?
     private var observeTask: Task<Void, Never>?
     private let settings = AppSettings.shared
     /// The bundled "new messages" notification: how many it covers and the
@@ -116,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self?.togglePanel(toChat: true) // ⌃⌥B: the chat with the caret in the message box
         }
         setupRightShift()
+        setupHotCorner()
 
         #if DEBUG
         // Dev only: -timelineFixtures DIR — the display rules against the shared examples.
@@ -584,6 +586,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             allow.indentationLevel = 1
             menu.addItem(allow)
         }
+        let cornerItem = NSMenuItem(title: "画面の隅でパネルを開閉", action: nil, keyEquivalent: "")
+        let cornerMenu = NSMenu()
+        for c in HotCornerLogic.Corner.allCases {
+            let i = NSMenuItem(title: c.label, action: #selector(setHotCorner(_:)), keyEquivalent: "")
+            i.target = self
+            i.representedObject = c.rawValue
+            i.state = settings.hotCorner == c ? .on : .off
+            cornerMenu.addItem(i)
+            if c == .off { cornerMenu.addItem(.separator()) }
+        }
+        cornerMenu.addItem(.separator())
+        let note = NSMenuItem(title: "macOS のホットコーナーと同じ隅は避けてください", action: nil, keyEquivalent: "")
+        note.isEnabled = false
+        cornerMenu.addItem(note)
+        cornerItem.submenu = cornerMenu
+        if settings.hotCorner != .off { cornerItem.title += "（\(settings.hotCorner.label)）" }
+        menu.addItem(cornerItem)
         let tick = NSMenuItem(title: "メニューバーにティッカーを流す", action: #selector(toggleTicker), keyEquivalent: "")
         tick.target = self
         tick.state = settings.menuBarTicker ? .on : .off
@@ -645,6 +664,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc private func toggleWebTimeline() { settings.webTimeline.toggle() }
     @objc private func toggleTickerNames() { settings.menuBarTickerNamesOnly.toggle() }
     @objc private func toggleRightShift() { settings.rightShiftDoubleTap.toggle() }
+    @objc private func setHotCorner(_ sender: NSMenuItem) {
+        settings.hotCorner = (sender.representedObject as? String).flatMap(HotCornerLogic.Corner.init(rawValue:)) ?? .off
+    }
     @objc private func allowRightShiftGlobal() { RightShiftDoubleTap.requestGlobalAccess() }
     @objc private func signOutAction() { signOut() }
     @objc private func checkUpdates() { Updater.shared.checkNow() }
@@ -894,6 +916,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc private func toggleKeepAwakeDisplay() { settings.keepAwakeDisplay.toggle() }
 
     // MARK: - 右 ⇧ を 2 回でパネルを開閉
+
+    private func setupHotCorner() {
+        let h = HotCorner { [weak self] in self?.togglePanel() } // ビーグルのクリックと同じ（最後のタブで開く）
+        hotCorner = h
+        settings.onHotCornerChange = { [weak self] c in
+            self?.hotCorner?.corner = c
+            StatusBarDiag.note("画面の隅でパネルを開閉: \(c.label)")
+        }
+        if !CommandLine.arguments.contains("-selftest") { h.corner = settings.hotCorner }
+    }
 
     private func setupRightShift() {
         let r = RightShiftDoubleTap { [weak self] in self?.togglePanel() } // ビーグルのクリックと同じ（最後のタブで開く）

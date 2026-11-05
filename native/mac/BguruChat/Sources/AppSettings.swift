@@ -150,6 +150,15 @@ final class AppSettings {
         }
     }
     @ObservationIgnored var onRightShiftChange: ((Bool) -> Void)?
+    /// 画面の隅でパネルを開閉する（自前のホットコーナー、ドリキン 2026-11-04）。既定は使わない。
+    var hotCorner: HotCornerLogic.Corner {
+        didSet {
+            guard hotCorner != oldValue else { return }
+            UserDefaults.standard.set(hotCorner.rawValue, forKey: "hotCorner")
+            onHotCornerChange?(hotCorner)
+        }
+    }
+    @ObservationIgnored var onHotCornerChange: ((HotCornerLogic.Corner) -> Void)?
     // ☕ スリープさせない（KeepAwake が Observation で見る。設定は手元だけ）。
     /// 入っているあいだ画面も消さない。既定は切。
     var keepAwakeDisplay: Bool {
@@ -208,6 +217,7 @@ final class AppSettings {
         aiTimelinePicks = d.bool(forKey: "aiTimelinePicks")
         webTimeline = d.bool(forKey: "webTimeline")
         rightShiftDoubleTap = d.object(forKey: "rightShiftDoubleTap") as? Bool ?? true
+        hotCorner = d.string(forKey: "hotCorner").flatMap(HotCornerLogic.Corner.init(rawValue:)) ?? .off
         keepAwakeDisplay = d.bool(forKey: "keepAwakeDisplay")
         keepAwakeAutoCall = d.object(forKey: "keepAwakeAutoCall") as? Bool ?? true
         keepAwakeAutoWatch = d.object(forKey: "keepAwakeAutoWatch") as? Bool ?? true

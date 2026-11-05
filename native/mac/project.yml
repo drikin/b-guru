@@ -213,6 +213,7 @@ targets:
       - path: ../shared/ChatSpeech.swift
       - path: BguruChat/Sources/KeepAwakeLogic.swift
       - path: BguruChat/Sources/BatteryBeagleLogic.swift
+      - path: BguruChat/Sources/HotCornerLogic.swift
       - path: ../shared/OffkaiSaveNames.swift
       - path: ../shared/CustomEmojiRules.swift
       - path: ../shared/Gosatsu.swift

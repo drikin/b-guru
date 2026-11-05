@@ -203,6 +203,13 @@ private struct ChatHeader: View {
                 if settings.rightShiftDoubleTap && !RightShiftDoubleTap.canMonitorGlobally {
                     Button("　ほかのアプリが前でも使う（入力監視を許可…）") { RightShiftDoubleTap.requestGlobalAccess() }
                 }
+                Picker("画面の隅でパネルを開閉", selection: $settings.hotCorner) {
+                    ForEach(HotCornerLogic.Corner.allCases) { Text($0.label).tag($0) }
+                }
+                if settings.hotCorner != .off {
+                    Text("隅にマウスを少し止めると開閉します。macOS のホットコーナーと同じ隅は避けてください。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 // macOS 27 からは出さない（StatusBarCollapser.isSupported）。
                 if StatusBarCollapser.isSupported {
                     Toggle("試験的：ほかのステータスバーアイコンを畳む", isOn: $settings.collapseStatusItems)
