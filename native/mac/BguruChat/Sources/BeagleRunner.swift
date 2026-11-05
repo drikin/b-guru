@@ -139,6 +139,12 @@ final class BeagleRunner {
     private(set) var pace: Pace = .still
     private(set) var lastCPU: Double = 0
     private(set) var lastGPU: Double?
+    /// 直近 3 回の平均の負荷（%、測っていなければ 0）。
+    private(set) var averageLoad: Double = 0
+    /// 右クリックに「アクティビティモニタで見る」を出す負荷（直近の平均、%）。
+    static let highLoadAt: Double = 50
+    /// 負荷が高い（走る機能がオンで、直近の平均が 50% 以上）ときの負荷。そうでなければ nil。
+    var highLoad: Double? { enabled && sampleTimer != nil && averageLoad >= Self.highLoadAt ? averageLoad : nil }
     #if DEBUG
     /// 開発のみ：負荷を固定して見本を撮る（nil = 実際の負荷）。
     var debugLoad: Double?
@@ -219,6 +225,7 @@ final class BeagleRunner {
     private func stop() {
         sampleTimer?.invalidate()
         sampleTimer = nil
+        averageLoad = 0
         frameTimer?.invalidate()
         frameTimer = nil
         pace = .still
@@ -244,6 +251,7 @@ final class BeagleRunner {
         history.append(load)
         if history.count > 3 { history.removeFirst(history.count - 3) }
         let avg = history.reduce(0, +) / Double(history.count)
+        averageLoad = avg
         var next = Pace.from(load: avg)
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { next = .still }
         #if DEBUG

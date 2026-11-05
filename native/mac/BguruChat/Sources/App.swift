@@ -524,6 +524,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             menu.addItem(i)
             menu.addItem(.separator())
         }
+        // 負荷が高いとき（負荷に合わせて走るがオンで、直近の平均が 50% 以上）：アクティビティモニタへ（ドリキン 2026-11-04）。
+        // 原因のアプリの上位をここに出したかったが、サンドボックスの中からはほかのプロセスの CPU を読めない（proc_listallpids は 0 件、
+        // /bin/ps は実行できない）ので、見るのはアクティビティモニタに任せる。
+        if let load = runner?.highLoad {
+            let i = NSMenuItem(title: "負荷 \(Int(load.rounded()))% — アクティビティモニタで見る", action: #selector(openActivityMonitor), keyEquivalent: "")
+            i.target = self
+            i.image = NSImage(systemSymbolName: "gauge.with.dots.needle.67percent", accessibilityDescription: nil)
+            menu.addItem(i)
+            menu.addItem(.separator())
+        }
         menu.addItem(withTitle: "チャットを開く  ⌃⌥B", action: #selector(openPanelAction), keyEquivalent: "").target = self
         menu.addItem(withTitle: "B-guru をブラウザで開く", action: #selector(openWeb), keyEquivalent: "").target = self
         let update = NSMenuItem(title: "アップデートを確認…", action: #selector(checkUpdates), keyEquivalent: "")
@@ -623,6 +633,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     @objc private func toggleTicker() { settings.menuBarTicker.toggle() }
     @objc private func toggleBark() { settings.menuBarBark.toggle() }
     @objc private func toggleRunner() { settings.menuBarRunner.toggle() }
+    @objc private func openActivityMonitor() {
+        let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.ActivityMonitor")
+            ?? URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app")
+        NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+        StatusBarDiag.note("負荷: アクティビティモニタを開いた")
+    }
     @objc private func toggleRunnerGPU() { settings.menuBarRunnerGPU.toggle() }
     @objc private func toggleBattery() { settings.menuBarBattery.toggle() }
     @objc private func toggleAIPicks() { settings.aiTimelinePicks.toggle() }
