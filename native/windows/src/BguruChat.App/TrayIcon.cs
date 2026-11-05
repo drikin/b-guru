@@ -95,7 +95,18 @@ public sealed class TrayIcon : IDisposable
         return !on || RegisterHotKey(hwnd, HotKeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 0x42 /* B */);
     }
 
+    /// <summary>ここで例外がネイティブ側へ抜けるとアプリごと落ちるので、全部受け止める。</summary>
     private nint WindowProc(nint h, uint msg, nint wParam, nint lParam)
+    {
+        try { return HandleMessage(h, msg, wParam, lParam); }
+        catch (Exception ex)
+        {
+            App.Log("tray: " + ex);
+            return 0;
+        }
+    }
+
+    private nint HandleMessage(nint h, uint msg, nint wParam, nint lParam)
     {
         if (msg == CallbackMessage)
         {

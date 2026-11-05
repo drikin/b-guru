@@ -42,6 +42,7 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        LoginWindow.CleanupOld();
         toasts.Invoked += a => ui.TryEnqueue(() => HandleToast(a));
         toasts.Register();
         tray = new TrayIcon { BuildMenu = BuildTrayMenu };

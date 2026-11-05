@@ -206,20 +206,31 @@ public sealed partial class ChatView : UserControl
             _ = store.ToggleReactionAsync(chip.MessageId, chip.Emoji);
     }
 
-    /// <summary>画像を押した: 元の大きさで、Windows の写真アプリなどで開く（鍵が要るので一度ファイルにする）。</summary>
+    /// <summary>
+    /// 画像を押した: 元の大きさで、Windows の写真アプリなどで開く（鍵が要るので一度ファイルにする）。
+    /// 名前と拡張子はこちらで決める（サーバの値のまま ShellExecute しない。チャットの画像は jpg・png・webp・gif だけ）。
+    /// </summary>
     private async void Image_Tapped(object sender, TappedRoutedEventArgs e)
     {
-        if (media is null || sender is not Image { DataContext: not null } img) return;
-        var vm = Rows.FirstOrDefault(r => r.Images.Contains(img.Source));
-        if (vm is null) return;
-        var index = vm.Images.IndexOf(img.Source);
-        if (index < 0 || index >= vm.Row.Message.Images.Count) return;
-        var path = vm.Row.Message.Images[index];
-        if (await media.GetBytesAsync(path) is not { } bytes) return;
-        var file = Path.Combine(Path.GetTempPath(), "BguruChat", Path.GetFileName(path.Split('?')[0]));
-        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
-        await File.WriteAllBytesAsync(file, bytes);
-        Process.Start(new ProcessStartInfo(file) { UseShellExecute = true });
+        try
+        {
+            if (media is null || sender is not Image img) return;
+            var vm = Rows.FirstOrDefault(r => r.Images.Contains(img.Source));
+            if (vm is null) return;
+            var index = vm.Images.IndexOf(img.Source);
+            if (index < 0 || index >= vm.Row.Message.Images.Count) return;
+            var path = vm.Row.Message.Images[index];
+            var m = System.Text.RegularExpressions.Regex.Match(path, @"^/api/media/chat-[A-Za-z0-9._-]+\.(jpg|jpeg|png|webp|gif)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!m.Success) return;
+            if (await media.GetBytesAsync(path) is not { } bytes) return;
+            var name = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(path)))[..16];
+            var dir = Path.Combine(Path.GetTempPath(), "BguruChat");
+            Directory.CreateDirectory(dir);
+            var file = Path.Combine(dir, $"{name}.{m.Groups[1].Value.ToLowerInvariant()}");
+            await File.WriteAllBytesAsync(file, bytes);
+            Process.Start(new ProcessStartInfo(file) { UseShellExecute = true });
+        }
+        catch (Exception ex) { App.Log("image open: " + ex.Message); }
     }
 
     private void MenuButton_Click(object sender, RoutedEventArgs e)

@@ -52,7 +52,9 @@ public static class TokenStore
 
     public static void Delete()
     {
-        try { File.Delete(FilePath); } catch (IOException) { }
+        try { File.Delete(FilePath); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 }
 

@@ -13,7 +13,21 @@ namespace BguruChat.App;
 public sealed partial class LoginWindow : Window
 {
     private readonly Uri baseUri = ApiClient.DefaultBase;
-    private readonly string dataDir = Path.Combine(Path.GetTempPath(), "BguruChat-login-" + Guid.NewGuid().ToString("N"));
+    private const string DataDirPrefix = "BguruChat-login-";
+    private readonly string dataDir = Path.Combine(Path.GetTempPath(), DataDirPrefix + Guid.NewGuid().ToString("N"));
+
+    /// <summary>前に消しきれなかったログインのデータ（強制終了など）を消す。起動時に呼ぶ。</summary>
+    public static void CleanupOld()
+    {
+        try
+        {
+            foreach (var d in Directory.GetDirectories(Path.GetTempPath(), DataDirPrefix + "*"))
+            {
+                try { Directory.Delete(d, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+        }
+        catch (IOException) { }
+    }
 
     /// <summary>鍵を受け取った。</summary>
     public event Action<string>? SignedIn;
@@ -38,11 +52,9 @@ public sealed partial class LoginWindow : Window
             core.NavigationStarting += (sender, e) =>
             {
                 // B-guru の中だけ。ほかのリンクはふだんのブラウザで
-                if (Uri.TryCreate(e.Uri, UriKind.Absolute, out var u) && !IsOurs(u) && u.Scheme is "http" or "https" or "mailto")
-                {
-                    e.Cancel = true;
-                    _ = Windows.System.Launcher.LaunchUriAsync(u);
-                }
+                if (!Uri.TryCreate(e.Uri, UriKind.Absolute, out var u) || IsOurs(u) || u.Scheme is "about" or "data" or "blob") return;
+                e.Cancel = true;
+                OpenOutside(u);
             };
             core.NewWindowRequested += (sender, e) =>
             {
@@ -50,7 +62,7 @@ public sealed partial class LoginWindow : Window
                 if (Uri.TryCreate(e.Uri, UriKind.Absolute, out var u))
                 {
                     if (IsOurs(u)) core.Navigate(u.ToString());
-                    else _ = Windows.System.Launcher.LaunchUriAsync(u);
+                    else OpenOutside(u);
                 }
             };
             core.Navigate(baseUri.ToString());
@@ -59,6 +71,12 @@ public sealed partial class LoginWindow : Window
         {
             ShowError("ログインの画面を開けませんでした（WebView2 が必要です）: " + ex.Message);
         }
+    }
+
+    /// <summary>外のリンクはふだんのブラウザで。http・https・mailto だけ（ms-settings: などのプロトコルは起動しない）。</summary>
+    private static void OpenOutside(Uri u)
+    {
+        if (u.Scheme is "http" or "https" or "mailto") _ = Windows.System.Launcher.LaunchUriAsync(u);
     }
 
     private bool IsOurs(Uri u) =>
@@ -81,6 +99,9 @@ public sealed partial class LoginWindow : Window
                 return;
             }
             var result = await ApiClient.IssueTokenAsync(header, Environment.MachineName, AppInfo.Version, baseUri);
+            // Web のセッションはもう要らない（アプリは鍵で動く）。サーバ側でも消す
+            try { await Web.CoreWebView2.ExecuteScriptAsync("fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'})"); await Task.Delay(300); }
+            catch (Exception) { }
             SignedIn?.Invoke(result.Token);
             Close();
         }
