@@ -39,4 +39,19 @@ final class HotCornerLogicTests: XCTestCase {
     func testFractionalCoordinates() {
         XCTAssertEqual(HotCornerLogic.screenIndex(at: CGPoint(x: 0.4, y: 981.5), corner: .topLeft, screens: screens), 0)
     }
+
+    func testFullScreenWhenDockWindowIsGone() {
+        let display = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+        // 実機の値（ノッチのある内蔵画面）: フルスクリーンも「画面いっぱい」も窓は (0, 39, 1800, 1130)
+        let win = CGRect(x: 0, y: 39, width: 1800, height: 1130)
+        XCTAssertFalse(HotCornerLogic.isFullScreen(appWindows: [win], dockWindows: [display], display: display, notch: 38))
+        XCTAssertTrue(HotCornerLogic.isFullScreen(appWindows: [win], dockWindows: [], display: display, notch: 38))
+        // ほかの画面の Dock の窓は関係ない・ほかの画面のフルスクリーン窓も関係ない
+        let other = CGRect(x: 1800, y: 0, width: 2560, height: 1440)
+        XCTAssertTrue(HotCornerLogic.isFullScreen(appWindows: [win], dockWindows: [other], display: display, notch: 38))
+        XCTAssertFalse(HotCornerLogic.isFullScreen(appWindows: [other], dockWindows: [], display: display, notch: 38))
+        // 普通の窓・Dock の上で止まる窓
+        XCTAssertFalse(HotCornerLogic.isFullScreen(appWindows: [CGRect(x: 284, y: 39, width: 1365, height: 883)], dockWindows: [], display: display, notch: 38))
+        XCTAssertFalse(HotCornerLogic.isFullScreen(appWindows: [CGRect(x: 0, y: 39, width: 1800, height: 1064)], dockWindows: [], display: display, notch: 38))
+    }
 }

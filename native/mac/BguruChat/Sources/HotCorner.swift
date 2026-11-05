@@ -3,7 +3,7 @@ import AppKit
 /// 画面の隅でパネルを開閉する（決め方は HotCornerLogic）。設定で隅を選んだときだけ見張る（既定は使わない）。
 /// - マウスの移動の知らせ（ほかのアプリが前でも。マウスは入力監視の許可がいらない）で、隅に入ったかだけを見る。
 ///   止まっているあいだは何も動かない（定期的には起きない）。
-/// - 隅で HotCornerLogic.dwell 秒止まったら開閉（隅の近くにいるあいだだけ 0.1 秒ごとに位置を見る）。ボタンを押している（ドラッグ）・前のアプリがフルスクリーンのときは開かない。
+/// - 隅で HotCornerLogic.dwell 秒止まったら開閉（隅の近くにいるあいだだけ 0.03 秒ごとに位置を見る）。ボタンを押している（ドラッグ）・前のアプリがフルスクリーンのときは開かない。
 /// - 開いたら隅を出るまで次は開かない。
 @MainActor
 final class HotCorner {
@@ -58,7 +58,7 @@ final class HotCorner {
 
     private var screens: [CGRect] { NSScreen.screens.map(\.frame) }
 
-    /// 隅の近く（HotCornerLogic.leave 以内）に来たら、移動の知らせだけに頼らず実際の位置を 0.1 秒ごとに確かめる
+    /// 隅の近く（HotCornerLogic.leave 以内）に来たら、移動の知らせだけに頼らず実際の位置を 0.03 秒ごとに確かめる
     /// （隅へ押し付けた最後の移動の知らせが届かないことがある。実機で確認）。近くを離れたら止める。
     private func moved() {
         let p = NSEvent.mouseLocation
@@ -70,10 +70,10 @@ final class HotCorner {
             stopWatching()
         } else if dwellTimer == nil {
             enteredAt = nil
-            let t = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            let t = Timer(timeInterval: 0.03, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.tick() }
             }
-            t.tolerance = 0.02
+            t.tolerance = 0.01
             RunLoop.main.add(t, forMode: .common)
             dwellTimer = t
             tick()
@@ -94,7 +94,11 @@ final class HotCorner {
         guard armed, !HotCornerLogic.hasLeft(p, corner: corner, screens: screens) else { stopWatching(); return }
         guard let i = HotCornerLogic.screenIndex(at: p, corner: corner, screens: screens),
               NSEvent.pressedMouseButtons == 0 else { enteredAt = nil; return }
-        guard let since = enteredAt else { enteredAt = Date(); return }
+        guard let since = enteredAt else {
+            enteredAt = Date()
+            if HotCornerLogic.dwell <= 0 { tick() }
+            return
+        }
         guard Date().timeIntervalSince(since) >= HotCornerLogic.dwell else { return }
         stopWatching()
         armed = false
@@ -106,23 +110,25 @@ final class HotCorner {
         action()
     }
 
-    /// 前のアプリ（自分以外）が、その画面いっぱいの窓を出しているか（フルスクリーンの動画・ゲーム・発表）。
-    /// 窓の位置・大きさと持ち主だけを見る（名前は読まないので、画面収録の許可はいらない）。ノッチのある画面では、
-    /// フルスクリーンの窓がカメラの下から始まることがあるので、上はノッチの分だけ低くてもよい。
+    /// 前のアプリ（自分以外）が、その画面でフルスクリーンか（動画・ゲーム・発表）。決め方は HotCornerLogic.isFullScreen。
+    /// 窓の位置・大きさ・持ち主・階層だけを見る（実機で確認: ノッチのある画面ではフルスクリーンでもメニューバーの窓が残り、
+    /// 窓の大きさも「画面いっぱい」と同じ。違うのは Dock の画面全体の窓が消えること）（名前は読まないので、画面収録の許可はいらない）。
     private static func frontmostIsFullScreen(on screen: NSScreen) -> Bool {
         guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid(),
               let num = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
-              let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]]
+              let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
         else { return false }
         let display = CGDisplayBounds(CGDirectDisplayID(num.uint32Value)) // 窓と同じ座標（左上が原点）
-        let notch = screen.safeAreaInsets.top
-        return list.contains { w in
-            guard (w[kCGWindowOwnerPID as String] as? pid_t) == app.processIdentifier,
-                  (w[kCGWindowLayer as String] as? Int) == 0,
-                  let d = w[kCGWindowBounds as String] as? NSDictionary,
-                  let b = CGRect(dictionaryRepresentation: d) else { return false }
-            return abs(b.minX - display.minX) < 1 && abs(b.width - display.width) < 1
-                && abs(b.maxY - display.maxY) < 1 && b.height >= display.height - notch - 1
+        let dockLevel = Int(CGWindowLevelForKey(.dockWindow))
+        let dockPID = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first?.processIdentifier
+        var appWindows: [CGRect] = [], dockWindows: [CGRect] = []
+        for w in list {
+            guard let d = w[kCGWindowBounds as String] as? NSDictionary, let b = CGRect(dictionaryRepresentation: d) else { continue }
+            let layer = w[kCGWindowLayer as String] as? Int ?? 0
+            let pid = w[kCGWindowOwnerPID as String] as? pid_t
+            if layer == dockLevel, let dockPID, pid == dockPID { dockWindows.append(b) }
+            if layer == 0, pid == app.processIdentifier { appWindows.append(b) }
         }
+        return HotCornerLogic.isFullScreen(appWindows: appWindows, dockWindows: dockWindows, display: display, notch: screen.safeAreaInsets.top)
     }
 }

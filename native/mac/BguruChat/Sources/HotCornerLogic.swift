@@ -23,8 +23,8 @@ enum HotCornerLogic {
     static let reach: CGFloat = 3
     /// 隅を出たとみなす距離（pt）。出入りの境目で何度も開かないように、入る幅より広くとる。
     static let leave: CGFloat = 24
-    /// 隅で止まってから開くまで（秒）。
-    static let dwell: Double = 0.3
+    /// 隅で止まってから開くまで（秒）。ほぼすぐ（ドリキン 2026-11-04「もっと一瞬で」）。通りすぎただけで開かない程度。
+    static let dwell: Double = 0.08
 
     /// その点が、どれかの画面の指定した隅にあるか（ある画面の番号）。
     static func screenIndex(at p: CGPoint, corner: Corner, screens: [CGRect], within d: CGFloat = reach) -> Int? {
@@ -62,6 +62,20 @@ enum HotCornerLogic {
         }
         let probes = [CGPoint(x: x + dx, y: y), CGPoint(x: x, y: y + dy), CGPoint(x: x + dx, y: y + dy)]
         return !probes.contains { p in screens.contains { $0 != f && $0.contains(p) } }
+    }
+
+    /// 前のアプリがその画面でフルスクリーンか（座標はすべて左上が原点の CG の画面座標）。
+    /// - その画面に Dock の画面全体の窓がない（普段の Space では Dock が画面全体の窓を出していて、フルスクリーンの Space では消える。
+    ///   ノッチのある画面ではフルスクリーンでもメニューバーの窓が残るので、メニューバーでは見分けられない。2026-11-04 実機で確認）
+    /// - かつ、前のアプリの窓が画面の幅いっぱいで下の端まであり、上はノッチの下から（ノッチの分だけ低くてよい）
+    static func isFullScreen(appWindows: [CGRect], dockWindows: [CGRect], display: CGRect, notch: CGFloat) -> Bool {
+        let dockCovers = dockWindows.contains { abs($0.minX - display.minX) < 1 && abs($0.minY - display.minY) < 1
+            && abs($0.width - display.width) < 1 && abs($0.height - display.height) < 1 }
+        guard !dockCovers else { return false }
+        return appWindows.contains { b in
+            abs(b.minX - display.minX) < 1 && abs(b.width - display.width) < 1
+                && abs(b.maxY - display.maxY) < 1 && b.minY <= display.minY + notch + 1
+        }
     }
 
     /// 開いたあと、隅を出たか（leave より離れたら次に開けるようにする）。
