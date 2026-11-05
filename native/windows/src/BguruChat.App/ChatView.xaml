@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="BguruChat.App.ChatView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:BguruChat.App"
+    xmlns:core="using:BguruChat.Core">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 見出し -->
+        <Grid Grid.Row="0" Padding="14,10,8,8" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Image Source="ms-appx:///Assets/logo.png" Width="22" Height="22" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <TextBlock Text="B-guru チャット" FontWeight="SemiBold" FontSize="15" />
+                <TextBlock x:Name="StatusText" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="12" VerticalAlignment="Center" />
+            </StackPanel>
+            <Button Grid.Column="2" x:Name="MenuButton" Content="&#xE712;" FontFamily="Segoe Fluent Icons,Segoe MDL2 Assets"
+                    Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="メニュー" Click="MenuButton_Click" />
+        </Grid>
+
+        <!-- 発言の一覧 -->
+        <ListView Grid.Row="1" x:Name="List" SelectionMode="None" IsItemClickEnabled="False" Padding="0,0,0,8"
+                  ItemsSource="{x:Bind Rows}">
+            <ListView.ItemContainerStyle>
+                <Style TargetType="ListViewItem">
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                    <Setter Property="Padding" Value="10,2,10,2" />
+                    <Setter Property="MinHeight" Value="0" />
+                </Style>
+            </ListView.ItemContainerStyle>
+            <ListView.ItemTemplate>
+                <DataTemplate x:DataType="local:RowViewModel">
+                    <StackPanel Spacing="2" RightTapped="Row_RightTapped" Tag="{x:Bind Key}">
+                        <!-- ここから未読 -->
+                        <Grid Visibility="{x:Bind local:Conv.Show(UnreadLine), Mode=OneWay}" Margin="0,6,0,4" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Rectangle Height="1" Fill="{StaticResource BguruAccent}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="ここから未読" FontSize="11" Foreground="{StaticResource BguruAccent}" />
+                            <Rectangle Grid.Column="2" Height="1" Fill="{StaticResource BguruAccent}" VerticalAlignment="Center" />
+                        </Grid>
+                        <!-- 静かな知らせ（部室の出入りなど） -->
+                        <TextBlock Visibility="{x:Bind local:Conv.Show(IsNotice), Mode=OneWay}" Text="{x:Bind Body, Mode=OneWay}"
+                                   TextWrapping="Wrap" HorizontalAlignment="Center" FontSize="12"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="0,4" />
+                        <!-- ふつうの発言 -->
+                        <Grid Visibility="{x:Bind local:Conv.Hide(IsNotice), Mode=OneWay}" ColumnSpacing="8" Padding="4,4"
+                              CornerRadius="6" Background="{x:Bind Background, Mode=OneWay}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="32" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid Width="32" Height="32" VerticalAlignment="Top" CornerRadius="16"
+                                  Background="{ThemeResource ControlFillColorSecondaryBrush}">
+                                <TextBlock Text="{x:Bind Initial, Mode=OneWay}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           Visibility="{x:Bind local:Conv.NoImage(Avatar), Mode=OneWay}" />
+                                <Image Source="{x:Bind Avatar, Mode=OneWay}" Stretch="UniformToFill" />
+                            </Grid>
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="{x:Bind Name, Mode=OneWay}" FontWeight="SemiBold" FontSize="13" />
+                                    <TextBlock Text="{x:Bind Time, Mode=OneWay}" FontSize="11" VerticalAlignment="Bottom"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                                <TextBlock Text="{x:Bind Body, Mode=OneWay}" TextWrapping="Wrap" IsTextSelectionEnabled="True"
+                                           Visibility="{x:Bind local:Conv.Show(HasBody), Mode=OneWay}" />
+                                <ItemsControl ItemsSource="{x:Bind Images}" Visibility="{x:Bind local:Conv.Show(HasImages), Mode=OneWay}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Horizontal" Spacing="4" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="ImageSource">
+                                            <Border CornerRadius="6" Margin="0,2">
+                                                <Image Source="{x:Bind}" MaxHeight="160" MaxWidth="240" Stretch="Uniform"
+                                                       Tapped="Image_Tapped" />
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <ItemsControl ItemsSource="{x:Bind Reactions, Mode=OneWay}" Visibility="{x:Bind local:Conv.Show(HasReactions), Mode=OneWay}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Horizontal" Spacing="4" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="local:ReactionChip">
+                                            <ToggleButton Content="{x:Bind Label}" IsChecked="{x:Bind Mine}" Padding="6,1" FontSize="12"
+                                                          ToolTipService.ToolTip="{x:Bind Tooltip}" Tag="{x:Bind}" Click="Reaction_Click" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="{x:Bind Status, Mode=OneWay}" FontSize="11" Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                           Visibility="{x:Bind local:Conv.Show(HasStatus), Mode=OneWay}" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+
+        <!-- メンションの候補 -->
+        <ListView Grid.Row="2" x:Name="Suggestions" Visibility="Collapsed" MaxHeight="200" SelectionMode="Single"
+                  IsItemClickEnabled="True" ItemClick="Suggestions_ItemClick" Margin="8,0"
+                  Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="6">
+            <ListView.ItemTemplate>
+                <DataTemplate x:DataType="core:Member">
+                    <TextBlock Text="{x:Bind Name}" Padding="4,2" />
+                </DataTemplate>
+            </ListView.ItemTemplate>
+        </ListView>
+
+        <!-- 入力欄 -->
+        <StackPanel Grid.Row="3" Padding="10,6,10,10" Spacing="6">
+            <ItemsControl x:Name="AttachmentsView" Visibility="Collapsed">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="6" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+            </ItemsControl>
+            <Grid ColumnSpacing="6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button x:Name="PhotoButton" Content="&#xE722;" FontFamily="Segoe Fluent Icons,Segoe MDL2 Assets"
+                        ToolTipService.ToolTip="写真を添える（貼り付けもできます）" Click="PhotoButton_Click" VerticalAlignment="Bottom" />
+                <TextBox Grid.Column="1" x:Name="Composer" PlaceholderText="メッセージ（Enter で送信・Shift+Enter で改行）"
+                         AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="140"
+                         PreviewKeyDown="Composer_PreviewKeyDown" TextChanged="Composer_TextChanged" Paste="Composer_Paste" />
+                <Button Grid.Column="2" x:Name="SendButton" Content="&#xE724;" FontFamily="Segoe Fluent Icons,Segoe MDL2 Assets"
+                        Style="{StaticResource AccentButtonStyle}" ToolTipService.ToolTip="送信" Click="SendButton_Click"
+                        VerticalAlignment="Bottom" />
+            </Grid>
+        </StackPanel>
+    </Grid>
+</UserControl>

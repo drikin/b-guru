@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="BguruChat.App.LoginWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Microsoft.UI.Xaml.Controls"
+    Title="B-guru Chat にログイン">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <StackPanel Padding="16,12" Spacing="8" Background="{ThemeResource LayerFillColorDefaultBrush}">
+            <TextBlock TextWrapping="Wrap">
+                下の画面で B-guru にログインしてから、「このアプリを接続」を押してください。
+            </TextBlock>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button x:Name="ConnectButton" Content="このアプリを接続" Style="{StaticResource AccentButtonStyle}" Click="Connect_Click" />
+                <ProgressRing x:Name="Busy" IsActive="False" Width="20" Height="20" />
+            </StackPanel>
+            <TextBlock x:Name="ErrorText" TextWrapping="Wrap" Foreground="{ThemeResource SystemFillColorCriticalBrush}" Visibility="Collapsed" />
+            <HyperlinkButton x:Name="SettingsLink" Content="アプリの接続を整理する（設定ページ）" Visibility="Collapsed"
+                             NavigateUri="https://bsm.backspace.fm/settings/agent" />
+        </StackPanel>
+        <controls:WebView2 Grid.Row="1" x:Name="Web" />
+    </Grid>
+</Window>

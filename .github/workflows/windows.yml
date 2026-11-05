@@ -1,0 +1,47 @@
+name: Windows app
+
+# B-guru Chat for Windows（native/windows、docs/windows-app-plan.md）: Core のテストと、WinUI 3 のアプリのビルド。
+# 成果物（zip）は Actions の Artifacts からダウンロードして試す。署名はまだしていない。
+on:
+  push:
+    branches: [main]
+    paths:
+      - "native/windows/**"
+      - ".github/workflows/windows.yml"
+  pull_request:
+    paths:
+      - "native/windows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Test & Build (win-x64)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: native/windows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Core tests
+        run: dotnet test tests/BguruChat.Core.Tests -c Release
+
+      - name: Publish app (win-x64, self-contained)
+        run: dotnet publish src/BguruChat.App/BguruChat.App.csproj -c Release -r win-x64 -p:Platform=x64 -o publish/win-x64
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path publish/win-x64/* -DestinationPath BguruChat-win-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BguruChat-win-x64
+          path: native/windows/BguruChat-win-x64.zip
+          retention-days: 14
