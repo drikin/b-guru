@@ -35,7 +35,7 @@ public sealed partial class LoginWindow : Window
             await Web.EnsureCoreWebView2Async(env);
             var core = Web.CoreWebView2;
             core.Settings.AreDevToolsEnabled = false;
-            core.NavigationStarting += (_, e) =>
+            core.NavigationStarting += (sender, e) =>
             {
                 // B-guru の中だけ。ほかのリンクはふだんのブラウザで
                 if (Uri.TryCreate(e.Uri, UriKind.Absolute, out var u) && !IsOurs(u) && u.Scheme is "http" or "https" or "mailto")
@@ -44,7 +44,7 @@ public sealed partial class LoginWindow : Window
                     _ = Windows.System.Launcher.LaunchUriAsync(u);
                 }
             };
-            core.NewWindowRequested += (_, e) =>
+            core.NewWindowRequested += (sender, e) =>
             {
                 e.Handled = true;
                 if (Uri.TryCreate(e.Uri, UriKind.Absolute, out var u))
