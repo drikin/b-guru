@@ -105,7 +105,8 @@ d("👥 グループ DM（DB）", () => {
     const g = await create(a, [b.userId, c.userId, a.userId, b.userId], "  旅行  ");
     expect(g).toMatchObject({ name: "旅行", title: "旅行", member_count: 3, is_creator: true, muted: false });
     expect(g.members.map((x) => x.user_id).sort()).toEqual([a.userId, b.userId, c.userId].sort());
-    expect(g.members.find((x) => x.user_id === a.userId)?.is_creator).toBe(true);
+    expect(g.members.find((x) => x.user_id === a.userId)).toMatchObject({ is_creator: true, is_me: true });
+    expect(g.members.filter((x) => x.is_me)).toHaveLength(1);
 
     const listB = await m.api.gdmListApi(b);
     expect(listB.status).toBe(200);

@@ -25,6 +25,8 @@ import {
 } from "@/lib/dm-client";
 import { chatTimeStr } from "@/lib/date-format";
 import { handleComposerKeyDown } from "@/lib/composer-keys";
+import { closeGroup, loadGdm, pruneGdmNow } from "@/lib/gdm-client";
+import { CreateGroupModal, GroupRow, GroupThread, useGdm } from "./GroupDM";
 
 const DM_MAX_BODY = 1000;
 
@@ -34,11 +36,17 @@ export function useDm(): DmSnapshot {
 
 /** 「✉️」と未読の数（DM が使える人だけ）。 */
 export function DmToggle() {
-  const s = useDm();
+  const s0 = useDm();
+  const g = useGdm();
   useEffect(() => {
-    if (s.status === "unknown") void loadDm();
-  }, [s.status]);
-  if (s.status !== "enabled") return null;
+    if (s0.status === "unknown") void loadDm();
+  }, [s0.status]);
+  useEffect(() => {
+    if (s0.status === "enabled" && g.status === "unknown") void loadGdm();
+  }, [s0.status, g.status]);
+  if (s0.status !== "enabled") return null;
+  // 👥 グループの未読も足して出す
+  const s = { ...s0, unread: s0.unread + (g.status === "enabled" ? g.unread : 0) };
   return (
     <Tooltip label="DM（30 日で消えます）" openDelay={400}>
       <Indicator label={s.unread > 99 ? "99+" : s.unread} size={16} color="red" disabled={s.unread === 0} offset={4}>
@@ -49,7 +57,7 @@ export function DmToggle() {
           aria-label={s.unread > 0 ? `DM（未読 ${s.unread} 件）` : "DM"}
           title="DM"
           data-cx="dm-toggle"
-          onClick={() => (s.open ? closeDm() : openDmList())}
+          onClick={() => (s.open ? (closeGroup(), closeDm()) : openDmList())}
         >
           <span aria-hidden style={{ fontSize: 15, lineHeight: 1 }}>
             ✉️
@@ -73,7 +81,7 @@ export function DmNameMenu({ peer, children }: { peer: DmPeer | null; children: 
       </Menu.Target>
       <Menu.Dropdown>
         <Menu.Label>{peer.name ?? "会員"}</Menu.Label>
-        <Menu.Item leftSection={<span aria-hidden>✉️</span>} onClick={() => void openDm(peer)}>
+        <Menu.Item leftSection={<span aria-hidden>✉️</span>} onClick={() => (closeGroup(), void openDm(peer))}>
           DM を送る
         </Menu.Item>
       </Menu.Dropdown>
@@ -93,16 +101,17 @@ function PeerAvatar({ peer, size = "sm" }: { peer: DmPeer; size?: "xs" | "sm" | 
 /** 右から出る DM（一覧 / 会話）。 */
 export function DmDrawer() {
   const s = useDm();
+  const g = useGdm();
   useEffect(() => {
     if (!s.open) return;
-    const t = setInterval(pruneNow, 60_000);
+    const t = setInterval(() => (pruneNow(), pruneGdmNow()), 60_000);
     return () => clearInterval(t);
   }, [s.open]);
   if (s.status !== "enabled") return null;
   return (
     <Drawer
       opened={s.open}
-      onClose={closeDm}
+      onClose={() => (closeGroup(), closeDm())}
       position="right"
       size="min(440px, 100vw)"
       padding={0}
@@ -110,12 +119,12 @@ export function DmDrawer() {
       data-cx="dm-drawer"
       styles={{ body: { height: "100%", display: "flex", flexDirection: "column", padding: 0 } }}
     >
-      {s.peer ? <DmThread key={s.peer.user_id} s={s} peer={s.peer} /> : <DmList s={s} />}
+      {g.current ? <GroupThread key={`g${g.current.id}`} s={g} /> : s.peer ? <DmThread key={s.peer.user_id} s={s} peer={s.peer} /> : <DmList s={s} />}
     </Drawer>
   );
 }
 
-function Header({ title, onBack, left }: { title: ReactNode; onBack: () => void; left?: ReactNode }) {
+function Header({ title, onBack, left, right }: { title: ReactNode; onBack: () => void; left?: ReactNode; right?: ReactNode }) {
   return (
     <Group gap={8} px="sm" py={8} wrap="nowrap" style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}>
       <ActionIcon variant="subtle" color="gray" onClick={onBack} aria-label="戻る">
@@ -127,6 +136,7 @@ function Header({ title, onBack, left }: { title: ReactNode; onBack: () => void;
       <Text fw={600} size="sm" style={{ flex: 1, minWidth: 0 }} truncate>
         {title}
       </Text>
+      {right}
       <ActionIcon variant="subtle" color="gray" onClick={closeDm} aria-label="閉じる">
         ✕
       </ActionIcon>
@@ -135,20 +145,43 @@ function Header({ title, onBack, left }: { title: ReactNode; onBack: () => void;
 }
 
 function DmList({ s }: { s: DmSnapshot }) {
+  const g = useGdm();
+  const [creating, setCreating] = useState(false);
+  const groupsOn = g.status === "enabled";
+  // 1 対 1 とグループを新しい順に混ぜる
+  const items = [
+    ...s.conversations.map((c) => ({ key: `p${c.peer.user_id}`, at: c.last_message.created_at, c, gs: null })),
+    ...(groupsOn ? g.groups : []).map((gs) => ({ key: `g${gs.group.id}`, at: gs.last_message?.created_at ?? gs.group.created_at, c: null, gs })),
+  ].sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
   return (
     <>
-      <Header title="DM" onBack={closeDm} />
+      <Header
+        title="DM"
+        onBack={closeDm}
+        right={
+          groupsOn ? (
+            <Button size="compact-xs" variant="light" color="green" onClick={() => setCreating(true)} data-cx="gdm-create">
+              ＋ グループ
+            </Button>
+          ) : undefined
+        }
+      />
+      {groupsOn && <CreateGroupModal opened={creating} onClose={() => setCreating(false)} />}
       <ScrollArea style={{ flex: 1 }}>
-        {s.conversations.length === 0 ? (
+        {items.length === 0 ? (
           <Text size="sm" c="dimmed" ta="center" py="xl" px="md">
             DM はまだありません。チャットで名前を押すと「DM を送る」が出ます。
+            {groupsOn ? "「＋ グループ」で何人かと話せます。" : ""}
           </Text>
         ) : (
           <Stack gap={0}>
-            {s.conversations.map((c) => (
+            {items.map(({ key, c, gs }) =>
+              gs ? (
+                <GroupRow key={key} g={gs} />
+              ) : c ? (
               <UnstyledButton
                 key={c.peer.user_id}
-                onClick={() => void openDm(c.peer)}
+                onClick={() => (closeGroup(), void openDm(c.peer))}
                 px="sm"
                 py={10}
                 style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}
@@ -179,7 +212,8 @@ function DmList({ s }: { s: DmSnapshot }) {
                   </Box>
                 </Group>
               </UnstyledButton>
-            ))}
+              ) : null
+            )}
           </Stack>
         )}
       </ScrollArea>

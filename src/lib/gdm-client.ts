@@ -1,0 +1,293 @@
+"use client";
+/* 👥 グループ DM の Web クライアントの状態（dm-client.ts と同じ形、docs/group-dm-spec.md）。
+ *
+ *   loadGdm()          GET /api/gdm — 200 = 使える、404 = 出していない（グループの部品を出さない）
+ *   openGroup(id)      1 つのグループを開く（DM の引き出しの中。1 対 1 の会話とは同時に開かない）
+ *   sendGroupText()    楽観的に出して POST、client_id で突き合わせる
+ *   applyGdmEvent()    /api/posts/stream の `event: gdm`
+ * 発言は 30 日で消える: 期限を過ぎたものはここでも隠す。 */
+import { newChatClientId } from "./chat-optimistic";
+import { DM_TTL_MS } from "./dm-client";
+
+export type GMember = { user_id: string; name: string | null; avatar: string | null; is_creator: boolean; is_me: boolean };
+export type Group = {
+  id: number;
+  name: string | null;
+  title: string;
+  members: GMember[];
+  member_count: number;
+  is_creator: boolean;
+  muted: boolean;
+  created_at: string;
+};
+export type GMessage = {
+  id: number;
+  group_id: number;
+  kind: "text" | "system";
+  from_id: string | null;
+  from_name: string | null;
+  from_avatar: string | null;
+  body: string;
+  created_at: string;
+  is_author: boolean;
+  client_id?: string;
+  pending?: boolean;
+  failed?: boolean;
+};
+export type GroupSummary = { group: Group; last_message: GMessage | null; unread_count: number };
+
+export interface GdmSnapshot {
+  status: "unknown" | "enabled" | "disabled";
+  unread: number;
+  groups: GroupSummary[];
+  /** 開いているグループ（null なら開いていない）。 */
+  current: Group | null;
+  messages: GMessage[];
+  canSend: boolean;
+  loading: boolean;
+  error: string | null;
+}
+
+const INITIAL: GdmSnapshot = { status: "unknown", unread: 0, groups: [], current: null, messages: [], canSend: true, loading: false, error: null };
+let snap: GdmSnapshot = INITIAL;
+const listeners = new Set<() => void>();
+function set(patch: Partial<GdmSnapshot>): void {
+  snap = { ...snap, ...patch };
+  for (const l of listeners) l();
+}
+export function subscribeGdm(l: () => void): () => void {
+  listeners.add(l);
+  return () => listeners.delete(l);
+}
+export const getGdmSnapshot = (): GdmSnapshot => snap;
+export const getGdmServerSnapshot = (): GdmSnapshot => INITIAL;
+
+// ---- 純粋な部分（テストする） ----
+
+export function pruneExpiredG<T extends { created_at: string; pending?: boolean }>(list: T[], now = Date.now()): T[] {
+  return list.filter((m) => m.pending || now - new Date(m.created_at).getTime() < DM_TTL_MS);
+}
+
+/** 届いた 1 件を入れる: 同じ ID か同じ client_id なら置き換え、無ければ足す。ID 順（送信中は最後）。 */
+export function reconcileG(list: GMessage[], m: GMessage): GMessage[] {
+  const i = list.findIndex((x) => x.id === m.id || (!!m.client_id && x.client_id === m.client_id));
+  const next = i >= 0 ? list.map((x, j) => (j === i ? { ...m, pending: false, failed: false } : x)) : [...list, m];
+  return next.sort((a, b) => (a.id < 0 ? Infinity : a.id) - (b.id < 0 ? Infinity : b.id));
+}
+
+/** 一覧に 1 件を反映（そのグループを先頭に、人の発言なら未読 +1。見ているなら増やさない）。知らないグループなら null。 */
+export function applyToGroups(list: GroupSummary[], m: GMessage, viewing: boolean): GroupSummary[] | null {
+  const prev = list.find((g) => g.group.id === m.group_id);
+  if (!prev) return null;
+  const counts = m.kind === "text" && !m.is_author && !viewing;
+  const unread = viewing ? 0 : prev.unread_count + (counts ? 1 : 0);
+  return [{ ...prev, last_message: m, unread_count: unread }, ...list.filter((g) => g.group.id !== m.group_id)];
+}
+
+// ---- ネットワーク ----
+
+type Body = Record<string, unknown> & { error?: string; code?: string };
+async function api(path: string, init?: RequestInit): Promise<{ status: number; body: Body | null }> {
+  try {
+    const r = await fetch(path, { cache: "no-store", ...init, headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) } });
+    let body: Body | null = null;
+    try {
+      body = (await r.json()) as Body;
+    } catch {
+      body = null;
+    }
+    return { status: r.status, body };
+  } catch {
+    return { status: 0, body: null };
+  }
+}
+
+let loading: Promise<void> | null = null;
+export function loadGdm(): Promise<void> {
+  loading ??= (async () => {
+    try {
+      const r = await api("/api/gdm");
+      if (r.status === 404 || r.status === 401) {
+        set({ status: "disabled" });
+        return;
+      }
+      if (r.status !== 200 || !r.body) return;
+      set({ status: "enabled", groups: (r.body.groups as GroupSummary[]) ?? [], unread: Number(r.body.group_unread_count ?? 0) });
+    } finally {
+      loading = null;
+    }
+  })();
+  return loading;
+}
+
+export function closeGroup(): void {
+  if (snap.current) set({ current: null, messages: [], error: null });
+}
+
+export async function openGroup(id: number): Promise<void> {
+  const known = snap.groups.find((g) => g.group.id === id)?.group ?? null;
+  set({ current: known ?? { id, name: null, title: "グループ", members: [], member_count: 0, is_creator: false, muted: false, created_at: "" }, messages: [], loading: true, error: null, canSend: true });
+  const r = await api(`/api/gdm/${id}`);
+  if (snap.current?.id !== id) return;
+  if (r.status !== 200 || !r.body) {
+    set({ loading: false, error: r.body?.error ?? "読み込めませんでした" });
+    return;
+  }
+  set({ current: r.body.group as Group, messages: pruneExpiredG((r.body.messages as GMessage[]) ?? []), canSend: r.body.can_send !== false, loading: false });
+  markSeen();
+}
+
+let readTimer: ReturnType<typeof setTimeout> | null = null;
+function markSeen(): void {
+  const g = snap.current;
+  if (!g) return;
+  const last = [...snap.messages].reverse().find((m) => m.id > 0);
+  const sum = snap.groups.find((x) => x.group.id === g.id);
+  if (sum && sum.unread_count > 0) {
+    set({ groups: snap.groups.map((x) => (x.group.id === g.id ? { ...x, unread_count: 0 } : x)), unread: Math.max(0, snap.unread - sum.unread_count) });
+  }
+  if (!last) return;
+  if (readTimer) clearTimeout(readTimer);
+  readTimer = setTimeout(async () => {
+    const r = await api(`/api/gdm/${g.id}/read`, { method: "POST", body: JSON.stringify({ last_read_id: last.id }) });
+    if (r.status === 200 && r.body) set({ unread: Number(r.body.group_unread_count ?? snap.unread) });
+  }, 400);
+}
+
+let tempSeq = 0;
+export async function sendGroupText(text: string): Promise<boolean> {
+  const g = snap.current;
+  const body = text.trim();
+  if (!g || !body) return false;
+  const temp: GMessage = {
+    id: -++tempSeq,
+    group_id: g.id,
+    kind: "text",
+    from_id: null,
+    from_name: null,
+    from_avatar: null,
+    body,
+    created_at: new Date().toISOString(),
+    is_author: true,
+    client_id: newChatClientId(),
+    pending: true,
+  };
+  set({ messages: [...snap.messages, temp], error: null });
+  return deliver(g.id, temp);
+}
+
+async function deliver(gid: number, temp: GMessage): Promise<boolean> {
+  const r = await api(`/api/gdm/${gid}/messages`, { method: "POST", body: JSON.stringify({ body: temp.body, client_id: temp.client_id }) });
+  if (r.status === 201 && r.body?.message) {
+    const m = r.body.message as GMessage;
+    if (snap.current?.id === gid) set({ messages: reconcileG(snap.messages, m) });
+    const next = applyToGroups(snap.groups, m, true);
+    if (next) set({ groups: next });
+    return true;
+  }
+  if (snap.current?.id === gid) {
+    set({
+      messages: snap.messages.map((x) => (x.client_id === temp.client_id ? { ...x, pending: false, failed: true } : x)),
+      error: r.body?.error ?? "送れませんでした",
+    });
+  }
+  return false;
+}
+
+export function retryGroupText(m: GMessage): void {
+  const g = snap.current;
+  if (!g || !m.failed) return;
+  set({ messages: snap.messages.map((x) => (x.client_id === m.client_id ? { ...x, failed: false, pending: true } : x)), error: null });
+  void deliver(g.id, { ...m, failed: false, pending: true });
+}
+
+export function discardGroupText(m: GMessage): void {
+  set({ messages: snap.messages.filter((x) => x.client_id !== m.client_id || x.id > 0) });
+}
+
+/** 作る。成功したらそのグループを開く。失敗はエラー文を返す。 */
+export async function createGroup(memberIds: string[], name: string): Promise<string | null> {
+  const r = await api("/api/gdm", { method: "POST", body: JSON.stringify({ member_ids: memberIds, name: name.trim() || null }) });
+  if (r.status !== 201 || !r.body?.group) return r.body?.error ?? "作れませんでした";
+  const g = r.body.group as Group;
+  if (!snap.groups.some((x) => x.group.id === g.id)) set({ groups: [{ group: g, last_message: null, unread_count: 0 }, ...snap.groups] });
+  void openGroup(g.id);
+  return null;
+}
+
+function replaceGroup(g: Group): void {
+  set({
+    groups: snap.groups.some((x) => x.group.id === g.id)
+      ? snap.groups.map((x) => (x.group.id === g.id ? { ...x, group: g } : x))
+      : [{ group: g, last_message: null, unread_count: 0 }, ...snap.groups],
+    ...(snap.current?.id === g.id ? { current: g } : {}),
+  });
+}
+
+function dropGroup(id: number): void {
+  const sum = snap.groups.find((x) => x.group.id === id);
+  set({
+    groups: snap.groups.filter((x) => x.group.id !== id),
+    unread: Math.max(0, snap.unread - (sum?.unread_count ?? 0)),
+    ...(snap.current?.id === id ? { current: null, messages: [] } : {}),
+  });
+}
+
+async function mutate(path: string, method: string, payload?: unknown): Promise<string | null> {
+  const r = await api(path, { method, ...(payload !== undefined ? { body: JSON.stringify(payload) } : {}) });
+  if (r.status !== 200 || !r.body) return r.body?.error ?? "できませんでした";
+  if (r.body.group) replaceGroup(r.body.group as Group);
+  return null;
+}
+
+export const renameGroup = (id: number, name: string) => mutate(`/api/gdm/${id}`, "PATCH", { name: name.trim() || null });
+export const setGroupMuted = (id: number, muted: boolean) => mutate(`/api/gdm/${id}`, "PATCH", { muted });
+export const addGroupMembers = (id: number, userIds: string[]) => mutate(`/api/gdm/${id}/members`, "POST", { user_ids: userIds });
+export async function removeGroupMember(id: number, userId: string, self: boolean): Promise<string | null> {
+  const err = await mutate(`/api/gdm/${id}/members/${encodeURIComponent(userId)}`, "DELETE");
+  if (!err && self) dropGroup(id);
+  return err;
+}
+
+/** /api/posts/stream の `event: gdm`。 */
+export function applyGdmEvent(data: unknown): void {
+  if (!data || typeof data !== "object") return;
+  const d = data as Record<string, unknown>;
+  if (snap.status !== "enabled") {
+    void loadGdm();
+    return;
+  }
+  if (d.action === "create" && d.message) {
+    const m = d.message as GMessage;
+    const viewing = snap.current?.id === m.group_id && typeof document !== "undefined" && document.visibilityState === "visible";
+    if (snap.current?.id === m.group_id) set({ messages: reconcileG(snap.messages, m) });
+    const next = applyToGroups(snap.groups, m, viewing);
+    if (!next) {
+      void loadGdm(); // 知らないグループ（入れてもらった直後など）
+      return;
+    }
+    const counts = m.kind === "text" && !m.is_author && !viewing;
+    set({ groups: next, unread: typeof d.group_unread_count === "number" && !viewing ? d.group_unread_count : snap.unread + (counts ? 1 : 0) });
+    if (viewing && !m.is_author) markSeen();
+  } else if (d.action === "read" && typeof d.group_id === "number") {
+    set({
+      groups: snap.groups.map((x) => (x.group.id === d.group_id ? { ...x, unread_count: Number(d.unread_count ?? 0) } : x)),
+      unread: typeof d.group_unread_count === "number" ? d.group_unread_count : snap.unread,
+    });
+  } else if (d.action === "group" && d.group && typeof d.group === "object") {
+    replaceGroup(d.group as Group);
+  } else if (d.action === "removed" && typeof d.group_id === "number") {
+    dropGroup(d.group_id);
+  }
+}
+
+export function pruneGdmNow(): void {
+  const messages = pruneExpiredG(snap.messages);
+  if (messages.length !== snap.messages.length) set({ messages });
+}
+
+export function _resetGdmClientForTest(): void {
+  snap = INITIAL;
+  listeners.clear();
+  loading = null;
+}

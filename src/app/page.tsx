@@ -92,6 +92,7 @@ import { ShogiChatCard, ShogiPanel } from "@/components/shogi/ShogiPanel";
 import { GameToggles, MinigamePanel } from "@/components/minigame/MinigamePanel";
 import { DmDrawer, DmNameMenu } from "@/components/dm/DMPanel";
 import { applyDmEvent } from "@/lib/dm-client";
+import { applyGdmEvent } from "@/lib/gdm-client";
 import { applyMinigameEvent, reloadMinigame } from "@/lib/minigame-client";
 import { applyWatchEvent, isYoutubeVideoUrl, reloadWatch } from "@/lib/watch-client";
 import { WatchPanel, WatchTogetherButton } from "@/components/watch/WatchPanel";
@@ -7247,6 +7248,14 @@ export default function Home() {
     es.addEventListener("dm", (e: MessageEvent) => {
       try {
         applyDmEvent(JSON.parse(e.data));
+      } catch {
+        /* ignore a malformed event */
+      }
+    });
+    // 👥 グループ DM: a message / read mark / member change in one of my groups (docs/group-dm-spec.md).
+    es.addEventListener("gdm", (e: MessageEvent) => {
+      try {
+        applyGdmEvent(JSON.parse(e.data));
       } catch {
         /* ignore a malformed event */
       }

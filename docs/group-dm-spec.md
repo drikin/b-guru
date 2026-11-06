@@ -56,7 +56,7 @@ gdm_messages        id SERIAL, group_id, sender_email TEXT NULL（system は NUL
 | `GET /gdm/messages/:id` | — | `{ message: GMessage, group: Group }`（通知の本文用。メンバーでなければ 404） |
 
 ```ts
-type GMember = { user_id: string; name: string | null; avatar: string | null; is_creator: boolean };
+type GMember = { user_id: string; name: string | null; avatar: string | null; is_creator: boolean; is_me: boolean };
 type Group = {
   id: number;
   name: string | null;          // 付けた名前（無ければ null）

@@ -42,7 +42,7 @@ export const GDM_MAX_NAME = 40;
 export const GDM_ADMIN_RATE_LIMIT = 30;
 export const GDM_GROUPS_LIMIT = 100;
 
-export type GMember = { user_id: string; name: string | null; avatar: string | null; is_creator: boolean };
+export type GMember = { user_id: string; name: string | null; avatar: string | null; is_creator: boolean; is_me: boolean };
 export type GroupDto = {
   id: number;
   name: string | null;
@@ -112,12 +112,14 @@ export function toGroupDto(g: GroupRow, members: MemberRow[], viewerEmail: strin
   const list: GMember[] = [];
   const others: (string | null)[] = [];
   let muted = false;
-  for (const m of members) {
+  // 作った人を先頭に、あとは入った順
+  const ordered = [...members.filter((m) => normEmail(m.email) === creator), ...members.filter((m) => normEmail(m.email) !== creator)];
+  for (const m of ordered) {
     const e = normEmail(m.email);
     const uid = lk.ids.get(e);
     if (!uid) continue;
     const name = lk.names.get(e) ?? null;
-    list.push({ user_id: uid, name, avatar: gravatarUrl(e), is_creator: e === creator });
+    list.push({ user_id: uid, name, avatar: gravatarUrl(e), is_creator: e === creator, is_me: e === me });
     if (e === me) muted = !!m.muted;
     else others.push(name);
   }
