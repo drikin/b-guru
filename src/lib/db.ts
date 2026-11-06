@@ -767,6 +767,8 @@ export async function initSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_gdm_messages_group ON gdm_messages (group_id, id DESC);
     CREATE INDEX IF NOT EXISTS idx_gdm_messages_created ON gdm_messages (created_at);
+    -- グループの写真（data/gdm-photos のファイル名。メンバーだけが /api/gdm/:gid/photo で読める）
+    ALTER TABLE gdm_groups ADD COLUMN IF NOT EXISTS photo TEXT;
     -- 自分で抜けた記録（同じグループに 24 時間入れ直せない）。グループと一緒に消える。
     CREATE TABLE IF NOT EXISTS gdm_leaves (
       group_id INTEGER NOT NULL REFERENCES gdm_groups(id) ON DELETE CASCADE,

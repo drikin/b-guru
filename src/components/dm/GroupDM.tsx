@@ -15,6 +15,8 @@ import {
   getGdmServerSnapshot,
   getGdmSnapshot,
   removeGroupMember,
+  removeGroupPhoto,
+  setGroupPhoto,
   renameGroup,
   retryGroupText,
   sendGroupText,
@@ -96,9 +98,10 @@ function MemberPicker({ open, exclude, value, onChange }: { open: boolean; exclu
   );
 }
 
-function GroupIcon({ size = 38 }: { size?: number }) {
+function GroupIcon({ size = 38, photo }: { size?: number; photo?: string | null }) {
+  const [failed, setFailed] = useState(false);
   return (
-    <Avatar size={size} radius="xl" color="green" aria-hidden>
+    <Avatar size={size} radius="xl" color="green" aria-hidden src={photo && !failed ? photo : undefined} onError={() => setFailed(true)}>
       <span style={{ fontSize: size * 0.5 }}>👥</span>
     </Avatar>
   );
@@ -125,7 +128,7 @@ export function GroupRow({ g }: { g: GroupSummary }) {
       data-cx="gdm-row"
     >
       <MGroup gap={10} wrap="nowrap">
-        <GroupIcon />
+        <GroupIcon photo={g.group.photo} />
         <Box style={{ flex: 1, minWidth: 0 }}>
           <MGroup gap={6} wrap="nowrap" justify="space-between">
             <Text size="sm" fw={g.unread_count > 0 ? 700 : 500} truncate>
@@ -217,7 +220,7 @@ function Header({ g, onMembers }: { g: Group; onMembers: () => void }) {
           <path d="M15 18l-6-6 6-6" />
         </svg>
       </ActionIcon>
-      <GroupIcon size={26} />
+      <GroupIcon size={26} photo={g.photo} />
       <UnstyledButton onClick={onMembers} style={{ flex: 1, minWidth: 0 }} aria-label="メンバーと設定">
         <Text fw={600} size="sm" truncate>
           {g.title}
@@ -370,6 +373,7 @@ function GroupMembers({ g, onBack }: { g: Group; onBack: () => void }) {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
+  const photoInput = useRef<HTMLInputElement>(null);
   const [confirmRemove, setConfirmRemove] = useState<{ id: string; name: string } | null>(null);
   const run = async (fn: () => Promise<string | null>) => {
     setBusy(true);
@@ -405,6 +409,35 @@ function GroupMembers({ g, onBack }: { g: Group; onBack: () => void }) {
             <Button variant="light" color="green" disabled={busy || (name.trim() || null) === g.name} onClick={() => void run(() => renameGroup(g.id, name))}>
               変える
             </Button>
+          </MGroup>
+          <MGroup gap="sm" wrap="nowrap">
+            <GroupIcon size={56} photo={g.photo} />
+            <Stack gap={4}>
+              <Text size="sm" fw={600}>
+                グループの写真
+              </Text>
+              <MGroup gap={6}>
+                <Button size="compact-xs" variant="light" color="green" disabled={busy} onClick={() => photoInput.current?.click()} data-cx="gdm-photo">
+                  {g.photo ? "写真を変える" : "写真を設定"}
+                </Button>
+                {g.photo && (
+                  <Button size="compact-xs" variant="subtle" color="gray" disabled={busy} onClick={() => void run(() => removeGroupPhoto(g.id))}>
+                    外す
+                  </Button>
+                )}
+              </MGroup>
+              <input
+                ref={photoInput}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                hidden
+                onChange={(e) => {
+                  const f = e.currentTarget.files?.[0];
+                  e.currentTarget.value = "";
+                  if (f) void run(() => setGroupPhoto(g.id, f));
+                }}
+              />
+            </Stack>
           </MGroup>
           <Switch
             label="🔕 このグループの通知を切る"

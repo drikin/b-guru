@@ -7,7 +7,12 @@
  *   - 追加はメンバーなら誰でも、外すのは作った人だけ、抜けるのは誰でも（オーナー決定 2026-11-06）。
  *   - 発言は全部 push、グループごとに自分で通知を切れる（muted）。
  *   - GROUP_DM_ENABLED（かつ DM_ENABLED）の対象の人だけ。 */
+import path from "path";
+import crypto from "crypto";
+import { mkdir, readFile, rm, writeFile } from "fs/promises";
+import sharp from "sharp";
 import { pool } from "./db";
+import { withImageSlot } from "./image-resize";
 import { gravatarUrl, SYSTEM_EMAIL } from "./posts";
 import { resolveDisplayNames } from "./display-name";
 import { emailToUserIds } from "./user";
@@ -49,6 +54,8 @@ export type GroupDto = {
   id: number;
   name: string | null;
   title: string;
+  /** グループの写真（メンバーだけが読める。Web はクッキー、アプリは鍵で）。無ければ null。 */
+  photo: string | null;
   members: GMember[];
   member_count: number;
   is_creator: boolean;
@@ -69,7 +76,7 @@ export type GMessageDto = {
 };
 export type GroupSummaryDto = { group: GroupDto; last_message: GMessageDto | null; unread_count: number };
 
-type GroupRow = { id: number; name: string | null; creator_email: string; created_at: Date | string };
+type GroupRow = { id: number; name: string | null; creator_email: string; created_at: Date | string; photo?: string | null };
 type MemberRow = { email: string; joined_at: Date | string; joined_from_id: number; muted: boolean; last_read_id: number };
 type MsgRow = { id: number; group_id: number; sender_email: string | null; kind: string; body: string; created_at: Date | string };
 
@@ -107,6 +114,13 @@ export function groupTitle(name: string | null, otherNames: (string | null)[]): 
   return shown.join("、") + (rest > 0 ? ` ほか ${rest} 人` : "");
 }
 
+/** 写真の URL（ファイル名が変わると ?v= も変わるので、端末のキャッシュは古いものを出さない）。 */
+export function photoUrl(gid: number, file: string | null): string | null {
+  if (!file) return null;
+  const v = file.replace(/\.[a-z]+$/, "").split("-").pop() ?? "";
+  return `/api/gdm/${gid}/photo?v=${encodeURIComponent(v)}`;
+}
+
 function displayName(email: string, names: Map<string, string | null>): string {
   if (normEmail(email) === SYSTEM_EMAIL) return "ビーグル";
   return names.get(normEmail(email)) || "だれか";
@@ -133,6 +147,7 @@ export function toGroupDto(g: GroupRow, members: MemberRow[], viewerEmail: strin
     id: g.id,
     name: g.name,
     title: groupTitle(g.name, others),
+    photo: photoUrl(g.id, g.photo ?? null),
     members: list,
     member_count: list.length,
     is_creator: creator === me,
@@ -184,7 +199,7 @@ function parseGroupId(v: unknown): number {
 
 async function loadGroup(gid: number): Promise<{ group: GroupRow; members: MemberRow[] } | null> {
   const [g, m] = await Promise.all([
-    pool.query(`SELECT id, name, creator_email, created_at FROM gdm_groups WHERE id = $1`, [gid]),
+    pool.query(`SELECT id, name, creator_email, created_at, photo FROM gdm_groups WHERE id = $1`, [gid]),
     pool.query(
       `SELECT email, joined_at, joined_from_id, muted, last_read_id FROM gdm_members WHERE group_id = $1 ORDER BY joined_at, email`,
       [gid]
@@ -348,7 +363,7 @@ function namesLine(emails: string[], names: Map<string, string | null>): string 
 export async function listGroups(actor: DmActor): Promise<{ groups: GroupSummaryDto[]; group_unread_count: number }> {
   const me = normEmail(actor.email);
   const gr = await pool.query(
-    `SELECT g.id, g.name, g.creator_email, g.created_at
+    `SELECT g.id, g.name, g.creator_email, g.created_at, g.photo
        FROM gdm_groups g JOIN gdm_members gm ON gm.group_id = g.id AND gm.email = $1
       ORDER BY g.updated_at DESC, g.id DESC
       LIMIT $2`,
@@ -629,10 +644,12 @@ export async function removeMember(actor: DmActor, rawGid: unknown, rawUserId: u
   // 削除・引き継ぎ・0 人で消すを、グループの行に鍵をかけてまとめて行う（同時に抜けても作った人が消えないように）。
   const client = await pool.connect();
   let gone = false;
+  let g0photo: string | null = null;
   try {
     await client.query("BEGIN");
-    const g = await client.query(`SELECT creator_email FROM gdm_groups WHERE id = $1 FOR UPDATE`, [gid]);
+    const g = await client.query(`SELECT creator_email, photo FROM gdm_groups WHERE id = $1 FOR UPDATE`, [gid]);
     if (!g.rows[0]) throw new DmError(404, "not_found", "グループが見つかりません");
+    g0photo = g.rows[0].photo ?? null;
     if (!self) {
       // 鍵を取ってから、外す権限を確かめ直す
       if (normEmail(g.rows[0].creator_email) !== me) throw new DmError(403, "forbidden", "外せるのはグループを作った人だけです");
@@ -661,7 +678,10 @@ export async function removeMember(actor: DmActor, rawGid: unknown, rawUserId: u
     client.release();
   }
   emitPersonal(target, { type: "gdm", data: { action: "removed", group_id: gid } });
-  if (gone) return { ok: true };
+  if (gone) {
+    await removePhotoFile(g0photo);
+    return { ok: true };
+  }
   const names = await resolveDisplayNames([me, target]);
   try {
     await insertMessage(
@@ -712,7 +732,101 @@ export function gdmCapability(enabled: boolean, scopes: string[]) {
     max_members: GDM_MAX_MEMBERS,
     ttl_hours: DM_TTL_HOURS,
     rate_limit_per_hour: 60,
+    // グループの写真: POST/DELETE {path}/:gid/photo（multipart の photo）。読むのは DTO の photo（鍵の Bearer）。
+    photo: true,
+    photo_max_bytes: GDM_PHOTO_MAX_BYTES,
     // stream: event "gdm" — { action: "create" | "read" | "group" | "removed", ... }（docs/group-dm-spec.md）
     stream_event: "gdm",
   };
+}
+
+// ---- グループの写真（docs/group-dm-spec.md）----
+// 変えられるのはメンバーなら誰でも（名前と同じ）。正方形 512px の WebP にし、位置情報などは落とす。
+// 置き場所は data/gdm-photos（public の外。/api/media からは読めない）。30 日では消さず、グループが消えるときに消す。
+
+export const GDM_PHOTO_SIDE = 512;
+export const GDM_PHOTO_MAX_BYTES = 15 * 1024 * 1024;
+const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
+const PHOTO_FILE_RE = /^g\d+-[a-f0-9]{16}\.webp$/;
+
+export function gdmPhotoDir(): string {
+  return process.env.GDM_PHOTO_DIR || path.join(process.cwd(), "data", "gdm-photos");
+}
+
+async function removePhotoFile(file: string | null | undefined): Promise<void> {
+  if (!file || !PHOTO_FILE_RE.test(file)) return;
+  await rm(path.join(gdmPhotoDir(), file), { force: true }).catch(() => {});
+}
+
+/** 写真を設定する（取り替えも）。返り値は見る人から見たグループ。 */
+export async function setGroupPhoto(actor: DmActor, rawGid: unknown, data: Buffer, mime: string): Promise<GroupDto> {
+  const me = normEmail(actor.email);
+  if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
+  const { gid } = await requireMember(actor, rawGid);
+  if (!PHOTO_TYPES.has((mime || "").toLowerCase())) throw new DmError(400, "invalid_request", "JPEG・PNG・WebP の写真を選んでください");
+  if (data.length === 0 || data.length > GDM_PHOTO_MAX_BYTES) throw new DmError(400, "invalid_request", "写真が大きすぎます");
+  await checkAdminRate(me);
+  let out: Buffer;
+  try {
+    out = await withImageSlot(() =>
+      sharp(data, { autoOrient: true, failOn: "error", limitInputPixels: 200_000_000 })
+        .resize(GDM_PHOTO_SIDE, GDM_PHOTO_SIDE, { fit: "cover", position: "attention" })
+        .webp({ quality: 82, effort: 4 }) // メタデータ（位置情報など）は既定で落ちる
+        .toBuffer()
+    );
+  } catch {
+    throw new DmError(400, "invalid_request", "この写真は読めませんでした");
+  }
+  const file = `g${gid}-${crypto.randomBytes(8).toString("hex")}.webp`;
+  await mkdir(gdmPhotoDir(), { recursive: true });
+  await writeFile(path.join(gdmPhotoDir(), file), out);
+  const prev = await pool.query(`SELECT photo FROM gdm_groups WHERE id = $1`, [gid]);
+  const r = await pool.query(`UPDATE gdm_groups SET photo = $2, updated_at = now() WHERE id = $1 RETURNING id`, [gid, file]);
+  if (!r.rowCount) {
+    await removePhotoFile(file); // 同時にグループが消えた
+    throw new DmError(404, "not_found", "グループが見つかりません");
+  }
+  await removePhotoFile(prev.rows[0]?.photo);
+  return afterPhotoChange(actor, gid, "グループの写真を変えました");
+}
+
+/** 写真を外す。 */
+export async function removeGroupPhoto(actor: DmActor, rawGid: unknown): Promise<GroupDto> {
+  const me = normEmail(actor.email);
+  if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
+  const { gid, group } = await requireMember(actor, rawGid);
+  if (!group.photo) {
+    const loaded = (await loadGroup(gid))!;
+    return toGroupDto(loaded.group, loaded.members, me, await lookup(loaded.members.map((m) => m.email)));
+  }
+  await checkAdminRate(me);
+  await pool.query(`UPDATE gdm_groups SET photo = NULL, updated_at = now() WHERE id = $1`, [gid]);
+  await removePhotoFile(group.photo);
+  return afterPhotoChange(actor, gid, "グループの写真を外しました");
+}
+
+async function afterPhotoChange(actor: DmActor, gid: number, what: string): Promise<GroupDto> {
+  const me = normEmail(actor.email);
+  const names = await resolveDisplayNames([me]);
+  await emitGroupToMembers(gid);
+  await insertMessage(gid, null, "system", `${displayName(me, names)}が${what}`);
+  const loaded = await loadGroup(gid);
+  const lk = await lookup(loaded!.members.map((m) => m.email));
+  return toGroupDto(loaded!.group, loaded!.members, me, lk);
+}
+
+/** 写真のファイルを読む（メンバーだけ）。無ければ null。 */
+export async function readGroupPhoto(email: string, rawGid: unknown): Promise<Buffer | null> {
+  const gid = parseGroupId(rawGid);
+  const r = await pool.query(
+    `SELECT g.photo FROM gdm_groups g JOIN gdm_members gm ON gm.group_id = g.id AND gm.email = $2 WHERE g.id = $1`,
+    [gid, normEmail(email)]
+  );
+  const file = r.rows[0]?.photo as string | undefined;
+  if (!file || !PHOTO_FILE_RE.test(file)) return null;
+  try {
+    return await readFile(path.join(gdmPhotoDir(), file));
+  } catch {
+    return null;
+  }
 }

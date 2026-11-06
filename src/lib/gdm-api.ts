@@ -11,6 +11,8 @@ import {
   listGroups,
   markGroupRead,
   removeMember,
+  removeGroupPhoto,
+  setGroupPhoto,
   sendGroupMessage,
   updateGroup,
 } from "./gdm";
@@ -92,3 +94,21 @@ export const gdmMessageApi = (actor: DmActor, rawId: string) =>
     if (!hit) throw new DmError(404, "not_found", "グループ DM が見つかりません");
     return { ...hit };
   });
+
+/** POST 写真（multipart の photo）→ { group }。 */
+export async function gdmSetPhotoApi(actor: DmActor, gid: string, req: Request): Promise<DmApiResult> {
+  let file: File | null = null;
+  try {
+    const form = await req.formData();
+    const f = form.get("photo");
+    file = f instanceof File ? f : null;
+  } catch {
+    file = null;
+  }
+  if (!file) return { status: 400, body: { error: "写真を選んでください", code: "invalid_request" } };
+  const buf = Buffer.from(await file.arrayBuffer());
+  return run(actor, async () => ({ group: await setGroupPhoto(actor, gid, buf, file.type) }));
+}
+
+/** DELETE 写真 → { group }。 */
+export const gdmRemovePhotoApi = (actor: DmActor, gid: string) => run(actor, async () => ({ group: await removeGroupPhoto(actor, gid) }));

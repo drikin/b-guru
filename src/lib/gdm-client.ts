@@ -14,6 +14,7 @@ export type Group = {
   id: number;
   name: string | null;
   title: string;
+  photo?: string | null;
   members: GMember[];
   member_count: number;
   is_creator: boolean;
@@ -281,6 +282,22 @@ async function mutate(path: string, method: string, payload?: unknown): Promise<
   if (r.body.group) replaceGroup(r.body.group as Group);
   return null;
 }
+
+/** 写真を設定する（取り替えも）。サーバが正方形に切り取って縮める。 */
+export async function setGroupPhoto(id: number, file: File): Promise<string | null> {
+  const fd = new FormData();
+  fd.append("photo", file);
+  try {
+    const r = await fetch(`/api/gdm/${id}/photo`, { method: "POST", body: fd, cache: "no-store" });
+    const body = (await r.json().catch(() => null)) as Body | null;
+    if (r.status !== 200 || !body) return body?.error ?? "写真を変えられませんでした";
+    if (body.group) replaceGroup(body.group as Group);
+    return null;
+  } catch {
+    return "写真を変えられませんでした";
+  }
+}
+export const removeGroupPhoto = (id: number) => mutate(`/api/gdm/${id}/photo`, "DELETE");
 
 export const renameGroup = (id: number, name: string) => mutate(`/api/gdm/${id}`, "PATCH", { name: name.trim() || null });
 export const setGroupMuted = (id: number, muted: boolean) => mutate(`/api/gdm/${id}`, "PATCH", { muted });

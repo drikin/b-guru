@@ -62,6 +62,7 @@ type GMember = { user_id: string; name: string | null; avatar: string | null; is
 type Group = {
   id: number;
   name: string | null;          // 付けた名前（無ければ null）
+  photo: string | null;         // グループの写真（メンバーだけが読める URL）。無ければ null
   title: string;                // 表示名: name か、自分以外のメンバーの名前を「、」で並べたもの（3 人まで＋「ほか N 人」）
   members: GMember[];           // 入った順
   member_count: number;
@@ -83,6 +84,15 @@ type GroupSummary = { group: Group; last_message: GMessage | null; unread_count:
 ```
 
 エラーは 1 対 1 と同じ `{ error, code }` で、code は `invalid_request`・`not_found`・`forbidden`・`rate_limited` のどれか（429 には `Retry-After` を付ける）。
+
+## グループの写真（2026-11-06 追加。ドリキン「グループのプロフィールに写真を設定できるようにしたい」、仕様はおすすめのとおり）
+- 変えられるのは**メンバーなら誰でも**（名前と同じ）。設定・取り替え・外すができる。変えると「〇〇がグループの写真を変えました／外しました」の system 行を残す。回数制限は名前の変更と同じ（`gdm-admin`、30 回/時）。
+- サーバで**正方形 512px の WebP**にする（中央寄りで切り抜く・位置情報などのメタデータは落とす）。受け付けるのは JPEG・PNG・WebP・HEIC で、15MB まで。
+- 置き場所は `data/gdm-photos`（public の外。`/api/media` からは読めない）。**読めるのはメンバーだけ**: `GET /api/gdm/:gid/photo`（Web はクッキー、アプリは鍵の Bearer）。
+- 発言と違って 30 日では消さない。取り替えたら前のファイルを、グループが消えたらファイルを消す。
+- `Group.photo` は `"/api/gdm/:gid/photo?v=…"` か null。`?v=` はファイルごとに変わるので、端末は長くキャッシュしてよい。
+- 設定: Web は `POST /api/gdm/:gid/photo`（multipart の `photo`。オリジンを確かめる）、アプリは `POST /api/agent/gdm/:gid/photo`（スコープ chat）。外すのはどちらも `DELETE`。返り値は `{ group }`。
+- capabilities の `features.gdm.photo: true`（`photo_max_bytes`）。無ければアプリは写真の操作を出さない。
 
 ## 配信（`/api/agent/stream` と Web の `/api/posts/stream`）
 新しいイベントとして **`event: gdm`** を足す。古いアプリは知らないイベント名を無視するので、`dm` とは分けた。

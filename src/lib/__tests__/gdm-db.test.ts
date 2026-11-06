@@ -9,6 +9,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vites
 
 const URL_ = process.env.DM_TEST_DATABASE_URL;
 if (URL_) process.env.DATABASE_URL = URL_;
+// 写真はテスト用の一時フォルダへ（リポジトリの data/ を汚さない）
+process.env.GDM_PHOTO_DIR = `${require("os").tmpdir()}/gdm-photos-test-${process.pid}`;
 const d = URL_ ? describe : describe.skip;
 
 const pushes: { to: string[]; id: number; group: number }[] = [];
@@ -271,6 +273,41 @@ d("👥 グループ DM（DB）", () => {
     await Promise.all([m.api.gdmRemoveMemberApi(a, String(g.id), a.userId), m.api.gdmRemoveMemberApi(b, String(g.id), b.userId)]);
     const th = await m.api.gdmThreadApi(c, String(g.id), new URLSearchParams());
     expect((th.body.group as G).is_creator).toBe(true);
+  });
+
+  it("グループの写真: メンバーなら誰でも設定・外せる、メンバーだけ読める、グループが消えるとファイルも消える", async () => {
+    const sharp = (await import("sharp")).default;
+    const { readdir } = await import("fs/promises");
+    const png = await sharp({ create: { width: 1200, height: 800, channels: 3, background: { r: 200, g: 50, b: 50 } } }).png().toBuffer();
+    const g = await create(a, [b.userId]);
+    personal.length = 0;
+    const set = await m.gdm.setGroupPhoto(b, g.id, png, "image/png"); // 作った人でなくても
+    expect(set.photo).toMatch(new RegExp(`^/api/gdm/${g.id}/photo\\?v=[a-f0-9]{16}$`));
+    expect(personal.some((p) => p.to === A && p.ev.data?.action === "group")).toBe(true);
+    const img = await m.gdm.readGroupPhoto(A, g.id);
+    expect(img).not.toBeNull();
+    const meta = await sharp(img!).metadata();
+    expect([meta.format, meta.width, meta.height, meta.exif]).toEqual(["webp", 512, 512, undefined]);
+    expect(await m.gdm.readGroupPhoto(C, g.id)).toBeNull(); // メンバー以外は読めない
+    const th = await m.api.gdmThreadApi(a, String(g.id), new URLSearchParams());
+    expect((th.body.messages as Msg[]).some((x) => x.body === "みけがグループの写真を変えました")).toBe(true);
+    // 取り替えると前のファイルは消える
+    const again = await m.gdm.setGroupPhoto(a, g.id, png, "image/png");
+    expect(again.photo).not.toBe(set.photo);
+    const dir = m.gdm.gdmPhotoDir();
+    expect((await readdir(dir)).filter((f) => f.startsWith(`g${g.id}-`))).toHaveLength(1);
+    // 読めない中身・違う種類は 400
+    await expect(m.gdm.setGroupPhoto(a, g.id, Buffer.from("not an image"), "image/png")).rejects.toMatchObject({ status: 400 });
+    await expect(m.gdm.setGroupPhoto(a, g.id, png, "image/gif")).rejects.toMatchObject({ status: 400 });
+    await expect(m.gdm.setGroupPhoto(c, g.id, png, "image/png")).rejects.toMatchObject({ status: 404 });
+    // 外す
+    expect((await m.gdm.removeGroupPhoto(b, g.id)).photo).toBeNull();
+    expect((await readdir(dir)).filter((f) => f.startsWith(`g${g.id}-`))).toHaveLength(0);
+    // 0 人でグループが消えるとファイルも消える
+    await m.gdm.setGroupPhoto(a, g.id, png, "image/png");
+    await m.api.gdmRemoveMemberApi(a, String(g.id), a.userId);
+    await m.api.gdmRemoveMemberApi(b, String(g.id), b.userId);
+    expect((await readdir(dir)).filter((f) => f.startsWith(`g${g.id}-`))).toHaveLength(0);
   });
 
   it("30 日を過ぎた発言は見えず、掃除で消える", async () => {
