@@ -19,6 +19,7 @@ import { macAssistantEnabledFor } from "@/lib/feature-flag";
 import { beagleOnDeviceEnabledFor } from "@/lib/beagle-ondevice";
 import { beagleServerEnabledFor } from "@/lib/beagle-server";
 import { dmCapability, dmEnabledFor } from "@/lib/dm";
+import { gdmCapability, gdmEnabledFor } from "@/lib/gdm";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -26,10 +27,23 @@ export const runtime = "nodejs";
 export async function GET(req: NextRequest) {
   const out = await withAgent(req, "GET /api/agent/capabilities", null, async (ctx) => ({
     status: 200,
-    body: withDm(ctx.scopes, dmEnabledFor(ctx.email), agentCapabilities(ctx.scopes, { voice: voiceEnabledFor(ctx.email), voiceAdmin: isAdmin(ctx.email), room: roomEnabledFor(ctx.email), jukebox: jukeboxEnabledFor(ctx.email) && !jukeboxBrokenClient(req.headers.get("user-agent")), shogi: shogiEnabledFor(ctx.email), shogiCommentary: commentaryEnabledFor(ctx.email), minigame: minigameEnabledFor(ctx.email), watch: watchEnabledFor(ctx.email), offkai: offkaiEnabledFor(ctx.email), chatOverlay: featureEnabledFor(CHAT_OVERLAY_FLAG, ctx.email), appIssued: ctx.appIssued, macAssistant: macAssistantEnabledFor(ctx.email), beagleOnDevice: beagleOnDeviceEnabledFor(ctx.email), beagleServer: beagleServerEnabledFor(ctx.email) })),
+    body: withGdm(ctx.scopes, gdmEnabledFor(ctx.email), withDm(ctx.scopes, dmEnabledFor(ctx.email), agentCapabilities(ctx.scopes, { voice: voiceEnabledFor(ctx.email), voiceAdmin: isAdmin(ctx.email), room: roomEnabledFor(ctx.email), jukebox: jukeboxEnabledFor(ctx.email) && !jukeboxBrokenClient(req.headers.get("user-agent")), shogi: shogiEnabledFor(ctx.email), shogiCommentary: commentaryEnabledFor(ctx.email), minigame: minigameEnabledFor(ctx.email), watch: watchEnabledFor(ctx.email), offkai: offkaiEnabledFor(ctx.email), chatOverlay: featureEnabledFor(CHAT_OVERLAY_FLAG, ctx.email), appIssued: ctx.appIssued, macAssistant: macAssistantEnabledFor(ctx.email), beagleOnDevice: beagleOnDeviceEnabledFor(ctx.email), beagleServer: beagleServerEnabledFor(ctx.email) }))),
     headers: {},
   }));
   return agentJson(out);
+}
+
+/** 👥 グループ DM（GROUP_DM_ENABLED）: features.gdm と stream・通知の "gdm"（lib/gdm.ts、docs/group-dm-spec.md）。 */
+function withGdm<T extends ReturnType<typeof withDm>>(scopes: string[], enabled: boolean, caps: T) {
+  return {
+    ...caps,
+    features: {
+      ...caps.features,
+      gdm: gdmCapability(enabled, scopes),
+      stream: { ...caps.features.stream, events: [...caps.features.stream.events, ...(enabled ? ["gdm"] : [])] },
+      push: { ...caps.features.push, kinds: [...caps.features.push.kinds, ...(enabled ? ["gdm"] : [])] },
+    },
+  };
 }
 
 /** ✉️ 簡易 DM（DM_ENABLED）: features.dm と stream の "dm"・通知の "dm" を足す（lib/dm.ts の dmCapability）。

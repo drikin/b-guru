@@ -34,6 +34,7 @@ import { minigameEnabledFor } from "@/lib/minigame";
 import { watchEnabledFor } from "@/lib/watch";
 import { offkaiEnabledFor } from "@/lib/offkai";
 import { dmEnabledFor, ensureDmSweeper, getDmUnreadTotal } from "@/lib/dm";
+import { gdmEnabledFor } from "@/lib/gdm";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -107,6 +108,7 @@ export async function GET(req: NextRequest) {
   const watchOn = watchEnabledFor(agent.email);
   const offkaiOn = offkaiEnabledFor(agent.email);
   const dmOn = dmEnabledFor(agent.email);
+  const gdmOn = gdmEnabledFor(agent.email);
   if (dmOn) ensureDmSweeper();
   const onLive = (ev: LiveEvent) => {
     if (ev.type === "room" && !roomOn) return; // the club room: only for members who have it
@@ -130,6 +132,9 @@ export async function GET(req: NextRequest) {
     } else if (ev.type === "dm" && dmOn) {
       // ✉️ 簡易 DM: this member's view, built per recipient by lib/dm.ts (no email).
       send({ event: "dm", data: ev.data });
+    } else if (ev.type === "gdm" && gdmOn) {
+      // 👥 グループ DM: this member's view (docs/group-dm-spec.md). Old apps ignore the unknown event name.
+      send({ event: "gdm", data: ev.data });
     } else if (ev.type === "sync") {
       // Read somewhere else: clear this app's own notifications for it (docs/device-sync-spec.md).
       send({ event: "sync", data: ev.sync });

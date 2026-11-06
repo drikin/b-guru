@@ -18,6 +18,7 @@ import { minigameEnabledFor } from "@/lib/minigame";
 import { watchEnabledFor } from "@/lib/watch";
 import { ensureOffkaiSweeper, offkaiEnabledFor } from "@/lib/offkai";
 import { dmEnabledFor, ensureDmSweeper } from "@/lib/dm";
+import { gdmEnabledFor } from "@/lib/gdm";
 import { isMutedFor } from "@/lib/muted-words";
 
 export const dynamic = "force-dynamic";
@@ -52,7 +53,9 @@ export async function GET(req: NextRequest) {
   // ✉️ 簡易 DM (DM_ENABLED): my DMs and read marks over the personal bus (`event: dm`, per-recipient DTO).
   const dmOn = dmEnabledFor(email);
   if (dmOn) ensureDmSweeper();
-  const shogiKey = email && (shogiOn || minigameOn || dmOn) ? personalKey(email) : null;
+  // 👥 グループ DM (GROUP_DM_ENABLED): `event: gdm`, per-member DTO (docs/group-dm-spec.md).
+  const gdmOn = gdmEnabledFor(email);
+  const shogiKey = email && (shogiOn || minigameOn || dmOn || gdmOn) ? personalKey(email) : null;
   let onPersonal: ((ev: PersonalEvent) => void) | null = null;
 
   let send: (event: LiveEvent | { type: "ping" }) => void = () => {};
@@ -152,9 +155,9 @@ export async function GET(req: NextRequest) {
       liveBus.on("change", send);
       if (shogiKey) {
         onPersonal = (ev) => {
-          if (ev.type === "shogi" ? !shogiOn : ev.type === "minigame" ? !minigameOn : ev.type === "dm" ? !dmOn : true) return;
+          if (ev.type === "shogi" ? !shogiOn : ev.type === "minigame" ? !minigameOn : ev.type === "dm" ? !dmOn : ev.type === "gdm" ? !gdmOn : true) return;
           try {
-            const data = ev.type === "dm" ? ev.data : ev;
+            const data = ev.type === "dm" || ev.type === "gdm" ? ev.data : ev;
             controller.enqueue(encoder.encode(`event: ${ev.type}\ndata: ${JSON.stringify(data)}\n\n`));
           } catch {
             // stream closed

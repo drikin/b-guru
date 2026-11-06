@@ -24,6 +24,9 @@ export type PersonalEvent =
   /** ✉️ 簡易 DM（lib/dm.ts）: 受け取る人ごとに作った DTO（メールなし）。そのまま `event: dm` で流す。
    *  { action: "create", message, peer, unread_count? } / { action: "read", peer_id, last_read_id, unread_count } */
   | { type: "dm"; data: Record<string, unknown> }
+  /** 👥 グループ DM（lib/gdm.ts、docs/group-dm-spec.md）: 受け取る人ごとの DTO。`event: gdm` で流す。
+   *  { action: "create" | "read" | "group" | "removed", ... } */
+  | { type: "gdm"; data: Record<string, unknown> }
   /** 既読が進んだ（ほかの端末に残っている同じ知らせを消す合図、docs/device-sync-spec.md）。`event: sync` で流す。 */
   | { type: "sync"; sync: SyncScope };
 
@@ -31,6 +34,7 @@ export type PersonalEvent =
 export type SyncScope =
   | { scope: "chat"; up_to: number }
   | { scope: "dm"; peer_id: string; up_to: number }
+  | { scope: "gdm"; group_id: number; up_to: number }
   | { scope: "reply"; post_id: number }
   | { scope: "reply_all" }
   | { scope: "shogi"; game_id: number }

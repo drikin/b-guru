@@ -73,6 +73,32 @@ export function buildShogiPayload(kind: "shogi_offer" | "shogi_turn", gameId: nu
   };
 }
 
+/** 👥 グループ DM（docs/group-dm-spec.md）: 1 対 1 と同じく ids と決まった文言だけ。本文は端末が
+ *  GET /api/agent/gdm/messages/{gdm_id} を自分の鍵で読む。dm_id・message_id は付けない（古いアプリは決まり文句のまま）。 */
+export function buildGdmPayload(messageId: number, groupId: number) {
+  return {
+    aps: {
+      alert: { title: "B-guru グループ DM", body: "グループ DM が届きました" },
+      sound: "default",
+      "mutable-content": 1,
+      category: "gdm",
+      "thread-id": `gdm-${groupId}`,
+    },
+    kind: "gdm" as const,
+    gdm_id: messageId,
+    group_id: groupId,
+  };
+}
+
+/** 👥 グループ DM の発言: 送った人と通知を切った人を除いたメンバー（呼ぶ側が渡す）の全端末へ。 */
+export async function pushGdm(recipientEmails: string[], messageId: number, groupId: number): Promise<number> {
+  if (!pushEnabled() || recipientEmails.length === 0) return 0;
+  const devices = await activePushDevices(recipientEmails);
+  if (devices.length === 0) return 0;
+  notePushed(new Set(devices.map((d) => d.email)), `gdm:${groupId}`, messageId);
+  return deliver(devices, buildGdmPayload(messageId, groupId), `gdm-${groupId}`);
+}
+
 /** 🍻 オフ会が始まった（1 回だけ）。中身は id だけ、文は固定（場所は出さない）。 */
 export function buildOffkaiPayload(eventId: number) {
   return {
@@ -315,7 +341,7 @@ function notePushed(emails: Iterable<string>, key: string, id: number, now = Dat
 /** 合図の collapse id: 範囲ごと（相手・投稿・対局ごと）。端末がオフラインの間に別の相手の合図で上書きされないように。 */
 function syncCollapseId(s: SyncScope): string {
   const id =
-    s.scope === "dm" ? s.peer_id : s.scope === "reply" ? s.post_id : s.scope === "shogi" ? s.game_id : s.scope === "offkai" ? s.event_id : "";
+    s.scope === "dm" ? s.peer_id : s.scope === "gdm" ? s.group_id : s.scope === "reply" ? s.post_id : s.scope === "shogi" ? s.game_id : s.scope === "offkai" ? s.event_id : "";
   return `sync-${s.scope}${id === "" ? "" : `-${id}`}`.slice(0, 64);
 }
 
@@ -337,6 +363,11 @@ export function takeCleared(email: string, s: SyncScope, now = Date.now()): stri
     case "dm": {
       const v = live(`dm:${s.peer_id}`);
       keys = v && s.up_to >= v.id ? [`dm:${s.peer_id}`] : [];
+      break;
+    }
+    case "gdm": {
+      const v = live(`gdm:${s.group_id}`);
+      keys = v && s.up_to >= v.id ? [`gdm:${s.group_id}`] : [];
       break;
     }
     case "reply":

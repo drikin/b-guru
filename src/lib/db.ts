@@ -737,6 +737,36 @@ export async function initSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (email, peer_email)
     );
+    -- 👥 グループ DM（lib/gdm.ts、docs/group-dm-spec.md）。メールは中だけ（応答・配信は users.user_id）。
+    -- 発言は 30 日で消える（ensureDmSweeper）。グループはメンバーが 0 人になったら消す。
+    CREATE TABLE IF NOT EXISTS gdm_groups (
+      id SERIAL PRIMARY KEY,
+      name TEXT,
+      creator_email TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS gdm_members (
+      group_id INTEGER NOT NULL REFERENCES gdm_groups(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      joined_from_id INTEGER NOT NULL DEFAULT 0,
+      added_by TEXT,
+      muted BOOLEAN NOT NULL DEFAULT false,
+      last_read_id INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (group_id, email)
+    );
+    CREATE INDEX IF NOT EXISTS idx_gdm_members_email ON gdm_members (email);
+    CREATE TABLE IF NOT EXISTS gdm_messages (
+      id SERIAL PRIMARY KEY,
+      group_id INTEGER NOT NULL REFERENCES gdm_groups(id) ON DELETE CASCADE,
+      sender_email TEXT,
+      kind TEXT NOT NULL DEFAULT 'text',
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_gdm_messages_group ON gdm_messages (group_id, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_gdm_messages_created ON gdm_messages (created_at);
     -- ☗ 将棋（lib/shogi.ts、docs/shogi-spec.md）。対局者は users.user_id（メールは持たない）。
     -- 正本はここ: 局面（SFEN）・指し手（USI）・持ち時間。残り時間は turn_started_at からその都度出す。
     CREATE TABLE IF NOT EXISTS shogi_games (

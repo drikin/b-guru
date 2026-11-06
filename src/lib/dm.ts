@@ -419,6 +419,8 @@ export async function purgeExpiredDm(): Promise<number> {
   const r = await pool.query(`DELETE FROM dm_messages WHERE created_at < now() - ($1::text)::interval`, [DM_TTL]);
   // 既読の記録は、最後に動いてから期限＋1 時間たてば指している DM はもう残っていない（消しても未読は変わらない）。
   await pool.query(`DELETE FROM dm_read_state WHERE updated_at < now() - ($1::text)::interval - interval '1 hour'`, [DM_TTL]);
+  // 👥 グループ DM の発言も同じ 30 日（lib/gdm.ts。循環を避けてここで直接消す）。
+  await pool.query(`DELETE FROM gdm_messages WHERE created_at < now() - ($1::text)::interval`, [DM_TTL]);
   return r.rowCount ?? 0;
 }
 
