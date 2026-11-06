@@ -760,10 +760,12 @@ const PHOTO_FILE_RE = /^g\d+-[a-f0-9]{16}\.webp$/;
 export function gdmPhotoDir(): string {
   return process.env.GDM_PHOTO_DIR || path.join(process.cwd(), "data", "gdm-photos");
 }
+// turbopackIgnore: 動的なパスだとビルドが全体を追跡しにいく（警告の表示で Turbopack が落ちた、2026-11-06）
+const photoFilePath = (file: string) => path.join(/*turbopackIgnore: true*/ gdmPhotoDir(), file);
 
 async function removePhotoFile(file: string | null | undefined): Promise<void> {
   if (!file || !PHOTO_FILE_RE.test(file)) return;
-  await rm(path.join(gdmPhotoDir(), file), { force: true }).catch(() => {});
+  await rm(photoFilePath(file), { force: true }).catch(() => {});
 }
 
 /** 写真を設定する（取り替えも）。返り値は見る人から見たグループ。 */
@@ -790,8 +792,8 @@ export async function setGroupPhoto(actor: DmActor, rawGid: unknown, data: Buffe
     throw new DmError(400, "invalid_request", "この写真は読めませんでした");
   }
   const file = `g${gid}-${crypto.randomBytes(8).toString("hex")}.webp`;
-  await mkdir(gdmPhotoDir(), { recursive: true });
-  await writeFile(path.join(gdmPhotoDir(), file), out);
+  await mkdir(/*turbopackIgnore: true*/ gdmPhotoDir(), { recursive: true });
+  await writeFile(photoFilePath(file), out);
   // 前のファイル名は同じクエリで取る（同時の取り替えでファイルが残らないように）
   const r = await pool.query(
     `UPDATE gdm_groups g SET photo = $2, updated_at = now()
@@ -842,7 +844,7 @@ export async function readGroupPhoto(email: string, rawGid: unknown): Promise<Bu
   const file = r.rows[0]?.photo as string | undefined;
   if (!file || !PHOTO_FILE_RE.test(file)) return null;
   try {
-    return await readFile(path.join(gdmPhotoDir(), file));
+    return await readFile(photoFilePath(file));
   } catch {
     return null;
   }
