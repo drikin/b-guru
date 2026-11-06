@@ -76,12 +76,26 @@ class DeviceSyncTest {
         assertEquals(emptySet<Int>(), cancel(sig("scope" to "offkai", "event_id" to "3"), listOf(ReadSync.Shown(5_000_003, Push.CH_DM, "dm", 1, "u-x"))))
     }
 
+    @Test fun gdmCancelsThatGroupOnlyAndNeverADM() {
+        val g7 = ReadSync.Shown(GDMLogic.notificationId(7), Push.CH_DM, "gdm", 50, groupId = 7)
+        val g8 = ReadSync.Shown(GDMLogic.notificationId(8), Push.CH_DM, "gdm", 51, groupId = 8)
+        val shown = listOf(g7, g8, dmMazzo, dmTakuto)
+        assertEquals(setOf(g7.id), cancel(sig("scope" to "gdm", "group_id" to "7", "up_to" to "50"), shown))
+        // A newer message came after what was read: it stays.
+        assertEquals(emptySet<Int>(), cancel(sig("scope" to "gdm", "group_id" to "7", "up_to" to "49"), shown))
+        // Without extras the id tells the group.
+        assertEquals(setOf(GDMLogic.notificationId(8)), cancel(sig("scope" to "gdm", "group_id" to "8"), listOf(ReadSync.Shown(GDMLogic.notificationId(8), Push.CH_DM, "gdm"))))
+        // A dm read_sync never takes a group's notification (same channel).
+        assertEquals(setOf(dmMazzo.id), cancel(sig("scope" to "dm", "peer_id" to "u-mazzo"), shown))
+        assertEquals(7L, sig("scope" to "gdm", "group_id" to "7").groupId)
+    }
+
     @Test fun unknownScopeCancelsNothing() {
         assertEquals(emptySet<Int>(), cancel(sig("scope" to "watch", "up_to" to "999")))
     }
 
     @Test fun onlyKnownKindsAreShown() {
-        listOf("chat_mention", "chat_new", "reply", "timeline_new", "shogi_offer", "shogi_turn", "offkai_start", "dm").forEach { assertTrue(it, PushContent.isKnown(it)) }
+        listOf("chat_mention", "chat_new", "reply", "timeline_new", "shogi_offer", "shogi_turn", "offkai_start", "dm", "gdm").forEach { assertTrue(it, PushContent.isKnown(it)) }
         // read_sync / voice_handoff have their own handling; a future kind shows nothing.
         listOf("read_sync", "voice_handoff", "something_new", "").forEach { assertFalse(it, PushContent.isKnown(it)) }
     }

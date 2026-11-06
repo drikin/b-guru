@@ -80,7 +80,7 @@ class MainActivity : ComponentActivity() {
                     androidx.compose.foundation.layout.Box {
                         MainScreen(store, timeline, session.jukebox, onSignOut = session::signOut)
                         // ✉️ DM list / conversation over everything (back returns to the chat).
-                        DMOverlay(store.dm)
+                        DMOverlay(store.dm, store.members)
                     }
                 } else {
                     LoginScreen(onToken = session::signIn)
@@ -135,6 +135,10 @@ class MainActivity : ComponentActivity() {
             // ✉️ the DM list, or the conversation with mazzo (one unread).
             "dm" -> store.dm.openList()
             "dm_chat" -> store.dm.openConversation(DMPeer("mazzo", "mazzo"))
+            // 👥 the demo group, or its members screen.
+            "gdm" -> store.dm.openGroup(1)
+            "gdm_members" -> { store.dm.openGroup(1); store.dm.openGroupMembers(1) }
+            "gdm_new" -> { store.dm.openList(); store.dm.openNewGroup() }
         }
     }
 
@@ -156,6 +160,12 @@ class MainActivity : ComponentActivity() {
         intent?.getStringExtra(Push.EXTRA_DM_PEER_ID)?.takeIf { it.isNotBlank() }?.let { peer ->
             App.session(this).store?.dm?.openConversation(DMPeer(peer, intent.getStringExtra(Push.EXTRA_DM_PEER_NAME)))
             intent.removeExtra(Push.EXTRA_DM_PEER_ID)
+        }
+        // 👥 グループ DM: that group.
+        val gdm = intent?.getLongExtra(Push.EXTRA_GDM_GROUP_ID, 0L) ?: 0L
+        if (gdm > 0) {
+            App.session(this).store?.dm?.openGroup(gdm)
+            intent?.removeExtra(Push.EXTRA_GDM_GROUP_ID)
         }
         // 🎧 音声をこの端末で続ける (voice_handoff): the chat at that feature, joined.
         VoiceHandoff.target(intent?.getStringExtra(Push.EXTRA_HANDOFF))?.let { target ->

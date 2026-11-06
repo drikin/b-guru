@@ -149,7 +149,20 @@ class DMStore(private val api: ApiClient) {
     sealed interface Route {
         data object Inbox : Route
         data class Conversation(val peer: DMPeer) : Route
+        /** 👥 グループ DM: make one, a group, its members, add people to it. */
+        data object NewGroup : Route
+        data class Group(val id: Long) : Route
+        data class GroupMembers(val id: Long) : Route
+        data class AddMembers(val id: Long) : Route
     }
+
+    /** 👥 グループ DM (only when capabilities.gdm is on). */
+    val groups = GDMStore(api).also { g -> g.onRemoved = { id -> dropGroup(id) } }
+    /** A group a notification asked for before the capabilities arrived (cold start). */
+    private var pendingGroup: Long? = null
+
+    /** The ✉️ badge: 1 対 1 and groups together. */
+    val badgeTotal: Int get() = unreadTotal + (if (groups.enabled) groups.unreadTotal else 0)
 
     var enabled by mutableStateOf(false); private set
     var canSendCap by mutableStateOf(false); private set
@@ -190,18 +203,22 @@ class DMStore(private val api: ApiClient) {
         maxBody = caps.dmMaxBody
         ttlHours = caps.dmTtlHours
         base = caps.dmPath
+        groups.configure(caps)
         if (!enabled) { stack = emptyList(); return }
         refreshList()
+        pendingGroup?.let { pendingGroup = null; openGroup(it) }
     }
 
-    fun close() { scope.cancel() }
+    fun close() { scope.cancel(); groups.close() }
 
     // MARK: navigation
 
     fun openList() {
         if (!enabled) return
         stack = listOf(Route.Inbox)
+        groups.closeGroup()
         refreshList()
+        groups.refreshList()
     }
 
     fun openConversation(peer: DMPeer) {
@@ -217,17 +234,66 @@ class DMStore(private val api: ApiClient) {
         canSendHere = true
         error = null
         lastReadSent = 0
+        syncGroup()
         loadThread(p.userId)
+    }
+
+    /** 👥 A group: from the list back goes to it; from a notification back closes. */
+    fun openGroup(id: Long) {
+        if (id <= 0) return
+        if (!groups.enabled) { if (!enabled && !groups.demo) pendingGroup = id; return }
+        if (route == Route.Group(id)) return
+        stack = (if (route == Route.Inbox) listOf(Route.Inbox) else emptyList()) + Route.Group(id)
+        groups.open(id)
+    }
+
+    fun openNewGroup() {
+        if (!groups.enabled || !groups.canSendCap) return
+        groups.actionError = null
+        stack = stack + Route.NewGroup
+    }
+
+    /** Made: the group replaces the create screen. */
+    fun groupCreated(id: Long) {
+        stack = stack.filterNot { it == Route.NewGroup } + Route.Group(id)
+        groups.open(id)
+    }
+
+    fun openGroupMembers(id: Long) {
+        groups.actionError = null
+        stack = stack + Route.GroupMembers(id)
+    }
+
+    fun openAddMembers(id: Long) {
+        groups.actionError = null
+        stack = stack + Route.AddMembers(id)
+    }
+
+    /** I left / was removed / the group went: its screens close (to the list if nothing else is left). */
+    private fun dropGroup(id: Long) {
+        val s = stack
+        val next = s.filterNot { it == Route.Group(id) || it == Route.GroupMembers(id) || it == Route.AddMembers(id) }
+        if (next.size == s.size) return
+        stack = next.ifEmpty { listOf(Route.Inbox) }
+        if (stack.lastOrNull() == Route.Inbox) { refreshList(); groups.refreshList() }
+        syncGroup()
+    }
+
+    /** The group stays open while one of its screens is on the stack. */
+    private fun syncGroup() {
+        val id = stack.filterIsInstance<Route.Group>().lastOrNull()?.id
+        if (id == null) groups.closeGroup() else if (groups.openId != id) groups.open(id)
     }
 
     fun back() {
         val s = stack
         if (s.isEmpty()) return
         stack = s.dropLast(1)
-        if (stack.lastOrNull() == Route.Inbox) refreshList()
+        if (stack.lastOrNull() == Route.Inbox) { refreshList(); groups.refreshList() }
+        syncGroup()
     }
 
-    fun closeAll() { stack = emptyList() }
+    fun closeAll() { stack = emptyList(); syncGroup() }
 
     /** DMScreen tells whether the conversation is really on screen (resumed). */
     fun setScreenVisible(peerId: String?, visible: Boolean) {
@@ -283,6 +349,7 @@ class DMStore(private val api: ApiClient) {
 
     /** Hide what passed the TTL while the screen stays open (DMScreen calls it every minute). */
     fun prune() {
+        groups.prune()
         val now = Instant.now()
         rows = DMLogic.fresh(rows, now, ttlHours)
         conversations = DMLogic.freshConversations(conversations, now, ttlHours)
@@ -296,6 +363,7 @@ class DMStore(private val api: ApiClient) {
         runCatching { ApiJson.decodeFromString<DMReadyEvent>(data) }.getOrNull()?.dm?.unreadCount?.let { unreadTotal = it }
         if (route != null) refreshList()
         openPeer?.let { loadThread(it.userId) }
+        groups.onReady()
     }
 
     fun apply(data: String) {
@@ -437,5 +505,6 @@ class DMStore(private val api: ApiClient) {
         }.sortedByDescending { it.lastMessage.createdAt }, now, ttlHours)
         unreadTotal = DMLogic.totalUnread(conversations)
         listLoaded = true
+        groups.loadDemo()
     }
 }

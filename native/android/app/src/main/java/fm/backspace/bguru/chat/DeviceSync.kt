@@ -15,6 +15,8 @@ object ReadSync {
     const val EXTRA_KIND = "bguru_kind"
     const val EXTRA_ID = "bguru_id"
     const val EXTRA_PEER = "bguru_peer"
+    /** 👥 グループ DM: the group of the notification. */
+    const val EXTRA_GROUP = "bguru_group"
 
     /** The push body (FCM data strings): `{ kind: "read_sync", scope, up_to?, peer_id?, post_id?, game_id?, event_id? }`. */
     data class Signal(
@@ -24,6 +26,8 @@ object ReadSync {
         val postId: Long? = null,
         val gameId: Long? = null,
         val eventId: Long? = null,
+        /** 👥 scope "gdm". */
+        val groupId: Long? = null,
     )
 
     fun parse(data: Map<String, String>): Signal? {
@@ -36,6 +40,7 @@ object ReadSync {
             postId = data["post_id"]?.toLongOrNull(),
             gameId = data["game_id"]?.toLongOrNull(),
             eventId = data["event_id"]?.toLongOrNull(),
+            groupId = data["group_id"]?.toLongOrNull(),
         )
     }
 
@@ -46,7 +51,7 @@ object ReadSync {
      * (PushContent.notificationId / DMLogic.notificationId), and anything that is not ours (the voice service,
      * the jukebox) is on another channel and never matches.
      */
-    data class Shown(val id: Int, val channel: String?, val kind: String? = null, val itemId: Long? = null, val peerId: String? = null)
+    data class Shown(val id: Int, val channel: String?, val kind: String? = null, val itemId: Long? = null, val peerId: String? = null, val groupId: Long? = null)
 
     /** The notification ids to cancel for [s]. Unknown scopes cancel nothing. */
     fun toCancel(s: Signal, shown: List<Shown>, newMessagesId: Int): List<Int> = shown.filter { n ->
@@ -67,7 +72,13 @@ object ReadSync {
             // That person's DM notification, unless a newer DM came after what was read.
             "dm" -> {
                 val peer = s.peerId ?: return@filter false
-                n.channel == Push.CH_DM && (n.peerId?.let { it == peer } ?: (n.id == DMLogic.notificationId(peer))) &&
+                n.channel == Push.CH_DM && n.kind != PushContent.GDM && (n.peerId?.let { it == peer } ?: (n.id == DMLogic.notificationId(peer))) &&
+                    (s.upTo == null || n.itemId == null || n.itemId <= s.upTo)
+            }
+            // 👥 That group's notification (it shares the DM channel), unless a newer message came after what was read.
+            "gdm" -> {
+                val group = s.groupId ?: return@filter false
+                n.channel == Push.CH_DM && n.kind == PushContent.GDM && (n.groupId?.let { it == group } ?: (n.id == GDMLogic.notificationId(group))) &&
                     (s.upTo == null || n.itemId == null || n.itemId <= s.upTo)
             }
             "reply" -> {

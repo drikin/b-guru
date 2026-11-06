@@ -39,6 +39,8 @@ object Push {
     const val EXTRA_SHOGI_GAME_ID = "shogi_game_id"
     const val EXTRA_DM_PEER_ID = "dm_peer_id"
     const val EXTRA_DM_PEER_NAME = "dm_peer_name"
+    /** 👥 グループ DM: that group. */
+    const val EXTRA_GDM_GROUP_ID = "gdm_group_id"
     const val EXTRA_OFFKAI = "offkai"
     /** voice_handoff tap: the target (offkai / voice / room) and whether the mic goes on. */
     const val EXTRA_HANDOFF = "voice_handoff"
@@ -154,6 +156,11 @@ object Push {
         NotificationManagerCompat.from(context).cancel(DMLogic.notificationId(peerId))
     }
 
+    /** That group is on screen: its notification is stale. */
+    fun clearGDMNotification(context: Context, groupId: Long) {
+        NotificationManagerCompat.from(context).cancel(GDMLogic.notificationId(groupId))
+    }
+
     // MARK: showing
 
     fun show(context: Context, data: Map<String, String>) {
@@ -165,6 +172,7 @@ object Push {
         if (!PushContent.isKnown(kind)) return
         if (PushContent.isShogi(kind)) { showShogi(context, kind, data["game_id"]?.toLongOrNull() ?: return); return }
         if (kind == PushContent.DM) { showDM(context, data["dm_id"]?.toLongOrNull(), data["peer_id"]); return }
+        if (kind == PushContent.GDM) { showGDM(context, data["gdm_id"]?.toLongOrNull(), data["group_id"]?.toLongOrNull()); return }
         if (kind == PushContent.OFFKAI_START) { showOffkai(context, data["event_id"]?.toLongOrNull() ?: 0L); return }
         val messageId = data["message_id"]?.toLongOrNull()
         val postId = data["post_id"]?.toLongOrNull()
@@ -361,11 +369,70 @@ object Push {
         }
     }
 
+    /** 👥 グループ DM: only ids come through FCM; the text, the sender and the group's title are read with this
+     *  device's token (GET gdm/messages/{id}). One notification per group (the last few lines); a tap opens it. */
+    private fun showGDM(context: Context, messageId: Long?, groupIdHint: Long?) {
+        val session = App.session(context)
+        val store = session.store
+        // Already looking at that group.
+        if (groupIdHint != null && store?.dm?.groups?.visibleGroupId == groupIdHint) return
+        val api = session.api ?: session.savedToken()?.let(::ApiClient) ?: return
+        val base = store?.capabilities?.gdmPath ?: "/api/agent/gdm"
+        val r = if (messageId == null || messageId <= 0) null
+            else runBlocking { withTimeoutOrNull(8000) { runCatching { api.gdmMessage(messageId, base) }.getOrNull() } }
+        val groupId = r?.message?.groupId?.takeIf { it > 0 } ?: r?.group?.id ?: groupIdHint ?: return
+        if (store?.dm?.groups?.visibleGroupId == groupId) return
+        val notifId = GDMLogic.notificationId(groupId)
+        val m = r?.message
+        val title = if (m == null) GDMLogic.FALLBACK_TITLE else GDMLogic.notificationTitle(r.group?.displayTitle)
+        val line = if (m == null) GDMLogic.FALLBACK_TEXT else GDMLogic.notificationText(m.fromName, m.body)
+        // The lines still on screen for this group (a later message adds to them, like one conversation).
+        val nm = context.getSystemService(NotificationManager::class.java)
+        val previous = runCatching {
+            nm?.activeNotifications?.firstOrNull { it.id == notifId }?.notification?.extras?.getStringArrayList(EXTRA_GDM_LINES)
+        }.getOrNull().orEmpty()
+        val lines = if (m == null) listOf(line) else GDMLogic.notificationLines(previous, line)
+        val open = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_GDM_GROUP_ID, groupId)
+        }
+        val tap = PendingIntent.getActivity(context, notifId, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val style = if (lines.size <= 1) NotificationCompat.BigTextStyle().bigText(line)
+            else NotificationCompat.InboxStyle().also { st -> lines.forEach(st::addLine) }
+        val b = NotificationCompat.Builder(context, CH_DM)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setColor(0xFF16A34A.toInt())
+            .setContentTitle(title)
+            .setContentText(line)
+            .setStyle(style)
+            .setContentIntent(tap)
+            .setAutoCancel(true)
+            .setGroup("gdm-$groupId")
+            .addExtras(syncExtras(PushContent.GDM, messageId, groupId = groupId).apply { putStringArrayList(EXTRA_GDM_LINES, ArrayList(lines)) })
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            // Lock screen: the generic text only.
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(
+                NotificationCompat.Builder(context, CH_DM)
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setColor(0xFF16A34A.toInt())
+                    .setContentTitle(PushContent.defaultTitle(PushContent.GDM))
+                    .setContentText(PushContent.publicText(PushContent.GDM))
+                    .build()
+            )
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < 33) {
+            NotificationManagerCompat.from(context).notify(notifId, b.build())
+        }
+    }
+
+    private const val EXTRA_GDM_LINES = "bguru_gdm_lines"
+
     /** What a later read_sync matches this notification by (ReadSync.Shown). */
-    private fun syncExtras(kind: String, id: Long?, peerId: String? = null) = Bundle().apply {
+    private fun syncExtras(kind: String, id: Long?, peerId: String? = null, groupId: Long? = null) = Bundle().apply {
         putString(ReadSync.EXTRA_KIND, kind)
         if (id != null && id > 0) putLong(ReadSync.EXTRA_ID, id)
         if (peerId != null) putString(ReadSync.EXTRA_PEER, peerId)
+        if (groupId != null && groupId > 0) putLong(ReadSync.EXTRA_GROUP, groupId)
     }
 
     /** read_sync: the notifications for what was read on another device go. */
@@ -379,6 +446,7 @@ object Push {
                 kind = x?.getString(ReadSync.EXTRA_KIND),
                 itemId = x?.getLong(ReadSync.EXTRA_ID, 0L)?.takeIf { it > 0 },
                 peerId = x?.getString(ReadSync.EXTRA_PEER),
+                groupId = x?.getLong(ReadSync.EXTRA_GROUP, 0L)?.takeIf { it > 0 },
             )
         }
         val nmc = NotificationManagerCompat.from(context)
@@ -447,13 +515,16 @@ object PushContent {
 
     /** The kinds shown as a notification here (read_sync / voice_handoff are handled before). Anything else —
      *  a kind a newer server sends — shows nothing rather than a generic 「新着があります」. */
-    fun isKnown(kind: String) = kind in setOf("chat_mention", "chat_new", "reply", TIMELINE_NEW, SHOGI_OFFER, SHOGI_TURN, OFFKAI_START, DM)
+    fun isKnown(kind: String) = kind in setOf("chat_mention", "chat_new", "reply", TIMELINE_NEW, SHOGI_OFFER, SHOGI_TURN, OFFKAI_START, DM, GDM)
 
     /** 🍻 オフ会が始まった (`event_id`). */
     const val OFFKAI_START = "offkai_start"
 
     /** ✉️ 簡易 DM (`dm_id`, `peer_id` — not message_id: older apps would read a chat message by it). */
     const val DM = "dm"
+
+    /** 👥 グループ DM (`gdm_id`, `group_id`). */
+    const val GDM = "gdm"
 
     /** Title and text of a DM notification: the sender and the text when they could be read,
      *  else 「B-guru DM」「DM が届きました」. */
@@ -467,6 +538,7 @@ object PushContent {
         OFFKAI_START -> "🍻 オフ会"
         TIMELINE_NEW -> "B-guru タイムライン"
         DM -> DMLogic.FALLBACK_TITLE
+        GDM -> GDMLogic.FALLBACK_TITLE
         else -> "B-guru チャット"
     }
 
@@ -478,6 +550,7 @@ object PushContent {
         SHOGI_TURN -> "あなたの番です"
         OFFKAI_START -> "オフ会が始まりました。チャットの 🍻 から聞けます"
         DM -> DMLogic.FALLBACK_TEXT
+        GDM -> GDMLogic.FALLBACK_TEXT
         else -> "あなたの投稿に返信がありました"
     }
 
@@ -497,6 +570,7 @@ object PushContent {
         SHOGI_OFFER, SHOGI_TURN -> "将棋の通知があります"
         OFFKAI_START -> "オフ会が始まりました"
         DM -> DMLogic.FALLBACK_TEXT
+        GDM -> GDMLogic.FALLBACK_TEXT
         else -> "新着があります"
     }
 

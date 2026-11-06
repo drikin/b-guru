@@ -313,6 +313,40 @@ class ApiClient(val token: String) : PostOpsApi {
     /** One DM (for a notification): the message and the other person. */
     suspend fun dmMessage(id: Long, base: String = "/api/agent/dm"): DMMessageResponse = get("$base/messages/$id")
 
+    // MARK: 👥 グループ DM (src/lib/gdm-api.ts) — `base` is capabilities' gdm path
+
+    suspend fun gdmGroups(base: String = "/api/agent/gdm"): GDMListResponse = get(base)
+    suspend fun gdmCreate(memberIds: List<String>, name: String?, base: String = "/api/agent/gdm"): GDMGroup =
+        decode<GDMGroupResponse>(send(request("POST", base, buildJsonObject {
+            if (!name.isNullOrBlank()) put("name", name)
+            put("member_ids", JsonArray(memberIds.map { JsonPrimitive(it) }))
+        }))).group
+    suspend fun gdmThread(groupId: Long, base: String = "/api/agent/gdm", limit: Int = 200): GDMThreadResponse =
+        get("$base/$groupId", mapOf("limit" to "$limit"))
+    /** `name`: "" clears it (the title goes back to the members' names). */
+    suspend fun gdmRename(groupId: Long, name: String, base: String = "/api/agent/gdm"): GDMGroup =
+        decode<GDMGroupResponse>(send(request("PATCH", "$base/$groupId", buildJsonObject {
+            if (name.isBlank()) put("name", JsonNull) else put("name", name)
+        }))).group
+    suspend fun gdmSetMuted(groupId: Long, muted: Boolean, base: String = "/api/agent/gdm"): GDMGroup =
+        decode<GDMGroupResponse>(send(request("PATCH", "$base/$groupId", buildJsonObject { put("muted", muted) }))).group
+    suspend fun gdmSend(groupId: Long, body: String, clientId: String, base: String = "/api/agent/gdm"): GMessage =
+        decode<GDMSendResponse>(send(request("POST", "$base/$groupId/messages", buildJsonObject {
+            put("body", body); put("client_id", clientId)
+        }))).message
+    suspend fun gdmMarkRead(groupId: Long, lastReadId: Long, base: String = "/api/agent/gdm"): GDMReadResponse =
+        decode(send(request("POST", "$base/$groupId/read", buildJsonObject { put("last_read_id", lastReadId) })))
+    suspend fun gdmAddMembers(groupId: Long, userIds: List<String>, base: String = "/api/agent/gdm"): GDMGroup =
+        decode<GDMGroupResponse>(send(request("POST", "$base/$groupId/members", buildJsonObject {
+            put("user_ids", JsonArray(userIds.map { JsonPrimitive(it) }))
+        }))).group
+    /** Myself: leave. Someone else: remove them (the creator only). */
+    suspend fun gdmRemoveMember(groupId: Long, userId: String, base: String = "/api/agent/gdm") {
+        send(request("DELETE", "$base/$groupId/members/${userId.encodedPath()}"))
+    }
+    /** One message (for a notification): the message and its group. */
+    suspend fun gdmMessage(id: Long, base: String = "/api/agent/gdm"): GDMMessageResponse = get("$base/messages/$id")
+
     private fun String.encodedPath(): String = java.net.URLEncoder.encode(this, "UTF-8").replace("+", "%20")
 
     // MARK: jukebox

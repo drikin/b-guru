@@ -39,6 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
@@ -73,13 +74,15 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun DMHeaderButton(dm: DMStore) {
     if (!dm.enabled) return
+    // 1 対 1 and 👥 groups together.
+    val total = dm.badgeTotal
     IconButton(onClick = { dm.openList() }) {
         BadgedBox(badge = {
-            if (dm.unreadTotal > 0) Badge(containerColor = Color(0xFFDC2626), contentColor = Color.White) {
-                Text(if (dm.unreadTotal > 99) "99+" else "${dm.unreadTotal}")
+            if (total > 0) Badge(containerColor = Color(0xFFDC2626), contentColor = Color.White) {
+                Text(if (total > 99) "99+" else "$total")
             }
         }) {
-            Icon(Icons.Default.Email, contentDescription = if (dm.unreadTotal > 0) "DM（未読 ${dm.unreadTotal}）" else "DM")
+            Icon(Icons.Default.Email, contentDescription = if (total > 0) "DM（未読 $total）" else "DM")
         }
     }
 }
@@ -99,9 +102,10 @@ fun DMOffer(onDM: (() -> Unit)?, content: @Composable () -> Unit) {
     }
 }
 
-/** The DM screens over the whole app (list → conversation). Nothing when no DM is open. */
+/** The DM screens over the whole app (list → conversation / 👥 group). Nothing when no DM is open.
+ *  [members] = the chat's members (the people a group can be made with). */
 @Composable
-fun DMOverlay(dm: DMStore) {
+fun DMOverlay(dm: DMStore, members: List<MentionMember> = emptyList()) {
     val route = dm.route ?: return
     BackHandler { dm.back() }
     // Hide what passes the ttl while it stays open (and on screen: back from the
@@ -114,6 +118,10 @@ fun DMOverlay(dm: DMStore) {
         when (route) {
             DMStore.Route.Inbox -> DMInbox(dm)
             is DMStore.Route.Conversation -> androidx.compose.runtime.key(route.peer.userId) { DMConversationScreen(dm, route.peer) }
+            DMStore.Route.NewGroup -> GDMPickerScreen(dm, members, groupId = null)
+            is DMStore.Route.Group -> androidx.compose.runtime.key(route.id) { GDMGroupScreen(dm, route.id) }
+            is DMStore.Route.GroupMembers -> androidx.compose.runtime.key(route.id) { GDMMembersScreen(dm, route.id) }
+            is DMStore.Route.AddMembers -> androidx.compose.runtime.key(route.id) { GDMPickerScreen(dm, members, groupId = route.id) }
         }
     }
 }
@@ -126,9 +134,16 @@ private fun DMInbox(dm: DMStore) {
             TopAppBar(
                 title = { Text("DM", maxLines = 1) },
                 navigationIcon = { IconButton(onClick = { dm.back() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "戻る") } },
+                actions = {
+                    // 👥 グループ DM (capabilities.gdm): make one.
+                    if (dm.groups.enabled && dm.groups.canSendCap) TextButton(onClick = { dm.openNewGroup() }) { Text("＋ グループ") }
+                },
             )
         },
     ) { padding ->
+        val items = remember(dm.conversations, dm.groups.groups, dm.groups.enabled) {
+            GDMLogic.mergeInbox(dm.conversations, if (dm.groups.enabled) dm.groups.groups else emptyList())
+        }
         Column(Modifier.fillMaxSize().padding(padding)) {
             Text(
                 "DM は 30 日で消えます。チャットで相手の名前やアイコンをタップすると送れます。",
@@ -137,15 +152,18 @@ private fun DMInbox(dm: DMStore) {
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
             )
             HorizontalDivider()
-            if (dm.conversations.isEmpty()) {
+            if (items.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     Text(if (dm.listLoaded) "まだ DM はありません" else "読み込み中…",
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 40.dp))
                 }
             } else {
                 LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
-                    items(dm.conversations, key = { it.peer.userId }) { c ->
-                        DMConversationRow(c) { dm.openConversation(c.peer) }
+                    items(items, key = { it.key }, contentType = { if (it is DMInboxItem.Group) "group" else "one" }) { item ->
+                        when (item) {
+                            is DMInboxItem.One -> DMConversationRow(item.c) { dm.openConversation(item.c.peer) }
+                            is DMInboxItem.Group -> GDMInboxRow(item.s) { dm.openGroup(item.s.group.id) }
+                        }
                         HorizontalDivider(Modifier.padding(start = 68.dp))
                     }
                 }
@@ -344,7 +362,7 @@ private val DM_HM = DateTimeFormatter.ofPattern("H:mm").withZone(ZoneId.systemDe
 private val DM_MDHM = DateTimeFormatter.ofPattern("M/d H:mm").withZone(ZoneId.systemDefault())
 
 /** "H:mm" today; "M/d H:mm" for yesterday's (the list), for older ones (DMs last 30 days). */
-private fun dmTime(iso: String, withDay: Boolean): String = runCatching {
+internal fun dmTime(iso: String, withDay: Boolean): String = runCatching {
     val t = Instant.parse(iso)
     val zone = ZoneId.systemDefault()
     if (!withDay || t.atZone(zone).toLocalDate() == LocalDate.now(zone)) DM_HM.format(t) else DM_MDHM.format(t)

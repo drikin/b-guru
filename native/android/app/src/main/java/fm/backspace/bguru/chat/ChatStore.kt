@@ -78,7 +78,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     /** 🎮 散財ダッシュ — only when the server turns it on for this member (capabilities.minigame). */
     val minigame = MinigameStore(api)
     /** ✉️ 簡易 DM — only when the server turns it on for this member (capabilities.dm). */
-    val dm = DMStore(api)
+    val dm = DMStore(api).also { it.groups.fallbackMe = { myUserId } }
     /** 📺 YouTube 共同鑑賞 — only when the server turns it on for this member (capabilities.watch). */
     val watch = WatchStore(api)
     /** 🍻 オフ会 — only when the server turns it on for this member (capabilities.offkai). */
@@ -203,6 +203,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             shogi = if (!withShogi) null else Capabilities.ShogiFeatures(enabled = true, path = "/api/agent/shogi", boardUrl = "/shogi-board/index.html", bridgeVersion = 1, play = true, beagle = true, commentary = true),
             minigame = if (!withMinigame) null else Capabilities.MinigameFeatures(enabled = true, path = "/api/agent/minigame", gameUrl = "/minigame/index.html", bridgeVersion = 1, play = true),
             dm = Capabilities.DMFeatures(enabled = true, path = "/api/agent/dm", send = true, maxBody = 1000, ttlHours = 24, rateLimitPerHour = 60, streamEvent = "dm"),
+            gdm = Capabilities.GDMFeatures(enabled = true, path = "/api/agent/gdm", send = true, maxBody = 1000, maxName = 40, maxMembers = 100, ttlHours = 24, rateLimitPerHour = 60, streamEvent = "gdm"),
             offkai = Capabilities.OffkaiFeatures(enabled = true, path = "/api/agent/offkai", control = true),
         ))
         dm.loadDemo()
@@ -377,6 +378,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             "shogi" -> if (shogi.enabled) shogi.apply(ev.data)
             "shogi_commentary" -> if (shogi.enabled) shogi.applyCommentary(ev.data) // ☗ ビーグルの実況 (the board's band)
             "dm" -> dm.apply(ev.data)
+            "gdm" -> dm.groups.apply(ev.data) // 👥 グループ DM
             "minigame" -> if (minigame.enabled) minigame.onStreamEvent(ev.data)
             "watch" -> if (watch.enabled) watch.onStreamEvent(ev.data)
             "offkai" -> if (offkai.enabled) offkai.onStreamEvent(ev.data)

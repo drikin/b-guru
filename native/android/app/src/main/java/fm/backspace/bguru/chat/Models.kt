@@ -95,6 +95,8 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val shogi: ShogiFeatures? = null,
         val minigame: MinigameFeatures? = null,
         val dm: DMFeatures? = null,
+        /** 👥 グループ DM (docs/group-dm-spec.md), behind GROUP_DM_ENABLED. */
+        val gdm: GDMFeatures? = null,
         val watch: WatchFeatures? = null,
         val offkai: OffkaiFeatures? = null,
         /** チャットの上に機能を重ねる形 (docs/chat-overlay-spec.md), behind CHAT_OVERLAY_ENABLED. */
@@ -121,6 +123,18 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val path: String? = null,
         val send: Boolean? = null,
         val maxBody: Int? = null,
+        val ttlHours: Int? = null,
+        val rateLimitPerHour: Int? = null,
+        val streamEvent: String? = null,
+    )
+    /** 👥 グループ DM (docs/group-dm-spec.md), behind GROUP_DM_ENABLED (and DM_ENABLED). `send` = this token may send (chat scope). */
+    @Serializable data class GDMFeatures(
+        val enabled: Boolean? = null,
+        val path: String? = null,
+        val send: Boolean? = null,
+        val maxBody: Int? = null,
+        val maxName: Int? = null,
+        val maxMembers: Int? = null,
         val ttlHours: Int? = null,
         val rateLimitPerHour: Int? = null,
         val streamEvent: String? = null,
@@ -314,6 +328,15 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val dmTtlHours get() = features?.dm?.ttlHours?.takeIf { it > 0 } ?: (30 * 24)
     /** Only paths on our own server (the request carries the token). */
     val dmPath get() = features?.dm?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/dm"
+    /** 👥 グループ DM is on for this member (absent or enabled false: nothing of it is shown). Needs ✉️ DM too. */
+    val gdmEnabled get() = dmEnabled && (features?.gdm?.enabled ?: false)
+    val canSendGDM get() = gdmEnabled && (features?.gdm?.send ?: false)
+    val gdmMaxBody get() = features?.gdm?.maxBody?.takeIf { it > 0 } ?: 1000
+    val gdmMaxName get() = features?.gdm?.maxName?.takeIf { it > 0 } ?: 40
+    val gdmMaxMembers get() = features?.gdm?.maxMembers?.takeIf { it > 0 } ?: 100
+    val gdmTtlHours get() = features?.gdm?.ttlHours?.takeIf { it > 0 } ?: (30 * 24)
+    /** Only paths on our own server (the request carries the token). */
+    val gdmPath get() = features?.gdm?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/gdm"
     /** 「ネタ帳に送る」 is on for this token. */
     val netaEnabled get() = features?.neta?.enabled ?: false
     /** Only paths on our own server (the request carries the token). */
