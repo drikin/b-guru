@@ -28,6 +28,14 @@ export async function readBody(req: Request): Promise<Record<string, unknown> | 
   }
 }
 
+/** readBody と同じだが、Content-Type が application/json でなければ null（フォームや text/plain の
+ *  別サイトからの POST を断る。CORS の事前確認なしに送れるのはこれらだけ）。👥 グループ DM で使う。 */
+export async function readJsonBody(req: Request): Promise<Record<string, unknown> | null> {
+  const ct = (req.headers.get("content-type") ?? "").toLowerCase();
+  if (!ct.startsWith("application/json")) return null;
+  return readBody(req);
+}
+
 /** 失敗は 500 にまとめる（中身は出さない）。 */
 export async function guarded(fn: () => Promise<Response>): Promise<Response> {
   try {

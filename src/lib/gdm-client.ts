@@ -138,6 +138,12 @@ export async function openGroup(id: number): Promise<void> {
 }
 
 let readTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingRead: { gid: number; id: number } | null = null;
+function sendRead(p: { gid: number; id: number }): void {
+  void api(`/api/gdm/${p.gid}/read`, { method: "POST", body: JSON.stringify({ last_read_id: p.id }) }).then((r) => {
+    if (r.status === 200 && r.body) set({ unread: Number(r.body.group_unread_count ?? snap.unread) });
+  });
+}
 function markSeen(): void {
   const g = snap.current;
   if (!g) return;
@@ -148,9 +154,13 @@ function markSeen(): void {
   }
   if (!last) return;
   if (readTimer) clearTimeout(readTimer);
-  readTimer = setTimeout(async () => {
-    const r = await api(`/api/gdm/${g.id}/read`, { method: "POST", body: JSON.stringify({ last_read_id: last.id }) });
-    if (r.status === 200 && r.body) set({ unread: Number(r.body.group_unread_count ?? snap.unread) });
+  // 別のグループの既読がまだ送れていなければ、待たずに送る（すぐ移っても前のグループの既読を落とさない）
+  if (pendingRead && pendingRead.gid !== g.id) sendRead(pendingRead);
+  pendingRead = { gid: g.id, id: last.id };
+  readTimer = setTimeout(() => {
+    const p = pendingRead;
+    pendingRead = null;
+    if (p) sendRead(p);
   }, 400);
 }
 
@@ -187,7 +197,8 @@ async function deliver(gid: number, temp: GMessage): Promise<boolean> {
   }
   if (snap.current?.id === gid) {
     set({
-      messages: snap.messages.map((x) => (x.client_id === temp.client_id ? { ...x, pending: false, failed: true } : x)),
+      // stream で本物に置き換わっていたら（id > 0）失敗にしない
+      messages: snap.messages.map((x) => (x.client_id === temp.client_id && x.id < 0 ? { ...x, pending: false, failed: true } : x)),
       error: r.body?.error ?? "送れませんでした",
     });
   }

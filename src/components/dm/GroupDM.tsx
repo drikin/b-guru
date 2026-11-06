@@ -184,7 +184,7 @@ export function CreateGroupModal({ opened, onClose }: { opened: boolean; onClose
           label="グループ名（任意）"
           placeholder="付けなければメンバーの名前で出ます"
           value={name}
-          maxLength={MAX_NAME}
+          maxLength={MAX_NAME * 2}
           onChange={(e) => setName(e.currentTarget.value)}
         />
         {err && (
@@ -398,7 +398,7 @@ function GroupMembers({ g, onBack }: { g: Group; onBack: () => void }) {
               label="グループ名"
               placeholder="付けなければメンバーの名前で出ます"
               value={name}
-              maxLength={MAX_NAME}
+              maxLength={MAX_NAME * 2}
               onChange={(e) => setName(e.currentTarget.value)}
             />
             <Button variant="light" color="green" disabled={busy || (name.trim() || null) === g.name} onClick={() => void run(() => renameGroup(g.id, name))}>

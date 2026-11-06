@@ -41,6 +41,8 @@ export const GDM_MAX_NAME = 40;
 /** 作る・追加する（1 人あたり 1 時間）。発言は 1 対 1 と同じカウンタ。 */
 export const GDM_ADMIN_RATE_LIMIT = 30;
 export const GDM_GROUPS_LIMIT = 100;
+/** 自分で抜けた人を同じグループに入れ直せない時間。 */
+export const GDM_REJOIN_COOLDOWN = "24 hours";
 
 export type GMember = { user_id: string; name: string | null; avatar: string | null; is_creator: boolean; is_me: boolean };
 export type GroupDto = {
@@ -86,7 +88,11 @@ async function lookup(emails: string[]): Promise<Lookup> {
 export function normalizeGroupName(raw: unknown): { ok: true; name: string | null } | { ok: false } {
   if (raw == null) return { ok: true, name: null };
   if (typeof raw !== "string") return { ok: false };
-  const name = raw.replace(/[\r\n\t]+/g, " ").trim();
+  // 改行・タブは空白に、ゼロ幅文字と文字の向きを変える制御文字は落とす
+  const name = raw
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g, "")
+    .trim();
   if (!name) return { ok: true, name: null };
   if ([...name].length > GDM_MAX_NAME) return { ok: false };
   return { ok: true, name };
@@ -311,10 +317,25 @@ async function insertMessage(
   }
   if (kind === "text") {
     const sender = senderEmail ? normEmail(senderEmail) : "";
-    const to = members.filter((m) => normEmail(m.email) !== sender && !m.muted).map((m) => normEmail(m.email));
-    void pushGdm(to, row.id, gid).catch((e) => console.error("gdm push:", (e as Error)?.message));
+    const cand = members.filter((m) => normEmail(m.email) !== sender && !m.muted && gdmEnabledFor(m.email)).map((m) => normEmail(m.email));
+    // 会員でなくなった人（鍵もセッションも無い）には送らない（本文を読めず決まり文句だけが届き続けるため）
+    void activeMembers(cand)
+      .then((to) => pushGdm(to, row.id, gid))
+      .catch((e) => console.error("gdm push:", (e as Error)?.message));
   }
   return { row, members, lk };
+}
+
+/** いま会員としてログインしている人だけ（isActiveMember を 1 回のクエリで）。 */
+async function activeMembers(emails: string[]): Promise<string[]> {
+  if (emails.length === 0) return [];
+  const r = await pool.query(
+    `SELECT e FROM unnest($1::text[]) AS e
+      WHERE EXISTS (SELECT 1 FROM sessions WHERE lower(email) = e AND expires_at > now())
+         OR EXISTS (SELECT 1 FROM agent_tokens WHERE lower(email) = e AND revoked_at IS NULL AND expires_at > now())`,
+    [emails]
+  );
+  return (r.rows as { e: string }[]).map((x) => x.e);
 }
 
 function namesLine(emails: string[], names: Map<string, string | null>): string {
@@ -376,7 +397,8 @@ export async function listGroups(actor: DmActor): Promise<{ groups: GroupSummary
     const l = lastBy.get(g.id);
     return { group: toGroupDto(g, membersBy.get(g.id) ?? [], me, lk), last_message: l ? toGMessageDto(l, me, lk) : null, unread_count: u };
   });
-  return { groups: out, group_unread_count: total };
+  // 合計は一覧の上限（100 件）に関係なく全部（stream の group_unread_count と同じ数え方）
+  return { groups: out, group_unread_count: groups.length >= GDM_GROUPS_LIMIT ? await getGdmUnreadTotal(me) : total };
 }
 
 /** 作る。自分のほかに 1 人以上。作った人は自分。 */
@@ -385,10 +407,10 @@ export async function createGroup(actor: DmActor, rawName: unknown, rawMemberIds
   if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
   const nm = normalizeGroupName(rawName);
   if (!nm.ok) throw new DmError(400, "invalid_request", `グループ名は ${GDM_MAX_NAME} 文字までです`);
+  await checkAdminRate(me); // 先に数える（入れられない人の判定で、相手の状態を何度も探られないように）
   const others = await resolveNewMembers(actor, rawMemberIds, new Set([me]));
   if (others.length === 0) throw new DmError(400, "invalid_request", "自分のほかに 1 人以上選んでください");
   if (others.length + 1 > GDM_MAX_MEMBERS) throw new DmError(400, "invalid_request", `1 グループ ${GDM_MAX_MEMBERS} 人までです`);
-  await checkAdminRate(me);
 
   const client = await pool.connect();
   let gid: number;
@@ -453,6 +475,7 @@ export async function sendGroupMessage(actor: DmActor, rawGid: unknown, rawBody:
   if (!checked.ok) throw new DmError(400, "invalid_request", checked.error === "empty" ? "本文が空です" : `本文が長すぎます（${DM_MAX_BODY} 文字まで）`);
   const clientId = normalizeDmClientId(rawClientId);
   if (!clientId) return insertText(actor, rawGid, checked.body, null);
+  await requireMember(actor, rawGid); // 再送の重複よけより先に（外された人の再送を送れたことにしない）
   const now = Date.now();
   for (const [k, v] of recentSends) {
     if (recentSends.size <= SEND_DEDUP_MAX && now - v.at < SEND_DEDUP_TTL_MS) break;
@@ -488,7 +511,10 @@ export async function markGroupRead(actor: DmActor, rawGid: unknown, lastReadId:
   if (!Number.isInteger(n) || n < 0 || n > 2147483647) throw new DmError(400, "invalid_request", "last_read_id が不正です");
   const me = normEmail(actor.email);
   const r = await pool.query(
-    `UPDATE gdm_members SET last_read_id = GREATEST(last_read_id, $3) WHERE group_id = $1 AND email = $2 RETURNING last_read_id`,
+    // まだ無い発言の id までは進めない（先の発言がずっと未読にならなくなるのを防ぐ）
+    `UPDATE gdm_members
+        SET last_read_id = GREATEST(last_read_id, LEAST($3, COALESCE((SELECT max(id) FROM gdm_messages WHERE group_id = $1), 0)))
+      WHERE group_id = $1 AND email = $2 RETURNING last_read_id`,
     [gid, me, n]
   );
   const upTo = Number(r.rows[0]?.last_read_id ?? n);
@@ -502,6 +528,7 @@ export async function markGroupRead(actor: DmActor, rawGid: unknown, lastReadId:
 export async function updateGroup(actor: DmActor, rawGid: unknown, input: Record<string, unknown>): Promise<GroupDto> {
   const { gid, group } = await requireMember(actor, rawGid);
   const me = normEmail(actor.email);
+  let nameChanged = false;
   if ("muted" in input) {
     if (typeof input.muted !== "boolean") throw new DmError(400, "invalid_request", "muted が不正です");
     await pool.query(`UPDATE gdm_members SET muted = $3 WHERE group_id = $1 AND email = $2`, [gid, me, input.muted]);
@@ -511,6 +538,8 @@ export async function updateGroup(actor: DmActor, rawGid: unknown, input: Record
     const nm = normalizeGroupName(input.name);
     if (!nm.ok) throw new DmError(400, "invalid_request", `グループ名は ${GDM_MAX_NAME} 文字までです`);
     if (nm.name !== group.name) {
+      nameChanged = true;
+      await checkAdminRate(me); // 名前を変えるのも数える（system 行と配信を増やせないように）
       await pool.query(`UPDATE gdm_groups SET name = $2, updated_at = now() WHERE id = $1`, [gid, nm.name]);
       const names = await resolveDisplayNames([me]);
       await insertMessage(
@@ -526,7 +555,7 @@ export async function updateGroup(actor: DmActor, rawGid: unknown, input: Record
   const lk = await lookup(loaded!.members.map((m) => m.email));
   const dto = toGroupDto(loaded!.group, loaded!.members, me, lk);
   // mute は自分だけの話なので、自分のほかの端末にだけ知らせる。
-  if ("muted" in input && !("name" in input)) emitPersonal(me, { type: "gdm", data: { action: "group", group: dto } });
+  if ("muted" in input && !nameChanged) emitPersonal(me, { type: "gdm", data: { action: "group", group: dto } });
   return dto;
 }
 
@@ -535,15 +564,24 @@ export async function addMembers(actor: DmActor, rawGid: unknown, rawIds: unknow
   const me = normEmail(actor.email);
   if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
   const { gid, members } = await requireMember(actor, rawGid);
+  await checkAdminRate(me);
   const existing = new Set(members.map((m) => normEmail(m.email)));
   const add = await resolveNewMembers(actor, rawIds, existing);
   if (add.length === 0) throw new DmError(400, "invalid_request", "追加する人がいません");
-  await checkAdminRate(me);
+  // 自分で抜けた人は、そのグループに 24 時間入れ直せない（承諾なしの追加をくり返す嫌がらせを止める）。
+  const recent = await pool.query(
+    `SELECT 1 FROM gdm_leaves WHERE group_id = $1 AND email = ANY($2::text[]) AND left_at > now() - ($3::text)::interval LIMIT 1`,
+    [gid, add, GDM_REJOIN_COOLDOWN]
+  );
+  if (recent.rowCount) throw new DmError(403, "forbidden", "最近このグループから抜けた人は、しばらく追加できません");
   const client = await pool.connect();
   let added: string[] = [];
   try {
     await client.query("BEGIN");
     await client.query(`SELECT id FROM gdm_groups WHERE id = $1 FOR UPDATE`, [gid]);
+    // 鍵を取ってから、操作する人がまだメンバーかを確かめ直す（同時に外されていたら断る）
+    const still = await client.query(`SELECT 1 FROM gdm_members WHERE group_id = $1 AND email = $2`, [gid, me]);
+    if (!still.rowCount) throw new DmError(404, "not_found", "グループが見つかりません");
     const cnt = await client.query(`SELECT count(*)::int AS c FROM gdm_members WHERE group_id = $1`, [gid]);
     if ((cnt.rows[0].c as number) + add.length > GDM_MAX_MEMBERS) {
       throw new DmError(400, "invalid_request", `1 グループ ${GDM_MAX_MEMBERS} 人までです`);
@@ -588,24 +626,55 @@ export async function removeMember(actor: DmActor, rawGid: unknown, rawUserId: u
   const self = target === me;
   if (!self && normEmail(group.creator_email) !== me) throw new DmError(403, "forbidden", "外せるのはグループを作った人だけです");
 
-  await pool.query(`DELETE FROM gdm_members WHERE group_id = $1 AND email = $2`, [gid, target]);
+  // 削除・引き継ぎ・0 人で消すを、グループの行に鍵をかけてまとめて行う（同時に抜けても作った人が消えないように）。
+  const client = await pool.connect();
+  let gone = false;
+  try {
+    await client.query("BEGIN");
+    const g = await client.query(`SELECT creator_email FROM gdm_groups WHERE id = $1 FOR UPDATE`, [gid]);
+    if (!g.rows[0]) throw new DmError(404, "not_found", "グループが見つかりません");
+    if (!self) {
+      // 鍵を取ってから、外す権限を確かめ直す
+      if (normEmail(g.rows[0].creator_email) !== me) throw new DmError(403, "forbidden", "外せるのはグループを作った人だけです");
+    }
+    const del = await client.query(`DELETE FROM gdm_members WHERE group_id = $1 AND email = $2`, [gid, target]);
+    if (!del.rowCount) throw new DmError(404, "not_found", "メンバーが見つかりません");
+    if (self) {
+      await client.query(
+        `INSERT INTO gdm_leaves (group_id, email, left_at) VALUES ($1, $2, now())
+         ON CONFLICT (group_id, email) DO UPDATE SET left_at = now()`,
+        [gid, target]
+      );
+    }
+    const rest = await client.query(`SELECT email FROM gdm_members WHERE group_id = $1 ORDER BY joined_at, email LIMIT 1`, [gid]);
+    if (!rest.rows[0]) {
+      await client.query(`DELETE FROM gdm_groups WHERE id = $1`, [gid]);
+      gone = true;
+    } else if (normEmail(g.rows[0].creator_email) === target) {
+      await client.query(`UPDATE gdm_groups SET creator_email = $2 WHERE id = $1`, [gid, normEmail(rest.rows[0].email)]);
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
   emitPersonal(target, { type: "gdm", data: { action: "removed", group_id: gid } });
-  const rest = members.filter((m) => normEmail(m.email) !== target);
-  if (rest.length === 0) {
-    await pool.query(`DELETE FROM gdm_groups WHERE id = $1`, [gid]);
-    return { ok: true };
-  }
-  if (normEmail(group.creator_email) === target) {
-    await pool.query(`UPDATE gdm_groups SET creator_email = $2 WHERE id = $1`, [gid, normEmail(rest[0].email)]);
-  }
+  if (gone) return { ok: true };
   const names = await resolveDisplayNames([me, target]);
-  await insertMessage(
-    gid,
-    null,
-    "system",
-    self ? `${displayName(target, names)}が抜けました` : `${displayName(me, names)}が${displayName(target, names)}を外しました`
-  );
-  await emitGroupToMembers(gid);
+  try {
+    await insertMessage(
+      gid,
+      null,
+      "system",
+      self ? `${displayName(target, names)}が抜けました` : `${displayName(me, names)}が${displayName(target, names)}を外しました`
+    );
+    await emitGroupToMembers(gid);
+  } catch (e) {
+    // 同時に最後の人も抜けてグループが消えた（外部キー違反）。抜けること自体はできているので成功を返す。
+    if ((e as { code?: string })?.code !== "23503") throw e;
+  }
   return { ok: true };
 }
 

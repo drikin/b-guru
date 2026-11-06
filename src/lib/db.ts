@@ -767,6 +767,13 @@ export async function initSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_gdm_messages_group ON gdm_messages (group_id, id DESC);
     CREATE INDEX IF NOT EXISTS idx_gdm_messages_created ON gdm_messages (created_at);
+    -- 自分で抜けた記録（同じグループに 24 時間入れ直せない）。グループと一緒に消える。
+    CREATE TABLE IF NOT EXISTS gdm_leaves (
+      group_id INTEGER NOT NULL REFERENCES gdm_groups(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      left_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (group_id, email)
+    );
     -- ☗ 将棋（lib/shogi.ts、docs/shogi-spec.md）。対局者は users.user_id（メールは持たない）。
     -- 正本はここ: 局面（SFEN）・指し手（USI）・持ち時間。残り時間は turn_started_at からその都度出す。
     CREATE TABLE IF NOT EXISTS shogi_games (

@@ -140,7 +140,7 @@ d("👥 グループ DM（DB）", () => {
     expect(sent.status).toBe(201);
     const msg = sent.body.message as Msg;
     expect(msg).toMatchObject({ kind: "text", from_id: a.userId, from_name: "ねこ", body: "やあ", is_author: true, client_id: "x1" });
-    expect(pushes).toEqual([{ to: [B], id: msg.id, group: g.id }]);
+    await vi.waitFor(() => expect(pushes).toEqual([{ to: [B], id: msg.id, group: g.id }])); // push は会員かを確かめてから
     const toB = personal.find((p) => p.to === B && p.ev.data?.action === "create");
     expect((toB?.ev.data?.message as Msg).is_author).toBe(false);
     expect((toB?.ev.data?.message as Msg).client_id).toBeUndefined();
@@ -243,6 +243,34 @@ d("👥 グループ DM（DB）", () => {
     );
     const r = await m.api.gdmAddMembersApi(a, String(g.id), { user_ids: [c.userId] });
     expect(r.status).toBe(400);
+  });
+
+  it("自分で抜けた人は 24 時間入れ直せない（外された人は入れ直せる）", async () => {
+    const g = await create(a, [b.userId, c.userId]);
+    await m.api.gdmRemoveMemberApi(b, String(g.id), b.userId);
+    const again = await m.api.gdmAddMembersApi(c, String(g.id), { user_ids: [b.userId] });
+    expect(again.status).toBe(403);
+    await sql(`UPDATE gdm_leaves SET left_at = now() - interval '25 hours' WHERE group_id = $1`, [g.id]);
+    expect((await m.api.gdmAddMembersApi(c, String(g.id), { user_ids: [b.userId] })).status).toBe(200);
+    await m.api.gdmRemoveMemberApi(a, String(g.id), c.userId); // 外されただけ
+    expect((await m.api.gdmAddMembersApi(b, String(g.id), { user_ids: [c.userId] })).status).toBe(200);
+  });
+
+  it("名前の変更も回数制限（作る・追加と同じ 30 回/時）", async () => {
+    const g = await create(a, [b.userId]); // 1 回目
+    for (let i = 0; i < 29; i++) expect((await m.api.gdmUpdateApi(a, String(g.id), { name: `n${i}` })).status).toBe(200);
+    const over = await m.api.gdmUpdateApi(a, String(g.id), { name: "over" });
+    expect(over.status).toBe(429);
+    expect(over.headers?.["Retry-After"]).toBeTruthy();
+    // mute は数えない
+    expect((await m.api.gdmUpdateApi(a, String(g.id), { muted: true })).status).toBe(200);
+  });
+
+  it("作った人と最古のメンバーが同時に抜けても、作った人は残っている人になる", async () => {
+    const g = await create(a, [b.userId, c.userId]);
+    await Promise.all([m.api.gdmRemoveMemberApi(a, String(g.id), a.userId), m.api.gdmRemoveMemberApi(b, String(g.id), b.userId)]);
+    const th = await m.api.gdmThreadApi(c, String(g.id), new URLSearchParams());
+    expect((th.body.group as G).is_creator).toBe(true);
   });
 
   it("30 日を過ぎた発言は見えず、掃除で消える", async () => {
