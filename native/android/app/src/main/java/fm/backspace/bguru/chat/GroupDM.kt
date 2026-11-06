@@ -47,6 +47,8 @@ data class GDMGroup(
     val isCreator: Boolean = false,
     val muted: Boolean = false,
     val createdAt: String = "",
+    /** `/api/gdm/:gid/photo?v=…` (members only: read with the token), or null. Last, so positional calls stay. */
+    val photo: String? = null,
 ) {
     val displayTitle: String get() = title.trim().ifEmpty { name?.trim()?.takeIf { it.isNotEmpty() } ?: "グループ" }
     val count: Int get() = if (memberCount > 0) memberCount else members.size
@@ -225,6 +227,23 @@ object GDMLogic {
     fun candidates(members: List<MentionMember>, peers: List<DMPeer>): List<MentionMember> =
         (peers.map { MentionMember(it.userId, it.displayName, it.avatar) } + members).distinctBy { it.userId }
 
+    /** 👥 the group photo: the phone sends a JPEG about this long on its long side (the server makes it 512 px square). */
+    const val PHOTO_SIDE = 1024
+    const val PHOTO_QUALITY = 85
+
+    /** The group's photo to show: only our own server's relative path (it is read with the token), else none (👥). */
+    fun photoUrl(g: GDMGroup?): String? = g?.photo?.trim()?.takeIf { it.startsWith("/api/") }
+
+    fun photoButtonLabel(g: GDMGroup): String = if (photoUrl(g) != null) "写真を変える" else "写真を設定"
+
+    /** Said before sending when the resized JPEG is still over the server's limit (null = fine). */
+    fun photoSizeError(bytes: Int, maxBytes: Long): String? =
+        when {
+            bytes <= 0 -> "写真を読み込めませんでした"
+            bytes > maxBytes -> "写真が大きすぎます"
+            else -> null
+        }
+
     /** 外す is offered to the creator only, and never on myself (that is 抜ける). */
     fun canRemove(g: GDMGroup, member: GMember): Boolean = g.isCreator && !member.isMe
 
@@ -250,6 +269,9 @@ class GDMStore(private val api: ApiClient) {
     var maxName by mutableIntStateOf(40); private set
     var maxMembers by mutableIntStateOf(100); private set
     var ttlHours by mutableIntStateOf(30 * 24); private set
+    /** capabilities `gdm.photo` (and a token that may send): offer 写真を設定 / 外す. */
+    var canSetPhoto by mutableStateOf(false); private set
+    var photoMaxBytes = 15L * 1024 * 1024; private set
     private var base = "/api/agent/gdm"
 
     var groups by mutableStateOf<List<GroupSummary>>(emptyList()); private set
@@ -292,6 +314,8 @@ class GDMStore(private val api: ApiClient) {
         maxName = caps.gdmMaxName
         maxMembers = caps.gdmMaxMembers
         ttlHours = caps.gdmTtlHours
+        canSetPhoto = caps.canSetGDMPhoto
+        photoMaxBytes = caps.gdmPhotoMaxBytes
         base = caps.gdmPath
         if (!enabled) { groups = emptyList(); unreadTotal = 0; openId = null; return }
         refreshList()
@@ -585,6 +609,20 @@ class GDMStore(private val api: ApiClient) {
         action { updated(api.gdmSetMuted(id, muted, base)) }
     }
 
+    /** 👥 set / replace the group photo (any member). [jpeg] is already resized on the phone. */
+    fun setPhoto(id: Long, jpeg: ByteArray) {
+        if (!canSetPhoto) return
+        GDMLogic.photoSizeError(jpeg.size, photoMaxBytes)?.let { actionError = it; return }
+        if (demo) { actionError = "デモでは写真を変えられません"; return }
+        action { updated(api.gdmSetPhoto(id, jpeg, base)) }
+    }
+
+    fun removePhoto(id: Long) {
+        if (!canSetPhoto) return
+        if (demo) { group(id)?.let { updated(it.copy(photo = null)) }; return }
+        action { updated(api.gdmRemovePhoto(id, base)) }
+    }
+
     /** The creator removes someone else. */
     fun removeMember(id: Long, userId: String) {
         if (demo) { group(id)?.let { g -> updated(g.copy(members = g.members.filterNot { it.userId == userId }, memberCount = g.count - 1)) }; return }
@@ -623,6 +661,7 @@ class GDMStore(private val api: ApiClient) {
         demo = true
         enabled = true
         canSendCap = true
+        canSetPhoto = true
         val now = Instant.now()
         fun at(minAgo: Long) = now.minusSeconds(minAgo * 60).toString()
         val members = listOf(GMember("me", "ドリキン", isCreator = true, isMe = true), GMember("mazzo", "mazzo"), GMember("takuto", "takuto"), GMember("coban", "coban"))

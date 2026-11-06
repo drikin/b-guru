@@ -138,6 +138,9 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val ttlHours: Int? = null,
         val rateLimitPerHour: Int? = null,
         val streamEvent: String? = null,
+        /** グループの写真: POST/DELETE {path}/:gid/photo（multipart `photo`）。 */
+        val photo: Boolean? = null,
+        val photoMaxBytes: Long? = null,
     )
     /** 🎮 散財ダッシュ (docs/minigame-spec.md), behind MINIGAME_ENABLED. `play` = may play (chat scope). */
     @Serializable data class MinigameFeatures(
@@ -335,6 +338,9 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val gdmMaxName get() = features?.gdm?.maxName?.takeIf { it > 0 } ?: 40
     val gdmMaxMembers get() = features?.gdm?.maxMembers?.takeIf { it > 0 } ?: 100
     val gdmTtlHours get() = features?.gdm?.ttlHours?.takeIf { it > 0 } ?: (30 * 24)
+    /** 👥 グループの写真の設定・外す（表示は photo があれば常に）。設定には送れる鍵（chat）が要る。 */
+    val canSetGDMPhoto get() = canSendGDM && (features?.gdm?.photo ?: false)
+    val gdmPhotoMaxBytes get() = features?.gdm?.photoMaxBytes?.takeIf { it > 0 } ?: (15L * 1024 * 1024)
     /** Only paths on our own server (the request carries the token). */
     val gdmPath get() = features?.gdm?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/gdm"
     /** 「ネタ帳に送る」 is on for this token. */

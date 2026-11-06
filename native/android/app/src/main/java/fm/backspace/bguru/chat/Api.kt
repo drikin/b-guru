@@ -344,6 +344,16 @@ class ApiClient(val token: String) : PostOpsApi {
     suspend fun gdmRemoveMember(groupId: Long, userId: String, base: String = "/api/agent/gdm") {
         send(request("DELETE", "$base/$groupId/members/${userId.encodedPath()}"))
     }
+    /** The group's photo (a JPEG already resized on the phone, EXIF gone) as multipart `photo`. */
+    suspend fun gdmSetPhoto(groupId: Long, jpeg: ByteArray, base: String = "/api/agent/gdm"): GDMGroup {
+        val form = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("photo", "group.jpg", jpeg.toRequestBody("image/jpeg".toMediaType()))
+            .build()
+        val req = Request.Builder().url(Net.BASE + "$base/$groupId/photo").header("Authorization", "Bearer $token").post(form).build()
+        return decode<GDMGroupResponse>(send(req)).group
+    }
+    suspend fun gdmRemovePhoto(groupId: Long, base: String = "/api/agent/gdm"): GDMGroup =
+        decode<GDMGroupResponse>(send(request("DELETE", "$base/$groupId/photo"))).group
     /** One message (for a notification): the message and its group. */
     suspend fun gdmMessage(id: Long, base: String = "/api/agent/gdm"): GDMMessageResponse = get("$base/messages/$id")
 

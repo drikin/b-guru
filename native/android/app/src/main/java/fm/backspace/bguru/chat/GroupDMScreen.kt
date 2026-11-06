@@ -1,5 +1,8 @@
 package fm.backspace.bguru.chat
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -48,11 +51,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
@@ -63,14 +68,20 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 /* 👥 グループ DM の画面（docs/group-dm-spec.md）: 一覧の 1 行・グループ・メンバー・人を選ぶ（作る／追加）。
  * 見た目と言い回しは 1 対 1 の DMScreen に合わせる。 */
 
+/** The group's round photo, or 👥 when it has none or it cannot be read (members only: ImageCache adds the token). */
 @Composable
-private fun GroupIcon(size: androidx.compose.ui.unit.Dp) {
-    Box(Modifier.size(size).background(MaterialTheme.colorScheme.surfaceVariant, CircleShape), contentAlignment = Alignment.Center) {
-        Text("👥", fontSize = (size.value * 0.5).sp)
+private fun GroupIcon(size: androidx.compose.ui.unit.Dp, group: GDMGroup?) {
+    val m = Modifier.size(size).clip(CircleShape)
+    val px = with(androidx.compose.ui.platform.LocalDensity.current) { size.roundToPx() }
+    RemoteImage(GDMLogic.photoUrl(group), m, maxPx = px) {
+        Box(m.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+            Text("👥", fontSize = (size.value * 0.5).sp)
+        }
     }
 }
 
@@ -84,7 +95,7 @@ internal fun GDMInboxRow(s: GroupSummary, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        GroupIcon(40.dp)
+        GroupIcon(40.dp, s.group)
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("👥 ${s.group.displayTitle}", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
@@ -147,11 +158,15 @@ internal fun GDMGroupScreen(dm: DMStore, id: Long) {
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text("👥 ${group?.displayTitle ?: "グループ"}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (group != null) {
-                            Text("${group.count} 人${if (group.muted) "・🔕 通知オフ" else ""}", style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.clickable { dm.openGroupMembers(id) }) {
+                        GroupIcon(34.dp, group)
+                        Column {
+                            Text(group?.displayTitle ?: "グループ", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (group != null) {
+                                Text("${group.count} 人${if (group.muted) "・🔕 通知オフ" else ""}", style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 },
@@ -312,6 +327,27 @@ internal fun GDMMembersScreen(dm: DMStore, id: Long) {
     var name by rememberSaveable(id) { mutableStateOf(group?.name.orEmpty()) }
     var confirmRemove by remember { mutableStateOf<GMember?>(null) }
     var confirmLeave by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var preparingPhoto by remember { mutableStateOf(false) }
+    // 写真を選ぶ → 端末で長辺 1024px の JPEG に縮めて（EXIF は落ちる）送る。
+    val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        preparingPhoto = true
+        g.actionError = null
+        scope.launch {
+            val jpeg = try {
+                ChatAttachments.jpeg(context, uri, GDMLogic.PHOTO_SIDE, GDMLogic.PHOTO_QUALITY)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            } finally {
+                preparingPhoto = false
+            }
+            if (jpeg == null) g.actionError = "写真を読み込めませんでした" else g.setPhoto(id, jpeg)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -330,6 +366,34 @@ internal fun GDMMembersScreen(dm: DMStore, id: Long) {
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(bottom = 32.dp)) {
             g.actionError?.let { e ->
                 item { Text(e, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
+            }
+            // 👥 グループの写真 (メンバーなら誰でも。capabilities gdm.photo のときだけ操作を出す)
+            item {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    GroupIcon(56.dp, group)
+                    Column(Modifier.weight(1f)) {
+                        Text("グループの写真", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (g.canSetPhoto) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(
+                                    onClick = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                                    enabled = !g.busy && !preparingPhoto,
+                                ) { Text(if (preparingPhoto) "準備中…" else GDMLogic.photoButtonLabel(group)) }
+                                if (GDMLogic.photoUrl(group) != null) {
+                                    TextButton(onClick = { g.removePhoto(id) }, enabled = !g.busy && !preparingPhoto) {
+                                        Text("外す", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        } else if (GDMLogic.photoUrl(group) == null) {
+                            Text("なし", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.outline)
+                        }
+                    }
+                }
             }
             // 名前を変える (メンバーなら誰でも。空にするとメンバーの名前で出る)
             item {

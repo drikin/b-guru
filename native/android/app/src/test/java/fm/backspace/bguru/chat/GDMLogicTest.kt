@@ -150,4 +150,46 @@ class GDMLogicTest {
         assertTrue(typed.none { it.userId == "u1" })
         assertTrue(GDMLogic.pickerList(all, emptySet(), emptyList(), emptySet(), "ビーグル").isEmpty())
     }
+
+    @Test fun groupPhoto() {
+        val g = ApiJson.decodeFromString<GDMGroupResponse>(
+            """{"group":{"id":3,"name":"配信","photo":"/api/gdm/3/photo?v=g3-0123456789abcdef","title":"配信","members":[],"member_count":3,"is_creator":false,"muted":false,"created_at":"2026-11-06T01:00:00.000Z"}}""").group
+        assertEquals("/api/gdm/3/photo?v=g3-0123456789abcdef", GDMLogic.photoUrl(g))
+        assertEquals("写真を変える", GDMLogic.photoButtonLabel(g))
+        // None, blank or not our own server's relative path: 👥 (the token is never sent elsewhere).
+        val none = group(1)
+        assertNull(none.photo)
+        assertNull(GDMLogic.photoUrl(none))
+        assertNull(GDMLogic.photoUrl(null))
+        assertEquals("写真を設定", GDMLogic.photoButtonLabel(none))
+        assertNull(GDMLogic.photoUrl(none.copy(photo = "  ")))
+        assertNull(GDMLogic.photoUrl(none.copy(photo = "https://evil.example/x.webp")))
+        assertNull(GDMLogic.photoUrl(none.copy(photo = "//evil.example/x.webp")))
+        // A `group` event carries the new photo (and its removal).
+        val list = listOf(summary(1))
+        val withPhoto = GDMLogic.applyGroup(list, none.copy(photo = "/api/gdm/1/photo?v=a"))
+        assertEquals("/api/gdm/1/photo?v=a", withPhoto.single().group.photo)
+        assertNull(GDMLogic.applyGroup(withPhoto, none).single().group.photo)
+    }
+
+    @Test fun groupPhotoSize() {
+        assertNull(GDMLogic.photoSizeError(200_000, 15L * 1024 * 1024))
+        assertEquals("写真が大きすぎます", GDMLogic.photoSizeError(2_000_001, 2_000_000))
+        assertEquals("写真を読み込めませんでした", GDMLogic.photoSizeError(0, 2_000_000))
+    }
+
+    @Test fun groupPhotoCapability() {
+        fun caps(photo: Boolean?, send: Boolean = true, max: Long? = null) = Capabilities(features = Capabilities.Features(
+            dm = Capabilities.DMFeatures(enabled = true),
+            gdm = Capabilities.GDMFeatures(enabled = true, send = send, photo = photo, photoMaxBytes = max)))
+        assertTrue(caps(true).canSetGDMPhoto)
+        assertFalse(caps(null).canSetGDMPhoto)
+        assertFalse(caps(false).canSetGDMPhoto)
+        assertFalse(caps(true, send = false).canSetGDMPhoto)
+        assertEquals(15L * 1024 * 1024, caps(true).gdmPhotoMaxBytes)
+        assertEquals(1000L, caps(true, max = 1000).gdmPhotoMaxBytes)
+        val decoded = ApiJson.decodeFromString<Capabilities>("""{"features":{"dm":{"enabled":true},"gdm":{"enabled":true,"send":true,"photo":true,"photo_max_bytes":15728640}}}""")
+        assertTrue(decoded.canSetGDMPhoto)
+        assertEquals(15728640L, decoded.gdmPhotoMaxBytes)
+    }
 }

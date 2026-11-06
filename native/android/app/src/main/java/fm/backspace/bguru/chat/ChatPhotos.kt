@@ -57,18 +57,32 @@ class ChatAttachments {
         private const val PREVIEW_SIDE = 720
         private const val QUALITY = 80
 
+        /** Decoded at most `maxSide` on the long side; ImageDecoder applies the EXIF rotation. */
+        private suspend fun decode(context: Context, uri: Uri, maxSide: Int): Bitmap = withContext(Dispatchers.IO) {
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
+                val w = info.size.width
+                val h = info.size.height
+                val scale = minOf(1.0, maxSide.toDouble() / max(w, h))
+                decoder.setTargetSize((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1))
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE // compress() needs a software bitmap
+            }
+        }
+
+        /** Just the JPEG (no preview): at most `maxSide` on the long side, re-encoded so EXIF
+         *  (location…) never leaves the phone. Used by 👥 the group photo. */
+        suspend fun jpeg(context: Context, uri: Uri, maxSide: Int, quality: Int = QUALITY): ByteArray {
+            val bmp = decode(context, uri, maxSide)
+            return withContext(Dispatchers.Default) {
+                try {
+                    ByteArrayOutputStream().use { out -> bmp.compress(Bitmap.CompressFormat.JPEG, quality, out); out.toByteArray() }
+                } finally { bmp.recycle() }
+            }
+        }
+
         /** Decoded at most `maxSide` on the long side (ImageDecoder applies the EXIF
          *  rotation) and re-encoded as JPEG, so location and other EXIF never leave the phone. */
         private suspend fun load(context: Context, uri: Uri, maxSide: Int): ChatPhoto {
-            val full = withContext(Dispatchers.IO) {
-                ImageDecoder.decodeBitmap(ImageDecoder.createSource(context.contentResolver, uri)) { decoder, info, _ ->
-                    val w = info.size.width
-                    val h = info.size.height
-                    val scale = minOf(1.0, maxSide.toDouble() / max(w, h))
-                    decoder.setTargetSize((w * scale).toInt().coerceAtLeast(1), (h * scale).toInt().coerceAtLeast(1))
-                    decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE // compress() needs a software bitmap
-                }
-            }
+            val full = decode(context, uri, maxSide)
             return withContext(Dispatchers.Default) {
                 val jpeg = ByteArrayOutputStream().use { out ->
                     full.compress(Bitmap.CompressFormat.JPEG, QUALITY, out)
