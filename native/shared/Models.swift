@@ -235,8 +235,21 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var maxBody: Int?
         var ttlHours: Int?
     }
+    /// 👥 グループ DM (features.gdm, GROUP_DM_ENABLED on the server; docs/group-dm-spec.md). Absent or
+    /// enabled:false → nothing of it shows.
+    struct GDMFeatures: Decodable, Sendable, Equatable {
+        var enabled: Bool?
+        var path: String?
+        /// This token may send / create / change groups (has the "chat" scope).
+        var send: Bool?
+        var maxBody: Int?
+        var maxName: Int?
+        var maxMembers: Int?
+        var ttlHours: Int?
+    }
     struct Features: Decodable, Sendable, Equatable {
         var dm: DMFeatures?
+        var gdm: GDMFeatures?
         var chat: ChatFeatures?
         var macAssistant: FlagFeature?
         var posts: PostFeatures?

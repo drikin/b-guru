@@ -114,7 +114,8 @@ extension APIClient {
 @MainActor
 @Observable
 final class DMStore {
-    enum Route: Equatable { case list, thread(DMPeer) }
+    /// `group` / `groupMembers` / `newGroup`: 👥 グループ DM (GroupDMStore.swift), only while `groups.enabled`.
+    enum Route: Equatable { case list, thread(DMPeer), group(Int), groupMembers(Int), newGroup }
 
     private(set) var enabled = false
     private(set) var canSend = false
@@ -122,6 +123,10 @@ final class DMStore {
     private(set) var conversations: [DMConversation] = []
     /// All my unread DMs (the badge).
     private(set) var unreadCount = 0
+    /// 👥 グループ DM: the groups in the same list and screens.
+    let groups: GroupDMStore
+    /// The ✉️ badge: 1:1 and groups together.
+    var totalUnread: Int { unreadCount + (groups.enabled ? groups.unreadCount : 0) }
     /// What is open (nil = closed). iPhone: a sheet; Mac: over the chat.
     var route: Route? {
         didSet {
@@ -129,8 +134,13 @@ final class DMStore {
                 Task { await load(p) }
                 if appVisible { onShowing?(p.userId) }
             }
-            if route == .list, oldValue != .list { Task { await reload() } }
+            if route == .list, oldValue != .list { Task { await reload(); await groups.reload() } }
             if route == nil { thread = [] ; error = nil }
+            switch route {
+            case let .group(id): groups.show(id, thread: true)
+            case let .groupMembers(id): groups.show(id, thread: false)
+            default: if groups.openId != nil { groups.hide() }
+            }
         }
     }
     /// The open conversation's messages (oldest first).
@@ -141,6 +151,7 @@ final class DMStore {
     /// The app is in front (iPhone: active scene; Mac: panel on screen) — read marks only then.
     var appVisible = true {
         didSet {
+            groups.appVisible = appVisible
             if appVisible, !oldValue {
                 markSeen()
                 if let p = openPeer { onShowing?(p.userId) }
@@ -161,6 +172,17 @@ final class DMStore {
 
     init(api: APIClient) {
         self.api = api
+        self.groups = GroupDMStore(api: api)
+        groups.dmPeers = { [weak self] in
+            (self?.conversations ?? []).map { MentionMember(userId: $0.peer.userId, name: $0.peer.displayName, avatar: $0.peer.avatar) }
+        }
+        groups.onOpenRemoved = { [weak self] in
+            guard let self else { return }
+            switch self.route {
+            case .group, .groupMembers: self.route = .list
+            default: break
+            }
+        }
     }
 
     var openPeer: DMPeer? {
@@ -180,6 +202,7 @@ final class DMStore {
         maxBody = f?.maxBody ?? 1000
         if let h = f?.ttlHours, h > 0 { DMLogic.ttl = TimeInterval(h) * 3600 }
         if let p = f?.path, p.hasPrefix("/api/") { path = p }
+        groups.configure(caps?.features?.gdm, dmOn: on)
         if !on { route = nil; conversations = []; unreadCount = 0 }
         if on, !wasOn {
             Task { await reload() }
@@ -189,9 +212,17 @@ final class DMStore {
 
     func openList() { route = .list }
     func open(_ peer: DMPeer) { route = .thread(peer) }
+    /// A group (from the list or a notification; before capabilities are in, the server says whether it may).
+    func openGroup(_ id: Int) { route = .group(id) }
     func close() { route = nil }
-    /// One step back: a conversation → the list → closed (the Mac's ←, drikin 2026-10-24).
-    func back() { route = route == .list ? nil : (route == nil ? nil : .list) }
+    /// One step back: a conversation → the list → closed (the Mac's ←, drikin 2026-10-24); a group's members → the group.
+    func back() {
+        switch route {
+        case nil, .list?: route = nil
+        case let .groupMembers(id)?: route = .group(id)
+        default: route = .list
+        }
+    }
 
     func reload() async {
         guard enabled, !demo else { return }
@@ -301,6 +332,7 @@ final class DMStore {
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
         if let n = (try? dec.decode(Ready.self, from: data))?.dm?.unreadCount { unreadCount = n }
+        groups.applyReady()
         Task {
             await reload()
             if let p = openPeer { await load(p) }
@@ -390,6 +422,11 @@ final class DMStore {
                                   unreadCount: id == "mazzo" ? 2 : 0)
         }
         unreadCount = 2
+        if !ProcessInfo.processInfo.arguments.contains("-demoGDMOff") { groups.debugLoadDemo() }
+        // -demoDMGroup / -demoDMGroupMembers / -demoDMNewGroup: 👥 the first group, its members, a new group (screenshots).
+        if ProcessInfo.processInfo.arguments.contains("-demoDMGroup") { route = .group(1); return }
+        if ProcessInfo.processInfo.arguments.contains("-demoDMGroupMembers") { route = .groupMembers(1); return }
+        if ProcessInfo.processInfo.arguments.contains("-demoDMNewGroup") { route = .newGroup; return }
         // -demoDM: open the list at once; -demoDMThread: mazzo's conversation (screenshots).
         let args = ProcessInfo.processInfo.arguments
         if args.contains("-demoDMThread") { route = .thread(DMPeer(userId: "mazzo", name: "mazzo", avatar: nil)) }

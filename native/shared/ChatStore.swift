@@ -220,6 +220,8 @@ final class ChatStore {
         }
         jukebox.voiceBusy = { [weak voice, weak offkai] in (voice?.phase ?? .idle) != .idle || (offkai?.audio ?? .off) != .off }
         offkai.myUserId = { [weak self] in self?.myUserId ?? self?.voice.myUserId }
+        dm.groups.chatMembers = { [weak self] in self?.members ?? [] } // 👥 グループ DM: whom to add
+        dm.groups.myUserId = { [weak self] in self?.myUserId ?? self?.voice.myUserId }
         speaker.nicknamer = { name in await ChatNickname.ask(name) } // 賢い読み方: long names, on this device only
         offkai.readingEnded = { [weak self] in
             guard let self, !self.chatReadActive else { return }
@@ -421,6 +423,8 @@ final class ChatStore {
             shogi.applyCommentary(ev.data)
         case "dm":
             dm.apply(ev.data)
+        case "gdm":
+            dm.groups.apply(ev.data) // 👥 グループ DM
         case "sync":
             // 既読で知らせを消す: read on some device of mine (ReadSync.swift).
             if let sync = ReadSync(json: ev.data) {

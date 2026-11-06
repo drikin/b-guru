@@ -401,6 +401,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         store.shogi.onOffer = { [weak self] g in self?.notifyShogi(g, offer: true) }
         store.shogi.onMyTurn = { [weak self] g in self?.notifyShogi(g, offer: false) }
         store.dm.onIncoming = { [weak self] m, peer in self?.notifyDM(m, peer: peer) }
+        store.dm.groups.onIncoming = { [weak self] m, g in self?.notifyGDM(m, group: g) }
         store.onReadSync = { [weak self] sync in self?.removeRead(sync) }
         // 📺 the player's own window (⧉): follows the mode.
         let watchWindow = WatchWindow(watch: store.watch)
@@ -1473,6 +1474,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "dm-\(peer.userId)", content: content, trigger: nil))
     }
 
+    /// 👥 グループ DM: someone's message in a group (not while it is on screen, not when I muted it — the store
+    /// leaves those out): the group's title and 「送り主: 本文」. One notification per group, like the 1:1 DM.
+    private func notifyGDM(_ m: GDMMessage, group g: GDMGroup) {
+        let t = GDMLogic.notificationText(title: g.title, fromName: m.fromName, body: m.body)
+        let content = UNMutableNotificationContent()
+        content.title = t.title
+        content.body = t.body
+        content.threadIdentifier = "gdm-\(g.id)"
+        content.userInfo = ["gdmGroupId": g.id]
+        if !settings.isQuietNow() { content.sound = .default }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "gdm-\(g.id)", content: content, trigger: nil))
+    }
+
     /// 「タイムラインの新しい投稿も通知する」: the stream says a post or comment was made;
     /// a moment later the timeline is read again and posts newer than any seen before
     /// (not mine, still unread) become one notification each (at most 3 at a time).
@@ -1693,6 +1707,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let shogiGameId = response.notification.request.content.userInfo["shogiGameId"] as? Int
         let dmPeerId = response.notification.request.content.userInfo["dmPeerId"] as? String
         let dmPeerName = response.notification.request.content.userInfo["dmPeerName"] as? String
+        let gdmGroupId = response.notification.request.content.userInfo["gdmGroupId"] as? Int
         let action = response.actionIdentifier
         let text = (response as? UNTextInputNotificationResponse)?.userText
         await MainActor.run {
@@ -1708,6 +1723,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     // ✉️ That person's DM conversation, over the chat.
                     self.panel?.pin.tab = .chat
                     store.dm.open(DMPeer(userId: dmPeerId, name: dmPeerName?.isEmpty == false ? dmPeerName : nil, avatar: nil))
+                } else if let gdmGroupId, let store = self.store {
+                    // 👥 That group, over the chat.
+                    self.panel?.pin.tab = .chat
+                    store.dm.openGroup(gdmGroupId)
                 } else if let shogiGameId {
                     self.panel?.pin.tab = .chat
                     self.store?.shogi.openGame(shogiGameId)

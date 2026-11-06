@@ -210,6 +210,7 @@ targets:
     sources:
       - path: Tests
       - path: ../shared/ReadSync.swift
+      - path: ../shared/GroupDMLogic.swift
       - path: ../shared/ChatSpeech.swift
       - path: BguruChat/Sources/KeepAwakeLogic.swift
       - path: BguruChat/Sources/BatteryBeagleLogic.swift

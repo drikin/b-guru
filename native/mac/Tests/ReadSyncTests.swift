@@ -24,6 +24,7 @@ final class ReadSyncTests: XCTestCase {
         XCTAssertNil(sync(["kind": "read_sync", "scope": "dm"]), "a dm word without peer_id would clear every DM")
         XCTAssertNil(sync(["kind": "read_sync", "scope": "reply"]))
         XCTAssertNil(sync(["kind": "read_sync", "scope": "shogi"]))
+        XCTAssertNil(sync(["kind": "read_sync", "scope": "gdm", "up_to": 3]), "a gdm word without group_id would clear every group")
         XCTAssertNil(ReadSync(json: Data("not json".utf8)))
     }
 
@@ -85,6 +86,30 @@ final class ReadSyncTests: XCTestCase {
         XCTAssertTrue(offkai.matchesPush(identifier: "offkai-8", userInfo: ["kind": "offkai_start", "event_id": 8]))
         XCTAssertFalse(offkai.matchesPush(identifier: "offkai-9", userInfo: ["kind": "offkai_start", "event_id": 9]))
         XCTAssertFalse(offkai.matchesPush(identifier: "voice-handoff", userInfo: ["kind": "voice_handoff", "target": "offkai", "event_id": 8]))
+    }
+
+    // MARK: 👥 グループ DM
+
+    func testGroupDM() throws {
+        let stream = try XCTUnwrap(ReadSync(json: Data(#"{"scope":"gdm","group_id":7,"up_to":120}"#.utf8)))
+        XCTAssertEqual(stream, ReadSync(scope: .gdm, upTo: 120, groupId: 7))
+        XCTAssertEqual(sync(["kind": "read_sync", "scope": "gdm", "group_id": "7", "up_to": "120"]), ReadSync(scope: .gdm, upTo: 120, groupId: 7))
+
+        let s = ReadSync(scope: .gdm, upTo: 120, groupId: 7)
+        XCTAssertTrue(s.matchesPush(identifier: "gdm-7", userInfo: ["kind": "gdm", "group_id": 7, "gdm_id": 120]))
+        XCTAssertTrue(s.matchesPush(identifier: "gdm-7", userInfo: ["kind": "gdm", "group_id": "7", "gdm_id": "99"]))
+        XCTAssertFalse(s.matchesPush(identifier: "gdm-7", userInfo: ["kind": "gdm", "group_id": 7, "gdm_id": 121]), "arrived after the read")
+        XCTAssertFalse(s.matchesPush(identifier: "gdm-8", userInfo: ["kind": "gdm", "group_id": 8, "gdm_id": 1]))
+        XCTAssertFalse(s.matchesPush(identifier: "dm-7", userInfo: ["kind": "dm", "peer_id": "7", "dm_id": 1]))
+        XCTAssertFalse(ReadSync(scope: .dm, peerId: "7").matchesPush(identifier: "gdm-7", userInfo: ["kind": "gdm", "group_id": 7]))
+        // No kind (an old payload): by the collapse id.
+        XCTAssertTrue(s.matchesPush(identifier: "gdm-7", userInfo: [:]))
+        XCTAssertFalse(s.matchesPush(identifier: "gdm-70", userInfo: [:]))
+        // Mac: one notification per group.
+        XCTAssertTrue(s.matchesLocal(identifier: "gdm-7"))
+        XCTAssertFalse(s.matchesLocal(identifier: "gdm-70"))
+        XCTAssertFalse(s.matchesLocal(identifier: "dm-7"))
+        XCTAssertFalse(s.clearsChatBundle(newestId: nil))
     }
 
     // MARK: Mac: its own notifications

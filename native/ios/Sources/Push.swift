@@ -74,6 +74,8 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
             UNNotificationCategory(identifier: "shogiturn", actions: [open], intentIdentifiers: [], options: []),
             // ✉️ 簡易 DM (a tap opens that conversation).
             UNNotificationCategory(identifier: "dm", actions: [open], intentIdentifiers: [], options: []),
+            // 👥 グループ DM (a tap opens that group).
+            UNNotificationCategory(identifier: "gdm", actions: [open], intentIdentifiers: [], options: []),
             // 🎧 音声をこの端末で続ける (the Mac's 「スマホで続ける」; a tap joins the sound here).
             UNNotificationCategory(identifier: "voicehandoff", actions: [open], intentIdentifiers: [], options: []),
         ])
@@ -118,6 +120,7 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
         let kind = notification.request.content.userInfo["kind"] as? String
         let gameId = (notification.request.content.userInfo["game_id"] as? NSNumber)?.intValue
         let dmPeer = kind == "dm" ? notification.request.content.userInfo["peer_id"] as? String : nil
+        let gdmGroup = kind == "gdm" ? ReadSync.int(notification.request.content.userInfo["group_id"]) : nil
         // In the app, the chat and the timeline show what is new themselves. Everything else — 🎧 voice_handoff
         // included (the Mac's button was pressed while this app is open) — shows as a banner.
         let options: UNNotificationPresentationOptions = kind == "chat_mention" || kind == "chat_new" || kind == "timeline_new" ? [] : [.banner, .sound]
@@ -126,6 +129,7 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
             let watching = gameId.map { id in MainActor.assumeIsolated { PushCenter.shared.isShowingShogi(id) } } ?? false
             // ✉️ Not while that DM conversation is on screen.
             let readingDM = dmPeer.map { id in MainActor.assumeIsolated { PushCenter.shared.session?.store?.dm.isShowing(peerId: id) ?? false } } ?? false
+                || gdmGroup.map { id in MainActor.assumeIsolated { PushCenter.shared.session?.store?.dm.groups.isShowing(groupId: id) ?? false } } ?? false
             // 🍻 Not while the 🍻 tab is on screen (it already shows the event).
             let seeingOffkai = kind == "offkai_start" && MainActor.assumeIsolated {
                 UIApplication.shared.applicationState == .active && PushCenter.shared.session?.store?.offkai.open == true
@@ -143,6 +147,7 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
         let kind = info["kind"] as? String
         let gameId = kind?.hasPrefix("shogi_") == true ? (info["game_id"] as? NSNumber)?.intValue : nil
         let dmPeer = kind == "dm" ? info["peer_id"] as? String : nil
+        let gdmGroup = kind == "gdm" ? ReadSync.int(info["group_id"]) : nil
         let offkai = kind == "offkai_start"
         // 🎧 音声をこの端末で続ける: { target: offkai | voice | room, mic }.
         let handoff = kind == "voice_handoff" ? info["target"] as? String : nil
@@ -162,6 +167,10 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
                     // ✉️ 簡易 DM: the chat page with that conversation open (its name comes with the thread).
                     store.showChat?()
                     store.dm.open(DMPeer(userId: dmPeer, name: nil, avatar: nil))
+                } else if let gdmGroup, let store = PushCenter.shared.session?.store {
+                    // 👥 グループ DM: the chat page with that group open.
+                    store.showChat?()
+                    store.dm.openGroup(gdmGroup)
                 } else {
                     PushCenter.shared.handle(action: action, messageId: messageId, postId: postId, shogiGameId: gameId, text: text)
                 }
@@ -184,6 +193,7 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
     func attach(_ store: ChatStore) {
         store.onBecameVisible = { [weak self] in self?.cleanOnScreen() }
         store.dm.onShowing = { [weak self] peer in self?.remove(ReadSync(scope: .dm, peerId: peer)) }
+        store.dm.groups.onShowing = { [weak self] id in self?.remove(ReadSync(scope: .gdm, groupId: id)) }
         store.shogi.onShowingGame = { [weak self] id in
             guard let self, self.isShowingShogi(id) else { return }
             self.remove(ReadSync(scope: .shogi, gameId: id))
@@ -199,6 +209,7 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
             if let id = store.shogi.selectedId, isShowingShogi(id) { remove(ReadSync(scope: .shogi, gameId: id)) }
         }
         if let peer = store.dm.openPeer, store.dm.appVisible { remove(ReadSync(scope: .dm, peerId: peer.userId)) }
+        if let id = store.dm.groups.openId, store.dm.groups.isShowing(groupId: id) { remove(ReadSync(scope: .gdm, groupId: id)) }
     }
 
     /// Remove the delivered notifications this word covers (decided by ReadSync on each one's userInfo).

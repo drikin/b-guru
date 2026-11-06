@@ -29,7 +29,8 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
             replyId: (info["reply_id"] as? NSNumber)?.intValue,
             gameId: (info["game_id"] as? NSNumber)?.intValue,
             dmId: (info["dm_id"] as? NSNumber)?.intValue,
-            eventId: (info["event_id"] as? NSNumber)?.intValue
+            eventId: (info["event_id"] as? NSNumber)?.intValue,
+            gdmId: (info["gdm_id"] as? NSNumber)?.intValue
         )
         Task {
             if let text = await Self.lookup(ask, token: token) { self.apply(text) }
@@ -75,6 +76,7 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
         var gameId: Int?
         var dmId: Int?
         var eventId: Int?
+        var gdmId: Int?
     }
 
     /// The real (title, body) for a push, or nil to keep the generic text.
@@ -106,6 +108,15 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
                   let body = m["body"] as? String else { return nil }
             let raw = ((r["peer"] as? [String: Any])?["name"] as? String ?? "").trimmingCharacters(in: .whitespaces)
             return ("\(raw.isEmpty ? "会員" : raw)さんからの DM", clip(body))
+        case "gdm":
+            // 👥 グループ DM: the group's title, and 「送り主: 本文」 (GDMLogic.notificationText in the app).
+            guard let id = q.gdmId,
+                  let r = await get("/api/agent/gdm/messages/\(id)", token: token),
+                  let m = r["message"] as? [String: Any],
+                  let body = m["body"] as? String else { return nil }
+            let title = ((r["group"] as? [String: Any])?["title"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            let raw = (m["from_name"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            return (title.isEmpty ? "B-guru グループ DM" : title, clip("\(raw.isEmpty ? "会員" : raw): \(body)"))
         case "shogi_offer", "shogi_turn":
             // ☗ 将棋: who asked (and how fast), or who just moved and what. The generic line
             // （「対局の申し込みが届きました」「あなたの番です」）stays when this cannot be read.

@@ -3,7 +3,7 @@ import Foundation
 /// 既読で知らせを消す (docs/device-sync-spec.md §1): read on one device → the same notification
 /// goes away on the others. One word from the server says what was read:
 ///
-///   APNs (background push): `{ kind: "read_sync", scope, up_to?, peer_id?, post_id?, game_id?, event_id? }`
+///   APNs (background push): `{ kind: "read_sync", scope, up_to?, peer_id?, group_id?, post_id?, game_id?, event_id? }`
 ///   stream (`event: sync`):  the same without `kind`
 ///
 /// This file only decides which notifications that word covers (pure, no UserNotifications, so the
@@ -11,6 +11,8 @@ import Foundation
 struct ReadSync: Equatable, Sendable {
     enum Scope: String, Sendable {
         case chat, dm, reply, shogi, offkai
+        /// 👥 グループ DM: one group's messages up to `up_to` (docs/group-dm-spec.md).
+        case gdm
         case replyAll = "reply_all"
     }
 
@@ -21,14 +23,17 @@ struct ReadSync: Equatable, Sendable {
     var postId: Int?
     var gameId: Int?
     var eventId: Int?
+    var groupId: Int?
 
-    init(scope: Scope, upTo: Int? = nil, peerId: String? = nil, postId: Int? = nil, gameId: Int? = nil, eventId: Int? = nil) {
+    init(scope: Scope, upTo: Int? = nil, peerId: String? = nil, postId: Int? = nil, gameId: Int? = nil, eventId: Int? = nil,
+         groupId: Int? = nil) {
         self.scope = scope
         self.upTo = upTo
         self.peerId = peerId
         self.postId = postId
         self.gameId = gameId
         self.eventId = eventId
+        self.groupId = groupId
     }
 
     /// A push's userInfo (`kind` must be read_sync) or the stream's data (no `kind`). Numbers may come as
@@ -42,11 +47,13 @@ struct ReadSync: Equatable, Sendable {
         postId = Self.int(payload["post_id"])
         gameId = Self.int(payload["game_id"])
         eventId = Self.int(payload["event_id"])
+        groupId = Self.int(payload["group_id"])
         // A word that names nothing would clear more than was read.
         switch scope {
         case .dm: if peerId == nil { return nil }
         case .reply: if postId == nil { return nil }
         case .shogi: if gameId == nil { return nil }
+        case .gdm: if groupId == nil { return nil }
         case .chat, .replyAll, .offkai: break
         }
     }
@@ -60,7 +67,7 @@ struct ReadSync: Equatable, Sendable {
     // MARK: iPhone / iPad: a delivered push
 
     /// This delivered push is covered. Decided on what the push carries (its userInfo); the request
-    /// identifier (= the APNs collapse id: chat-<id>, chat-new, dm-<peer>, reply-<id>, shogi-<id>, offkai-<id>)
+    /// identifier (= the APNs collapse id: chat-<id>, chat-new, dm-<peer>, gdm-<group>, reply-<id>, shogi-<id>, offkai-<id>)
     /// only when the push has no `kind`.
     func matchesPush(identifier: String, userInfo: [AnyHashable: Any]) -> Bool {
         guard let kind = userInfo["kind"] as? String else { return matchesCollapseId(identifier) }
@@ -71,6 +78,10 @@ struct ReadSync: Equatable, Sendable {
             return covers(id)
         case .dm:
             return kind == "dm" && Self.string(userInfo["peer_id"]) == peerId
+        case .gdm:
+            // Only what was read: a message newer than up_to (arrived after) stays.
+            guard kind == "gdm", Self.int(userInfo["group_id"]) == groupId else { return false }
+            return Self.int(userInfo["gdm_id"]).map(covers) ?? true
         case .reply:
             return kind == "reply" && Self.int(userInfo["post_id"]) == postId
         case .replyAll:
@@ -89,6 +100,7 @@ struct ReadSync: Equatable, Sendable {
             if identifier == "chat-new" { return true }
             return Self.number(after: "chat-", in: identifier).map(covers) ?? false
         case .dm: return peerId.map { identifier == "dm-\($0)" } ?? false
+        case .gdm: return groupId.map { identifier == "gdm-\($0)" } ?? false
         case .reply: return postId.map { identifier == "reply-\($0)" } ?? false
         case .replyAll: return identifier.hasPrefix("reply-")
         case .shogi: return gameId.map { identifier == "shogi-\($0)" } ?? false
@@ -100,12 +112,13 @@ struct ReadSync: Equatable, Sendable {
 
     // MARK: Mac: the app's own notifications
 
-    /// One of the Mac's own notifications (App.swift: chat-<id> mentions, dm-<peer>, post-<id>, shogi-<id>).
+    /// One of the Mac's own notifications (App.swift: chat-<id> mentions, dm-<peer>, gdm-<group>, post-<id>, shogi-<id>).
     /// The bundled 「新着」 (chat-new) is decided by `clearsChatBundle`, which also resets the bundle.
     func matchesLocal(identifier: String) -> Bool {
         switch scope {
         case .chat: return Self.number(after: "chat-", in: identifier).map(covers) ?? false
         case .dm: return peerId.map { identifier == "dm-\($0)" } ?? false
+        case .gdm: return groupId.map { identifier == "gdm-\($0)" } ?? false
         // The Mac has no reply notifications; a post's own one (タイムラインの新しい投稿) goes with its replies.
         case .reply: return postId.map { identifier == "post-\($0)" } ?? false
         case .shogi: return gameId.map { identifier == "shogi-\($0)" } ?? false

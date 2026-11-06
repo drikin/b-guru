@@ -19,8 +19,8 @@ struct DMBadgeButton: View {
                 Image(systemName: "envelope")
                     .font(.app(.body))
                     .overlay(alignment: .topTrailing) {
-                        if dm.unreadCount > 0 {
-                            Text(dm.unreadCount > 99 ? "99+" : "\(dm.unreadCount)")
+                        if dm.totalUnread > 0 {
+                            Text(dm.totalUnread > 99 ? "99+" : "\(dm.totalUnread)")
                                 .font(.app(.caption2, weight: .bold))
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 4).padding(.vertical, 1)
@@ -32,7 +32,7 @@ struct DMBadgeButton: View {
             }
             .buttonStyle(.borderless)
             .help("DM（30 日で消えます）")
-            .accessibilityLabel(dm.unreadCount > 0 ? "DM、未読 \(dm.unreadCount) 件" : "DM")
+            .accessibilityLabel(dm.totalUnread > 0 ? "DM、未読 \(dm.totalUnread) 件" : "DM")
         }
     }
 }
@@ -47,6 +47,14 @@ struct DMScreen: View {
             case let .thread(peer):
                 DMThreadView(dm: dm, peer: peer)
                     .id(peer.userId)
+            case let .group(id):
+                GDMThreadView(dm: dm, groups: dm.groups, groupId: id)
+                    .id("g-\(id)")
+            case let .groupMembers(id):
+                GDMMembersView(dm: dm, groups: dm.groups, groupId: id)
+                    .id("gm-\(id)")
+            case .newGroup:
+                GDMNewGroupView(dm: dm, groups: dm.groups)
             default:
                 DMListView(dm: dm)
             }
@@ -57,11 +65,12 @@ struct DMScreen: View {
     }
 }
 
-private struct DMHeader<Leading: View>: View {
+struct DMHeader<Leading: View, Trailing: View>: View {
     let title: String
     let onBack: () -> Void
     let onClose: () -> Void
     @ViewBuilder var leading: Leading
+    @ViewBuilder var trailing: Trailing
 
     var body: some View {
         HStack(spacing: 8) {
@@ -72,6 +81,7 @@ private struct DMHeader<Leading: View>: View {
             leading
             Text(title).font(.app(.headline)).lineLimit(1)
             Spacer()
+            trailing
             Button(action: onClose) { Image(systemName: "xmark").font(.app(.callout)) }
                 .buttonStyle(.borderless)
                 .accessibilityLabel("閉じる")
@@ -80,14 +90,56 @@ private struct DMHeader<Leading: View>: View {
     }
 }
 
+extension DMHeader where Trailing == EmptyView {
+    init(title: String, onBack: @escaping () -> Void, onClose: @escaping () -> Void, @ViewBuilder leading: () -> Leading) {
+        self.init(title: title, onBack: onBack, onClose: onClose, leading: leading, trailing: { EmptyView() })
+    }
+}
+
+/// One line of the DM list: a 1:1 conversation or a 👥 group, newest first together.
+enum DMListEntry: Identifiable {
+    case one(DMConversation)
+    case group(GDMSummary)
+
+    var id: String {
+        switch self {
+        case let .one(c): return "u-\(c.peer.userId)"
+        case let .group(s): return "g-\(s.group.id)"
+        }
+    }
+
+    var at: String? {
+        switch self {
+        case let .one(c): return c.lastMessage.createdAt
+        case let .group(s): return GDMLogic.activity(s)
+        }
+    }
+
+    @MainActor static func merged(_ dm: DMStore) -> [DMListEntry] {
+        let groups = dm.groups.enabled ? dm.groups.summaries.map(DMListEntry.group) : []
+        return GDMLogic.newestFirst(dm.conversations.map(DMListEntry.one) + groups, at: \.at)
+    }
+}
+
 struct DMListView: View {
     let dm: DMStore
 
     var body: some View {
         VStack(spacing: 0) {
-            DMHeader(title: "DM", onBack: dm.close, onClose: dm.close) { EmptyView() }
+            DMHeader(title: "DM", onBack: dm.close, onClose: dm.close) { EmptyView() } trailing: {
+                if dm.groups.enabled, dm.groups.canSend {
+                    // 👥 グループ DM: pick members (and a name) → a new group.
+                    Button { dm.route = .newGroup } label: {
+                        Label("グループ", systemImage: "plus").font(.app(.callout))
+                    }
+                    .buttonStyle(.borderless)
+                    .help("グループ DM を作る")
+                    .accessibilityLabel("グループ DM を作る")
+                }
+            }
             Divider()
-            if dm.conversations.isEmpty {
+            let entries = DMListEntry.merged(dm)
+            if entries.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
                     Image(systemName: "envelope").font(.app(size: 30)).foregroundStyle(.secondary)
@@ -101,9 +153,15 @@ struct DMListView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(dm.conversations) { c in
-                            Button { dm.open(c.peer) } label: { row(c) }
-                                .buttonStyle(.plain)
+                        ForEach(entries) { e in
+                            switch e {
+                            case let .one(c):
+                                Button { dm.open(c.peer) } label: { row(c) }
+                                    .buttonStyle(.plain)
+                            case let .group(s):
+                                Button { dm.openGroup(s.group.id) } label: { GDMListRow(s: s) }
+                                    .buttonStyle(.plain)
+                            }
                             Divider().padding(.leading, 56)
                         }
                     }
