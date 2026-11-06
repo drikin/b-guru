@@ -246,6 +246,9 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var maxName: Int?
         var maxMembers: Int?
         var ttlHours: Int?
+        /// The group's photo may be set / removed (POST / DELETE {path}/:gid/photo). Shown whenever a group has one.
+        var photo: Bool?
+        var photoMaxBytes: Int?
     }
     struct Features: Decodable, Sendable, Equatable {
         var dm: DMFeatures?

@@ -48,6 +48,24 @@ extension APIClient {
         return r.group
     }
 
+    /// The group's photo: one JPEG (already shrunk) as multipart `photo` → the group with its new `photo`.
+    func gdmSetPhoto(path: String, groupId: Int, jpeg: Data) async throws -> GDMGroup {
+        struct R: Decodable { var group: GDMGroup }
+        let boundary = "bguru-\(UUID().uuidString)"
+        var req = request("POST", "\(path)/\(groupId)/photo")
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        req.httpBody = GDMLogic.photoMultipart(jpeg, boundary: boundary)
+        req.timeoutInterval = 120
+        let r: R = try await send(req)
+        return r.group
+    }
+
+    func gdmRemovePhoto(path: String, groupId: Int) async throws -> GDMGroup {
+        struct R: Decodable { var group: GDMGroup }
+        let r: R = try await send(request("DELETE", "\(path)/\(groupId)/photo"))
+        return r.group
+    }
+
     /// Myself: leave. Someone else: remove them (only its maker may).
     func gdmRemoveMember(path: String, groupId: Int, userId: String) async throws {
         struct R: Decodable { var ok: Bool? }
@@ -63,6 +81,9 @@ final class GroupDMStore {
     private(set) var maxBody = 1000
     private(set) var maxName = 40
     private(set) var maxMembers = 100
+    /// The group's photo may be set / removed here (features.gdm.photo; old servers say nothing → only shown).
+    private(set) var photoEditable = false
+    private(set) var maxPhotoBytes = 15 * 1024 * 1024
     /// My groups, newest first.
     private(set) var summaries: [GDMSummary] = []
     /// All my groups' unread (`group_unread_count`; added to the 1:1 count for the ✉️ badge).
@@ -131,6 +152,8 @@ final class GroupDMStore {
         maxBody = f?.maxBody ?? 1000
         maxName = f?.maxName ?? 40
         maxMembers = f?.maxMembers ?? 100
+        photoEditable = canSend && (f?.photo ?? false)
+        if let b = f?.photoMaxBytes, b > 0 { maxPhotoBytes = b }
         if let h = f?.ttlHours, h > 0 { GDMLogic.ttl = TimeInterval(h) * 3600 }
         if let p = f?.path, p.hasPrefix("/api/") { path = p }
         if !on { summaries = []; unreadCount = 0; thread = []; group = nil }
@@ -338,6 +361,32 @@ final class GroupDMStore {
         }
     }
 
+    /// The group's photo from a picked image's bytes: shrunk on the device (long side ≤ 1024px, EXIF rotation
+    /// applied, no metadata) to a JPEG, then sent. Anyone in the group may (the server checks).
+    func setPhoto(_ original: Data) async {
+        guard let id = openId, photoEditable, !busy else { return }
+        let jpeg = await Task.detached(priority: .userInitiated) {
+            PostDraft.uploadJPEG(original, maxSide: GDMLogic.photoMaxSide, quality: 0.85)
+        }.value
+        guard let jpeg else { error = "この画像は使えません（画像として読めませんでした）"; return }
+        if let tooBig = GDMLogic.photoTooBig(jpeg.count, max: maxPhotoBytes) { error = tooBig; return }
+        #if DEBUG
+        let demoPath = demo ? debugPhotoPath(jpeg) : nil
+        #else
+        let demoPath: String? = nil
+        #endif
+        await change(id, demoChange: { $0.photo = demoPath }, fallback: "写真を変えられませんでした") { [api, path] in
+            try await api.gdmSetPhoto(path: path, groupId: id, jpeg: jpeg)
+        }
+    }
+
+    func removePhoto() async {
+        guard let id = openId, photoEditable else { return }
+        await change(id, demoChange: { $0.photo = nil }, fallback: "写真を外せませんでした") { [api, path] in
+            try await api.gdmRemovePhoto(path: path, groupId: id)
+        }
+    }
+
     /// Someone else out (only its maker sees the button; the server checks too).
     func remove(_ userId: String) async {
         guard let id = openId, !busy else { return }
@@ -375,7 +424,8 @@ final class GroupDMStore {
     }
 
     @discardableResult
-    private func change(_ id: Int, demoChange: (inout GDMGroup) -> Void, _ call: @escaping @Sendable () async throws -> GDMGroup) async -> Bool {
+    private func change(_ id: Int, demoChange: (inout GDMGroup) -> Void, fallback: String = "変えられませんでした",
+                        _ call: @escaping @Sendable () async throws -> GDMGroup) async -> Bool {
         guard !busy else { return false }
         busy = true
         error = nil
@@ -388,7 +438,7 @@ final class GroupDMStore {
             applyGroup(try await call())
             return true
         } catch {
-            self.error = Self.message(error, or: "変えられませんでした")
+            self.error = Self.message(error, or: fallback)
             return false
         }
     }
@@ -482,6 +532,7 @@ final class GroupDMStore {
         demo = true
         enabled = true
         canSend = true
+        photoEditable = true
         func at(_ minutesAgo: Double) -> String { ISO8601DateFormatter().string(from: Date().addingTimeInterval(-minutesAgo * 60)) }
         func mem(_ id: String, creator: Bool = false, me: Bool = false) -> GDMMember {
             GDMMember(userId: id, name: me ? "ドリキン" : id, avatar: nil, isCreator: creator, isMe: me)
@@ -490,7 +541,7 @@ final class GroupDMStore {
             GDMMessage(id: id, groupId: g, kind: from == nil ? "system" : "text", fromId: from, fromName: from,
                        fromAvatar: nil, body: body, createdAt: at(ago), isAuthor: from == "me", clientId: nil)
         }
-        let g1 = GDMGroup(id: 1, name: "週末の撮影", title: "週末の撮影", members: [mem("mazzo", creator: true), mem("me", me: true), mem("takuto")],
+        let g1 = GDMGroup(id: 1, name: "週末の撮影", photo: TimelineDemoMedia.picture("gdm-photo-1", 512, 512, hue: 0.55), title: "週末の撮影", members: [mem("mazzo", creator: true), mem("me", me: true), mem("takuto")],
                           memberCount: 3, isCreator: false, muted: false, createdAt: at(200))
         let g2 = GDMGroup(id: 2, name: nil, title: "coban、りとる", members: [mem("me", creator: true, me: true), mem("coban"), mem("りとる")],
                           memberCount: 3, isCreator: true, muted: true, createdAt: at(900))
@@ -505,6 +556,14 @@ final class GroupDMStore {
         summaries = [GDMSummary(group: g1, lastMessage: demoThreads[1]?.last, unreadCount: 1),
                      GDMSummary(group: g2, lastMessage: demoThreads[2]?.last, unreadCount: 0)]
         unreadCount = 1
+    }
+
+    /// Demo: the picked photo goes straight into the image cache under a made-up path (nothing is sent).
+    private func debugPhotoPath(_ jpeg: Data) -> String? {
+        guard let cg = MediaCache.decode(jpeg, maxPixel: 600) else { return nil }
+        let path = "selftest-media/gdm-photo-\(UUID().uuidString).jpg"
+        MediaCache.shared.debugInsert(PlatformImage.decoded(cg), for: path)
+        return path
     }
     #endif
 }

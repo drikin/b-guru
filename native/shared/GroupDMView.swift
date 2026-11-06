@@ -1,4 +1,6 @@
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
 
 // 👥 グループ DM — the screens (state: GroupDMStore.swift). Shown inside DMScreen (iPhone: the DM sheet;
 // Mac: over the chat), with the same header, bubbles and words as the 1:1 DM (DMView.swift).
@@ -9,8 +11,7 @@ struct GDMListRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text("👥").font(.app(size: 20)).frame(width: 36, height: 36)
-                .background(Circle().fill(Color.primary.opacity(0.06)))
+            GDMGroupPhoto(path: s.group.photoPath, size: 36)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(s.group.displayTitle).font(.app(.callout, weight: s.unreadCount > 0 ? .bold : .medium)).lineLimit(1)
@@ -57,7 +58,7 @@ struct GDMThreadView: View {
     var body: some View {
         VStack(spacing: 0) {
             DMHeader(title: title, onBack: dm.openList, onClose: dm.close) {
-                Text("👥").font(.app(.body))
+                GDMGroupPhoto(path: (groups.group ?? groups.summary(groupId)?.group)?.photoPath, size: 26, plain: true)
             } trailing: {
                 Button { dm.route = .groupMembers(groupId) } label: {
                     HStack(spacing: 3) {
@@ -373,7 +374,7 @@ struct GDMMembersView: View {
         VStack(spacing: 0) {
             DMHeader(title: "メンバー（\(group?.memberCount ?? group?.members.count ?? 0) 人）",
                      onBack: { dm.route = .group(groupId) }, onClose: dm.close) {
-                Text("👥").font(.app(.body))
+                GDMGroupPhoto(path: group?.photoPath, size: 26, plain: true)
             }
             Divider()
             ScrollView {
@@ -381,6 +382,7 @@ struct GDMMembersView: View {
                     if let e = groups.error {
                         Text(e).font(.app(.caption)).foregroundStyle(.red)
                     }
+                    photoSection
                     if groups.canSend { nameSection }
                     if groups.canSend { muteSection }
                     Divider()
@@ -417,6 +419,34 @@ struct GDMMembersView: View {
                 removing = nil
             }
             Button("やめる", role: .cancel) { removing = nil }
+        }
+    }
+
+    /// The group's photo: large, and (features.gdm.photo) 「写真を設定／写真を変える」 and 「外す」 — anyone in it may.
+    private var photoSection: some View {
+        HStack(spacing: 12) {
+            GDMGroupPhoto(path: group?.photoPath, size: 64)
+            if groups.photoEditable {
+                VStack(alignment: .leading, spacing: 6) {
+                    GDMPhotoPickButton(title: GDMLogic.photoButtonTitle(hasPhoto: group?.photoPath != nil),
+                                       disabled: groups.busy) { data in
+                        Task { await groups.setPhoto(data) }
+                    } onUnreadable: {
+                        groups.error = "画像を読み込めませんでした（別の写真で試してください）"
+                    }
+                    if group?.photoPath != nil {
+                        Button(role: .destructive) { Task { await groups.removePhoto() } } label: {
+                            Label("外す", systemImage: "trash").font(.app(.callout))
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.red)
+                        .disabled(groups.busy)
+                        .accessibilityLabel("グループの写真を外す")
+                    }
+                }
+            }
+            if groups.busy { ProgressView().controlSize(.small) }
+            Spacer()
         }
     }
 
@@ -495,4 +525,115 @@ struct GDMMembersView: View {
             .buttonStyle(.borderless)
         }
     }
+}
+
+/// The group's face: its photo in a circle, or 👥 when it has none or it cannot be read.
+/// The photo is our server's `/api/gdm/:gid/photo?v=…`: MediaCache reads it with the member's Bearer
+/// and keeps it (memory and disk) until `?v=` changes.
+struct GDMGroupPhoto: View {
+    let path: String?
+    let size: CGFloat
+    /// No circle behind 👥 (the headers, as before).
+    var plain = false
+    @State private var image: PlatformImage?
+    @State private var loadedPath: String?
+
+    /// Small faces at the avatar size, the members screen's larger one at 600 (the server's file is 512).
+    private var pixels: Int { size <= 40 ? AvatarCache.pixels : 600 }
+    private var showing: Bool { image != nil && loadedPath == path && path != nil }
+
+    var body: some View {
+        ZStack {
+            if let image, showing {
+                Image(platformImage: image).resizable().scaledToFill()
+                    .frame(width: size, height: size)
+                    .clipShape(Circle())
+            } else if plain {
+                Text("👥").font(.app(.body))
+            } else {
+                Circle().fill(Color.primary.opacity(0.06))
+                Text("👥").font(.app(size: size * 0.55))
+            }
+        }
+        .frame(width: showing || !plain ? size : nil, height: showing || !plain ? size : nil)
+        .accessibilityHidden(true)
+        .task(id: path) {
+            guard let path else { image = nil; loadedPath = nil; return }
+            if let hit = MediaCache.shared.cached(path, maxPixel: pixels) { image = hit; loadedPath = path; return }
+            let img = await MediaCache.shared.image(for: path, maxPixel: pixels)
+            guard !Task.isCancelled else { return }
+            image = img
+            loadedPath = img == nil ? nil : path
+        }
+    }
+}
+
+/// 「写真を設定」: iPhone / iPad — the photo library (PhotosPicker); Mac — a file (NSOpenPanel: JPEG・PNG・HEIC・WebP).
+/// Hands back the picked image's bytes as they are (the store shrinks them).
+private struct GDMPhotoPickButton: View {
+    let title: String
+    let disabled: Bool
+    let onPicked: (Data) -> Void
+    let onUnreadable: () -> Void
+    #if os(iOS)
+    @State private var pick: PhotosPickerItem?
+    #endif
+
+    var body: some View {
+        #if os(iOS)
+        PhotosPicker(selection: $pick, matching: .images) {
+            Label(title, systemImage: "photo.on.rectangle").font(.app(.callout))
+        }
+        .buttonStyle(.borderless)
+        .disabled(disabled)
+        .accessibilityLabel("グループの\(title)")
+        .onChange(of: pick) { _, item in
+            guard let item else { return }
+            pick = nil
+            Task {
+                if let data = await Self.load(item) { onPicked(data) } else { onUnreadable() }
+            }
+        }
+        #else
+        Button {
+            Task {
+                guard let url = await Self.choose() else { return }
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                if let data = try? Data(contentsOf: url), !data.isEmpty { onPicked(data) } else { onUnreadable() }
+            }
+        } label: {
+            Label(title + "…", systemImage: "photo.on.rectangle").font(.app(.callout))
+        }
+        .buttonStyle(.borderless)
+        .disabled(disabled)
+        .accessibilityLabel("グループの\(title)")
+        #endif
+    }
+
+    #if os(iOS)
+    /// The photo's bytes (an original only in iCloud comes as a file).
+    private static func load(_ item: PhotosPickerItem) async -> Data? {
+        if let d = try? await item.loadTransferable(type: Data.self), !d.isEmpty { return d }
+        if let file = try? await item.loadTransferable(type: PickedImageFile.self) {
+            defer { try? FileManager.default.removeItem(at: file.url) }
+            if let d = try? Data(contentsOf: file.url), !d.isEmpty { return d }
+        }
+        return nil
+    }
+    #else
+    private static func choose() async -> URL? {
+        let panel = NSOpenPanel()
+        panel.title = "グループの写真"
+        panel.prompt = "選ぶ"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.jpeg, .png, .heic, .webP]
+        NSApp.activate()
+        return await withCheckedContinuation { (c: CheckedContinuation<URL?, Never>) in
+            panel.begin { r in c.resume(returning: r == .OK ? panel.url : nil) }
+        }
+    }
+    #endif
 }

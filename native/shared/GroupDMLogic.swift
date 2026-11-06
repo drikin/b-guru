@@ -19,6 +19,9 @@ struct GDMGroup: Codable, Equatable, Sendable, Identifiable {
     var id: Int
     /// The name someone gave it (nil = none: `title` is the members' names).
     var name: String?
+    /// The group's photo (🖼 2026-11-06): `/api/gdm/:gid/photo?v=…` on our own server (read with the member's
+    /// Bearer; `?v=` changes with each file, so it may be cached), or nil — then 👥.
+    var photo: String? = nil
     var title: String
     /// In the order they joined.
     var members: [GDMMember]
@@ -30,6 +33,8 @@ struct GDMGroup: Codable, Equatable, Sendable, Identifiable {
     var createdAt: String?
 
     var displayTitle: String { title.isEmpty ? "グループ" : title }
+    /// The photo to show (nil = 👥): only a path or URL that looks like one.
+    var photoPath: String? { GDMLogic.photoPath(photo) }
     var me: GDMMember? { members.first { $0.isMe == true } }
 }
 
@@ -192,6 +197,35 @@ enum GDMLogic {
     static func cleanName(_ s: String, max: Int) -> String? {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty ? nil : String(t.prefix(max))
+    }
+
+    // MARK: The group's photo
+
+    /// A photo path worth loading (nil / empty → 👥). MediaCache sends the token only to our own server.
+    static func photoPath(_ raw: String?) -> String? {
+        guard let t = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+        return t
+    }
+
+    /// The members screen's button: 「写真を設定」 or 「写真を変える」.
+    static func photoButtonTitle(hasPhoto: Bool) -> String { hasPhoto ? "写真を変える" : "写真を設定" }
+
+    /// The longest side the app shrinks a photo to before sending (the server makes it a 512px square).
+    static let photoMaxSide = 1024
+
+    /// POST {path}/:gid/photo's body: one multipart field `photo` (a JPEG made on the device).
+    static func photoMultipart(_ jpeg: Data, boundary: String) -> Data {
+        var body = Data()
+        body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"photo.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n".utf8))
+        body.append(jpeg)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        return body
+    }
+
+    /// Too big to send (after shrinking): the server's limit, said the same way as the web.
+    static func photoTooBig(_ bytes: Int, max: Int) -> String? {
+        guard max > 0, bytes > max else { return nil }
+        return "写真が大きすぎます（\(max / (1024 * 1024))MB まで）"
     }
 
     /// How many people the picker shows at once.

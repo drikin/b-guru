@@ -146,4 +146,38 @@ final class GroupDMLogicTests: XCTestCase {
         XCTAssertFalse(typed.contains { $0.id == "u1" })
         XCTAssertTrue(GDMLogic.pickerList(all, id: \.id, name: \.name, excluding: [], peerIds: [], selected: [], query: "ビーグル").isEmpty)
     }
+
+    /// 🖼 The group's photo: the stream's `group` brings it in (and takes it out), the multipart has one `photo` field.
+    func testPhoto() throws {
+        let set = try XCTUnwrap(GDMEvent.decode(Data(#"""
+        {"action":"group","group":{"id":5,"name":"撮影部","photo":"/api/gdm/5/photo?v=ab12","title":"撮影部","members":[],"member_count":3,"is_creator":false,"muted":false,"created_at":"2026-11-06T00:00:00.000Z"}}
+        """#.utf8)))
+        XCTAssertEqual(set.group?.photo, "/api/gdm/5/photo?v=ab12")
+        XCTAssertEqual(set.group?.photoPath, "/api/gdm/5/photo?v=ab12")
+        let cleared = try XCTUnwrap(GDMEvent.decode(Data(#"""
+        {"action":"group","group":{"id":5,"name":null,"photo":null,"title":"a、b","members":[]}}
+        """#.utf8)))
+        XCTAssertNil(cleared.group?.photoPath)
+        let old = try XCTUnwrap(GDMEvent.decode(Data(#"{"action":"group","group":{"id":5,"title":"a","members":[]}}"#.utf8)))
+        XCTAssertNil(old.group?.photo, "an older server says nothing: 👥")
+
+        var list = [GDMSummary(group: GDMGroup(id: 5, name: nil, title: "a", members: []), lastMessage: nil, unreadCount: 2)]
+        list = GDMLogic.summaries(list, updating: try XCTUnwrap(set.group))
+        XCTAssertEqual(list.first?.group.photoPath, "/api/gdm/5/photo?v=ab12")
+        XCTAssertEqual(list.first?.unreadCount, 2, "a new photo keeps the unread count")
+
+        XCTAssertNil(GDMLogic.photoPath("  "))
+        XCTAssertNil(GDMLogic.photoPath(nil))
+        XCTAssertEqual(GDMLogic.photoButtonTitle(hasPhoto: false), "写真を設定")
+        XCTAssertEqual(GDMLogic.photoButtonTitle(hasPhoto: true), "写真を変える")
+        XCTAssertNil(GDMLogic.photoTooBig(100, max: 15 * 1024 * 1024))
+        XCTAssertEqual(GDMLogic.photoTooBig(16 * 1024 * 1024, max: 15 * 1024 * 1024), "写真が大きすぎます（15MB まで）")
+
+        let jpeg = Data([0xFF, 0xD8, 0x00, 0xFF, 0xD9])
+        let body = GDMLogic.photoMultipart(jpeg, boundary: "XYZ")
+        let head = Data("--XYZ\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"photo.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n".utf8)
+        XCTAssertEqual(body.prefix(head.count), head)
+        XCTAssertEqual(body.dropFirst(head.count).prefix(jpeg.count), jpeg)
+        XCTAssertTrue(body.suffix(10) == Data("\r\n--XYZ--\r\n".utf8).suffix(10))
+    }
 }
