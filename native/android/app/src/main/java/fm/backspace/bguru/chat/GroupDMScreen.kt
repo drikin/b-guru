@@ -440,7 +440,8 @@ internal fun GDMPickerScreen(dm: DMStore, members: List<MentionMember>, groupId:
 
     val exclude = remember(group, g.myUserId) { (group?.members?.map { it.userId }.orEmpty() + listOfNotNull(g.myUserId)).toSet() }
     val all = remember(members, dm.conversations) { GDMLogic.candidates(members, dm.conversations.map { it.peer }) }
-    val shown = remember(all, exclude, query) { GDMLogic.pickable(all, exclude, query) }
+    val peerIds = remember(dm.conversations) { dm.conversations.map { it.peer.userId }.toSet() }
+    val shown = remember(all, exclude, query, picked, peerIds) { GDMLogic.pickerList(all, peerIds, picked, exclude, query) }
     val already = if (group != null) group.count else 1
     val over = already + picked.size > g.maxMembers
 
@@ -468,7 +469,7 @@ internal fun GDMPickerScreen(dm: DMStore, members: List<MentionMember>, groupId:
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    placeholder = { Text("名前で探す") },
+                    placeholder = { Text("名前を入れて探す") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -479,7 +480,7 @@ internal fun GDMPickerScreen(dm: DMStore, members: List<MentionMember>, groupId:
             LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
                 if (shown.isEmpty()) {
                     item {
-                        Text(if (members.isEmpty() && dm.conversations.isEmpty()) "読み込み中…" else "選べる人がいません",
+                        Text(if (query.isBlank()) "名前を入れて探してください" else if (members.isEmpty()) "読み込み中…" else "見つかりません",
                             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
                     }
                 }

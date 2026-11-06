@@ -84,6 +84,37 @@ export function applyToGroups(list: GroupSummary[], m: GMessage, viewing: boolea
   return [{ ...prev, last_message: m, unread_count: unread }, ...list.filter((g) => g.group.id !== m.group_id)];
 }
 
+/** 一度に出す候補の上限。 */
+export const PICKER_LIMIT = 10;
+
+/** 候補（ドリキン 2026-11-06: 会員の総数は非公開なので、全員の一覧を最初から出さない）。
+ *  - 何も打っていない: 自分の 1 対 1 の DM の相手だけ（全体の人数は分からない）
+ *  - 打った: 名前に含む人を、会員の一覧と DM の相手から（重複なし）
+ *  どちらも PICKER_LIMIT 人まで。ビーグル（システム。入れられない）・入れた人・除く人は出さない。 */
+export function pickerCandidates(
+  members: { userId: string; name: string }[],
+  peers: { user_id: string; name: string | null }[],
+  exclude: Set<string>,
+  query: string,
+  selected: { value: string; label: string }[] = []
+) {
+  const q = query.trim().toLowerCase();
+  const pool = q
+    ? [...peers.map((p) => ({ id: p.user_id, name: p.name ?? "" })), ...members.map((x) => ({ id: x.userId, name: x.name }))]
+    : peers.map((p) => ({ id: p.user_id, name: p.name ?? "" }));
+  const seen = new Set<string>(selected.map((x) => x.value));
+  const out: { value: string; label: string }[] = [];
+  for (const m of pool) {
+    if (out.length >= PICKER_LIMIT) break;
+    if (!m.id || seen.has(m.id) || exclude.has(m.id) || m.name === "ビーグル") continue;
+    if (q && !(m.name || "").toLowerCase().includes(q)) continue;
+    seen.add(m.id);
+    out.push({ value: m.id, label: m.name || "会員" });
+  }
+  // 選んだ人は表示（ピル）に要るので、候補の上限とは別に必ず入れる
+  return [...selected, ...out];
+}
+
 // ---- ネットワーク ----
 
 type Body = Record<string, unknown> & { error?: string; code?: string };

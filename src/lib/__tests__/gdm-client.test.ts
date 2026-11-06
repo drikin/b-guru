@@ -57,3 +57,21 @@ describe("gdm-client", () => {
     expect(groupTitle(null, ["a", null])).toBe("a、だれか");
   });
 });
+
+describe("pickerCandidates（会員の総数を出さない）", () => {
+  const members = Array.from({ length: 50 }, (_, i) => ({ userId: `u${i}`, name: i === 0 ? "ビーグル" : `会員${i}` }));
+  const peers = [{ user_id: "u3", name: "会員3" }, { user_id: "p1", name: "ともだち" }];
+  it("何も打っていなければ 1 対 1 の相手だけ（全員の一覧は出さない）", async () => {
+    const { pickerCandidates } = await import("../gdm-client");
+    expect(pickerCandidates(members, peers, new Set(), "").map((x) => x.value)).toEqual(["u3", "p1"]);
+    expect(pickerCandidates(members, [], new Set(), "  ")).toEqual([]);
+  });
+  it("打ったら名前に含む人だけ、10 人まで。ビーグル・除く人は出さない。選んだ人は残す", async () => {
+    const { pickerCandidates, PICKER_LIMIT } = await import("../gdm-client");
+    const hit = pickerCandidates(members, peers, new Set(["u5"]), "会員");
+    expect(hit.length).toBe(PICKER_LIMIT);
+    expect(hit.map((x) => x.value)).not.toContain("u5");
+    expect(pickerCandidates(members, peers, new Set(), "ビーグル")).toEqual([]);
+    expect(pickerCandidates(members, peers, new Set(), "会員1", [{ value: "u2", label: "会員2" }])[0]).toEqual({ value: "u2", label: "会員2" });
+  });
+});

@@ -25,6 +25,7 @@ import {
   type GMessage,
   type Group,
   type GroupSummary,
+  pickerCandidates,
 } from "@/lib/gdm-client";
 import { closeDm, getSnapshot as getDmSnapshot, openDmList } from "@/lib/dm-client";
 import { chatTimeStr } from "@/lib/date-format";
@@ -64,31 +65,31 @@ function useMembers(open: boolean): Member[] {
   return list;
 }
 
-/** 候補: 会員の一覧＋1 対 1 の DM の相手（重複なし）。ビーグル（システム。入れられない）は出さない。 */
-export function pickerCandidates(members: Member[], peers: { user_id: string; name: string | null }[], exclude: Set<string>) {
-  const seen = new Set<string>();
-  const out: { value: string; label: string }[] = [];
-  for (const m of [...members.map((x) => ({ id: x.userId, name: x.name })), ...peers.map((p) => ({ id: p.user_id, name: p.name ?? "" }))]) {
-    if (!m.id || seen.has(m.id) || exclude.has(m.id) || m.name === "ビーグル") continue;
-    seen.add(m.id);
-    out.push({ value: m.id, label: m.name || "会員" });
-  }
-  return out;
-}
-
 function MemberPicker({ open, exclude, value, onChange }: { open: boolean; exclude: Set<string>; value: string[]; onChange: (v: string[]) => void }) {
   const members = useMembers(open);
-  const data = pickerCandidates(members, getDmSnapshot().conversations.map((c) => c.peer), exclude);
+  const [search, setSearch] = useState("");
+  const [labels, setLabels] = useState<Record<string, string>>({});
+  const selected = value.map((v) => ({ value: v, label: labels[v] ?? "会員" }));
+  const data = pickerCandidates(members, getDmSnapshot().conversations.map((c) => c.peer), exclude, search, selected);
   return (
     <MultiSelect
       label="メンバー"
-      placeholder={value.length ? "" : "名前で探す"}
+      placeholder={value.length ? "" : "名前を入れて探す"}
       data={data}
       value={value}
-      onChange={onChange}
+      onChange={(v) => {
+        const next = { ...labels };
+        for (const d of data) next[d.value] = d.label;
+        setLabels(next);
+        onChange(v);
+        setSearch("");
+      }}
       searchable
+      searchValue={search}
+      onSearchChange={setSearch}
+      filter={({ options }) => options.filter((o) => !("value" in o) || !value.includes(o.value))}
       clearable
-      nothingFoundMessage={members.length ? "見つかりません" : "読み込み中…"}
+      nothingFoundMessage={search.trim() ? (members.length ? "見つかりません" : "読み込み中…") : "名前を入れて探してください"}
       comboboxProps={{ withinPortal: true }}
       data-cx="gdm-member-picker"
     />

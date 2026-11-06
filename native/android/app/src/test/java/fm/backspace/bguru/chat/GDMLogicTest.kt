@@ -139,4 +139,15 @@ class GDMLogicTest {
         // gdm without dm (should not happen): off.
         assertFalse(Capabilities(features = Capabilities.Features(gdm = Capabilities.GDMFeatures(enabled = true))).gdmEnabled)
     }
+
+    @Test fun pickerNeverShowsTheWholeList() {
+        val all = (0 until 50).map { MentionMember("u$it", if (it == 0) "ビーグル" else "会員$it", null) }
+        assertEquals(listOf("u3", "u7"), GDMLogic.pickerList(all, setOf("u3", "u7"), emptyList(), emptySet(), "").map { it.userId })
+        assertTrue(GDMLogic.pickerList(all, emptySet(), emptyList(), emptySet(), " ").isEmpty())
+        val typed = GDMLogic.pickerList(all, emptySet(), listOf("u2"), setOf("u1"), "会員")
+        assertEquals("u2", typed.first().userId)
+        assertEquals(1 + GDMLogic.PICKER_LIMIT, typed.size)
+        assertTrue(typed.none { it.userId == "u1" })
+        assertTrue(GDMLogic.pickerList(all, emptySet(), emptyList(), emptySet(), "ビーグル").isEmpty())
+    }
 }

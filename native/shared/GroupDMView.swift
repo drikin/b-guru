@@ -248,15 +248,17 @@ struct GDMMemberPicker: View {
     @State private var query = ""
 
     var body: some View {
-        let list = GDMLogic.candidates(groups.directory, id: \.userId, name: \.name, excluding: excluding, query: query)
+        let list = GDMLogic.pickerList(groups.directory, id: \.userId, name: \.name, excluding: excluding,
+                                       peerIds: groups.peerIds, selected: selected, query: query)
         VStack(spacing: 0) {
-            TextField("名前で探す", text: $query)
+            TextField("名前を入れて探す", text: $query)
                 .textFieldStyle(.roundedBorder)
                 .font(.app(.callout))
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .accessibilityLabel("メンバーを名前で探す")
             if list.isEmpty {
-                Text(groups.directory.isEmpty ? "読み込み中…" : "選べる人がいません")
+                Text(query.trimmingCharacters(in: .whitespaces).isEmpty ? "名前を入れて探してください"
+                     : groups.directory.isEmpty ? "読み込み中…" : "見つかりません")
                     .font(.app(.caption)).foregroundStyle(.secondary).padding()
             }
             LazyVStack(spacing: 0) {

@@ -132,4 +132,18 @@ final class GroupDMLogicTests: XCTestCase {
         XCTAssertEqual(all.map(\.0), ["u_1", "u_2"], "not me, not those already in, not ビーグル")
         XCTAssertEqual(GDMLogic.candidates(people, id: { $0.0 }, name: { $0.1 }, excluding: [], query: "norio taka").map(\.0), ["u_2"])
     }
+
+    /// The member total is private: nothing typed shows only my 1:1 partners; typed shows ≤ 10 matches.
+    func testPickerNeverShowsTheWholeList() {
+        struct M { let id: String; let name: String }
+        let all = (0..<50).map { M(id: "u\($0)", name: $0 == 0 ? "ビーグル" : "会員\($0)") }
+        let empty = GDMLogic.pickerList(all, id: \.id, name: \.name, excluding: [], peerIds: ["u3", "u7"], selected: [], query: "")
+        XCTAssertEqual(empty.map(\.id), ["u3", "u7"])
+        XCTAssertTrue(GDMLogic.pickerList(all, id: \.id, name: \.name, excluding: [], peerIds: [], selected: [], query: " ").isEmpty)
+        let typed = GDMLogic.pickerList(all, id: \.id, name: \.name, excluding: ["u1"], peerIds: [], selected: ["u2"], query: "会員")
+        XCTAssertEqual(typed.first?.id, "u2")
+        XCTAssertEqual(typed.count, 1 + GDMLogic.pickerLimit)
+        XCTAssertFalse(typed.contains { $0.id == "u1" })
+        XCTAssertTrue(GDMLogic.pickerList(all, id: \.id, name: \.name, excluding: [], peerIds: [], selected: [], query: "ビーグル").isEmpty)
+    }
 }

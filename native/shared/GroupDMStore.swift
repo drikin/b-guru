@@ -91,6 +91,8 @@ final class GroupDMStore {
     }
     /// Members to pick from (the chat's @mention list, GET /api/agent/members).
     private(set) var directory: [MentionMember] = []
+    /// My 1:1 DM partners: the only people the picker shows before a name is typed.
+    private(set) var peerIds: Set<String> = []
 
     /// That group's conversation came on screen (the iPhone removes its notifications).
     @ObservationIgnored var onShowing: ((Int) -> Void)?
@@ -274,6 +276,7 @@ final class GroupDMStore {
             if directory.isEmpty, let m = try? await api.members() { list = m } else { list = directory }
         }
         var seen = Set(list.map(\.userId))
+        peerIds = Set(dmPeers().map(\.userId))
         for p in dmPeers() where !seen.contains(p.userId) {
             list.append(p)
             seen.insert(p.userId)

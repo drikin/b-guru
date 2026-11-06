@@ -209,6 +209,18 @@ object GDMLogic {
             .distinctBy { it.userId }
     }
 
+    const val PICKER_LIMIT = 10
+
+    /** What the picker shows (ドリキン 2026-11-06: the member total is private, so never the whole list up front).
+     *  Nothing typed: only my 1 対 1 DM partners and those already chosen. Typed: matches, at most [PICKER_LIMIT],
+     *  plus those already chosen. */
+    fun pickerList(all: List<MentionMember>, peerIds: Set<String>, picked: List<String>, exclude: Set<String>, query: String): List<MentionMember> {
+        val chosen = all.filter { it.userId in picked }.distinctBy { it.userId }
+        val pool = pickable(all, exclude + picked, query)
+        val more = if (query.isBlank()) pool.filter { it.userId in peerIds } else pool
+        return chosen + more.take(PICKER_LIMIT)
+    }
+
     /** The picker's people: my 1 対 1 DM partners first (newest first), then the chat's members, once each. */
     fun candidates(members: List<MentionMember>, peers: List<DMPeer>): List<MentionMember> =
         (peers.map { MentionMember(it.userId, it.displayName, it.avatar) } + members).distinctBy { it.userId }

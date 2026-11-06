@@ -194,6 +194,21 @@ enum GDMLogic {
         return t.isEmpty ? nil : String(t.prefix(max))
     }
 
+    /// How many people the picker shows at once.
+    static let pickerLimit = 10
+
+    /// What the picker shows (ドリキン 2026-11-06: the member total is private, so never the whole list up front).
+    /// - nothing typed: only my 1:1 DM partners (`peerIds`) and those already chosen
+    /// - typed: those whose name matches, at most `pickerLimit`, plus those already chosen
+    static func pickerList<T>(_ list: [T], id: (T) -> String, name: (T) -> String, excluding: Set<String>,
+                              peerIds: Set<String>, selected: Set<String>, query: String) -> [T] {
+        let chosen = list.filter { selected.contains(id($0)) }
+        let pool = candidates(list, id: id, name: name, excluding: excluding.union(selected), query: query)
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let more = q.isEmpty ? pool.filter { peerIds.contains(id($0)) } : pool
+        return chosen + Array(more.prefix(pickerLimit))
+    }
+
     /// Who can be picked: not me, not those already in, not Beagle; matched by name (case and spaces ignored).
     static func candidates<T>(_ list: [T], id: (T) -> String, name: (T) -> String, excluding: Set<String>,
                               excludingNames: Set<String> = ["ビーグル"], query: String) -> [T] {
