@@ -299,6 +299,19 @@ d("👥 グループ DM（DB）", () => {
     // 読めない中身・違う種類は 400
     await expect(m.gdm.setGroupPhoto(a, g.id, Buffer.from("not an image"), "image/png")).rejects.toMatchObject({ status: 400 });
     await expect(m.gdm.setGroupPhoto(a, g.id, png, "image/gif")).rejects.toMatchObject({ status: 400 });
+    // 中身が SVG なら、PNG と名乗っても断る
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>');
+    await expect(m.gdm.setGroupPhoto(a, g.id, svg, "image/png")).rejects.toMatchObject({ status: 400 });
+    // 本文を読む前に: 大きさの申告が無い・大きすぎる・メンバーでない
+    const big = new Request("http://x/p", { method: "POST", headers: { "content-length": String(40 * 1024 * 1024) } });
+    expect((await m.api.gdmSetPhotoApi(a, String(g.id), big)).status).toBe(413);
+    const fd = new FormData();
+    fd.append("photo", new Blob([new Uint8Array(png)], { type: "image/png" }), "p.png");
+    const req = new Request("http://x/p", { method: "POST", body: fd });
+    const body = Buffer.from(await req.clone().arrayBuffer());
+    const sized = () => new Request("http://x/p", { method: "POST", body, headers: { "content-type": req.headers.get("content-type")!, "content-length": String(body.length) } });
+    expect((await m.api.gdmSetPhotoApi(c, String(g.id), sized())).status).toBe(404);
+    expect((await m.api.gdmSetPhotoApi(a, String(g.id), sized())).status).toBe(200);
     await expect(m.gdm.setGroupPhoto(c, g.id, png, "image/png")).rejects.toMatchObject({ status: 404 });
     // 外す
     expect((await m.gdm.removeGroupPhoto(b, g.id)).photo).toBeNull();

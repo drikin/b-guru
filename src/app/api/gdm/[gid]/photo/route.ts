@@ -39,8 +39,9 @@ export async function POST(req: NextRequest, rc: RC) {
   });
 }
 
-export async function DELETE(_req: NextRequest, rc: RC) {
+export async function DELETE(req: NextRequest, rc: RC) {
   return guarded(async () => {
+    if (!sameOrigin(req)) return new Response(JSON.stringify({ error: "オリジンが不正です", code: "forbidden" }), { status: 403 });
     const actor = await webDmActor();
     if (!actor) return UNAUTHORIZED();
     const { gid } = await rc.params;

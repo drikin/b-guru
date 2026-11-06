@@ -13,6 +13,8 @@ import {
   removeMember,
   removeGroupPhoto,
   setGroupPhoto,
+  assertCanSetPhoto,
+  GDM_PHOTO_MAX_BYTES,
   sendGroupMessage,
   updateGroup,
 } from "./gdm";
@@ -97,6 +99,16 @@ export const gdmMessageApi = (actor: DmActor, rawId: string) =>
 
 /** POST 写真（multipart の photo）→ { group }。 */
 export async function gdmSetPhotoApi(actor: DmActor, gid: string, req: Request): Promise<DmApiResult> {
+  // 本文を読む前に: 大きさ（Content-Length が無い・大きすぎるものは断る）と、メンバーか
+  const len = Number(req.headers.get("content-length") ?? "");
+  if (!Number.isFinite(len) || len <= 0 || len > GDM_PHOTO_MAX_BYTES + 1024 * 1024) {
+    return { status: 413, body: { error: "写真が大きすぎます", code: "invalid_request" } };
+  }
+  const pre = await run(actor, async () => {
+    await assertCanSetPhoto(actor, gid);
+    return {};
+  });
+  if (pre.status !== 200) return pre;
   let file: File | null = null;
   try {
     const form = await req.formData();

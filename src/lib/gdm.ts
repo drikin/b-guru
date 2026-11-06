@@ -746,6 +746,14 @@ export function gdmCapability(enabled: boolean, scopes: string[]) {
 
 export const GDM_PHOTO_SIDE = 512;
 export const GDM_PHOTO_MAX_BYTES = 15 * 1024 * 1024;
+/** 1 枚の画素数の上限（512px のアイコンには十分。画像爆弾よけ）。 */
+const GDM_PHOTO_MAX_PIXELS = 40_000_000;
+
+/** 写真を受け取る前の確かめ（本文を読む前に、メンバーか・使えるかを見る）。 */
+export async function assertCanSetPhoto(actor: DmActor, rawGid: unknown): Promise<void> {
+  if (!gdmEnabledFor(actor.email)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
+  await requireMember(actor, rawGid);
+}
 const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 const PHOTO_FILE_RE = /^g\d+-[a-f0-9]{16}\.webp$/;
 
@@ -768,25 +776,34 @@ export async function setGroupPhoto(actor: DmActor, rawGid: unknown, data: Buffe
   await checkAdminRate(me);
   let out: Buffer;
   try {
-    out = await withImageSlot(() =>
-      sharp(data, { autoOrient: true, failOn: "error", limitInputPixels: 200_000_000 })
+    out = await withImageSlot(async () => {
+      // 形式は送り手の申告（Content-Type）ではなく中身で確かめる（SVG・PDF・多ページの形式を解かさない）
+      const meta = await sharp(data, { limitInputPixels: GDM_PHOTO_MAX_PIXELS }).metadata();
+      if (!["jpeg", "png", "webp", "heif"].includes(meta.format ?? "") || (meta.pages ?? 1) > 1) throw new Error("format");
+      return sharp(data, { autoOrient: true, failOn: "error", limitInputPixels: GDM_PHOTO_MAX_PIXELS })
         .resize(GDM_PHOTO_SIDE, GDM_PHOTO_SIDE, { fit: "cover", position: "attention" })
-        .webp({ quality: 82, effort: 4 }) // メタデータ（位置情報など）は既定で落ちる
-        .toBuffer()
-    );
+        .keepIccProfile() // 色だけは残す（位置情報などのメタデータは既定で落ちる）
+        .webp({ quality: 82, effort: 4 })
+        .toBuffer();
+    });
   } catch {
     throw new DmError(400, "invalid_request", "この写真は読めませんでした");
   }
   const file = `g${gid}-${crypto.randomBytes(8).toString("hex")}.webp`;
   await mkdir(gdmPhotoDir(), { recursive: true });
   await writeFile(path.join(gdmPhotoDir(), file), out);
-  const prev = await pool.query(`SELECT photo FROM gdm_groups WHERE id = $1`, [gid]);
-  const r = await pool.query(`UPDATE gdm_groups SET photo = $2, updated_at = now() WHERE id = $1 RETURNING id`, [gid, file]);
+  // 前のファイル名は同じクエリで取る（同時の取り替えでファイルが残らないように）
+  const r = await pool.query(
+    `UPDATE gdm_groups g SET photo = $2, updated_at = now()
+       FROM (SELECT id, photo FROM gdm_groups WHERE id = $1 FOR UPDATE) old
+      WHERE g.id = old.id RETURNING old.photo AS prev`,
+    [gid, file]
+  );
   if (!r.rowCount) {
     await removePhotoFile(file); // 同時にグループが消えた
     throw new DmError(404, "not_found", "グループが見つかりません");
   }
-  await removePhotoFile(prev.rows[0]?.photo);
+  await removePhotoFile(r.rows[0]?.prev);
   return afterPhotoChange(actor, gid, "グループの写真を変えました");
 }
 
