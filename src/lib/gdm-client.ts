@@ -19,6 +19,8 @@ export type Group = {
   member_count: number;
   is_creator: boolean;
   muted: boolean;
+  /** 🐶 @ビーグル に答えるか（古いサーバには無い）。 */
+  beagle?: boolean;
   created_at: string;
 };
 export type GMessage = {
@@ -31,6 +33,8 @@ export type GMessage = {
   body: string;
   created_at: string;
   is_author: boolean;
+  /** 🐶 ビーグルの答え。 */
+  is_beagle?: boolean;
   client_id?: string;
   pending?: boolean;
   failed?: boolean;
@@ -301,6 +305,7 @@ export const removeGroupPhoto = (id: number) => mutate(`/api/gdm/${id}/photo`, "
 
 export const renameGroup = (id: number, name: string) => mutate(`/api/gdm/${id}`, "PATCH", { name: name.trim() || null });
 export const setGroupMuted = (id: number, muted: boolean) => mutate(`/api/gdm/${id}`, "PATCH", { muted });
+export const setGroupBeagle = (id: number, beagle: boolean) => mutate(`/api/gdm/${id}`, "PATCH", { beagle });
 export const addGroupMembers = (id: number, userIds: string[]) => mutate(`/api/gdm/${id}/members`, "POST", { user_ids: userIds });
 export async function removeGroupMember(id: number, userId: string, self: boolean): Promise<string | null> {
   const err = await mutate(`/api/gdm/${id}/members/${encodeURIComponent(userId)}`, "DELETE");

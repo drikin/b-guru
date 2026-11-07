@@ -94,6 +94,18 @@ type GroupSummary = { group: Group; last_message: GMessage | null; unread_count:
 - 設定: Web は `POST /api/gdm/:gid/photo`（multipart の `photo`。オリジンを確かめる）、アプリは `POST /api/agent/gdm/:gid/photo`（スコープ chat）。外すのはどちらも `DELETE`。返り値は `{ group }`。
 - capabilities の `features.gdm.photo: true`（`photo_max_bytes`）。無ければアプリは写真の操作を出さない。
 
+## 🐶 ビーグル（2026-11-06 追加。ドリキン「新規で入ったメンバーは過去のログを見られないけど、ビーグルがうまく要約してくれると嬉しい」）
+
+- グループごとの入・切（`gdm_groups.beagle`、既定は切）。メンバーなら誰でも `PATCH {beagle: true|false}`（回数は作る・名前と同じ 30 回/時）。
+  切り替えると system 行で全員に知らせる。入れたときの文言で「答えは全員に見える」「入る前の流れも新しく入った人に要約で伝える」と書く。
+- 入っているグループで `@ビーグル` を含む発言を送ると、サーバ（さくら AI Engine、`BEAGLE_SERVER_ENABLED` の人）が答える。
+  答えは `kind 'beagle'` の発言（DTO は古いアプリのため `kind "text"`・`is_beagle: true`・`from_name "ビーグル"`・`from_avatar null`）。
+  全員に見え、ふつうの発言と同じく push・未読に数え、30 日で消える。
+- AI に渡すのはそのグループの直近 200 件（30 日以内、`lib/gdm-beagle.ts`）だけ。ほかのグループ・チャットは混ぜない。
+  質問した人が入る前の発言も渡す（印つき、要約で伝え、そのまま引用しない・立ち入った話は書かない指示）。未読の境目にも印。
+- 上限はチャットのビーグルと共通（`beagle_ai_log`: 1 人 24 時間 30 回・全体 300 回）。1 つの質問に答えは 1 つ（部分一意索引）。
+  考えているあいだに切られた・質問した人が抜けたら出さない。答えられないときは黙る。`@` なしの返事・リマインドはグループでは扱わない。
+
 ## 配信（`/api/agent/stream` と Web の `/api/posts/stream`）
 新しいイベントとして **`event: gdm`** を足す。古いアプリは知らないイベント名を無視するので、`dm` とは分けた。
 
@@ -111,6 +123,8 @@ type GroupSummary = { group: Group; last_message: GMessage | null; unread_count:
 - **read_sync** の範囲として `{ scope: "gdm", group_id, up_to }` を足す。
 
 ## capabilities
+
+`features.gdm.beagle: true` — 🐶 の入・切を出してよい（古いサーバには無い）。
 `features.gdm = { enabled, path: "/api/agent/gdm", send, max_body, max_name, max_members, ttl_hours, rate_limit_per_hour, stream_event: "gdm" }`。
 stream の events と push の kinds に `"gdm"` を足す。
 

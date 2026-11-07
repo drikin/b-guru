@@ -265,6 +265,8 @@ export async function initSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_beagle_ai_log_created ON beagle_ai_log(created_at);
+    -- 🐶 グループ DM の 1 つの質問に答えは 1 つ（lib/gdm.ts の answerGroupBeagle）
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_beagle_ai_log_gdm_question ON beagle_ai_log(question_id) WHERE app LIKE 'gdm:%';
 
     -- Per-user read cursor for the chat unread badge.
     CREATE TABLE IF NOT EXISTS chat_read_state (
@@ -769,6 +771,8 @@ export async function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_gdm_messages_created ON gdm_messages (created_at);
     -- グループの写真（data/gdm-photos のファイル名。メンバーだけが /api/gdm/:gid/photo で読める）
     ALTER TABLE gdm_groups ADD COLUMN IF NOT EXISTS photo TEXT;
+    -- 🐶 このグループで @ビーグル に答えるか（メンバーなら誰でも入・切、既定は切）
+    ALTER TABLE gdm_groups ADD COLUMN IF NOT EXISTS beagle BOOLEAN NOT NULL DEFAULT false;
     -- 自分で抜けた記録（同じグループに 24 時間入れ直せない）。グループと一緒に消える。
     CREATE TABLE IF NOT EXISTS gdm_leaves (
       group_id INTEGER NOT NULL REFERENCES gdm_groups(id) ON DELETE CASCADE,

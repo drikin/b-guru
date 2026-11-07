@@ -21,6 +21,7 @@ import {
   retryGroupText,
   sendGroupText,
   setGroupMuted,
+  setGroupBeagle,
   subscribeGdm,
   openGroup,
   type GdmSnapshot,
@@ -288,7 +289,7 @@ export function GroupThread({ s }: { s: GdmSnapshot }) {
               minRows={1}
               maxRows={6}
               value={draft}
-              placeholder={`${g.title} へ（30 日で消えます）`}
+              placeholder={g.beagle ? `${g.title} へ（@ビーグル で質問・要約。30 日で消えます）` : `${g.title} へ（30 日で消えます）`}
               aria-label="グループ DM の本文"
               error={draft.length > MAX_BODY ? `${MAX_BODY} 文字までです` : undefined}
               onChange={(e) => setDraft(e.currentTarget.value)}
@@ -322,7 +323,18 @@ function GBubble({ m, prev }: { m: GMessage; prev?: GMessage }) {
   const showName = !mine && (!prev || prev.kind === "system" || prev.from_id !== m.from_id);
   return (
     <div style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start", gap: 6, opacity: m.pending ? 0.6 : 1 }}>
-      {!mine && <div style={{ width: 26, flexShrink: 0 }}>{showName && <SmallAvatar src={m.from_avatar} name={m.from_name} />}</div>}
+      {!mine && (
+        <div style={{ width: 26, flexShrink: 0 }}>
+          {showName &&
+            (m.is_beagle ? (
+              <Avatar size={26} radius="xl" color="yellow" aria-hidden>
+                🐶
+              </Avatar>
+            ) : (
+              <SmallAvatar src={m.from_avatar} name={m.from_name} />
+            ))}
+        </div>
+      )}
       <div style={{ maxWidth: "78%", display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start" }}>
         {showName && (
           <Text size="xs" c="dimmed" mb={2}>
@@ -445,6 +457,14 @@ function GroupMembers({ g, onBack }: { g: Group; onBack: () => void }) {
             disabled={busy}
             onChange={(e) => void run(() => setGroupMuted(g.id, e.currentTarget.checked))}
             data-cx="gdm-mute"
+          />
+          <Switch
+            label="🐶 ビーグルを呼べるようにする"
+            description="@ビーグル で質問・要約できます。答えはメンバー全員に見えます。入る前の流れも、新しく入った人に要約で伝えます。切り替えるとグループに知らせます。"
+            checked={!!g.beagle}
+            disabled={busy}
+            onChange={(e) => void run(() => setGroupBeagle(g.id, e.currentTarget.checked))}
+            data-cx="gdm-beagle"
           />
           <Box>
             <Text size="sm" fw={600} mb={4}>

@@ -19,6 +19,11 @@ import { emailToUserIds } from "./user";
 import { featureEnabledFor } from "./feature-flag";
 import { emitPersonal } from "./personal-live";
 import { pushGdm, syncRead } from "./push-notify";
+import { asksBeagle, stripBeagleCall } from "./beagle-call";
+import { sanitizeBeagleAnswer } from "./beagle-ondevice";
+import { beagleServerEnabledFor, beagleUnderLimits, SERVER_MAX_CHARS, SERVER_MAX_TOKENS } from "./beagle-server";
+import { sakuraChat, SAKURA_MODEL } from "./sakura";
+import { buildGroupBeaglePrompt, GDM_BEAGLE_HISTORY, GDM_BEAGLE_SYSTEM_PROMPT, type GdmBeagleLine } from "./gdm-beagle";
 import {
   DM_MAX_BODY,
   DM_PAGE_LIMIT,
@@ -60,6 +65,8 @@ export type GroupDto = {
   member_count: number;
   is_creator: boolean;
   muted: boolean;
+  /** 🐶 このグループで @ビーグル に答えるか（メンバーなら誰でも入・切。既定は切）。 */
+  beagle: boolean;
   created_at: string;
 };
 export type GMessageDto = {
@@ -72,11 +79,13 @@ export type GMessageDto = {
   body: string;
   created_at: string;
   is_author: boolean;
+  /** 🐶 ビーグルの答え（kind は古いアプリのため "text" のまま、送り主は「ビーグル」）。 */
+  is_beagle?: boolean;
   client_id?: string;
 };
 export type GroupSummaryDto = { group: GroupDto; last_message: GMessageDto | null; unread_count: number };
 
-type GroupRow = { id: number; name: string | null; creator_email: string; created_at: Date | string; photo?: string | null };
+type GroupRow = { id: number; name: string | null; creator_email: string; created_at: Date | string; photo?: string | null; beagle?: boolean };
 type MemberRow = { email: string; joined_at: Date | string; joined_from_id: number; muted: boolean; last_read_id: number };
 type MsgRow = { id: number; group_id: number; sender_email: string | null; kind: string; body: string; created_at: Date | string };
 
@@ -152,6 +161,7 @@ export function toGroupDto(g: GroupRow, members: MemberRow[], viewerEmail: strin
     member_count: list.length,
     is_creator: creator === me,
     muted,
+    beagle: !!g.beagle,
     created_at: new Date(g.created_at).toISOString(),
   };
 }
@@ -159,6 +169,20 @@ export function toGroupDto(g: GroupRow, members: MemberRow[], viewerEmail: strin
 export function toGMessageDto(r: MsgRow, viewerEmail: string, lk: Lookup, clientId?: string | null): GMessageDto {
   const from = r.sender_email ? normEmail(r.sender_email) : null;
   const mine = !!from && from === normEmail(viewerEmail);
+  if (r.kind === "beagle") {
+    return {
+      id: r.id,
+      group_id: r.group_id,
+      kind: "text",
+      from_id: null, // 会員ではない（名前のタップで DM などにしない）
+      from_name: "ビーグル",
+      from_avatar: null,
+      body: r.body,
+      created_at: new Date(r.created_at).toISOString(),
+      is_author: false,
+      is_beagle: true,
+    };
+  }
   const dto: GMessageDto = {
     id: r.id,
     group_id: r.group_id,
@@ -199,7 +223,7 @@ function parseGroupId(v: unknown): number {
 
 async function loadGroup(gid: number): Promise<{ group: GroupRow; members: MemberRow[] } | null> {
   const [g, m] = await Promise.all([
-    pool.query(`SELECT id, name, creator_email, created_at, photo FROM gdm_groups WHERE id = $1`, [gid]),
+    pool.query(`SELECT id, name, creator_email, created_at, photo, beagle FROM gdm_groups WHERE id = $1`, [gid]),
     pool.query(
       `SELECT email, joined_at, joined_from_id, muted, last_read_id FROM gdm_members WHERE group_id = $1 ORDER BY joined_at, email`,
       [gid]
@@ -252,7 +276,7 @@ export async function gdmUnreadTotals(emails: string[]): Promise<Map<string, num
        FROM gdm_members gm
        JOIN gdm_messages m ON m.group_id = gm.group_id
       WHERE gm.email = ANY($1::text[])
-        AND m.kind = 'text'
+        AND m.kind IN ('text', 'beagle')
         AND m.sender_email IS DISTINCT FROM gm.email
         AND m.id > GREATEST(gm.last_read_id, gm.joined_from_id)
         AND m.created_at >= now() - ($2::text)::interval
@@ -272,7 +296,7 @@ async function unreadIn(gid: number, email: string): Promise<number> {
   const r = await pool.query(
     `SELECT count(*)::int AS c
        FROM gdm_members gm JOIN gdm_messages m ON m.group_id = gm.group_id
-      WHERE gm.group_id = $1 AND gm.email = $2 AND m.kind = 'text'
+      WHERE gm.group_id = $1 AND gm.email = $2 AND m.kind IN ('text', 'beagle')
         AND m.sender_email IS DISTINCT FROM gm.email
         AND m.id > GREATEST(gm.last_read_id, gm.joined_from_id)
         AND m.created_at >= now() - ($3::text)::interval`,
@@ -295,7 +319,7 @@ async function emitGroupToMembers(gid: number): Promise<void> {
 async function insertMessage(
   gid: number,
   senderEmail: string | null,
-  kind: "text" | "system",
+  kind: "text" | "system" | "beagle",
   body: string,
   clientId: string | null = null
 ): Promise<{ row: MsgRow; members: MemberRow[]; lk: Lookup }> {
@@ -330,7 +354,7 @@ async function insertMessage(
       },
     });
   }
-  if (kind === "text") {
+  if (kind !== "system") {
     const sender = senderEmail ? normEmail(senderEmail) : "";
     const cand = members.filter((m) => normEmail(m.email) !== sender && !m.muted && gdmEnabledFor(m.email)).map((m) => normEmail(m.email));
     // 会員でなくなった人（鍵もセッションも無い）には送らない（本文を読めず決まり文句だけが届き続けるため）
@@ -363,7 +387,7 @@ function namesLine(emails: string[], names: Map<string, string | null>): string 
 export async function listGroups(actor: DmActor): Promise<{ groups: GroupSummaryDto[]; group_unread_count: number }> {
   const me = normEmail(actor.email);
   const gr = await pool.query(
-    `SELECT g.id, g.name, g.creator_email, g.created_at, g.photo
+    `SELECT g.id, g.name, g.creator_email, g.created_at, g.photo, g.beagle
        FROM gdm_groups g JOIN gdm_members gm ON gm.group_id = g.id AND gm.email = $1
       ORDER BY g.updated_at DESC, g.id DESC
       LIMIT $2`,
@@ -387,7 +411,7 @@ export async function listGroups(actor: DmActor): Promise<{ groups: GroupSummary
     pool.query(
       `SELECT gm.group_id, count(*)::int AS c
          FROM gdm_members gm JOIN gdm_messages m ON m.group_id = gm.group_id
-        WHERE gm.email = $1 AND gm.group_id = ANY($2::int[]) AND m.kind = 'text'
+        WHERE gm.email = $1 AND gm.group_id = ANY($2::int[]) AND m.kind IN ('text', 'beagle')
           AND m.sender_email IS DISTINCT FROM gm.email
           AND m.id > GREATEST(gm.last_read_id, gm.joined_from_id)
           AND m.created_at >= now() - ($3::text)::interval
@@ -512,10 +536,11 @@ export async function sendGroupMessage(actor: DmActor, rawGid: unknown, rawBody:
 async function insertText(actor: DmActor, rawGid: unknown, body: string, clientId: string | null): Promise<GMessageDto> {
   const me = normEmail(actor.email);
   if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
-  const { gid } = await requireMember(actor, rawGid);
+  const { gid, group, self } = await requireMember(actor, rawGid);
   const rate = await checkDmRate(me);
   if (!rate.allowed) throw new DmError(429, "rate_limited", "DM を送りすぎです。しばらく待ってください", rate.retryAfter);
   const { row, lk } = await insertMessage(gid, me, "text", body, clientId);
+  if (group.beagle && asksBeagle(body)) scheduleGroupBeagle(gid, row.id, me, body, Number(self.last_read_id) || 0);
   return toGMessageDto(row, me, lk, clientId);
 }
 
@@ -547,6 +572,30 @@ export async function updateGroup(actor: DmActor, rawGid: unknown, input: Record
   if ("muted" in input) {
     if (typeof input.muted !== "boolean") throw new DmError(400, "invalid_request", "muted が不正です");
     await pool.query(`UPDATE gdm_members SET muted = $3 WHERE group_id = $1 AND email = $2`, [gid, me, input.muted]);
+  }
+  if ("beagle" in input) {
+    if (typeof input.beagle !== "boolean") throw new DmError(400, "invalid_request", "beagle が不正です");
+    if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
+    let beagleChanged = false;
+    if (input.beagle !== !!group.beagle) {
+      await checkAdminRate(me);
+      // 2 人が同時に切り替えても、お知らせは変わったときの 1 回だけ
+      const upd = await pool.query(`UPDATE gdm_groups SET beagle = $2, updated_at = now() WHERE id = $1 AND beagle IS DISTINCT FROM $2`, [gid, input.beagle]);
+      beagleChanged = !!upd.rowCount;
+    }
+    if (beagleChanged) {
+      nameChanged = true; // グループの形が変わる（全員へ配る）
+      const names = await resolveDisplayNames([me]);
+      await insertMessage(
+        gid,
+        null,
+        "system",
+        input.beagle
+          ? `${displayName(me, names)}がビーグルを呼べるようにしました（@ビーグル で質問・要約。答えはメンバー全員に見えます。入る前の流れも、新しく入った人に要約で伝えます）`
+          : `${displayName(me, names)}がビーグルを呼べないようにしました`
+      );
+      await emitGroupToMembers(gid);
+    }
   }
   if ("name" in input) {
     if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
@@ -665,6 +714,11 @@ export async function removeMember(actor: DmActor, rawGid: unknown, rawUserId: u
     }
     const rest = await client.query(`SELECT email FROM gdm_members WHERE group_id = $1 ORDER BY joined_at, email LIMIT 1`, [gid]);
     if (!rest.rows[0]) {
+      // 🐶 そのグループの質問と答えの記録も一緒に消す（入る前の要約が含まれうる）
+      await client.query(
+        `DELETE FROM beagle_ai_log WHERE app LIKE 'gdm:%' AND question_id IN (SELECT id FROM gdm_messages WHERE group_id = $1)`,
+        [gid]
+      );
       await client.query(`DELETE FROM gdm_groups WHERE id = $1`, [gid]);
       gone = true;
     } else if (normEmail(g.rows[0].creator_email) === target) {
@@ -735,6 +789,8 @@ export function gdmCapability(enabled: boolean, scopes: string[]) {
     // グループの写真: POST/DELETE {path}/:gid/photo（multipart の photo）。読むのは DTO の photo（鍵の Bearer）。
     photo: true,
     photo_max_bytes: GDM_PHOTO_MAX_BYTES,
+    // 🐶 PATCH {path}/:gid { beagle: true|false }。答えは is_beagle の発言（kind "text"）。
+    beagle: true,
     // stream: event "gdm" — { action: "create" | "read" | "group" | "removed", ... }（docs/group-dm-spec.md）
     stream_event: "gdm",
   };
@@ -848,4 +904,88 @@ export async function readGroupPhoto(email: string, rawGid: unknown): Promise<Bu
   } catch {
     return null;
   }
+}
+
+// ---- 🐶 グループのビーグル（lib/gdm-beagle.ts、docs/group-dm-spec.md）----
+// 上限はチャットのビーグルと共通（beagle_ai_log: 1 人 24 時間 30 回・全体 300 回）。答えられないとき（上限・切った・抜けた）は黙る。
+
+// 1 人 1 つずつ（答えを待つあいだに続けて送っても、上限を数えてから記録するまでの隙間ですり抜けない。security-reviewer 2026-11-06）
+const beagleInFlight = new Set<string>();
+
+function scheduleGroupBeagle(gid: number, questionId: number, asker: string, body: string, lastReadId: number): void {
+  const key = normEmail(asker);
+  if (!beagleServerEnabledFor(asker) || beagleInFlight.has(key)) return;
+  beagleInFlight.add(key);
+  void answerGroupBeagle(gid, questionId, asker, body, lastReadId)
+    .catch((e) => console.error("gdm beagle:", (e as Error)?.message))
+    .finally(() => beagleInFlight.delete(key));
+}
+
+/** @ビーグル に答えてグループに出す（テストからも呼ぶ）。答えたら true。 */
+export async function answerGroupBeagle(gid: number, questionId: number, askerEmail: string, body: string, lastReadId: number): Promise<boolean> {
+  const asker = normEmail(askerEmail);
+  const loaded = await loadGroup(gid);
+  const self = loaded?.members.find((m) => normEmail(m.email) === asker);
+  if (!loaded?.group.beagle || !self) return false;
+  const done = await pool.query(`SELECT 1 FROM beagle_ai_log WHERE question_id = $1 AND app LIKE 'gdm:%'`, [questionId]);
+  if (done.rowCount) return false;
+  if (!(await beagleUnderLimits(asker, false))) return false;
+
+  const hist = await pool.query(
+    `SELECT id, group_id, sender_email, kind, body, created_at FROM gdm_messages
+      WHERE group_id = $1 AND id < $2 AND created_at >= now() - ($3::text)::interval
+      ORDER BY id DESC LIMIT $4`,
+    [gid, questionId, DM_TTL, GDM_BEAGLE_HISTORY]
+  );
+  const rows = (hist.rows as MsgRow[]).reverse();
+  const lk = await lookup([...loaded.members.map((m) => m.email), ...rows.map((r) => r.sender_email ?? "").filter(Boolean)]);
+  const history: GdmBeagleLine[] = rows.map((r) => ({
+    id: r.id,
+    kind: r.kind === "system" ? "system" : r.kind === "beagle" ? "beagle" : "text",
+    name: r.sender_email ? displayName(r.sender_email, lk.names) : "",
+    body: r.body,
+    at: r.created_at,
+  }));
+  const dto = toGroupDto(loaded.group, loaded.members, asker, lk);
+  const content = buildGroupBeaglePrompt({
+    title: dto.title,
+    memberCount: dto.member_count,
+    askerName: displayName(asker, lk.names),
+    question: stripBeagleCall(body),
+    history,
+    joinedFromId: Number(self.joined_from_id) || 0,
+    lastReadId,
+  });
+  const r = await sakuraChat({
+    model: SAKURA_MODEL,
+    messages: [
+      { role: "system", content: GDM_BEAGLE_SYSTEM_PROMPT },
+      { role: "user", content },
+    ],
+    temperature: 0.4,
+    max_tokens: SERVER_MAX_TOKENS,
+    reasoning_effort: "low",
+    signal: AbortSignal.timeout(120_000),
+  });
+  const answer = sanitizeBeagleAnswer(r.content, SERVER_MAX_CHARS);
+  if (!answer) return false;
+  // 考えているあいだに切られた・質問した人が抜けたら出さない
+  const again = await loadGroup(gid);
+  if (!again?.group.beagle || !again.members.some((m) => normEmail(m.email) === asker)) return false;
+  const logged = await pool.query(
+    `INSERT INTO beagle_ai_log (chat_message_id, question_id, question_body, answer, ai_by_email, app)
+     VALUES (NULL, $1, $2, $3, $4, $5)
+     ON CONFLICT (question_id) WHERE app LIKE 'gdm:%' DO NOTHING
+     RETURNING id`,
+    [questionId, body, answer, asker, `gdm:server:${r.model}`]
+  );
+  if (!logged.rowCount) return false;
+  try {
+    await insertMessage(gid, SYSTEM_EMAIL, "beagle", answer);
+  } catch (e) {
+    // 出せなかったら記録も戻す（回数を使わせず、また答えられるように）
+    await pool.query(`DELETE FROM beagle_ai_log WHERE id = $1`, [logged.rows[0].id]).catch(() => {});
+    throw e;
+  }
+  return true;
 }

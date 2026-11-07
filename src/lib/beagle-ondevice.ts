@@ -93,7 +93,8 @@ export async function postBeagleAiReply(input: {
   if (!beagleOnDeviceEnabledFor(input.email)) return fail(404, "not_enabled", "この機能は使えません");
   const body = sanitizeBeagleAnswer(input.body);
   if (!body) return fail(400, "invalid_request", "本文が空です");
-  const app = typeof input.app === "string" ? input.app.slice(0, 64) : null;
+  // "gdm:" はグループ DM のビーグルの記録の印（question_id の空間が違う）。端末からは名乗らせない
+  const app = typeof input.app === "string" ? input.app.slice(0, 64).replace(/^gdm:/i, "app-gdm:") : null;
 
   const client = await pool.connect();
   try {

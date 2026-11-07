@@ -236,6 +236,9 @@ async function answerAndPost(questionId: number, body: string, askerEmail: strin
   }
 }
 
+/** 上限（端末内 AI・チャット・グループ DM で共通）。 */
+export const beagleUnderLimits = (askerEmail: string, implicit: boolean) => underLimits(askerEmail, implicit);
+
 async function underLimits(askerEmail: string, implicit: boolean): Promise<boolean> {
   const counts = await pool.query(
     `SELECT count(*) FILTER (WHERE lower(ai_by_email) = lower($1))::int AS mine,
