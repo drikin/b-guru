@@ -36,6 +36,15 @@ class GDMLogicTest {
         assertEquals(3L, ev.groupId); assertEquals(1, ev.groupUnreadCount)
     }
 
+    @Test fun decodesBeagleAnswerAndSwitch() {
+        val m = ApiJson.decodeFromString<GMessage>("""{"id":11,"group_id":3,"kind":"text","from_id":"s","from_name":"ビーグル","from_avatar":null,"body":"まとめだわん","created_at":"2026-11-06T01:00:00.000Z","is_author":false,"is_beagle":true}""")
+        assertTrue(m.isBeagle); assertEquals("ビーグル", m.senderName); assertTrue(!m.isSystem)
+        val g = ApiJson.decodeFromString<GDMGroupResponse>("""{"group":{"id":3,"title":"t","members":[],"beagle":true}}""").group
+        assertTrue(g.beagle)
+        val old = ApiJson.decodeFromString<GDMGroupResponse>("""{"group":{"id":3,"title":"t","members":[]}}""").group
+        assertTrue(!old.beagle)
+    }
+
     @Test fun reconcileReplacesMyPendingBubbleKeepingItsKey() {
         val pending = GRow(msg(-1, mine = true, clientId = "c1"), SendState.PENDING)
         val once = GDMLogic.reconcile(listOf(GRow(msg(5)), pending), msg(10, mine = true, clientId = "c1"))

@@ -249,6 +249,8 @@ struct Capabilities: Decodable, Sendable, Equatable {
         /// The group's photo may be set / removed (POST / DELETE {path}/:gid/photo). Shown whenever a group has one.
         var photo: Bool?
         var photoMaxBytes: Int?
+        /// 🐶 PATCH {path}/:gid { beagle } — a member may let @ビーグル answer in the group.
+        var beagle: Bool?
     }
     struct Features: Decodable, Sendable, Equatable {
         var dm: DMFeatures?

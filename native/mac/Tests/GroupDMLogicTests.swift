@@ -48,6 +48,22 @@ final class GroupDMLogicTests: XCTestCase {
         XCTAssertNil(GDMEvent.decode(Data("nope".utf8)))
     }
 
+    func testDecodesBeagleAnswerAndSwitch() throws {
+        let ev = try XCTUnwrap(GDMEvent.decode(Data(#"""
+        {"action":"create","group_id":3,
+         "message":{"id":11,"group_id":3,"kind":"text","from_id":"u_sys","from_name":"ビーグル","from_avatar":null,
+                    "body":"まとめだわん","created_at":"2026-11-06T01:02:03.000Z","is_author":false,"is_beagle":true}}
+        """#.utf8)))
+        XCTAssertEqual(ev.message?.isBeagle, true)
+        XCTAssertEqual(ev.message?.senderName, "ビーグル")
+        XCTAssertEqual(ev.message?.isSystem, false)
+        let g = try XCTUnwrap(GDMEvent.decode(Data(#"{"action":"group","group":{"id":3,"name":null,"title":"t","members":[],"beagle":true}}"#.utf8))?.group)
+        XCTAssertEqual(g.beagle, true)
+        // older server: no field
+        let old = try XCTUnwrap(GDMEvent.decode(Data(#"{"action":"group","group":{"id":3,"name":null,"title":"t","members":[]}}"#.utf8))?.group)
+        XCTAssertNil(old.beagle)
+    }
+
     // MARK: Thread
 
     func testReconcileReplacesPendingByClientId() {

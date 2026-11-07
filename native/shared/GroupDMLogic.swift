@@ -30,6 +30,8 @@ struct GDMGroup: Codable, Equatable, Sendable, Identifiable {
     var isCreator: Bool?
     /// I turned its notifications off.
     var muted: Bool?
+    /// 🐶 Members' @ビーグル gets an answer here (any member turns it on or off; off by default; nil = older server).
+    var beagle: Bool? = nil
     var createdAt: String?
 
     var displayTitle: String { title.isEmpty ? "グループ" : title }
@@ -49,12 +51,14 @@ struct GDMMessage: Codable, Equatable, Sendable, Identifiable {
     var body: String
     var createdAt: String
     var isAuthor: Bool
+    /// 🐶 Beagle's answer (kind stays "text" so older apps show it as a message from ビーグル).
+    var isBeagle: Bool? = nil
     var clientId: String?
     /// Local only: on its way (negative id) / could not be sent.
     var pending = false
     var failed = false
 
-    enum CodingKeys: String, CodingKey { case id, groupId, kind, fromId, fromName, fromAvatar, body, createdAt, isAuthor, clientId }
+    enum CodingKeys: String, CodingKey { case id, groupId, kind, fromId, fromName, fromAvatar, body, createdAt, isAuthor, isBeagle, clientId }
 
     var isSystem: Bool { kind == "system" }
     var senderName: String {

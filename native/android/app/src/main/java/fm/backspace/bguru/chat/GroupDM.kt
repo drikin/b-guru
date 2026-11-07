@@ -49,6 +49,8 @@ data class GDMGroup(
     val createdAt: String = "",
     /** `/api/gdm/:gid/photo?v=…` (members only: read with the token), or null. Last, so positional calls stay. */
     val photo: String? = null,
+    /** 🐶 members' @ビーグル gets an answer here (any member turns it on/off; off by default). */
+    val beagle: Boolean = false,
 ) {
     val displayTitle: String get() = title.trim().ifEmpty { name?.trim()?.takeIf { it.isNotEmpty() } ?: "グループ" }
     val count: Int get() = if (memberCount > 0) memberCount else members.size
@@ -68,6 +70,8 @@ data class GMessage(
     val createdAt: String = "",
     val isAuthor: Boolean = false,
     val clientId: String? = null,
+    /** 🐶 Beagle's answer (kind stays "text"). */
+    val isBeagle: Boolean = false,
 ) {
     val isSystem: Boolean get() = kind == "system"
     val senderName: String get() = fromName?.trim()?.takeIf { it.isNotEmpty() } ?: "会員"
@@ -272,6 +276,8 @@ class GDMStore(private val api: ApiClient) {
     /** capabilities `gdm.photo` (and a token that may send): offer 写真を設定 / 外す. */
     var canSetPhoto by mutableStateOf(false); private set
     var photoMaxBytes = 15L * 1024 * 1024; private set
+    /** capabilities `gdm.beagle` (and a token that may send): offer the 🐶 switch. */
+    var canSetBeagle by mutableStateOf(false); private set
     private var base = "/api/agent/gdm"
 
     var groups by mutableStateOf<List<GroupSummary>>(emptyList()); private set
@@ -315,6 +321,7 @@ class GDMStore(private val api: ApiClient) {
         maxMembers = caps.gdmMaxMembers
         ttlHours = caps.gdmTtlHours
         canSetPhoto = caps.canSetGDMPhoto
+        canSetBeagle = caps.canSetGDMBeagle
         photoMaxBytes = caps.gdmPhotoMaxBytes
         base = caps.gdmPath
         if (!enabled) { groups = emptyList(); unreadTotal = 0; openId = null; return }
@@ -609,6 +616,13 @@ class GDMStore(private val api: ApiClient) {
         action { updated(api.gdmSetMuted(id, muted, base)) }
     }
 
+    /** 🐶 let @ビーグル answer in the group (any member; the server tells everyone). */
+    fun setBeagle(id: Long, on: Boolean) {
+        if (!canSetBeagle) return
+        if (demo) { group(id)?.let { updated(it.copy(beagle = on)) }; return }
+        action { updated(api.gdmSetBeagle(id, on, base)) }
+    }
+
     /** 👥 set / replace the group photo (any member). [jpeg] is already resized on the phone. */
     fun setPhoto(id: Long, jpeg: ByteArray) {
         if (!canSetPhoto) return
@@ -662,6 +676,7 @@ class GDMStore(private val api: ApiClient) {
         enabled = true
         canSendCap = true
         canSetPhoto = true
+        canSetBeagle = true
         val now = Instant.now()
         fun at(minAgo: Long) = now.minusSeconds(minAgo * 60).toString()
         val members = listOf(GMember("me", "ドリキン", isCreator = true, isMe = true), GMember("mazzo", "mazzo"), GMember("takuto", "takuto"), GMember("coban", "coban"))

@@ -83,6 +83,7 @@ final class GroupDMStore {
     private(set) var maxMembers = 100
     /// The group's photo may be set / removed here (features.gdm.photo; old servers say nothing → only shown).
     private(set) var photoEditable = false
+    private(set) var beagleAvailable = false
     private(set) var maxPhotoBytes = 15 * 1024 * 1024
     /// My groups, newest first.
     private(set) var summaries: [GDMSummary] = []
@@ -153,6 +154,7 @@ final class GroupDMStore {
         maxName = f?.maxName ?? 40
         maxMembers = f?.maxMembers ?? 100
         photoEditable = canSend && (f?.photo ?? false)
+        beagleAvailable = canSend && (f?.beagle ?? false)
         if let b = f?.photoMaxBytes, b > 0 { maxPhotoBytes = b }
         if let h = f?.ttlHours, h > 0 { GDMLogic.ttl = TimeInterval(h) * 3600 }
         if let p = f?.path, p.hasPrefix("/api/") { path = p }
@@ -350,6 +352,13 @@ final class GroupDMStore {
         }
     }
 
+    func setBeagle(_ on: Bool) async {
+        guard let id = openId else { return }
+        await change(id, demoChange: { $0.beagle = on }) { [api, path] in
+            try await api.gdmPatch(path: path, groupId: id, ["beagle": on])
+        }
+    }
+
     func add(_ userIds: [String]) async -> Bool {
         guard let id = openId, !userIds.isEmpty else { return false }
         let picked = directory.filter { userIds.contains($0.userId) }
@@ -533,6 +542,7 @@ final class GroupDMStore {
         enabled = true
         canSend = true
         photoEditable = true
+        beagleAvailable = true
         func at(_ minutesAgo: Double) -> String { ISO8601DateFormatter().string(from: Date().addingTimeInterval(-minutesAgo * 60)) }
         func mem(_ id: String, creator: Bool = false, me: Bool = false) -> GDMMember {
             GDMMember(userId: id, name: me ? "ドリキン" : id, avatar: nil, isCreator: creator, isMe: me)

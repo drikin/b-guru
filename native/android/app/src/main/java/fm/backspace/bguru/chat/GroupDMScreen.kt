@@ -64,6 +64,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -243,7 +245,18 @@ private fun GDMBubble(row: GRow, showHeader: Boolean, onRetry: () -> Unit, onDis
     val mine = m.isAuthor
     Row(modifier, horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
         if (!mine) {
-            Box(Modifier.size(28.dp)) { if (showHeader) Avatar(ApiClient.absolute(m.fromAvatar) ?: m.fromAvatar, m.senderName, 28.dp) }
+            Box(Modifier.size(28.dp)) {
+                if (showHeader) {
+                    if (m.isBeagle) {
+                        Box(
+                            Modifier.size(28.dp).background(Color(0x40FFC107), CircleShape).semantics { contentDescription = "ビーグル" },
+                            contentAlignment = Alignment.Center,
+                        ) { Text("🐶", fontSize = 15.sp) }
+                    } else {
+                        Avatar(ApiClient.absolute(m.fromAvatar) ?: m.fromAvatar, m.senderName, 28.dp)
+                    }
+                }
+            }
             Spacer(Modifier.size(6.dp))
         }
         Column(
@@ -297,7 +310,7 @@ private fun GDMComposer(g: GDMStore, draft: String, onDraft: (String) -> Unit, o
                         value = draft,
                         onValueChange = onDraft,
                         enabled = allowed,
-                        placeholder = { Text("グループ DM（30 日で消えます）") },
+                        placeholder = { Text(if (g.openId?.let { g.group(it) }?.beagle == true) "@ビーグル で質問・要約（30 日で消えます）" else "グループ DM（30 日で消えます）") },
                         maxLines = 6,
                         shape = RoundedCornerShape(20.dp),
                         colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, disabledIndicatorColor = Color.Transparent),
@@ -425,6 +438,23 @@ internal fun GDMMembersScreen(dm: DMStore, id: Long) {
                         Text("このグループの DM が届いても通知しません", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Switch(checked = group.muted, onCheckedChange = { g.setMuted(id, it) }, enabled = !g.busy && g.canSendCap)
+                }
+            }
+            if (g.canSetBeagle) {
+                item {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("🐶 ビーグルを呼べるようにする", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "@ビーグル で質問・要約できます。答えはメンバー全員に見えます。入る前の流れも、新しく入った人に要約で伝えます。切り替えるとグループに知らせます。",
+                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(checked = group.beagle, onCheckedChange = { g.setBeagle(id, it) }, enabled = !g.busy)
+                    }
                 }
             }
             item { HorizontalDivider(Modifier.padding(top = 8.dp)) }

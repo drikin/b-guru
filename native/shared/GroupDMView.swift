@@ -112,7 +112,7 @@ struct GDMThreadView: View {
         if groups.canSend && groups.groupCanSend {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .bottom, spacing: 8) {
-                    PostTextInput(text: $draft, isFocused: $focused, placeholder: "\(title) へ", onSubmit: send)
+                    PostTextInput(text: $draft, isFocused: $focused, placeholder: (groups.summary(groups.openId ?? -1)?.group.beagle == true) ? "\(title) へ（@ビーグル で質問・要約）" : "\(title) へ", onSubmit: send)
                         .font(.app(.body))
                         .padding(.horizontal, 10).padding(.vertical, 7)
                         .background(RoundedRectangle(cornerRadius: 16).fill(Color.primary.opacity(0.06)))
@@ -199,7 +199,15 @@ private struct GDMBubble: View {
             if m.isAuthor { Spacer(minLength: 40) }
             if !m.isAuthor {
                 Group {
-                    if showsSender { AvatarView(url: m.fromAvatar, name: m.senderName, size: 26) }
+                    if showsSender {
+                        if m.isBeagle == true {
+                            Text("🐶").font(.system(size: 15)).frame(width: 26, height: 26)
+                                .background(Circle().fill(Color.yellow.opacity(0.25)))
+                                .accessibilityLabel("ビーグル")
+                        } else {
+                            AvatarView(url: m.fromAvatar, name: m.senderName, size: 26)
+                        }
+                    }
                     else { Color.clear.frame(width: 26, height: 1) }
                 }
                 .padding(.top, showsSender ? 16 : 0)
@@ -385,6 +393,7 @@ struct GDMMembersView: View {
                     photoSection
                     if groups.canSend { nameSection }
                     if groups.canSend { muteSection }
+                    if groups.canSend && groups.beagleAvailable { beagleSection }
                     Divider()
                     membersSection
                     if groups.canSend { addSection }
@@ -469,6 +478,18 @@ struct GDMMembersView: View {
         }
         .disabled(groups.busy)
         .accessibilityLabel("このグループの通知を切る")
+    }
+
+    private var beagleSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: Binding(get: { group?.beagle ?? false }, set: { v in Task { await groups.setBeagle(v) } })) {
+                Text("🐶 ビーグルを呼べるようにする").font(.app(.callout))
+            }
+            .disabled(groups.busy)
+            Text("@ビーグル で質問・要約できます。答えはメンバー全員に見えます。入る前の流れも、新しく入った人に要約で伝えます。切り替えるとグループに知らせます。")
+                .font(.app(.caption)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var membersSection: some View {

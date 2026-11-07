@@ -330,6 +330,8 @@ class ApiClient(val token: String) : PostOpsApi {
         }))).group
     suspend fun gdmSetMuted(groupId: Long, muted: Boolean, base: String = "/api/agent/gdm"): GDMGroup =
         decode<GDMGroupResponse>(send(request("PATCH", "$base/$groupId", buildJsonObject { put("muted", muted) }))).group
+    suspend fun gdmSetBeagle(groupId: Long, on: Boolean, base: String = "/api/agent/gdm"): GDMGroup =
+        decode<GDMGroupResponse>(send(request("PATCH", "$base/$groupId", buildJsonObject { put("beagle", on) }))).group
     suspend fun gdmSend(groupId: Long, body: String, clientId: String, base: String = "/api/agent/gdm"): GMessage =
         decode<GDMSendResponse>(send(request("POST", "$base/$groupId/messages", buildJsonObject {
             put("body", body); put("client_id", clientId)
