@@ -102,6 +102,16 @@ const held: Dir[] = [];
 let entryTarget: { x: number; y: number } | null = null;
 let micAskedAt = 0;
 let loading: Promise<void> | null = null;
+/** サーバの起動ごとの印（GET /api/room の boot）。 */
+let lastBoot: string | null = null;
+let rejoinAt = 0;
+/** サーバが再起動して私を忘れた（部室にいたのにテキスト扱い）: テキストに戻さず入り直す。音声はそのまま。 */
+function rejoinAfterRestart(): void {
+  const now = Date.now();
+  if (now - rejoinAt < 10_000 || snap.busy) return; // 繰り返さない
+  rejoinAt = now;
+  void enterRoom();
+}
 let resyncing = false;
 /** We are in (or joining) the voice on purpose; a drop otherwise means 見るだけ. */
 let expectVoice = false;
@@ -163,7 +173,10 @@ export function loadRoom(): Promise<void> {
       }
       if (!r.ok) return; // signed out / offline: keep what we have
       const d = await r.json();
-      applySnapshot(d.map as RoomMapDto, d.me as string, (d.members ?? []) as RoomMember[], d.reactions);
+      const boot = typeof d.boot === "string" ? d.boot : null;
+      const restarted = !!(boot && lastBoot && boot !== lastBoot);
+      lastBoot = boot ?? lastBoot;
+      applySnapshot(d.map as RoomMapDto, d.me as string, (d.members ?? []) as RoomMember[], d.reactions, restarted);
     } catch {
       /* offline: the next stream reconnect retries */
     } finally {
@@ -187,7 +200,7 @@ function disableRoom() {
   set({ status: "disabled", view: "text", members: [] });
 }
 
-function applySnapshot(map: RoomMapDto, me: string, members: RoomMember[], reactions?: unknown) {
+function applySnapshot(map: RoomMapDto, me: string, members: RoomMember[], reactions?: unknown, restarted = false) {
   const seen = new Set<string>();
   for (const m of members) {
     seen.add(m.userId);
@@ -205,7 +218,13 @@ function applySnapshot(map: RoomMapDto, me: string, members: RoomMember[], react
   for (const id of [...actors.keys()]) if (!seen.has(id)) actors.delete(id);
   const mine = members.find((m) => m.userId === me);
   // Another tab or device moved me back to the text view.
-  const view = snap.view === "room" && mine && mine.mode === "text" && !snap.busy ? "text" : snap.view;
+  const forgot = snap.view === "room" && mine && mine.mode === "text" && !snap.busy;
+  if (forgot && restarted) {
+    set({ status: "enabled", map, me, members });
+    rejoinAfterRestart();
+    return;
+  }
+  const view = forgot ? "text" : snap.view;
   if (view !== snap.view) {
     expectVoice = false;
     void leaveVoice();
@@ -266,6 +285,11 @@ export function applyRoomEvent(ev: RoomEvent): void {
   let next = m;
   let view = snap.view;
   if (isMe) {
+    if (m.mode === "text" && ev.action === "join" && snap.view === "room") {
+      // 「join」で私がテキスト = サーバが私を覚えていない（再起動）。ほかの端末の操作なら update で来る
+      rejoinAfterRestart();
+      return;
+    }
     if (m.mode === "text") {
       placeAt(a, m.x, m.y);
       entryTarget = null;

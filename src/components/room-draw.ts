@@ -273,6 +273,18 @@ export function drawLabel(c: Ctx, text: string, x: number, y: number, bg: string
   c.fillText(text, lx + 2, y + 0.5);
 }
 
+/** 頭の上の名前札: ふつうのラベルより小さく、背景を薄く（さりげなく）。 */
+export function drawNameTag(c: Ctx, text: string, x: number, y: number, bg: string, fg: string): void {
+  c.font = `6px ${PIXEL_FONT}, ${EMOJI_FONT}`;
+  c.textBaseline = "top";
+  const w = Math.ceil(c.measureText(text).width) + 3;
+  const lx = Math.round(x - w / 2);
+  c.fillStyle = bg;
+  c.fillRect(lx, y, w, 7);
+  c.fillStyle = fg;
+  c.fillText(text, lx + 1.5, y + 0.5);
+}
+
 /** A speech bubble whose tail points at (x, y). */
 export function drawBubble(c: Ctx, text: string, x: number, y: number): void {
   c.font = `8px ${PIXEL_FONT}, ${EMOJI_FONT}`;

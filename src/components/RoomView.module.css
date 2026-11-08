@@ -4,7 +4,8 @@
 .mapBox {
   position: relative;
   flex: 0 0 auto;
-  height: clamp(220px, 48%, 560px);
+  /* 画面の高さで決める（チャットの上に重ねる形では親の高さが決まっておらず、% だと最低の 220px になっていた） */
+  height: clamp(260px, 50vh, 620px);
   background: #120e14;
   overflow: hidden;
   touch-action: none;
@@ -159,9 +160,20 @@
   background: var(--text-green, #2b8a3e);
 }
 
-/* 広げる（ドリキン 2026-11-08「部室のビューが狭すぎて全体が見にくい」）: チャット欄を少し残してマップを高く */
+/* 大きく表示（ドリキン 2026-11-08「縦幅が少なすぎる・こんな感じで広く」）: ページの上に大きな窓。
+ * 上はヘッダー、下はチャットの入力欄を残す（入力はそのままできる）。Esc・⤡ で戻る */
 .mapBox.expanded {
-  height: 85%;
+  position: fixed;
+  top: max(56px, calc(env(safe-area-inset-top, 0px) + 48px));
+  bottom: max(84px, calc(env(safe-area-inset-bottom, 0px) + 76px));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(1180px, calc(100vw - 24px));
+  height: auto;
+  border: 1px solid #43384a;
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  z-index: 300;
 }
 
 /* 拡大・縮小・全体・広げる（右上）。いる場所の表示はその下へ */

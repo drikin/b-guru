@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ROOM_TILES, ROOM_DOOR, ROOM_SEATS, roomMapDto } from "../room-map";
 import {
+  shortRoomName,
   nextRoomScale,
   roomFitZoom,
   roomZoom,
@@ -208,5 +209,16 @@ describe("部室の拡大・縮小", () => {
   });
   it("自動の倍率が全体より小さい（大きな画面）なら下限は自動の倍率", () => {
     expect(roomZoom(2, 4, 0.1).zoom).toBe(2);
+  });
+});
+
+describe("頭の上の名前", () => {
+  it("短い名前はそのまま、長い名前は幅 12 で切って …", () => {
+    expect(shortRoomName("Ken")).toBe("Ken");
+    expect(shortRoomName("ドリキン")).toBe("ドリキン");
+    expect(shortRoomName("yatakaharu（グルペット）")).toBe("yatakaharu…");
+    expect(shortRoomName("KOJI SHIGEMURA（しげ）")).toBe("KOJI SHIGEM…");
+    expect(shortRoomName("散財王ドリキン様")).toBe("散財王ドリ…");
+    expect(shortRoomName("  a\n b ")).toBe("a b");
   });
 });

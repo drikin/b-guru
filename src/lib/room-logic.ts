@@ -239,3 +239,21 @@ export function nextRoomScale(action: "in" | "out" | "fit", auto: number, fit: n
   const crosses = (cur.scale < 1 && want > 1) || (cur.scale > 1 && want < 1);
   return roomZoom(auto, fit, crosses ? 1 : want).scale;
 }
+
+/** 頭の上の名前（ドリキン 2026-11-08「でかすぎて見にくい・長い人は折りたたむ」）: 全角 6 字ぶん（半角は半分）で切って「…」。
+ *  全部の名前は、人をタップしたときのメニューに出る。 */
+export const ROOM_NAME_WIDTH = 12;
+export function shortRoomName(name: string, width = ROOM_NAME_WIDTH): string {
+  const chars = [...(name ?? "").replace(/\s+/g, " ").trim()];
+  const w = (ch: string) => (/^[\x20-\x7e]$/.test(ch) ? 1 : 2);
+  const total = chars.reduce((n, ch) => n + w(ch), 0);
+  if (total <= width) return chars.join("");
+  let out = "";
+  let used = 0;
+  for (const ch of chars) {
+    if (used + w(ch) > width - 1) break;
+    out += ch;
+    used += w(ch);
+  }
+  return out.trimEnd() + "…";
+}

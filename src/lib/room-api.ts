@@ -1,7 +1,7 @@
 /* Request handling for the club room, shared by the web (/api/room, session) and
  * the apps (/api/agent/room, device token): the same rules, two DTO casings. */
 import { roomMapDto } from "./room-map";
-import { ROOM_REACTIONS, roomEnabledFor, roomEnter, roomMove, roomReact, roomSnapshot, roomToText, roomVoice, type RoomMember } from "./room";
+import { ROOM_BOOT, ROOM_REACTIONS, roomEnabledFor, roomEnter, roomMove, roomReact, roomSnapshot, roomToText, roomVoice, type RoomMember } from "./room";
 import { toAgentRoomMemberDto } from "./agent-chat";
 import { ensureUserId } from "./user";
 
@@ -17,9 +17,7 @@ export async function roomGet(email: string, c: Casing): Promise<Out> {
   const members = roomSnapshot().map((m) => dto(m, c));
   return {
     status: 200,
-    body: c === "agent"
-      ? { map: roomMapDto(), members, me, reactions: ROOM_REACTIONS }
-      : { map: roomMapDto(), members, me, reactions: ROOM_REACTIONS },
+    body: { map: roomMapDto(), members, me, reactions: ROOM_REACTIONS, boot: ROOM_BOOT },
   };
 }
 

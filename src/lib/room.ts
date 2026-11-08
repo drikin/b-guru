@@ -57,9 +57,12 @@ const AWAY_AFTER_MS = 10 * 60_000;
 const MIC_OFF_AFTER_MS = 30 * 60_000;
 const MAX_MOVES_PER_SEC = 12;
 
-type G = { __room?: Map<string, Entry>; __roomSweep?: ReturnType<typeof setInterval> };
+type G = { __room?: Map<string, Entry>; __roomSweep?: ReturnType<typeof setInterval>; __roomBoot?: string };
 const g = globalThis as unknown as G;
 const members = (g.__room ??= new Map<string, Entry>());
+/** 起動ごとの印。部屋の様子はメモリだけなので、再起動すると全員テキストに戻る。クライアントはこれが
+ *  変わったら「テキストに戻された」と受け取らず、部室に入り直す（音声も切らない、2026-11-08）。 */
+export const ROOM_BOOT = (g.__roomBoot ??= `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
 
 /** The room is on for this member (rollout: ROOM_ALLOW_EMAILS; unset = nobody yet). */
 export function roomEnabledFor(email: string | null | undefined): boolean {

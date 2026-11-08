@@ -9,6 +9,7 @@
  *
  * State lives in lib/room-client.ts (outside React); the map draws the animated
  * actors from there every frame. Voice proximity is applied by the store. */
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Button, CloseButton, Group, Popover, SegmentedControl, Text, Tooltip } from "@mantine/core";
 import {
@@ -47,6 +48,7 @@ import {
   nextRoomScale,
   roomFitZoom,
   roomZoom,
+  shortRoomName,
   statusMark,
   tileOf,
   volumeFor,
@@ -57,7 +59,7 @@ import {
   type RoomMapDto,
   type RoomMember,
 } from "@/lib/room-logic";
-import { ROOM_BG, ROOM_COLORS, TILE, drawBeagle, drawBubble, drawEmoji, drawLabel, drawPerson, renderBase } from "./room-draw";
+import { ROOM_BG, ROOM_COLORS, TILE, drawBeagle, drawBubble, drawEmoji, drawLabel, drawNameTag, drawPerson, renderBase } from "./room-draw";
 import css from "./RoomView.module.css";
 
 const GREEN = "var(--text-green, #2b8a3e)";
@@ -414,7 +416,7 @@ function drawRoom(
     drawPerson(ctx, x, y, look, m.mode === "text" ? "up" : a.dir, step, sitting);
     ctx.restore();
     const fg = isMe ? ROOM_COLORS.ink : vol > 0 || m.mode === "text" ? ROOM_COLORS.fg : ROOM_COLORS.dim;
-    drawLabel(ctx, `${statusMark(m, talking)} ${m.name}`, x + 8, y - 9, isMe ? "rgba(242,178,76,.92)" : "rgba(18,14,20,.78)", fg, true);
+    drawNameTag(ctx, `${statusMark(m, talking)} ${shortRoomName(m.name)}`, x + 8, y - 7, isMe ? "rgba(242,178,76,.85)" : "rgba(18,14,20,.5)", fg);
   }
 
   // Bubbles, then reactions, on top of everything.
@@ -561,6 +563,18 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
     return () => ro.disconnect();
   }, [map.w, map.h, expanded]);
 
+  // 大きな窓は Esc でも閉じる
+  useEffect(() => {
+    if (!expanded) return;
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || isTyping(e.target)) return;
+      setExpanded(false);
+      save(EXPAND_KEY, "0");
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [expanded]);
+
   // ⌘/Ctrl + ホイール・トラックパッドのピンチ（ブラウザは ctrl 付きのホイールで送ってくる）で拡大・縮小。
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -572,7 +586,7 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
     };
     canvas.addEventListener("wheel", wheel, { passive: false });
     return () => canvas.removeEventListener("wheel", wheel);
-  }, [applyScale]);
+  }, [applyScale, expanded]);
 
   // 2 本指のピンチ（タッチ）。1 本目のタップの「歩く」はそのまま。
   const touches = useRef(new Map<number, { x: number; y: number }>());
@@ -636,7 +650,7 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
     };
     raf = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(raf);
-  }, [base, map]);
+  }, [base, map, expanded]);
 
   // Keyboard: arrows / WASD walk, 1–6 react (not while typing).
   useEffect(() => {
@@ -731,7 +745,7 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
     </button>
   );
 
-  return (
+  const box = (
     <section ref={boxRef} className={`${css.mapBox} ${expanded ? css.expanded : ""}`} aria-label="部室のマップ">
       <canvas
         ref={canvasRef}
@@ -758,8 +772,8 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
         </button>
         <button
           type="button"
-          aria-label={expanded ? "マップを元の高さに戻す" : "マップを広げる"}
-          title={expanded ? "元の高さに戻す" : "マップを広げる"}
+          aria-label={expanded ? "マップを元の大きさに戻す" : "マップを大きく表示"}
+          title={expanded ? "元の大きさに戻す（Esc）" : "マップを大きく表示"}
           aria-pressed={expanded}
           onClick={() => {
             const next = !expanded;
@@ -818,4 +832,9 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
       )}
     </section>
   );
+  // 大きく表示: ページの上に大きな窓で（チャット欄の幅に縛られない、ドリキン 2026-11-08 の見本）。入力欄は下に残す
+  if (expanded && typeof document !== "undefined") {
+    return createPortal(box, document.body);
+  }
+  return box;
 }
