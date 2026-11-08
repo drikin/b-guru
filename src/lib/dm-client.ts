@@ -7,6 +7,16 @@
  *   applyDmEvent()   /api/posts/stream の `event: dm`（受け取る人ごとの DTO）
  * DM は 30 日で消える: 期限を過ぎたものはここでも隠す。 */
 import { newChatClientId } from "./chat-optimistic";
+import {
+  dropDmPhotoJob,
+  dropUnsentPhotoJobs,
+  permanentUploadFailure,
+  photoUploadError,
+  setDmPhotoJob,
+  takeDmPhotoJob,
+  uploadDmPhotoJob,
+  type PickedPhoto,
+} from "./dm-photos-client";
 
 export type DmPeer = { user_id: string; name: string | null; avatar: string | null };
 export type DmMessage = {
@@ -15,6 +25,8 @@ export type DmMessage = {
   to_id: string;
   peer_id: string;
   body: string;
+  /** 付けた写真（/api/media/dm-…。送信中はプレビューの blob: URL）。 */
+  images?: string[];
   created_at: string;
   is_author: boolean;
   client_id?: string;
@@ -142,16 +154,19 @@ function pruneConversations(list: DmConversation[]): DmConversation[] {
 }
 
 export function openDmList(): void {
+  dropUnsentPhotoJobs(snap.messages);
   set({ open: true, peer: null, messages: [], error: null });
   void loadDm();
 }
 
 export function closeDm(): void {
+  dropUnsentPhotoJobs(snap.messages);
   set({ open: false, peer: null, messages: [], error: null });
 }
 
 /** 会話を開く（チャットの名前から: 名前とアイコンは分かっている）。 */
 export async function openDm(peer: DmPeer): Promise<void> {
+  dropUnsentPhotoJobs(snap.messages);
   set({ open: true, peer, messages: [], loadingThread: true, error: null, canSend: true });
   const r = await api(`/api/dm/${encodeURIComponent(peer.user_id)}`);
   if (snap.peer?.user_id !== peer.user_id) return; // 別の会話へ移った
@@ -195,17 +210,19 @@ function markSeen(): void {
 }
 
 let tempSeq = 0;
-export async function sendDmMessage(text: string): Promise<boolean> {
+export async function sendDmMessage(text: string, photos: PickedPhoto[] = []): Promise<boolean> {
   const peer = snap.peer;
   const body = text.trim();
-  if (!peer || !body) return false;
+  if (!peer || (!body && photos.length === 0)) return false;
   const clientId = newChatClientId();
+  const previews = setDmPhotoJob(clientId, photos);
   const temp: DmMessage = {
     id: -++tempSeq,
     from_id: "",
     to_id: peer.user_id,
     peer_id: peer.user_id,
     body,
+    images: previews,
     created_at: new Date().toISOString(),
     is_author: true,
     client_id: clientId,
@@ -216,11 +233,37 @@ export async function sendDmMessage(text: string): Promise<boolean> {
 }
 
 async function deliver(peer: DmPeer, temp: DmMessage): Promise<boolean> {
+  let images: string[] | undefined;
+  try {
+    images = await uploadDmPhotoJob(temp.client_id);
+  } catch (e) {
+    if (!(snap.peer?.user_id === peer.user_id)) {
+      dropDmPhotoJob(temp.client_id); // 会話を離れた後の失敗: 写真を残さない
+      return false;
+    }
+    if (permanentUploadFailure(e)) {
+      // 再送しても通らない: 吹き出しを消して、本文と写真を入力欄へ戻す（チャットと同じ）。
+      const back = { body: temp.body, photos: takeDmPhotoJob(temp.client_id) };
+      if (restoreHandler) restoreHandler(back);
+      else back.photos.forEach((ph) => URL.revokeObjectURL(ph.preview));
+      set({
+        messages: snap.messages.filter((x) => !(x.client_id === temp.client_id && x.id < 0)),
+        error: photoUploadError(e),
+      });
+    } else {
+      set({
+        messages: snap.messages.map((x) => (x.client_id === temp.client_id && x.id < 0 ? { ...x, pending: false, failed: true } : x)),
+        error: photoUploadError(e),
+      });
+    }
+    return false;
+  }
   const r = await api(`/api/dm/${encodeURIComponent(peer.user_id)}`, {
     method: "POST",
-    body: JSON.stringify({ body: temp.body, client_id: temp.client_id }),
+    body: JSON.stringify({ body: temp.body, client_id: temp.client_id, ...(images ? { images } : {}) }),
   });
   if (r.status === 201 && r.body?.message) {
+    dropDmPhotoJob(temp.client_id);
     const m = r.body.message as DmMessage;
     if (snap.peer?.user_id === peer.user_id) set({ messages: reconcileDm(snap.messages, m) });
     set({ conversations: applyToConversations(snap.conversations, m, peer, true) });
@@ -243,6 +286,7 @@ export function retryDm(m: DmMessage): void {
 }
 
 export function discardDm(m: DmMessage): void {
+  dropDmPhotoJob(m.client_id);
   set({ messages: snap.messages.filter((x) => x.client_id !== m.client_id || x.id > 0) });
 }
 
@@ -285,4 +329,14 @@ export function _resetDmClientForTest(): void {
   snap = INITIAL;
   listeners.clear();
   loading = null;
+}
+
+type Restore = { body: string; photos: PickedPhoto[] };
+let restoreHandler: ((r: Restore) => void) | null = null;
+/** 入力欄が、送れなかった本文と写真を受け取る（開いている会話の入力欄だけ）。戻り値で外す。 */
+export function onDmRestore(fn: (r: Restore) => void): () => void {
+  restoreHandler = fn;
+  return () => {
+    if (restoreHandler === fn) restoreHandler = null;
+  };
 }

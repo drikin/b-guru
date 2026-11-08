@@ -68,7 +68,7 @@ export function gdmUpdateApi(actor: DmActor, gid: string, input: Record<string, 
 /** POST 送る: { body, client_id? } → 201 { message }。 */
 export function gdmSendApi(actor: DmActor, gid: string, input: Record<string, unknown> | null): Promise<DmApiResult> {
   if (!input) return Promise.resolve(NEED_JSON);
-  return run(actor, async () => ({ message: await sendGroupMessage(actor, gid, input.body, input.client_id ?? input.clientId) }), 201);
+  return run(actor, async () => ({ message: await sendGroupMessage(actor, gid, input.body, input.client_id ?? input.clientId, input.images) }), 201);
 }
 
 /** POST 既読: { last_read_id } → { unread_count, group_unread_count }。 */

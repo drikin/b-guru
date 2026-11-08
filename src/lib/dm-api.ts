@@ -57,10 +57,10 @@ export function dmThreadApi(actor: DmActor, peerId: string, sp: URLSearchParams)
   }));
 }
 
-/** POST 送信: { body, client_id? } → 201 { message }。 */
+/** POST 送信: { body, client_id?, images? } → 201 { message }（images は /api/…/dm/upload の urls、写真だけなら body は空でよい）。 */
 export function dmSendApi(actor: DmActor, peerId: string, input: Record<string, unknown> | null): Promise<DmApiResult> {
   if (!input) return Promise.resolve({ status: 400, body: { error: "JSON ボディが必要です", code: "invalid_request" } });
-  return run(actor, async () => ({ message: await sendDm(actor, peerId, input.body, input.client_id ?? input.clientId) }), 201);
+  return run(actor, async () => ({ message: await sendDm(actor, peerId, input.body, input.client_id ?? input.clientId, input.images) }), 201);
 }
 
 /** POST 既読: { last_read_id } → { unread_count }。 */

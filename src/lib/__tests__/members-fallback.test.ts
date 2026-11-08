@@ -69,6 +69,6 @@ describe("mentionMembers", () => {
     const { GET } = await import("@/app/api/members/route");
     const res = await GET();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ members: [] });
+    expect(await res.json()).toEqual({ members: [], me: "uid_me" });
   });
 });

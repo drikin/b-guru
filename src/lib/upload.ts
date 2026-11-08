@@ -59,6 +59,8 @@ const AUDIO_EXTS = new Set([
 export const CHAT_UPLOAD = { prefix: "chat-", maxImages: 4, maxImageBytes: 4 * 1024 * 1024, maxTotalBytes: 17 * 1024 * 1024 };
 /** 🍻 オフ会のアルバムの写真（chat- と違い、掃除されずに残る）。 */
 export const OFFKAI_UPLOAD_PREFIX = "offkai-";
+/** ✉️👥 DM の写真（lib/dm-media.ts。見られるのは当事者だけ、30 日で消える）。 */
+export const DM_UPLOAD_PREFIX = "dm-";
 
 /* 大きなアップロードの同時数の上限（サーバ全体）。
  * req.formData() はリクエストを丸ごとメモリに載せる（動画・音声は 1 本 100MB まで）。ストリームで解析して
@@ -76,11 +78,11 @@ export function _bigUploadsInFlightForTest(): number {
 export async function handleUpload(
   req: Request,
   email: string,
-  opts: { imagesOnly?: boolean; chat?: boolean; appMedia?: boolean; offkai?: boolean; onForm?: (form: FormData) => void } = {}
+  opts: { imagesOnly?: boolean; chat?: boolean; appMedia?: boolean; offkai?: boolean; dm?: boolean; onForm?: (form: FormData) => void; onSaved?: (urls: string[]) => Promise<void> } = {}
 ): Promise<NextResponse> {
   const len = Number(req.headers.get("content-length") ?? "0");
   // No length (chunked) counts as big: formData() still reads it all into memory.
-  const big = !opts.chat && !opts.offkai && (!(len > 0) || len > BIG_UPLOAD_BYTES);
+  const big = !opts.chat && !opts.offkai && !opts.dm && (!(len > 0) || len > BIG_UPLOAD_BYTES);
   if (big) {
     if (bigUploadsInFlight >= MAX_CONCURRENT_BIG_UPLOADS) {
       return NextResponse.json(
@@ -103,11 +105,13 @@ async function handleUploadInner(
   /** imagesOnly: アプリの画像だけ（合計 50MB）。appMedia: アプリから画像・動画・音声（動画・音声は Web と
    *  同じ形式と 100MB まで、画像は imagesOnly と同じ合計 50MB まで）。chat: チャットの写真。
    *  offkai: 🍻 オフ会のアルバム（チャットの写真と同じ大きさの枠、offkai-… で残る。サーバでも EXIF を落とす）。 */
-  opts: { imagesOnly?: boolean; chat?: boolean; appMedia?: boolean; offkai?: boolean; onForm?: (form: FormData) => void },
+  opts: { imagesOnly?: boolean; chat?: boolean; appMedia?: boolean; offkai?: boolean; dm?: boolean; onForm?: (form: FormData) => void; onSaved?: (urls: string[]) => Promise<void> },
   len: number
 ): Promise<NextResponse> {
   const chat = !!opts.chat;
-  const offkai = !!opts.offkai;
+  // ✉️👥 DM の写真（dm-…、lib/dm-media.ts）: 大きさの枠はチャットと同じ、EXIF はオフ会と同じくサーバでも落とす（30 日残るため）。
+  const dm = !!opts.dm;
+  const offkai = !!opts.offkai || dm;
   const small = chat || offkai;
   const maxImages = small ? CHAT_UPLOAD.maxImages : MAX_IMAGES;
   const maxImageBytes = small ? CHAT_UPLOAD.maxImageBytes : MAX_BYTES;
@@ -275,7 +279,7 @@ async function handleUploadInner(
   for (const file of files) {
     const ext = path.extname(file.name).toLowerCase() || ".jpg";
     let safeExt = [".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext) ? ext : ".jpg";
-    const base = `${chat ? CHAT_UPLOAD.prefix : offkai ? OFFKAI_UPLOAD_PREFIX : ""}${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
+    const base = `${chat ? CHAT_UPLOAD.prefix : dm ? DM_UPLOAD_PREFIX : offkai ? OFFKAI_UPLOAD_PREFIX : ""}${Date.now()}-${crypto.randomBytes(6).toString("hex")}`;
     let filename = `${base}${safeExt}`;
     try {
       // Post images (not chat: those are already ≤1280 px and EXIF-free from the
@@ -323,6 +327,15 @@ async function handleUploadInner(
     urls.push(`/api/media/${filename}`);
   }
 
+  // ✉️👥 DM: 上げた人を記録してから返す（記録できなければ写真を消して失敗にする）。
+  if (opts.onSaved) {
+    try {
+      await opts.onSaved(urls);
+    } catch (err) {
+      await Promise.all(written.map((n) => rm(path.join(uploadDir, n), { force: true }).catch(() => {})));
+      throw err;
+    }
+  }
   return NextResponse.json({ urls }, { status: 201 });
 }
 

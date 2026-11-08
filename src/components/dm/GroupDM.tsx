@@ -6,7 +6,7 @@
  *   GroupMembers      メンバー・追加・外す（作った人だけ）・抜ける・名前・🔕 通知を切る
  *   CreateGroupModal  ＋ グループ（メンバーを選ぶ・名前は任意） */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ActionIcon, Avatar, Badge, Box, Button, Group as MGroup, Loader, Modal, MultiSelect, ScrollArea, Stack, Switch, Text, Textarea, TextInput, UnstyledButton } from "@mantine/core";
+import { ActionIcon, Avatar, Badge, Box, Button, Group as MGroup, Loader, Modal, MultiSelect, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, UnstyledButton } from "@mantine/core";
 import {
   addGroupMembers,
   closeGroup,
@@ -20,6 +20,7 @@ import {
   renameGroup,
   retryGroupText,
   sendGroupText,
+  onGroupRestore,
   setGroupMuted,
   setGroupBeagle,
   subscribeGdm,
@@ -30,9 +31,11 @@ import {
   type GroupSummary,
   pickerCandidates,
 } from "@/lib/gdm-client";
-import { closeDm, getSnapshot as getDmSnapshot, openDmList } from "@/lib/dm-client";
+import { closeDm, getSnapshot as getDmSnapshot, openDm, openDmList } from "@/lib/dm-client";
 import { chatTimeStr } from "@/lib/date-format";
 import { handleComposerKeyDown } from "@/lib/composer-keys";
+import { DmDropOverlay, DmImageGrid, DmPhotoButton, DmPhotoTray, useDmPhotoDrop, useDmPhotoPicker } from "./DmPhotos";
+import { dmPreviewText } from "@/lib/dm-photos-client";
 
 const MAX_BODY = 1000;
 const MAX_NAME = 40;
@@ -44,10 +47,15 @@ export function useGdm(): GdmSnapshot {
 /** 会員の一覧（@ 補完と同じ /api/members）。 */
 type Member = { userId: string; name: string; avatar: string | null };
 let membersCache: Promise<Member[]> | null = null;
+/** 自分の user_id（/api/members の me。新規 DM の候補から外す）。 */
+let myUserId: string | null = null;
 function loadMembers(): Promise<Member[]> {
   membersCache ??= fetch("/api/members", { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : { members: [] }))
-    .then((j) => ((j?.members as Member[]) ?? []).filter((m) => m?.userId))
+    .then((j) => {
+      if (typeof j?.me === "string") myUserId = j.me;
+      return ((j?.members as Member[]) ?? []).filter((m) => m?.userId);
+    })
     .catch(() => {
       membersCache = null;
       return [];
@@ -145,7 +153,7 @@ export function GroupRow({ g }: { g: GroupSummary }) {
           </MGroup>
           <MGroup gap={6} wrap="nowrap" justify="space-between">
             <Text size="xs" c="dimmed" truncate>
-              {!last ? "まだ発言はありません" : last.kind === "system" ? last.body : `${last.is_author ? "あなた" : (last.from_name ?? "会員")}: ${last.body}`}
+              {!last ? "まだ発言はありません" : last.kind === "system" ? last.body : `${last.is_author ? "あなた" : (last.from_name ?? "会員")}: ${dmPreviewText(last)}`}
             </Text>
             {g.unread_count > 0 && (
               <Badge size="sm" color="red" circle={g.unread_count < 10}>
@@ -156,6 +164,50 @@ export function GroupRow({ g }: { g: GroupSummary }) {
         </Box>
       </MGroup>
     </UnstyledButton>
+  );
+}
+
+/** ＋ 新規 DM（2026-11-08 オーナー「新規 DM を作るメニュー、ユーザー名補完で」）。名前を入れると候補が出る
+ *  （何も入れないうちは今までの DM の相手だけ。会員の一覧を最初から全部は見せない）。選ぶとその人との DM を開く。 */
+export function NewDmModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
+  const members = useMembers(opened);
+  const [search, setSearch] = useState("");
+  const peers = getDmSnapshot().conversations.map((c) => c.peer);
+  const exclude = new Set(myUserId ? [myUserId] : []);
+  const data = pickerCandidates(members, peers, exclude, search);
+  const close = () => {
+    setSearch("");
+    onClose();
+  };
+  const pick = (id: string | null) => {
+    if (!id) return;
+    const peer = peers.find((p) => p.user_id === id);
+    const m = members.find((x) => x.userId === id);
+    close();
+    openDm(peer ?? { user_id: id, name: m?.name ?? null, avatar: m?.avatar ?? null });
+  };
+  return (
+    <Modal opened={opened} onClose={close} title="✉️ 新しい DM" centered zIndex={1000}>
+      <Stack gap="sm">
+        <Select
+          label="相手"
+          placeholder="名前を入れて探す"
+          data={data}
+          value={null}
+          onChange={pick}
+          searchable
+          searchValue={search}
+          onSearchChange={setSearch}
+          nothingFoundMessage={search.trim() ? (members.length ? "見つかりません" : "読み込み中…") : "名前を入れて探してください"}
+          comboboxProps={{ withinPortal: true, zIndex: 1100 }}
+          data-autofocus
+          data-cx="dm-new-picker"
+        />
+        <Text size="xs" c="dimmed">
+          DM は 30 日で消えます。
+        </Text>
+      </Stack>
+    </Modal>
   );
 }
 
@@ -245,20 +297,34 @@ export function GroupThread({ s }: { s: GdmSnapshot }) {
   const g = s.current!;
   const [draft, setDraft] = useState("");
   const [members, setMembers] = useState(false);
+  const picker = useDmPhotoPicker();
+  // 送れなかった写真（大きすぎ・ログイン切れなど）は本文と一緒に入力欄へ戻る。
+  const put = picker.put;
+  useEffect(
+    () =>
+      onGroupRestore((r) => {
+        setDraft((cur) => cur || r.body);
+        put(r.photos);
+      }),
+    [put]
+  );
+  const drop = useDmPhotoDrop(picker, s.canSend && !members);
   const viewport = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = viewport.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [s.messages.length, g.id]);
+  const canSend = (!!draft.trim() || picker.photos.length > 0) && draft.length <= MAX_BODY && picker.busy === 0;
   const send = () => {
+    if (!canSend) return;
     const text = draft;
-    if (!text.trim() || text.length > MAX_BODY) return;
     setDraft("");
-    void sendGroupText(text);
+    void sendGroupText(text, picker.take());
   };
   if (members) return <GroupMembers g={g} onBack={() => setMembers(false)} />;
   return (
-    <>
+    <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }} {...drop.handlers}>
+      <DmDropOverlay show={drop.over} />
       <Header g={g} onMembers={() => setMembers(true)} />
       <ScrollArea style={{ flex: 1 }} viewportRef={viewport}>
         <Stack gap={6} p="sm">
@@ -282,7 +348,10 @@ export function GroupThread({ s }: { s: GdmSnapshot }) {
       )}
       <Box p="sm" style={{ borderTop: "1px solid var(--mantine-color-default-border)" }}>
         {s.canSend ? (
+          <>
+          <DmPhotoTray picker={picker} />
           <MGroup gap={6} align="flex-end" wrap="nowrap">
+            <DmPhotoButton picker={picker} />
             <Textarea
               style={{ flex: 1 }}
               autosize
@@ -294,19 +363,21 @@ export function GroupThread({ s }: { s: GdmSnapshot }) {
               error={draft.length > MAX_BODY ? `${MAX_BODY} 文字までです` : undefined}
               onChange={(e) => setDraft(e.currentTarget.value)}
               onKeyDown={(e) => void handleComposerKeyDown(e, { onSend: send })}
+              onPaste={picker.onPaste}
               data-cx="gdm-input"
             />
-            <Button color="green" onClick={send} disabled={!draft.trim() || draft.length > MAX_BODY}>
+            <Button color="green" onClick={send} disabled={!canSend}>
               送信
             </Button>
           </MGroup>
+          </>
         ) : (
           <Text size="xs" c="dimmed" ta="center">
             このグループにはまだ送れません
           </Text>
         )}
       </Box>
-    </>
+    </div>
   );
 }
 
@@ -353,6 +424,11 @@ function GBubble({ m, prev }: { m: GMessage; prev?: GMessage }) {
             wordBreak: "break-word",
           }}
         >
+          {(m.images?.length ?? 0) > 0 && (
+            <div style={{ margin: m.body ? "2px -4px 6px" : "2px -4px" }}>
+              <DmImageGrid urls={m.images} />
+            </div>
+          )}
           {m.body}
         </div>
         <MGroup gap={6}>

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionEmail } from "@/lib/session";
 import { mentionMembers } from "@/lib/members";
+import { ensureUserId } from "@/lib/user";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -12,7 +13,9 @@ export async function GET() {
     return NextResponse.json({ error: "ログインが必要です" }, { status: 401 });
   }
   try {
-    return NextResponse.json({ members: await mentionMembers() });
+    // me: 自分の user_id（✉️ 新規 DM の候補から自分を外すため）。
+    const [members, me] = await Promise.all([mentionMembers(), ensureUserId(email)]);
+    return NextResponse.json({ members, me });
   } catch (e: any) {
     console.error("members list error:", e.message);
     return NextResponse.json(

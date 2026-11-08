@@ -35,7 +35,7 @@ function inCache(...parts: string[]): string {
 
 /** 縮小版を作る対象か（名前だけで決まる部分）。 */
 export function isVariantCandidate(filename: string): boolean {
-  if (filename.startsWith("chat-")) return false;
+  if (filename.startsWith("chat-") || filename.startsWith("dm-")) return false; // dm-: 端末で縮め、サーバで EXIF も落とし済み（30 日で消えるのでキャッシュを残さない）
   return VARIANT_EXTS.has(path.extname(filename).toLowerCase());
 }
 

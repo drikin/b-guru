@@ -16,6 +16,7 @@ import { CHAT_BODY_LIMIT } from "./chat-optimistic";
 import { featureEnabledFor } from "./feature-flag";
 import { emitPersonal } from "./personal-live";
 import { pushDm, syncRead } from "./push-notify";
+import { allUploadedBy, parseDmImages, purgeDmMedia, DM_MAX_IMAGES } from "./dm-media";
 
 export const DM_FLAG = "DM_ENABLED";
 export function dmEnabledFor(email: string | null | undefined): boolean {
@@ -59,6 +60,8 @@ export type DmMessageDto = {
   /** この DTO を見る人から見た相手（会話の鍵）。 */
   peer_id: string;
   body: string;
+  /** 付けた写真（/api/media/dm-…、最大 4 枚。写真だけなら body は ""）。見られるのは当事者だけ。 */
+  images: string[];
   created_at: string;
   /** 見る人が送ったものか。 */
   is_author: boolean;
@@ -77,6 +80,7 @@ type DmRow = {
   sender_email: string;
   recipient_email: string;
   body: string;
+  images?: string[] | null;
   created_at: Date | string;
 };
 
@@ -116,6 +120,7 @@ export function toDmDto(r: DmRow, viewerEmail: string, ids: Map<string, string>,
     to_id: toId,
     peer_id: mine ? toId : fromId,
     body: r.body,
+    images: r.images ?? [],
     created_at: new Date(r.created_at).toISOString(),
     is_author: mine,
   };
@@ -191,7 +196,7 @@ export async function listDmConversations(actor: DmActor): Promise<{ conversatio
   const me = normEmail(actor.email);
   const r = await pool.query(
     `WITH mine AS (
-       SELECT id, sender_email, recipient_email, body, created_at,
+       SELECT id, sender_email, recipient_email, body, images, created_at,
               CASE WHEN sender_email = $1 THEN recipient_email ELSE sender_email END AS peer
          FROM dm_messages
         WHERE (sender_email = $1 OR recipient_email = $1)
@@ -240,7 +245,7 @@ export async function listDmMessages(
   const limit = Math.min(Math.max(opts.limit ?? DM_PAGE_LIMIT, 1), DM_PAGE_LIMIT);
   const [res, read, names, canSend] = await Promise.all([
     pool.query(
-      `SELECT id, sender_email, recipient_email, body, created_at
+      `SELECT id, sender_email, recipient_email, body, images, created_at
          FROM dm_messages
         WHERE ((sender_email = $1 AND recipient_email = $2) OR (sender_email = $2 AND recipient_email = $1))
           AND created_at >= now() - ($3::text)::interval
@@ -273,7 +278,7 @@ async function peerCanReceive(email: string): Promise<boolean> {
 export async function getDmMessage(actor: DmActor, id: number): Promise<{ message: DmMessageDto; peer: DmPeer } | null> {
   const me = normEmail(actor.email);
   const r = await pool.query(
-    `SELECT id, sender_email, recipient_email, body, created_at
+    `SELECT id, sender_email, recipient_email, body, images, created_at
        FROM dm_messages
       WHERE id = $1 AND (sender_email = $2 OR recipient_email = $2)
         AND created_at >= now() - ($3::text)::interval`,
@@ -318,13 +323,22 @@ const SEND_DEDUP_MAX = 2000;
 const recentSends = new Map<string, { at: number; p: Promise<DmMessageDto> }>();
 
 /** 送る。返り値は送り主から見た DTO。 */
-export async function sendDm(actor: DmActor, peerId: unknown, rawBody: unknown, rawClientId: unknown = null): Promise<DmMessageDto> {
+export async function sendDm(
+  actor: DmActor,
+  peerId: unknown,
+  rawBody: unknown,
+  rawClientId: unknown = null,
+  rawImages: unknown = null
+): Promise<DmMessageDto> {
+  const images = await checkDmImages(actor.email, rawImages);
   const checked = normalizeDmBody(rawBody);
-  if (!checked.ok) {
-    throw new DmError(400, "invalid_request", checked.error === "empty" ? "本文が空です" : `本文が長すぎます（${DM_MAX_BODY} 文字まで）`);
+  // 写真だけ（本文なし）も送れる。
+  const body = checked.ok ? checked.body : checked.error === "empty" && images.length > 0 ? "" : null;
+  if (body == null) {
+    throw new DmError(400, "invalid_request", !checked.ok && checked.error === "empty" ? "本文が空です" : `本文が長すぎます（${DM_MAX_BODY} 文字まで）`);
   }
   const clientId = normalizeDmClientId(rawClientId);
-  if (!clientId) return insertDm(actor, peerId, checked.body, null);
+  if (!clientId) return insertDm(actor, peerId, body, null, images);
   const now = Date.now();
   for (const [k, v] of recentSends) {
     if (recentSends.size <= SEND_DEDUP_MAX && now - v.at < SEND_DEDUP_TTL_MS) break;
@@ -333,7 +347,7 @@ export async function sendDm(actor: DmActor, peerId: unknown, rawBody: unknown, 
   const key = `${normEmail(actor.email)}\u0000${clientId}`;
   const hit = recentSends.get(key);
   if (hit && now - hit.at < SEND_DEDUP_TTL_MS) return { ...(await hit.p) };
-  const p = insertDm(actor, peerId, checked.body, clientId);
+  const p = insertDm(actor, peerId, body, clientId, images);
   recentSends.set(key, { at: now, p });
   try {
     return await p;
@@ -343,7 +357,15 @@ export async function sendDm(actor: DmActor, peerId: unknown, rawBody: unknown, 
   }
 }
 
-async function insertDm(actor: DmActor, peerId: unknown, body: string, clientId: string | null): Promise<DmMessageDto> {
+/** 付ける写真を確かめる（形・枚数、送り主が上げたものか）。✉️ と 👥 で共通。 */
+export async function checkDmImages(email: string, raw: unknown): Promise<string[]> {
+  const images = parseDmImages(raw);
+  if (!images) throw new DmError(400, "invalid_request", `写真が不正です（${DM_MAX_IMAGES} 枚まで）`);
+  if (!(await allUploadedBy(email, images))) throw new DmError(400, "invalid_request", "写真が不正です");
+  return images;
+}
+
+async function insertDm(actor: DmActor, peerId: unknown, body: string, clientId: string | null, images: string[] = []): Promise<DmMessageDto> {
   const me = normEmail(actor.email);
   if (!dmEnabledFor(me)) throw new DmError(403, "forbidden", "DM はまだ使えません");
   const peer = await resolvePeer(actor, peerId);
@@ -352,9 +374,9 @@ async function insertDm(actor: DmActor, peerId: unknown, body: string, clientId:
   if (!rate.allowed) throw new DmError(429, "rate_limited", "DM を送りすぎです。しばらく待ってください", rate.retryAfter);
 
   const ins = await pool.query(
-    `INSERT INTO dm_messages (sender_email, recipient_email, body) VALUES ($1, $2, $3)
-     RETURNING id, sender_email, recipient_email, body, created_at`,
-    [me, peer.email, body]
+    `INSERT INTO dm_messages (sender_email, recipient_email, body, images) VALUES ($1, $2, $3, $4::text[])
+     RETURNING id, sender_email, recipient_email, body, images, created_at`,
+    [me, peer.email, body, images]
   );
   const row = ins.rows[0] as DmRow;
   const ids = new Map<string, string>([
@@ -398,7 +420,7 @@ export async function sendSystemDm(recipientEmail: string, rawBody: string): Pro
   const body = rawBody.slice(0, DM_MAX_BODY);
   const ins = await pool.query(
     `INSERT INTO dm_messages (sender_email, recipient_email, body) VALUES ($1, $2, $3)
-     RETURNING id, sender_email, recipient_email, body, created_at`,
+     RETURNING id, sender_email, recipient_email, body, images, created_at`,
     [SYSTEM_EMAIL, to, body]
   );
   const row = ins.rows[0] as DmRow;
@@ -421,6 +443,8 @@ export async function purgeExpiredDm(): Promise<number> {
   await pool.query(`DELETE FROM dm_read_state WHERE updated_at < now() - ($1::text)::interval - interval '1 hour'`, [DM_TTL]);
   // 👥 グループ DM の発言も同じ 30 日（lib/gdm.ts。循環を避けてここで直接消す）。
   await pool.query(`DELETE FROM gdm_messages WHERE created_at < now() - ($1::text)::interval`, [DM_TTL]);
+  // 写真（期限を過ぎたもの・送られなかったもの）。
+  await purgeDmMedia(DM_TTL).catch((e) => console.error("dm media purge:", (e as Error)?.message));
   return r.rowCount ?? 0;
 }
 
@@ -446,6 +470,9 @@ export function dmCapability(enabled: boolean, scopes: string[]) {
     path: "/api/agent/dm",
     send: enabled && scopes.includes("chat"),
     max_body: DM_MAX_BODY,
+    // 📷 写真: POST {upload_path}（multipart images[]）→ { urls } を送信の images に。グループ DM も同じ。
+    max_images: DM_MAX_IMAGES,
+    upload_path: "/api/agent/dm/upload",
     ttl_hours: DM_TTL_HOURS,
     rate_limit_per_hour: DM_RATE_LIMIT,
     // stream: event "dm" — { action: "create", message, peer, unread_count? } / { action: "read", peer_id, last_read_id, unread_count }

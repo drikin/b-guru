@@ -30,6 +30,7 @@ import {
   DM_TTL,
   DM_TTL_HOURS,
   DmError,
+  checkDmImages,
   checkDmRate,
   dmEnabledFor,
   isActiveMember,
@@ -77,6 +78,8 @@ export type GMessageDto = {
   from_name: string | null;
   from_avatar: string | null;
   body: string;
+  /** 付けた写真（/api/media/dm-…、最大 4 枚。写真だけなら body は ""）。見られるのはいまのメンバーだけ。 */
+  images: string[];
   created_at: string;
   is_author: boolean;
   /** 🐶 ビーグルの答え（kind は古いアプリのため "text" のまま、送り主は「ビーグル」）。 */
@@ -87,7 +90,7 @@ export type GroupSummaryDto = { group: GroupDto; last_message: GMessageDto | nul
 
 type GroupRow = { id: number; name: string | null; creator_email: string; created_at: Date | string; photo?: string | null; beagle?: boolean };
 type MemberRow = { email: string; joined_at: Date | string; joined_from_id: number; muted: boolean; last_read_id: number };
-type MsgRow = { id: number; group_id: number; sender_email: string | null; kind: string; body: string; created_at: Date | string };
+type MsgRow = { id: number; group_id: number; sender_email: string | null; kind: string; body: string; images?: string[] | null; created_at: Date | string };
 
 /** 名前・ID の引き当て（DTO を作るのに要るもの）。 */
 type Lookup = { ids: Map<string, string>; names: Map<string, string | null> };
@@ -178,6 +181,7 @@ export function toGMessageDto(r: MsgRow, viewerEmail: string, lk: Lookup, client
       from_name: "ビーグル",
       from_avatar: null,
       body: r.body,
+      images: [],
       created_at: new Date(r.created_at).toISOString(),
       is_author: false,
       is_beagle: true,
@@ -191,6 +195,7 @@ export function toGMessageDto(r: MsgRow, viewerEmail: string, lk: Lookup, client
     from_name: from ? (lk.names.get(from) ?? null) : null,
     from_avatar: from ? gravatarUrl(from) : null,
     body: r.body,
+    images: r.images ?? [],
     created_at: new Date(r.created_at).toISOString(),
     is_author: mine,
   };
@@ -321,12 +326,13 @@ async function insertMessage(
   senderEmail: string | null,
   kind: "text" | "system" | "beagle",
   body: string,
-  clientId: string | null = null
+  clientId: string | null = null,
+  images: string[] = []
 ): Promise<{ row: MsgRow; members: MemberRow[]; lk: Lookup }> {
   const ins = await pool.query(
-    `INSERT INTO gdm_messages (group_id, sender_email, kind, body) VALUES ($1, $2, $3, $4)
-     RETURNING id, group_id, sender_email, kind, body, created_at`,
-    [gid, senderEmail, kind, body]
+    `INSERT INTO gdm_messages (group_id, sender_email, kind, body, images) VALUES ($1, $2, $3, $4, $5::text[])
+     RETURNING id, group_id, sender_email, kind, body, images, created_at`,
+    [gid, senderEmail, kind, body, images]
   );
   const row = ins.rows[0] as MsgRow;
   await pool.query(`UPDATE gdm_groups SET updated_at = now() WHERE id = $1`, [gid]);
@@ -402,7 +408,7 @@ export async function listGroups(actor: DmActor): Promise<{ groups: GroupSummary
       [gids]
     ),
     pool.query(
-      `SELECT DISTINCT ON (m.group_id) m.id, m.group_id, m.sender_email, m.kind, m.body, m.created_at
+      `SELECT DISTINCT ON (m.group_id) m.id, m.group_id, m.sender_email, m.kind, m.body, m.images, m.created_at
          FROM gdm_messages m JOIN gdm_members gm ON gm.group_id = m.group_id AND gm.email = $2
         WHERE m.group_id = ANY($1::int[]) AND m.id > gm.joined_from_id AND m.created_at >= now() - ($3::text)::interval
         ORDER BY m.group_id, m.id DESC`,
@@ -490,7 +496,7 @@ export async function getGroupThread(
   const me = normEmail(actor.email);
   const limit = Math.min(Math.max(opts.limit ?? DM_PAGE_LIMIT, 1), DM_PAGE_LIMIT);
   const res = await pool.query(
-    `SELECT id, group_id, sender_email, kind, body, created_at FROM gdm_messages
+    `SELECT id, group_id, sender_email, kind, body, images, created_at FROM gdm_messages
       WHERE group_id = $1 AND id > $2 AND created_at >= now() - ($3::text)::interval
         AND ($4::int IS NULL OR id < $4)
       ORDER BY id DESC LIMIT $5`,
@@ -509,11 +515,22 @@ const SEND_DEDUP_MAX = 2000;
 const recentSends = new Map<string, { at: number; p: Promise<GMessageDto> }>();
 
 /** 送る。返り値は送り主から見た DTO。client_id の再送は 2 重に入れない。 */
-export async function sendGroupMessage(actor: DmActor, rawGid: unknown, rawBody: unknown, rawClientId: unknown = null): Promise<GMessageDto> {
+export async function sendGroupMessage(
+  actor: DmActor,
+  rawGid: unknown,
+  rawBody: unknown,
+  rawClientId: unknown = null,
+  rawImages: unknown = null
+): Promise<GMessageDto> {
+  const images = await checkDmImages(actor.email, rawImages);
   const checked = normalizeDmBody(rawBody);
-  if (!checked.ok) throw new DmError(400, "invalid_request", checked.error === "empty" ? "本文が空です" : `本文が長すぎます（${DM_MAX_BODY} 文字まで）`);
+  // 写真だけ（本文なし）も送れる。
+  const body = checked.ok ? checked.body : checked.error === "empty" && images.length > 0 ? "" : null;
+  if (body == null) {
+    throw new DmError(400, "invalid_request", !checked.ok && checked.error === "empty" ? "本文が空です" : `本文が長すぎます（${DM_MAX_BODY} 文字まで）`);
+  }
   const clientId = normalizeDmClientId(rawClientId);
-  if (!clientId) return insertText(actor, rawGid, checked.body, null);
+  if (!clientId) return insertText(actor, rawGid, body, null, images);
   await requireMember(actor, rawGid); // 再送の重複よけより先に（外された人の再送を送れたことにしない）
   const now = Date.now();
   for (const [k, v] of recentSends) {
@@ -523,7 +540,7 @@ export async function sendGroupMessage(actor: DmActor, rawGid: unknown, rawBody:
   const key = `${normEmail(actor.email)}\u0000${String(rawGid)}\u0000${clientId}`;
   const hit = recentSends.get(key);
   if (hit && now - hit.at < SEND_DEDUP_TTL_MS) return { ...(await hit.p) };
-  const p = insertText(actor, rawGid, checked.body, clientId);
+  const p = insertText(actor, rawGid, body, clientId, images);
   recentSends.set(key, { at: now, p });
   try {
     return await p;
@@ -533,13 +550,13 @@ export async function sendGroupMessage(actor: DmActor, rawGid: unknown, rawBody:
   }
 }
 
-async function insertText(actor: DmActor, rawGid: unknown, body: string, clientId: string | null): Promise<GMessageDto> {
+async function insertText(actor: DmActor, rawGid: unknown, body: string, clientId: string | null, images: string[] = []): Promise<GMessageDto> {
   const me = normEmail(actor.email);
   if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
   const { gid, group, self } = await requireMember(actor, rawGid);
   const rate = await checkDmRate(me);
   if (!rate.allowed) throw new DmError(429, "rate_limited", "DM を送りすぎです。しばらく待ってください", rate.retryAfter);
-  const { row, lk } = await insertMessage(gid, me, "text", body, clientId);
+  const { row, lk } = await insertMessage(gid, me, "text", body, clientId, images);
   if (group.beagle && asksBeagle(body)) scheduleGroupBeagle(gid, row.id, me, body, Number(self.last_read_id) || 0);
   return toGMessageDto(row, me, lk, clientId);
 }
@@ -756,7 +773,7 @@ export async function removeMember(actor: DmActor, rawGid: unknown, rawUserId: u
 export async function getGroupMessage(actor: DmActor, id: number): Promise<{ message: GMessageDto; group: GroupDto } | null> {
   const me = normEmail(actor.email);
   const r = await pool.query(
-    `SELECT m.id, m.group_id, m.sender_email, m.kind, m.body, m.created_at
+    `SELECT m.id, m.group_id, m.sender_email, m.kind, m.body, m.images, m.created_at
        FROM gdm_messages m JOIN gdm_members gm ON gm.group_id = m.group_id AND gm.email = $2
       WHERE m.id = $1 AND m.id > gm.joined_from_id AND m.created_at >= now() - ($3::text)::interval`,
     [id, me, DM_TTL]
@@ -932,7 +949,7 @@ export async function answerGroupBeagle(gid: number, questionId: number, askerEm
   if (!(await beagleUnderLimits(asker, false))) return false;
 
   const hist = await pool.query(
-    `SELECT id, group_id, sender_email, kind, body, created_at FROM gdm_messages
+    `SELECT id, group_id, sender_email, kind, body, images, created_at FROM gdm_messages
       WHERE group_id = $1 AND id < $2 AND created_at >= now() - ($3::text)::interval
       ORDER BY id DESC LIMIT $4`,
     [gid, questionId, DM_TTL, GDM_BEAGLE_HISTORY]
@@ -943,7 +960,8 @@ export async function answerGroupBeagle(gid: number, questionId: number, askerEm
     id: r.id,
     kind: r.kind === "system" ? "system" : r.kind === "beagle" ? "beagle" : "text",
     name: r.sender_email ? displayName(r.sender_email, lk.names) : "",
-    body: r.body,
+    // 写真はビーグルには見えない: 写真があることだけ伝える（写真だけの発言を空行にしない）。
+    body: photoNote(r.body, r.images),
     at: r.created_at,
   }));
   const dto = toGroupDto(loaded.group, loaded.members, asker, lk);
@@ -988,4 +1006,12 @@ export async function answerGroupBeagle(gid: number, questionId: number, askerEm
     throw e;
   }
   return true;
+}
+
+/** 🐶 ビーグルに渡す本文: 写真が付いていれば「（写真 N 枚・中身は見えません）」を添える。 */
+export function photoNote(body: string, images: string[] | null | undefined): string {
+  const n = images?.length ?? 0;
+  if (n === 0) return body;
+  const note = `（写真 ${n} 枚・中身は見えません）`;
+  return body ? `${body} ${note}` : note;
 }

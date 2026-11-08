@@ -773,6 +773,17 @@ export async function initSchema() {
     ALTER TABLE gdm_groups ADD COLUMN IF NOT EXISTS photo TEXT;
     -- 🐶 このグループで @ビーグル に答えるか（メンバーなら誰でも入・切、既定は切）
     ALTER TABLE gdm_groups ADD COLUMN IF NOT EXISTS beagle BOOLEAN NOT NULL DEFAULT false;
+    -- ✉️👥 DM の写真（lib/dm-media.ts）: 発言に付けた /api/media/dm-… と、誰が上げたか（自分の写真だけ付けられる）。
+    ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS images TEXT[] NOT NULL DEFAULT '{}';
+    ALTER TABLE gdm_messages ADD COLUMN IF NOT EXISTS images TEXT[] NOT NULL DEFAULT '{}';
+    CREATE INDEX IF NOT EXISTS idx_dm_images ON dm_messages USING GIN (images);
+    CREATE INDEX IF NOT EXISTS idx_gdm_images ON gdm_messages USING GIN (images);
+    CREATE TABLE IF NOT EXISTS dm_uploads (
+      name TEXT PRIMARY KEY,
+      uploader_email TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_dm_uploads_created ON dm_uploads (created_at);
     -- 自分で抜けた記録（同じグループに 24 時間入れ直せない）。グループと一緒に消える。
     CREATE TABLE IF NOT EXISTS gdm_leaves (
       group_id INTEGER NOT NULL REFERENCES gdm_groups(id) ON DELETE CASCADE,

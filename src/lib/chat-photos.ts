@@ -96,15 +96,15 @@ export async function prepareChatPhoto(file: File): Promise<Blob> {
   }
 }
 
-/** Upload prepared photos → server urls. Throws Error(message) on failure;
+/** Upload prepared photos → server urls (chat by default; ✉️ DM passes /api/dm/upload). Throws Error(message) on failure;
  *  `status` is set on the error for HTTP failures (4xx = don't retry). */
-export async function uploadChatPhotos(blobs: Blob[], signal?: AbortSignal): Promise<string[]> {
+export async function uploadChatPhotos(blobs: Blob[], signal?: AbortSignal, endpoint = "/api/chat/upload"): Promise<string[]> {
   const form = new FormData();
   blobs.forEach((b, i) => {
     const ext = b.type === "image/gif" ? "gif" : b.type === "image/png" ? "png" : b.type === "image/webp" ? "webp" : "jpg";
     form.append("images", b, `photo-${i + 1}.${ext}`);
   });
-  const r = await fetch("/api/chat/upload", { method: "POST", body: form, cache: "no-store", signal });
+  const r = await fetch(endpoint, { method: "POST", body: form, cache: "no-store", signal });
   const d = await r.json().catch(() => null);
   if (r.ok && Array.isArray(d?.urls)) return d.urls as string[];
   const err = new Error(typeof d?.error === "string" ? d.error : "写真を送れませんでした") as Error & { status?: number };

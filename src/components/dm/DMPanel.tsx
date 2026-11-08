@@ -18,6 +18,7 @@ import {
   openDmList,
   pruneNow,
   retryDm,
+  onDmRestore,
   sendDmMessage,
   subscribe,
   type DmMessage,
@@ -26,8 +27,10 @@ import {
 } from "@/lib/dm-client";
 import { chatTimeStr } from "@/lib/date-format";
 import { handleComposerKeyDown } from "@/lib/composer-keys";
+import { DmDropOverlay, DmImageGrid, DmPhotoButton, DmPhotoTray, useDmPhotoDrop, useDmPhotoPicker } from "./DmPhotos";
+import { dmPreviewText } from "@/lib/dm-photos-client";
 import { closeGroup, loadGdm, pruneGdmNow } from "@/lib/gdm-client";
-import { CreateGroupModal, GroupRow, GroupThread, useGdm } from "./GroupDM";
+import { CreateGroupModal, GroupRow, GroupThread, NewDmModal, useGdm } from "./GroupDM";
 
 const DM_MAX_BODY = 1000;
 
@@ -195,6 +198,7 @@ function Header({ title, onBack, left, right }: { title: ReactNode; onBack: () =
 function DmList({ s }: { s: DmSnapshot }) {
   const g = useGdm();
   const [creating, setCreating] = useState(false);
+  const [newDm, setNewDm] = useState(false);
   const groupsOn = g.status === "enabled";
   // 1 対 1 とグループを新しい順に混ぜる
   const items = [
@@ -207,18 +211,24 @@ function DmList({ s }: { s: DmSnapshot }) {
         title="DM"
         onBack={closeDm}
         right={
-          groupsOn ? (
-            <Button size="compact-xs" variant="light" color="green" onClick={() => setCreating(true)} data-cx="gdm-create">
-              ＋ グループ
+          <Group gap={6} wrap="nowrap">
+            <Button size="compact-xs" variant="light" color="green" onClick={() => setNewDm(true)} data-cx="dm-new">
+              ＋ 新規 DM
             </Button>
-          ) : undefined
+            {groupsOn && (
+              <Button size="compact-xs" variant="light" color="green" onClick={() => setCreating(true)} data-cx="gdm-create">
+                ＋ グループ
+              </Button>
+            )}
+          </Group>
         }
       />
+      <NewDmModal opened={newDm} onClose={() => setNewDm(false)} />
       {groupsOn && <CreateGroupModal opened={creating} onClose={() => setCreating(false)} />}
       <ScrollArea style={{ flex: 1 }}>
         {items.length === 0 ? (
           <Text size="sm" c="dimmed" ta="center" py="xl" px="md">
-            DM はまだありません。チャットで名前を押すと「DM を送る」が出ます。
+            DM はまだありません。「＋ 新規 DM」で名前を入れて始めるか、チャットで名前を押すと「DM を送る」が出ます。
             {groupsOn ? "「＋ グループ」で何人かと話せます。" : ""}
           </Text>
         ) : (
@@ -249,7 +259,7 @@ function DmList({ s }: { s: DmSnapshot }) {
                     <Group gap={6} wrap="nowrap" justify="space-between">
                       <Text size="xs" c="dimmed" truncate>
                         {c.last_message.is_author ? "あなた: " : ""}
-                        {c.last_message.body}
+                        {dmPreviewText(c.last_message)}
                       </Text>
                       {c.unread_count > 0 && (
                         <Badge size="sm" color="red" circle={c.unread_count < 10}>
@@ -274,19 +284,33 @@ function DmList({ s }: { s: DmSnapshot }) {
 
 function DmThread({ s, peer }: { s: DmSnapshot; peer: DmPeer }) {
   const [draft, setDraft] = useState("");
+  const picker = useDmPhotoPicker();
+  // 送れなかった写真（大きすぎ・ログイン切れなど）は本文と一緒に入力欄へ戻る。
+  const put = picker.put;
+  useEffect(
+    () =>
+      onDmRestore((r) => {
+        setDraft((cur) => cur || r.body);
+        put(r.photos);
+      }),
+    [put]
+  );
+  const drop = useDmPhotoDrop(picker, s.canSend);
   const viewport = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = viewport.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [s.messages.length, peer.user_id]);
+  const canSend = (!!draft.trim() || picker.photos.length > 0) && draft.length <= DM_MAX_BODY && picker.busy === 0;
   const send = () => {
+    if (!canSend) return;
     const text = draft;
-    if (!text.trim() || text.length > DM_MAX_BODY) return;
     setDraft("");
-    void sendDmMessage(text);
+    void sendDmMessage(text, picker.take());
   };
   return (
-    <>
+    <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }} {...drop.handlers}>
+      <DmDropOverlay show={drop.over} />
       <Header title={peer.name ?? "会員"} onBack={openDmList} left={<PeerAvatar peer={peer} size="sm" />} />
       <ScrollArea style={{ flex: 1 }} viewportRef={viewport}>
         <Stack gap={6} p="sm">
@@ -310,7 +334,10 @@ function DmThread({ s, peer }: { s: DmSnapshot; peer: DmPeer }) {
       )}
       <Box p="sm" style={{ borderTop: "1px solid var(--mantine-color-default-border)" }}>
         {s.canSend ? (
+          <>
+          <DmPhotoTray picker={picker} />
           <Group gap={6} align="flex-end" wrap="nowrap">
+            <DmPhotoButton picker={picker} />
             <Textarea
               style={{ flex: 1 }}
               autosize
@@ -322,19 +349,21 @@ function DmThread({ s, peer }: { s: DmSnapshot; peer: DmPeer }) {
               error={draft.length > DM_MAX_BODY ? `${DM_MAX_BODY} 文字までです` : undefined}
               onChange={(e) => setDraft(e.currentTarget.value)}
               onKeyDown={(e) => void handleComposerKeyDown(e, { onSend: send })}
+              onPaste={picker.onPaste}
               data-cx="dm-input"
             />
-            <Button color="green" onClick={send} disabled={!draft.trim() || draft.length > DM_MAX_BODY}>
+            <Button color="green" onClick={send} disabled={!canSend}>
               送信
             </Button>
           </Group>
+          </>
         ) : (
           <Text size="xs" c="dimmed" ta="center">
             この人にはまだ DM を送れません
           </Text>
         )}
       </Box>
-    </>
+    </div>
   );
 }
 
@@ -355,6 +384,11 @@ function DmBubble({ m }: { m: DmMessage }) {
             wordBreak: "break-word",
           }}
         >
+          {(m.images?.length ?? 0) > 0 && (
+            <div style={{ margin: m.body ? "2px -4px 6px" : "2px -4px" }}>
+              <DmImageGrid urls={m.images} />
+            </div>
+          )}
           {m.body}
         </div>
         <Group gap={6}>

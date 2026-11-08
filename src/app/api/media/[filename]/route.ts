@@ -5,6 +5,7 @@ import { Readable } from "stream";
 import path from "path";
 import { mediaAuthEmail } from "@/lib/download-auth";
 import { mediaVariant } from "@/lib/media-variants";
+import { canViewDmMedia, dmMediaDir } from "@/lib/dm-media";
 
 // Stream a byte range of `filePath` as a web ReadableStream. Buffering the whole
 // file (Buffer.alloc + fh.read) held the HTTP connection until the entire
@@ -43,7 +44,15 @@ export async function GET(
     return NextResponse.json({ error: "不正なパス" }, { status: 400 });
   }
 
-  const uploadDir = path.join(process.cwd(), "public", "uploads");
+  // ✉️👥 DM の写真は当事者（グループはいまのメンバー）と上げた本人だけ（lib/dm-media.ts）。ほかの人には無いのと同じ 404。
+  if (filename.startsWith("dm-") && !(await canViewDmMedia(email, filename).catch(() => false))) {
+    return NextResponse.json({ error: "見つかりません" }, { status: 404 });
+  }
+
+  // dm- は public の外（lib/dm-media.ts の dmMediaDir）。外されたメンバーのブラウザに残さないようキャッシュもしない。
+  const isDm = filename.startsWith("dm-");
+  const uploadDir = isDm ? dmMediaDir() : path.join(process.cwd(), "public", "uploads");
+  const cacheControl = isDm ? "private, no-store" : "private, max-age=31536000, immutable";
   const filePath = path.join(uploadDir, filename);
 
   const ext = path.extname(filename).toLowerCase();
@@ -64,7 +73,7 @@ export async function GET(
         status: 200,
         headers: {
           "Content-Type": variant.contentType,
-          "Cache-Control": "private, max-age=31536000, immutable",
+          "Cache-Control": cacheControl,
           "Content-Length": String(vs.size),
           "X-Media-Variant": variant.label,
           // 上げられたファイルを宣言どおりの型としてだけ扱わせる（中身から HTML 等と推測させない）。
@@ -78,7 +87,7 @@ export async function GET(
       "Content-Type": contentType,
       // private: the response needs a login (session or app token) — never let a
       // shared cache (CDN / proxy) store it and hand it to anyone.
-      "Cache-Control": "private, max-age=31536000, immutable",
+      "Cache-Control": cacheControl,
       "Accept-Ranges": "bytes",
       // 上げられたファイルを宣言どおりの型としてだけ扱わせる（中身から HTML 等と推測させない）。
       "X-Content-Type-Options": "nosniff",

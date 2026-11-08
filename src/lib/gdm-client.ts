@@ -7,6 +7,16 @@
  *   applyGdmEvent()    /api/posts/stream の `event: gdm`
  * 発言は 30 日で消える: 期限を過ぎたものはここでも隠す。 */
 import { newChatClientId } from "./chat-optimistic";
+import {
+  dropDmPhotoJob,
+  dropUnsentPhotoJobs,
+  permanentUploadFailure,
+  photoUploadError,
+  setDmPhotoJob,
+  takeDmPhotoJob,
+  uploadDmPhotoJob,
+  type PickedPhoto,
+} from "./dm-photos-client";
 import { DM_TTL_MS } from "./dm-client";
 
 export type GMember = { user_id: string; name: string | null; avatar: string | null; is_creator: boolean; is_me: boolean };
@@ -31,6 +41,8 @@ export type GMessage = {
   from_name: string | null;
   from_avatar: string | null;
   body: string;
+  /** 付けた写真（/api/media/dm-…。送信中はプレビューの blob: URL）。 */
+  images?: string[];
   created_at: string;
   is_author: boolean;
   /** 🐶 ビーグルの答え。 */
@@ -157,11 +169,13 @@ export function loadGdm(): Promise<void> {
 }
 
 export function closeGroup(): void {
+  if (snap.current) dropUnsentPhotoJobs(snap.messages);
   if (snap.current) set({ current: null, messages: [], error: null });
 }
 
 export async function openGroup(id: number): Promise<void> {
   const known = snap.groups.find((g) => g.group.id === id)?.group ?? null;
+  dropUnsentPhotoJobs(snap.messages);
   set({ current: known ?? { id, name: null, title: "グループ", members: [], member_count: 0, is_creator: false, muted: false, created_at: "" }, messages: [], loading: true, error: null, canSend: true });
   const r = await api(`/api/gdm/${id}`);
   if (snap.current?.id !== id) return;
@@ -201,10 +215,12 @@ function markSeen(): void {
 }
 
 let tempSeq = 0;
-export async function sendGroupText(text: string): Promise<boolean> {
+export async function sendGroupText(text: string, photos: PickedPhoto[] = []): Promise<boolean> {
   const g = snap.current;
   const body = text.trim();
-  if (!g || !body) return false;
+  if (!g || (!body && photos.length === 0)) return false;
+  const clientId = newChatClientId();
+  const previews = setDmPhotoJob(clientId, photos);
   const temp: GMessage = {
     id: -++tempSeq,
     group_id: g.id,
@@ -213,9 +229,10 @@ export async function sendGroupText(text: string): Promise<boolean> {
     from_name: null,
     from_avatar: null,
     body,
+    images: previews,
     created_at: new Date().toISOString(),
     is_author: true,
-    client_id: newChatClientId(),
+    client_id: clientId,
     pending: true,
   };
   set({ messages: [...snap.messages, temp], error: null });
@@ -223,8 +240,37 @@ export async function sendGroupText(text: string): Promise<boolean> {
 }
 
 async function deliver(gid: number, temp: GMessage): Promise<boolean> {
-  const r = await api(`/api/gdm/${gid}/messages`, { method: "POST", body: JSON.stringify({ body: temp.body, client_id: temp.client_id }) });
+  let images: string[] | undefined;
+  try {
+    images = await uploadDmPhotoJob(temp.client_id);
+  } catch (e) {
+    if (!(snap.current?.id === gid)) {
+      dropDmPhotoJob(temp.client_id); // 会話を離れた後の失敗: 写真を残さない
+      return false;
+    }
+    if (permanentUploadFailure(e)) {
+      // 再送しても通らない: 吹き出しを消して、本文と写真を入力欄へ戻す（チャットと同じ）。
+      const back = { body: temp.body, photos: takeDmPhotoJob(temp.client_id) };
+      if (restoreHandler) restoreHandler(back);
+      else back.photos.forEach((ph) => URL.revokeObjectURL(ph.preview));
+      set({
+        messages: snap.messages.filter((x) => !(x.client_id === temp.client_id && x.id < 0)),
+        error: photoUploadError(e),
+      });
+    } else {
+      set({
+        messages: snap.messages.map((x) => (x.client_id === temp.client_id && x.id < 0 ? { ...x, pending: false, failed: true } : x)),
+        error: photoUploadError(e),
+      });
+    }
+    return false;
+  }
+  const r = await api(`/api/gdm/${gid}/messages`, {
+    method: "POST",
+    body: JSON.stringify({ body: temp.body, client_id: temp.client_id, ...(images ? { images } : {}) }),
+  });
   if (r.status === 201 && r.body?.message) {
+    dropDmPhotoJob(temp.client_id);
     const m = r.body.message as GMessage;
     if (snap.current?.id === gid) set({ messages: reconcileG(snap.messages, m) });
     const next = applyToGroups(snap.groups, m, true);
@@ -249,6 +295,7 @@ export function retryGroupText(m: GMessage): void {
 }
 
 export function discardGroupText(m: GMessage): void {
+  dropDmPhotoJob(m.client_id);
   set({ messages: snap.messages.filter((x) => x.client_id !== m.client_id || x.id > 0) });
 }
 
@@ -354,4 +401,14 @@ export function _resetGdmClientForTest(): void {
   snap = INITIAL;
   listeners.clear();
   loading = null;
+}
+
+type Restore = { body: string; photos: PickedPhoto[] };
+let restoreHandler: ((r: Restore) => void) | null = null;
+/** 入力欄が、送れなかった本文と写真を受け取る（開いている会話の入力欄だけ）。戻り値で外す。 */
+export function onGroupRestore(fn: (r: Restore) => void): () => void {
+  restoreHandler = fn;
+  return () => {
+    if (restoreHandler === fn) restoreHandler = null;
+  };
 }

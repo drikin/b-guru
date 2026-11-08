@@ -34,6 +34,7 @@ describe("toDmDto", () => {
       to_id: "userBBBBBBBB",
       peer_id: "userBBBBBBBB",
       body: "やあ",
+      images: [],
       created_at: "2026-10-24T01:02:03.000Z",
       is_author: true,
       client_id: "cid",
