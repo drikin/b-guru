@@ -580,6 +580,17 @@ function imagesFromPaste(e: React.ClipboardEvent): FileList | null {
   return dt.files;
 }
 
+/** ドラッグ＆ドロップの画像（ドリキン 2026-11-08「貼り付けられる場所ではドラッグ＆ドロップでも」）。
+ *  画像が 1 枚も無ければ null（ふつうのテキストのドロップはそのまま）。 */
+function imagesFromDrop(e: React.DragEvent): FileList | null {
+  const files = Array.from(e.dataTransfer?.files ?? []).filter((f) => f.type.startsWith("image/"));
+  if (files.length === 0) return null;
+  const dt = new DataTransfer();
+  files.forEach((f) => dt.items.add(f));
+  return dt.files;
+}
+const dragHasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+
 /** The chat composer's textarea with its own state (see chatDraftRef in Home):
  *  a keystroke re-renders only this, not Home and the timeline. */
 function ChatDraftInput({
@@ -617,7 +628,7 @@ function ChatDraftInput({
 function MentionTextarea({
   value, onChange, onKeyDown, onSend, onCancel, onPaste, placeholder, autosize, minRows, maxRows, mb,
   maxLength, label, description, autoFocus, ariaLabel, suggestUp, wrapperStyle,
-  initialMention, inputRef,
+  initialMention, inputRef, onDropImages,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -650,7 +661,33 @@ function MentionTextarea({
    *  the textarea (used when the user clicks an online member in the chat
    *  widget so they can immediately mention that person). */
   initialMention?: string | null;
+  /** 画像のドラッグ＆ドロップで添付（貼り付けと同じ先へ）。渡したときだけ受け付ける。 */
+  onDropImages?: (files: FileList) => void;
 }) {
+  const [dragOver, setDragOver] = useState(false);
+  const dropProps = onDropImages
+    ? {
+        onDragOver: (e: React.DragEvent<HTMLDivElement>) => {
+          if (!dragHasFiles(e)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = "copy";
+          if (!dragOver) setDragOver(true);
+        },
+        onDragLeave: (e: React.DragEvent<HTMLDivElement>) => {
+          const next = e.relatedTarget as Node | null;
+          if (!next || !e.currentTarget.contains(next)) setDragOver(false);
+        },
+        onDrop: (e: React.DragEvent<HTMLDivElement>) => {
+          if (!dragHasFiles(e)) return;
+          e.preventDefault();
+          e.stopPropagation();
+          setDragOver(false);
+          const files = imagesFromDrop(e);
+          if (files) onDropImages(files);
+        },
+      }
+    : {};
   const [members, setMembers] = useState<MentionMember[]>([]);
   const [query, setQuery] = useState<string | null>(null);
   const [suggestIndex, setSuggestIndex] = useState(0);
@@ -786,7 +823,34 @@ function MentionTextarea({
   };
 
   return (
-    <div style={{ position: "relative", ...(wrapperStyle ? wrapperStyle : {}) }}>
+    <div
+      {...dropProps}
+      style={{
+        position: "relative",
+        ...(dragOver ? { outline: "2px dashed var(--mantine-color-green-6, #2f9e44)", outlineOffset: 2, borderRadius: 8 } : {}),
+        ...(wrapperStyle ? wrapperStyle : {}),
+      }}
+    >
+      {dragOver && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 2,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            pointerEvents: "none",
+            borderRadius: 8,
+            background: "rgba(47, 158, 68, 0.10)",
+            color: "var(--mantine-color-green-8, #2b8a3e)",
+            fontSize: "0.85rem",
+            fontWeight: 600,
+          }}
+        >
+          ここにドロップして画像を添付
+        </div>
+      )}
       <Textarea
         ref={(node: HTMLTextAreaElement | null) => {
           taRef.current = node;
@@ -3473,6 +3537,7 @@ function InlineReplyBox({
         autoFocus
         onChange={setText}
         onPaste={handlePaste}
+        onDropImages={onPick}
         placeholder={`${authorLabel} の投稿にコメント…${enterSends ? `（${SEND_HINT}）` : ""}`}
         minRows={2}
         autosize
@@ -4299,6 +4364,7 @@ function ComposerPaper({
           onChange={setText}
           onSend={() => void handleSubmit()}
           onPaste={handlePaste}
+          onDropImages={onPick}
           mb="xs"
         />
         <Group justify="flex-end" gap={6} mb="sm">
@@ -12919,6 +12985,7 @@ export default function Home() {
                                 onThreadReplyPick(files);
                               }
                             }}
+                            onDropImages={onThreadReplyPick}
                             // Enter（物理キーボード）で吠える。うなるは「うなる」ボタン（docs/composer-keys.md）。
                             onSend={() => void submitThreadReply()}
                           />
@@ -13829,6 +13896,7 @@ export default function Home() {
                   onEditPickImages(files);
                 }
               }}
+              onDropImages={onEditPickImages}
             />
             {editImages.length > 0 && (
               <Group gap="xs">
