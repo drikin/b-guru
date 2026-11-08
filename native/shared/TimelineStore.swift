@@ -3,7 +3,11 @@ import Observation
 import SwiftUI
 
 /// Chat or timeline (iPhone pages, the Mac panel switch).
-enum MainTab: Hashable { case timeline, chat, jukebox }
+enum MainTab: Hashable {
+    case timeline, chat, jukebox
+    /// iPhone: the page past the last tab — landing on it opens ✉️ DM (a swipe reaches DM like the button).
+    case dm
+}
 
 /// The timeline (root posts, newest activity first) for the native apps.
 /// Read-mostly: list + reactions + unread, open a thread, reply / post with images.

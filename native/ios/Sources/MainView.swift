@@ -120,6 +120,13 @@ struct MainView: View {
                                     .frame(width: g.size.width, height: g.size.height)
                                     .id(MainTab.jukebox)
                             }
+                            // ✉️ DM: one more page past the last tab, so a swipe reaches DM like the ✉️ button
+                            // (2026-11-08: スワイプで DM に行けない). Settling on it opens DM and goes back to the last tab.
+                            if store.dm.enabled {
+                                Text("✉️ DM").font(.title3)
+                                    .frame(width: g.size.width, height: g.size.height)
+                                    .id(MainTab.dm)
+                            }
                         }
                         .scrollTargetLayout()
                     }
@@ -217,6 +224,12 @@ private struct PagerWatcher: View {
                 settle = Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(350))
                     guard !Task.isCancelled, pager.tab == t else { return }
+                    if t == .dm {
+                        // Like the ✉️ button: DM is shown over the chat page (ChatScreen's sheet).
+                        pager.tab = .chat
+                        store.dm.openList()
+                        return
+                    }
                     pager.settledTab = t
                 }
             }
