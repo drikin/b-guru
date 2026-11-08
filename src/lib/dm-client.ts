@@ -7,6 +7,7 @@
  *   applyDmEvent()   /api/posts/stream の `event: dm`（受け取る人ごとの DTO）
  * DM は 30 日で消える: 期限を過ぎたものはここでも隠す。 */
 import { newChatClientId } from "./chat-optimistic";
+import { toggleReactionOptimistic, type OptimisticReaction } from "./reaction-optimistic";
 import {
   dropDmPhotoJob,
   dropUnsentPhotoJobs,
@@ -29,6 +30,11 @@ export type DmMessage = {
   images?: string[];
   created_at: string;
   is_author: boolean;
+  /** 送った本人が直した（「編集済み」）。古いサーバには無い。 */
+  edited?: boolean;
+  edited_at?: string | null;
+  /** リアクション（チャットと同じ形）。古いサーバ・一覧の last_message には無い／空。 */
+  reactions?: OptimisticReaction[];
   client_id?: string;
   /** 送信中（まだサーバの ID が無い: 負の ID）・失敗。 */
   pending?: boolean;
@@ -102,6 +108,16 @@ export function applyToConversations(
   const unread = m.is_author ? before : viewing ? 0 : before + 1;
   const conv: DmConversation = { peer, last_message: m, unread_count: unread };
   return [conv, ...list.filter((c) => c.peer.user_id !== peer.user_id)];
+}
+
+/** 同じ ID の発言を直したものに差し替える（リアクションは届いたものを優先、無ければ今のまま）。 */
+export function replaceEditedDm(list: DmMessage[], m: DmMessage): DmMessage[] {
+  return list.map((x) => (x.id === m.id ? { ...x, ...m, reactions: m.reactions ?? x.reactions, pending: false, failed: false } : x));
+}
+
+/** 1 件のリアクションを差し替える。 */
+export function setDmReactions(list: DmMessage[], id: number, reactions: OptimisticReaction[]): DmMessage[] {
+  return list.map((x) => (x.id === id ? { ...x, reactions } : x));
 }
 
 // ---- ネットワーク ----
@@ -309,11 +325,46 @@ export function applyDmEvent(data: unknown): void {
       unread: typeof d.unread_count === "number" && !viewing ? d.unread_count : m.is_author || viewing ? snap.unread : snap.unread + 1,
     });
     if (viewing && !m.is_author) markSeen();
+  } else if (d.action === "edit" && d.message && typeof d.message === "object") {
+    applyEdited(d.message as DmMessage);
+  } else if (d.action === "reaction" && typeof d.message_id === "number" && Array.isArray(d.reactions)) {
+    if (snap.peer?.user_id === d.peer_id) set({ messages: setDmReactions(snap.messages, d.message_id, d.reactions as OptimisticReaction[]) });
   } else if (d.action === "read" && typeof d.peer_id === "string") {
     set({
       conversations: snap.conversations.map((c) => (c.peer.user_id === d.peer_id ? { ...c, unread_count: 0 } : c)),
       unread: typeof d.unread_count === "number" ? d.unread_count : snap.unread,
     });
+  }
+}
+
+/** ✏️ 自分の DM を直す。失敗はエラー文を返す（成功は null）。 */
+export async function editDmMessage(id: number, text: string): Promise<string | null> {
+  const r = await api(`/api/dm/messages/${id}`, { method: "PATCH", body: JSON.stringify({ body: text.trim() }) });
+  if (r.status !== 200 || !r.body?.message) return r.body?.error ?? "直せませんでした";
+  applyEdited(r.body.message as DmMessage);
+  return null;
+}
+
+function applyEdited(m: DmMessage): void {
+  if (snap.peer?.user_id === m.peer_id) set({ messages: replaceEditedDm(snap.messages, m) });
+  set({
+    conversations: snap.conversations.map((c) =>
+      c.last_message.id === m.id ? { ...c, last_message: { ...c.last_message, body: m.body, edited: m.edited, edited_at: m.edited_at } } : c
+    ),
+  });
+}
+
+/** 😀 リアクションを付ける・外す（楽観的に出して、サーバの返事で置き換える。失敗したら戻す）。 */
+export async function toggleDmReaction(id: number, emoji: string, myName: string): Promise<void> {
+  const peerId = snap.peer?.user_id;
+  const before = snap.messages.find((x) => x.id === id)?.reactions ?? [];
+  set({ messages: setDmReactions(snap.messages, id, toggleReactionOptimistic(before, emoji, myName)), error: null });
+  const r = await api(`/api/dm/messages/${id}/reactions`, { method: "POST", body: JSON.stringify({ emoji }) });
+  if (snap.peer?.user_id !== peerId) return;
+  if (r.status === 200 && Array.isArray(r.body?.reactions)) {
+    set({ messages: setDmReactions(snap.messages, id, r.body.reactions as OptimisticReaction[]) });
+  } else {
+    set({ messages: setDmReactions(snap.messages, id, before), error: r.body?.error ?? "リアクションできませんでした" });
   }
 }
 

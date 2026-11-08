@@ -9,6 +9,8 @@ import {
   listDmMessages,
   markDmRead,
   sendDm,
+  editDm,
+  reactDm,
   dmEnabledFor,
   type DmActor,
 } from "./dm";
@@ -78,4 +80,16 @@ export function dmMessageApi(actor: DmActor, rawId: string): Promise<DmApiResult
     if (!hit) throw new DmError(404, "not_found", "DM が見つかりません");
     return { ...hit };
   });
+}
+
+/** PATCH 1 件を直す: { body } → { message }（自分の DM だけ）。 */
+export function dmEditApi(actor: DmActor, rawId: string, input: Record<string, unknown> | null): Promise<DmApiResult> {
+  if (!input) return Promise.resolve({ status: 400, body: { error: "JSON ボディが必要です", code: "invalid_request" } });
+  return run(actor, async () => ({ message: await editDm(actor, rawId, input.body) }));
+}
+
+/** POST リアクション: { emoji } → { added, reactions }。当事者でなければ 404。 */
+export function dmReactApi(actor: DmActor, rawId: string, input: Record<string, unknown> | null): Promise<DmApiResult> {
+  if (!input) return Promise.resolve({ status: 400, body: { error: "JSON ボディが必要です", code: "invalid_request" } });
+  return run(actor, async () => ({ ...(await reactDm(actor, rawId, input.emoji)) }));
 }

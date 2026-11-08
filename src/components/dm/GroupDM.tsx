@@ -25,6 +25,8 @@ import {
   setGroupBeagle,
   subscribeGdm,
   openGroup,
+  editGroupText,
+  toggleGroupReaction,
   type GdmSnapshot,
   type GMessage,
   type Group,
@@ -36,6 +38,8 @@ import { chatTimeStr } from "@/lib/date-format";
 import { handleComposerKeyDown } from "@/lib/composer-keys";
 import { DmDropOverlay, DmImageGrid, DmPhotoButton, DmPhotoTray, useDmPhotoDrop, useDmPhotoPicker } from "./DmPhotos";
 import { dmPreviewText } from "@/lib/dm-photos-client";
+import { mentionToken } from "@/lib/chat-mention";
+import { DmActions, DmBody, DmEditBox, EditedMark, useDmChatKit } from "./DmChatKit";
 
 const MAX_BODY = 1000;
 const MAX_NAME = 40;
@@ -309,6 +313,20 @@ export function GroupThread({ s }: { s: GdmSnapshot }) {
     [put]
   );
   const drop = useDmPhotoDrop(picker, s.canSend && !members);
+  const kit = useDmChatKit();
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // ↩️ 返信: 入力欄の先頭に @名前（チャットの replyChatTo と同じ）
+  const replyTo = (name: string) => {
+    const token = mentionToken(name);
+    setDraft((cur) => (cur.startsWith(token) ? cur : token + cur.replace(/^\s+/, "")));
+    requestAnimationFrame(() => {
+      const ta = inputRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    });
+  };
   const viewport = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = viewport.current;
@@ -337,7 +355,23 @@ export function GroupThread({ s }: { s: GdmSnapshot }) {
               グループ DM（30 日で消えます）
             </Text>
           ) : (
-            s.messages.map((m, i) => <GBubble key={m.client_id ?? m.id} m={m} prev={s.messages[i - 1]} />)
+            s.messages.map((m, i) => (
+              <GBubble
+                key={m.client_id ?? m.id}
+                m={m}
+                prev={s.messages[i - 1]}
+                editing={editingId === m.id}
+                onToggleReaction={kit && m.id > 0 && m.kind === "text" ? (emoji) => void toggleGroupReaction(m.id, emoji, kit.myName) : undefined}
+                onReply={!m.is_author && !m.is_beagle && m.from_name && s.canSend ? () => replyTo(m.from_name!) : undefined}
+                onEdit={m.is_author && m.id > 0 && !m.pending && !m.failed ? () => setEditingId(m.id) : undefined}
+                onSaveEdit={async (text) => {
+                  const err = await editGroupText(m.id, text);
+                  if (!err) setEditingId(null);
+                  return err;
+                }}
+                onCancelEdit={() => setEditingId(null)}
+              />
+            ))
           )}
         </Stack>
       </ScrollArea>
@@ -353,6 +387,7 @@ export function GroupThread({ s }: { s: GdmSnapshot }) {
           <MGroup gap={6} align="flex-end" wrap="nowrap">
             <DmPhotoButton picker={picker} />
             <Textarea
+              ref={inputRef}
               style={{ flex: 1 }}
               autosize
               minRows={1}
@@ -381,7 +416,25 @@ export function GroupThread({ s }: { s: GdmSnapshot }) {
   );
 }
 
-function GBubble({ m, prev }: { m: GMessage; prev?: GMessage }) {
+function GBubble({
+  m,
+  prev,
+  editing,
+  onToggleReaction,
+  onReply,
+  onEdit,
+  onSaveEdit,
+  onCancelEdit,
+}: {
+  m: GMessage;
+  prev?: GMessage;
+  editing: boolean;
+  onToggleReaction?: (emoji: string) => void;
+  onReply?: () => void;
+  onEdit?: () => void;
+  onSaveEdit: (text: string) => Promise<string | null>;
+  onCancelEdit: () => void;
+}) {
   if (m.kind === "system") {
     return (
       <Text size="xs" c="dimmed" ta="center" py={2} data-cx="gdm-system">
@@ -392,6 +445,9 @@ function GBubble({ m, prev }: { m: GMessage; prev?: GMessage }) {
   const mine = m.is_author;
   // 同じ人が続けて話したら名前とアイコンは最初だけ
   const showName = !mine && (!prev || prev.kind === "system" || prev.from_id !== m.from_id);
+  const actions = (
+    <DmActions reactions={m.reactions ?? []} onToggleReaction={onToggleReaction} replyName={m.from_name} onReply={onReply} onEdit={onEdit} />
+  );
   return (
     <div style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start", gap: 6, opacity: m.pending ? 0.6 : 1 }}>
       {!mine && (
@@ -412,6 +468,18 @@ function GBubble({ m, prev }: { m: GMessage; prev?: GMessage }) {
             {m.from_name ?? "会員"}
           </Text>
         )}
+        {editing ? (
+          <>
+            {(m.images?.length ?? 0) > 0 && (
+              <div style={{ marginBottom: 6 }}>
+                <DmImageGrid urls={m.images} />
+              </div>
+            )}
+            <DmEditBox initial={m.body} allowEmpty={(m.images?.length ?? 0) > 0} maxLength={MAX_BODY} onSave={onSaveEdit} onCancel={onCancelEdit} />
+          </>
+        ) : (
+        <MGroup gap={4} align="center" wrap="nowrap" justify={mine ? "flex-end" : "flex-start"} style={{ maxWidth: "100%" }}>
+        {mine && actions}
         <div
           style={{
             background: mine ? "var(--bg-surface, var(--mantine-color-body))" : "var(--bg-subtle, var(--mantine-color-gray-1))",
@@ -429,8 +497,11 @@ function GBubble({ m, prev }: { m: GMessage; prev?: GMessage }) {
               <DmImageGrid urls={m.images} />
             </div>
           )}
-          {m.body}
+          <DmBody body={m.body} />
         </div>
+        {!mine && actions}
+        </MGroup>
+        )}
         <MGroup gap={6}>
           {m.failed ? (
             <>
@@ -445,9 +516,12 @@ function GBubble({ m, prev }: { m: GMessage; prev?: GMessage }) {
               </Button>
             </>
           ) : (
-            <Text size="xs" c="dimmed" style={{ opacity: 0.7 }}>
-              {chatTimeStr(m.created_at)}
-            </Text>
+            <>
+              {m.edited && <EditedMark />}
+              <Text size="xs" c="dimmed" style={{ opacity: 0.7 }}>
+                {chatTimeStr(m.created_at)}
+              </Text>
+            </>
           )}
         </MGroup>
       </div>

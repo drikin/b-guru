@@ -778,6 +778,9 @@ export async function initSchema() {
     ALTER TABLE gdm_messages ADD COLUMN IF NOT EXISTS images TEXT[] NOT NULL DEFAULT '{}';
     CREATE INDEX IF NOT EXISTS idx_dm_images ON dm_messages USING GIN (images);
     CREATE INDEX IF NOT EXISTS idx_gdm_images ON gdm_messages USING GIN (images);
+    -- ✉️👥 DM の編集（チャットと同じ「タイポを修正」。編集した時刻、NULL なら編集なし）。
+    ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+    ALTER TABLE gdm_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
     CREATE TABLE IF NOT EXISTS dm_uploads (
       name TEXT PRIMARY KEY,
       uploader_email TEXT NOT NULL,

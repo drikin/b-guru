@@ -37,6 +37,9 @@ describe("toDmDto", () => {
       images: [],
       created_at: "2026-10-24T01:02:03.000Z",
       is_author: true,
+      edited: false,
+      edited_at: null,
+      reactions: [],
       client_id: "cid",
     });
     const theirs = toDmDto(row, B, ids, "cid");

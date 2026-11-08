@@ -17,6 +17,8 @@ import {
   GDM_PHOTO_MAX_BYTES,
   sendGroupMessage,
   updateGroup,
+  editGroupMessage,
+  reactGroupMessage,
 } from "./gdm";
 
 export const GDM_API_VERSION = 1;
@@ -96,6 +98,14 @@ export const gdmMessageApi = (actor: DmActor, rawId: string) =>
     if (!hit) throw new DmError(404, "not_found", "グループ DM が見つかりません");
     return { ...hit };
   });
+
+/** PATCH 1 件を直す: { body } → { message }（自分の発言だけ）。 */
+export const gdmEditApi = (actor: DmActor, rawId: string, input: Record<string, unknown> | null) =>
+  input ? run(actor, async () => ({ message: await editGroupMessage(actor, rawId, input.body) })) : Promise.resolve(NEED_JSON);
+
+/** POST リアクション: { emoji } → { added, reactions }。 */
+export const gdmReactApi = (actor: DmActor, rawId: string, input: Record<string, unknown> | null) =>
+  input ? run(actor, async () => ({ ...(await reactGroupMessage(actor, rawId, input.emoji)) })) : Promise.resolve(NEED_JSON);
 
 /** POST 写真（multipart の photo）→ { group }。 */
 export async function gdmSetPhotoApi(actor: DmActor, gid: string, req: Request): Promise<DmApiResult> {

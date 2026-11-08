@@ -91,7 +91,8 @@ import { applyRoomEvent, reloadRoomIfOn, roomChatBubble } from "@/lib/room-clien
 import { ShogiChatCard, ShogiPanel } from "@/components/shogi/ShogiPanel";
 import { GameToggles, MinigamePanel } from "@/components/minigame/MinigamePanel";
 import { DmDrawer, DmNameMenu, DmTabLabel, useDmEnabled } from "@/components/dm/DMPanel";
-import { applyDmEvent, openDmList } from "@/lib/dm-client";
+import { applyDmEvent, closeDm, openDmList } from "@/lib/dm-client";
+import { DmChatKitProvider, type DmChatKit } from "@/components/dm/DmChatKit";
 import { applyGdmEvent, closeGroup } from "@/lib/gdm-client";
 import { applyMinigameEvent, reloadMinigame } from "@/lib/minigame-client";
 import { applyWatchEvent, isYoutubeVideoUrl, reloadWatch } from "@/lib/watch-client";
@@ -9393,6 +9394,24 @@ export default function Home() {
     [chatReactions, customEmojis, handleToggleChatReaction, handleRegisterEmoji, handleDeleteEmoji, auth]
   );
 
+  // ✉️👥 DM をチャットと同じ機能に（docs/dm-chat-parity-spec.md）: 本文の描き方・カスタム絵文字・自分の名前を DM の引き出しへ。
+  // 投稿リンクを押したら DM を閉じてタイムラインでスレッドを開く（チャットと同じ行き先）。
+  // （openPostFromChat は毎回作り直されるので、この値も毎回作り直される。DM の引き出しは小さいので気にしない。）
+  const dmChatKit = useMemo<DmChatKit>(
+    () => ({
+      renderBody: (body: string) =>
+        renderChatBody(body, mentionMembers, auth?.userId || "", (postId) => {
+          closeDm();
+          openPostFromChat(postId);
+        }),
+      customEmojis,
+      onRegisterEmoji: auth ? handleRegisterEmoji : undefined,
+      onDeleteEmoji: auth ? handleDeleteEmoji : undefined,
+      myName: myReactorName,
+    }),
+    [mentionMembers, auth, customEmojis, handleRegisterEmoji, handleDeleteEmoji, myReactorName, openPostFromChat]
+  );
+
   // Pin / unpin own post. The right-sidebar panel is the canonical home for
   // pins now, so refresh it (and the feed) when a pin changes.
   const handlePin = (postId: number) => {
@@ -12197,7 +12216,9 @@ export default function Home() {
               )}
 
               {/* DM の引き出しはどの画面でも（上のタブの ✉️ DM から開ける） */}
-              <DmDrawer />
+              <DmChatKitProvider value={dmChatKit}>
+                <DmDrawer />
+              </DmChatKitProvider>
               {showChatView ? (
                 <div
                   key="chat-main"

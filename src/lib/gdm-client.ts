@@ -7,6 +7,7 @@
  *   applyGdmEvent()    /api/posts/stream の `event: gdm`
  * 発言は 30 日で消える: 期限を過ぎたものはここでも隠す。 */
 import { newChatClientId } from "./chat-optimistic";
+import { toggleReactionOptimistic, type OptimisticReaction } from "./reaction-optimistic";
 import {
   dropDmPhotoJob,
   dropUnsentPhotoJobs,
@@ -47,6 +48,11 @@ export type GMessage = {
   is_author: boolean;
   /** 🐶 ビーグルの答え。 */
   is_beagle?: boolean;
+  /** 送った本人が直した（「編集済み」）。古いサーバには無い。 */
+  edited?: boolean;
+  edited_at?: string | null;
+  /** リアクション（チャットと同じ形）。古いサーバ・一覧の last_message には無い／空。 */
+  reactions?: OptimisticReaction[];
   client_id?: string;
   pending?: boolean;
   failed?: boolean;
@@ -99,6 +105,16 @@ export function applyToGroups(list: GroupSummary[], m: GMessage, viewing: boolea
   const counts = m.kind === "text" && !m.is_author && !viewing;
   const unread = viewing ? 0 : prev.unread_count + (counts ? 1 : 0);
   return [{ ...prev, last_message: m, unread_count: unread }, ...list.filter((g) => g.group.id !== m.group_id)];
+}
+
+/** 同じ ID の発言を直したものに差し替える（リアクションは届いたものを優先、無ければ今のまま）。 */
+export function replaceEditedG(list: GMessage[], m: GMessage): GMessage[] {
+  return list.map((x) => (x.id === m.id ? { ...x, ...m, reactions: m.reactions ?? x.reactions, pending: false, failed: false } : x));
+}
+
+/** 1 件のリアクションを差し替える。 */
+export function setGReactions(list: GMessage[], id: number, reactions: OptimisticReaction[]): GMessage[] {
+  return list.map((x) => (x.id === id ? { ...x, reactions } : x));
 }
 
 /** 一度に出す候補の上限。 */
@@ -360,6 +376,37 @@ export async function removeGroupMember(id: number, userId: string, self: boolea
   return err;
 }
 
+/** ✏️ 自分の発言を直す。失敗はエラー文を返す（成功は null）。 */
+export async function editGroupText(id: number, text: string): Promise<string | null> {
+  const r = await api(`/api/gdm/messages/${id}`, { method: "PATCH", body: JSON.stringify({ body: text.trim() }) });
+  if (r.status !== 200 || !r.body?.message) return r.body?.error ?? "直せませんでした";
+  applyEditedG(r.body.message as GMessage);
+  return null;
+}
+
+function applyEditedG(m: GMessage): void {
+  if (snap.current?.id === m.group_id) set({ messages: replaceEditedG(snap.messages, m) });
+  set({
+    groups: snap.groups.map((g) =>
+      g.last_message?.id === m.id ? { ...g, last_message: { ...g.last_message, body: m.body, edited: m.edited, edited_at: m.edited_at } } : g
+    ),
+  });
+}
+
+/** 😀 リアクションを付ける・外す（楽観的に出して、サーバの返事で置き換える。失敗したら戻す）。 */
+export async function toggleGroupReaction(id: number, emoji: string, myName: string): Promise<void> {
+  const gid = snap.current?.id;
+  const before = snap.messages.find((x) => x.id === id)?.reactions ?? [];
+  set({ messages: setGReactions(snap.messages, id, toggleReactionOptimistic(before, emoji, myName)), error: null });
+  const r = await api(`/api/gdm/messages/${id}/reactions`, { method: "POST", body: JSON.stringify({ emoji }) });
+  if (snap.current?.id !== gid) return;
+  if (r.status === 200 && Array.isArray(r.body?.reactions)) {
+    set({ messages: setGReactions(snap.messages, id, r.body.reactions as OptimisticReaction[]) });
+  } else {
+    set({ messages: setGReactions(snap.messages, id, before), error: r.body?.error ?? "リアクションできませんでした" });
+  }
+}
+
 /** /api/posts/stream の `event: gdm`。 */
 export function applyGdmEvent(data: unknown): void {
   if (!data || typeof data !== "object") return;
@@ -380,6 +427,10 @@ export function applyGdmEvent(data: unknown): void {
     const counts = m.kind === "text" && !m.is_author && !viewing;
     set({ groups: next, unread: typeof d.group_unread_count === "number" && !viewing ? d.group_unread_count : snap.unread + (counts ? 1 : 0) });
     if (viewing && !m.is_author) markSeen();
+  } else if (d.action === "edit" && d.message && typeof d.message === "object") {
+    applyEditedG(d.message as GMessage);
+  } else if (d.action === "reaction" && typeof d.message_id === "number" && Array.isArray(d.reactions)) {
+    if (snap.current?.id === d.group_id) set({ messages: setGReactions(snap.messages, d.message_id, d.reactions as OptimisticReaction[]) });
   } else if (d.action === "read" && typeof d.group_id === "number") {
     set({
       groups: snap.groups.map((x) => (x.group.id === d.group_id ? { ...x, unread_count: Number(d.unread_count ?? 0) } : x)),

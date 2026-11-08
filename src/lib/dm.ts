@@ -17,6 +17,7 @@ import { featureEnabledFor } from "./feature-flag";
 import { emitPersonal } from "./personal-live";
 import { pushDm, syncRead } from "./push-notify";
 import { allUploadedBy, parseDmImages, purgeDmMedia, DM_MAX_IMAGES } from "./dm-media";
+import { getReactions, toggleReaction, type ReactionSummary } from "./reactions";
 
 export const DM_FLAG = "DM_ENABLED";
 export function dmEnabledFor(email: string | null | undefined): boolean {
@@ -65,6 +66,11 @@ export type DmMessageDto = {
   created_at: string;
   /** 見る人が送ったものか。 */
   is_author: boolean;
+  /** 送った本人が直した（チャットと同じ「タイポを修正」、「編集済み」と出す）。 */
+  edited: boolean;
+  edited_at: string | null;
+  /** リアクション（チャットと同じ形。mine は見る人から見て）。一覧の last_message などでは空。 */
+  reactions: ReactionSummary[];
   /** 送った本人の端末にだけ返す（楽観的に出した吹き出しと突き合わせる）。 */
   client_id?: string;
 };
@@ -82,6 +88,7 @@ type DmRow = {
   body: string;
   images?: string[] | null;
   created_at: Date | string;
+  edited_at?: Date | string | null;
 };
 
 export function normEmail(e: string): string {
@@ -108,7 +115,13 @@ export function normalizeDmClientId(v: unknown): string | null {
 }
 
 /** 行 → 見る人ごとの DTO（純粋関数）。ids: email → user_id。 */
-export function toDmDto(r: DmRow, viewerEmail: string, ids: Map<string, string>, clientId?: string | null): DmMessageDto {
+export function toDmDto(
+  r: DmRow,
+  viewerEmail: string,
+  ids: Map<string, string>,
+  clientId?: string | null,
+  reactions: ReactionSummary[] = []
+): DmMessageDto {
   const from = normEmail(r.sender_email);
   const to = normEmail(r.recipient_email);
   const mine = from === normEmail(viewerEmail);
@@ -123,6 +136,9 @@ export function toDmDto(r: DmRow, viewerEmail: string, ids: Map<string, string>,
     images: r.images ?? [],
     created_at: new Date(r.created_at).toISOString(),
     is_author: mine,
+    edited: !!r.edited_at,
+    edited_at: r.edited_at ? new Date(r.edited_at).toISOString() : null,
+    reactions,
   };
   if (mine && clientId) dto.client_id = clientId;
   return dto;
@@ -196,7 +212,7 @@ export async function listDmConversations(actor: DmActor): Promise<{ conversatio
   const me = normEmail(actor.email);
   const r = await pool.query(
     `WITH mine AS (
-       SELECT id, sender_email, recipient_email, body, images, created_at,
+       SELECT id, sender_email, recipient_email, body, images, created_at, edited_at,
               CASE WHEN sender_email = $1 THEN recipient_email ELSE sender_email END AS peer
          FROM dm_messages
         WHERE (sender_email = $1 OR recipient_email = $1)
@@ -245,7 +261,7 @@ export async function listDmMessages(
   const limit = Math.min(Math.max(opts.limit ?? DM_PAGE_LIMIT, 1), DM_PAGE_LIMIT);
   const [res, read, names, canSend] = await Promise.all([
     pool.query(
-      `SELECT id, sender_email, recipient_email, body, images, created_at
+      `SELECT id, sender_email, recipient_email, body, images, created_at, edited_at
          FROM dm_messages
         WHERE ((sender_email = $1 AND recipient_email = $2) OR (sender_email = $2 AND recipient_email = $1))
           AND created_at >= now() - ($3::text)::interval
@@ -264,7 +280,8 @@ export async function listDmMessages(
   ]);
   const rows = (res.rows as DmRow[]).reverse();
   const lastRead = Number(read.rows[0]?.last_read_id ?? 0);
-  const messages = rows.map((r) => toDmDto(r, me, ids));
+  const reacts = await getReactions("dm", rows.map((r) => r.id), me);
+  const messages = rows.map((r) => toDmDto(r, me, ids, null, reacts.get(r.id) ?? []));
   const unread = messages.filter((m) => !m.is_author && m.id > lastRead).length;
   return { peer: peerDto(peer.email, peer.userId, names), messages, unread_count: unread, last_read_id: lastRead, can_send: canSend };
 }
@@ -278,7 +295,7 @@ async function peerCanReceive(email: string): Promise<boolean> {
 export async function getDmMessage(actor: DmActor, id: number): Promise<{ message: DmMessageDto; peer: DmPeer } | null> {
   const me = normEmail(actor.email);
   const r = await pool.query(
-    `SELECT id, sender_email, recipient_email, body, images, created_at
+    `SELECT id, sender_email, recipient_email, body, images, created_at, edited_at
        FROM dm_messages
       WHERE id = $1 AND (sender_email = $2 OR recipient_email = $2)
         AND created_at >= now() - ($3::text)::interval`,
@@ -291,7 +308,8 @@ export async function getDmMessage(actor: DmActor, id: number): Promise<{ messag
   ids.set(me, actor.userId);
   const peerId = ids.get(peerEmail);
   if (!peerId) return null;
-  return { message: toDmDto(row, me, ids), peer: peerDto(peerEmail, peerId, names) };
+  const reacts = await getReactions("dm", [row.id], me);
+  return { message: toDmDto(row, me, ids, null, reacts.get(row.id) ?? []), peer: peerDto(peerEmail, peerId, names) };
 }
 
 /** 既読を進める（単調）。自分のほかの端末にも知らせる。返り値は未読の合計。 */
@@ -375,7 +393,7 @@ async function insertDm(actor: DmActor, peerId: unknown, body: string, clientId:
 
   const ins = await pool.query(
     `INSERT INTO dm_messages (sender_email, recipient_email, body, images) VALUES ($1, $2, $3, $4::text[])
-     RETURNING id, sender_email, recipient_email, body, images, created_at`,
+     RETURNING id, sender_email, recipient_email, body, images, created_at, edited_at`,
     [me, peer.email, body, images]
   );
   const row = ins.rows[0] as DmRow;
@@ -420,7 +438,7 @@ export async function sendSystemDm(recipientEmail: string, rawBody: string): Pro
   const body = rawBody.slice(0, DM_MAX_BODY);
   const ins = await pool.query(
     `INSERT INTO dm_messages (sender_email, recipient_email, body) VALUES ($1, $2, $3)
-     RETURNING id, sender_email, recipient_email, body, images, created_at`,
+     RETURNING id, sender_email, recipient_email, body, images, created_at, edited_at`,
     [SYSTEM_EMAIL, to, body]
   );
   const row = ins.rows[0] as DmRow;
@@ -436,6 +454,127 @@ export async function sendSystemDm(recipientEmail: string, rawBody: string): Pro
   return row.id;
 }
 
+/** 編集・リアクションの対象の 1 件（当事者で、30 日以内）。無ければ 404。 */
+async function loadOwnPairMessage(actor: DmActor, rawId: unknown): Promise<DmRow> {
+  const id = Number(rawId);
+  if (!Number.isInteger(id) || id <= 0 || id > 2147483647) throw new DmError(400, "invalid_request", "不正な ID です");
+  const me = normEmail(actor.email);
+  const r = await pool.query(
+    `SELECT id, sender_email, recipient_email, body, images, created_at, edited_at
+       FROM dm_messages
+      WHERE id = $1 AND (sender_email = $2 OR recipient_email = $2)
+        AND created_at >= now() - ($3::text)::interval`,
+    [id, me, DM_TTL]
+  );
+  const row = r.rows[0] as DmRow | undefined;
+  if (!row) throw new DmError(404, "not_found", "DM が見つかりません");
+  return row;
+}
+
+/** 当事者 2 人の email → user_id。 */
+async function pairIds(row: DmRow): Promise<Map<string, string>> {
+  const a = normEmail(row.sender_email);
+  const b = normEmail(row.recipient_email);
+  if (a === SYSTEM_EMAIL || b === SYSTEM_EMAIL) await ensureUserId(SYSTEM_EMAIL);
+  return emailToUserIds([a, b]);
+}
+
+/** ✏️ 自分の発言を直す（チャットの「タイポを修正」と同じ）。本文だけ、写真はそのまま。写真があれば本文を空にもできる。
+ *  当事者 2 人の画面に `action: "edit"` で知らせる（push はしない）。 */
+export async function editDm(actor: DmActor, rawId: unknown, rawBody: unknown): Promise<DmMessageDto> {
+  const me = normEmail(actor.email);
+  if (!dmEnabledFor(me)) throw new DmError(403, "forbidden", "DM はまだ使えません");
+  const row = await loadOwnPairMessage(actor, rawId);
+  if (normEmail(row.sender_email) !== me) throw new DmError(403, "forbidden", "自分の DM だけ直せます");
+  const checked = normalizeDmBody(rawBody);
+  const body = checked.ok ? checked.body : checked.error === "empty" && (row.images?.length ?? 0) > 0 ? "" : null;
+  if (body == null) {
+    throw new DmError(400, "invalid_request", !checked.ok && checked.error === "empty" ? "本文が空です" : `本文が長すぎます（${DM_MAX_BODY} 文字まで）`);
+  }
+  const up = await pool.query(
+    `UPDATE dm_messages SET body = $2, edited_at = now()
+      WHERE id = $1 AND sender_email = $3 AND created_at >= now() - ($4::text)::interval
+      RETURNING id, sender_email, recipient_email, body, images, created_at, edited_at`,
+    [row.id, body, me, DM_TTL]
+  );
+  const next = up.rows[0] as DmRow | undefined;
+  if (!next) throw new DmError(404, "not_found", "DM が見つかりません");
+  const ids = await pairIds(next);
+  ids.set(me, actor.userId);
+  const peer = normEmail(next.recipient_email);
+  const reacts = await Promise.all([getReactions("dm", [next.id], me), getReactions("dm", [next.id], peer)]);
+  const mine = toDmDto(next, me, ids, null, reacts[0].get(next.id) ?? []);
+  emitPersonal(me, { type: "dm", data: { action: "edit", message: mine } });
+  emitPersonal(peer, { type: "dm", data: { action: "edit", message: toDmDto(next, peer, ids, null, reacts[1].get(next.id) ?? []) } });
+  return mine;
+}
+
+/** 😀 リアクションを付ける・外す（チャットと同じ絵文字・カスタム絵文字。ビーグルからの DM にも付けられる）。
+ *  当事者 2 人の画面に `action: "reaction"` で知らせる（mine は見る人ごと）。 */
+export async function reactDm(
+  actor: DmActor,
+  rawId: unknown,
+  rawEmoji: unknown
+): Promise<{ added: boolean; reactions: ReactionSummary[] }> {
+  const me = normEmail(actor.email);
+  if (!dmEnabledFor(me)) throw new DmError(403, "forbidden", "DM はまだ使えません");
+  const emoji = typeof rawEmoji === "string" ? rawEmoji : "";
+  if (!emoji) throw new DmError(400, "invalid_request", "emoji が必要です");
+  const row = await loadOwnPairMessage(actor, rawId);
+  const rate = await checkReactRate(me);
+  if (!rate.allowed) throw new DmError(429, "rate_limited", "リアクションが多すぎます。しばらく待ってください", rate.retryAfter);
+  const r = await toggleReactionOr400("dm", row.id, me, emoji);
+  const ids = await pairIds(row);
+  ids.set(me, actor.userId);
+  const sender = normEmail(row.sender_email);
+  const recipient = normEmail(row.recipient_email);
+  for (const viewer of [sender, recipient]) {
+    if (viewer === SYSTEM_EMAIL) continue;
+    const list = viewer === me ? r.reactions : ((await getReactions("dm", [row.id], viewer)).get(row.id) ?? []);
+    const peerEmail = viewer === sender ? recipient : sender;
+    emitPersonal(viewer, {
+      type: "dm",
+      data: { action: "reaction", peer_id: ids.get(peerEmail) ?? "", message_id: row.id, reactions: list },
+    });
+  }
+  return r;
+}
+
+/** toggleReaction の失敗（絵文字が不正・登録されていない）を 400 / 404 に。✉️ と 👥 で共通。 */
+export async function toggleReactionOr400(
+  target: "dm" | "gdm",
+  id: number,
+  email: string,
+  emoji: string
+): Promise<{ added: boolean; reactions: ReactionSummary[] }> {
+  try {
+    return await toggleReaction(target, id, email, emoji);
+  } catch (e) {
+    const msg = (e as Error)?.message;
+    if (msg === "invalid_emoji") throw new DmError(400, "invalid_request", "不正な絵文字です");
+    if (msg === "unknown_emoji") throw new DmError(404, "not_found", "その絵文字は登録されていません");
+    throw e;
+  }
+}
+
+/** リアクションの回数制限（1 人あたり 1 時間 300 回。送信の 60 件とは別のカウンタ、鍵は dm-react:<email>）。✉️ と 👥 で共通。 */
+export const DM_REACT_RATE_LIMIT = 300;
+export async function checkReactRate(email: string): Promise<{ allowed: boolean; retryAfter: number }> {
+  const res = await pool.query(
+    `INSERT INTO rate_limits (key, window_start, count)
+     VALUES ($1, now(), 1)
+     ON CONFLICT (key) DO UPDATE SET
+       window_start = CASE WHEN rate_limits.window_start < now() - interval '1 hour' THEN now() ELSE rate_limits.window_start END,
+       count = CASE WHEN rate_limits.window_start < now() - interval '1 hour' THEN 1 ELSE rate_limits.count + 1 END
+     RETURNING count, window_start`,
+    [`dm-react:${normEmail(email)}`]
+  );
+  const count = Number(res.rows[0].count);
+  if (count <= DM_REACT_RATE_LIMIT) return { allowed: true, retryAfter: 0 };
+  const started = new Date(res.rows[0].window_start).getTime();
+  return { allowed: false, retryAfter: Math.max(1, Math.ceil((started + 3600_000 - Date.now()) / 1000)) };
+}
+
 /** 30 日を過ぎた DM と、それより古い既読の記録を消す。消した DM の件数を返す。 */
 export async function purgeExpiredDm(): Promise<number> {
   const r = await pool.query(`DELETE FROM dm_messages WHERE created_at < now() - ($1::text)::interval`, [DM_TTL]);
@@ -443,6 +582,13 @@ export async function purgeExpiredDm(): Promise<number> {
   await pool.query(`DELETE FROM dm_read_state WHERE updated_at < now() - ($1::text)::interval - interval '1 hour'`, [DM_TTL]);
   // 👥 グループ DM の発言も同じ 30 日（lib/gdm.ts。循環を避けてここで直接消す）。
   await pool.query(`DELETE FROM gdm_messages WHERE created_at < now() - ($1::text)::interval`, [DM_TTL]);
+  // 消えた発言（1 対 1・グループ）のリアクション。
+  await pool.query(
+    `DELETE FROM reactions r WHERE r.target_type = 'dm' AND NOT EXISTS (SELECT 1 FROM dm_messages m WHERE m.id = r.target_id)`
+  );
+  await pool.query(
+    `DELETE FROM reactions r WHERE r.target_type = 'gdm' AND NOT EXISTS (SELECT 1 FROM gdm_messages m WHERE m.id = r.target_id)`
+  );
   // 写真（期限を過ぎたもの・送られなかったもの）。
   await purgeDmMedia(DM_TTL).catch((e) => console.error("dm media purge:", (e as Error)?.message));
   return r.rowCount ?? 0;
@@ -475,7 +621,12 @@ export function dmCapability(enabled: boolean, scopes: string[]) {
     upload_path: "/api/agent/dm/upload",
     ttl_hours: DM_TTL_HOURS,
     rate_limit_per_hour: DM_RATE_LIMIT,
+    // ✏️ 自分の発言を直す: PATCH {path}/messages/:id { body } → { message }（グループは /api/agent/gdm/messages/:id）。
+    edit: true,
+    // 😀 リアクション: POST {path}/messages/:id/reactions { emoji } → { added, reactions }（チャットと同じ絵文字・カスタム絵文字）。
+    reactions: true,
     // stream: event "dm" — { action: "create", message, peer, unread_count? } / { action: "read", peer_id, last_read_id, unread_count }
+    //   / { action: "edit", message } / { action: "reaction", peer_id, message_id, reactions }
     stream_event: "dm",
   };
 }

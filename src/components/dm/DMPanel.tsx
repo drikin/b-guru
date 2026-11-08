@@ -19,6 +19,8 @@ import {
   pruneNow,
   retryDm,
   onDmRestore,
+  editDmMessage,
+  toggleDmReaction,
   sendDmMessage,
   subscribe,
   type DmMessage,
@@ -31,6 +33,7 @@ import { DmDropOverlay, DmImageGrid, DmPhotoButton, DmPhotoTray, useDmPhotoDrop,
 import { dmPreviewText } from "@/lib/dm-photos-client";
 import { closeGroup, loadGdm, pruneGdmNow } from "@/lib/gdm-client";
 import { CreateGroupModal, GroupRow, GroupThread, NewDmModal, useGdm } from "./GroupDM";
+import { DmActions, DmBody, DmEditBox, EditedMark, useDmChatKit } from "./DmChatKit";
 
 const DM_MAX_BODY = 1000;
 
@@ -296,6 +299,8 @@ function DmThread({ s, peer }: { s: DmSnapshot; peer: DmPeer }) {
     [put]
   );
   const drop = useDmPhotoDrop(picker, s.canSend);
+  const kit = useDmChatKit();
+  const [editingId, setEditingId] = useState<number | null>(null);
   const viewport = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = viewport.current;
@@ -323,7 +328,21 @@ function DmThread({ s, peer }: { s: DmSnapshot; peer: DmPeer }) {
               {peer.name ?? "会員"} さんとの DM（30 日で消えます）
             </Text>
           ) : (
-            s.messages.map((m) => <DmBubble key={m.client_id ?? m.id} m={m} />)
+            s.messages.map((m) => (
+              <DmBubble
+                key={m.client_id ?? m.id}
+                m={m}
+                editing={editingId === m.id}
+                onToggleReaction={kit && m.id > 0 ? (emoji) => void toggleDmReaction(m.id, emoji, kit.myName) : undefined}
+                onEdit={m.is_author && m.id > 0 && !m.pending && !m.failed ? () => setEditingId(m.id) : undefined}
+                onSaveEdit={async (text) => {
+                  const err = await editDmMessage(m.id, text);
+                  if (!err) setEditingId(null);
+                  return err;
+                }}
+                onCancelEdit={() => setEditingId(null)}
+              />
+            ))
           )}
         </Stack>
       </ScrollArea>
@@ -367,11 +386,38 @@ function DmThread({ s, peer }: { s: DmSnapshot; peer: DmPeer }) {
   );
 }
 
-function DmBubble({ m }: { m: DmMessage }) {
+function DmBubble({
+  m,
+  editing,
+  onToggleReaction,
+  onEdit,
+  onSaveEdit,
+  onCancelEdit,
+}: {
+  m: DmMessage;
+  editing: boolean;
+  onToggleReaction?: (emoji: string) => void;
+  onEdit?: () => void;
+  onSaveEdit: (text: string) => Promise<string | null>;
+  onCancelEdit: () => void;
+}) {
   const mine = m.is_author;
+  const actions = <DmActions reactions={m.reactions ?? []} onToggleReaction={onToggleReaction} onEdit={onEdit} />;
   return (
     <div style={{ display: "flex", justifyContent: mine ? "flex-end" : "flex-start", opacity: m.pending ? 0.6 : 1 }}>
       <div style={{ maxWidth: "82%", display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start" }}>
+        {editing ? (
+          <>
+            {(m.images?.length ?? 0) > 0 && (
+              <div style={{ marginBottom: 6 }}>
+                <DmImageGrid urls={m.images} />
+              </div>
+            )}
+            <DmEditBox initial={m.body} allowEmpty={(m.images?.length ?? 0) > 0} maxLength={DM_MAX_BODY} onSave={onSaveEdit} onCancel={onCancelEdit} />
+          </>
+        ) : (
+        <Group gap={4} align="center" wrap="nowrap" justify={mine ? "flex-end" : "flex-start"} style={{ maxWidth: "100%" }}>
+        {mine && actions}
         <div
           style={{
             background: mine ? "var(--bg-surface, var(--mantine-color-body))" : "var(--bg-subtle, var(--mantine-color-gray-1))",
@@ -389,8 +435,11 @@ function DmBubble({ m }: { m: DmMessage }) {
               <DmImageGrid urls={m.images} />
             </div>
           )}
-          {m.body}
+          <DmBody body={m.body} />
         </div>
+        {!mine && actions}
+        </Group>
+        )}
         <Group gap={6}>
           {m.failed ? (
             <>
@@ -405,9 +454,12 @@ function DmBubble({ m }: { m: DmMessage }) {
               </Button>
             </>
           ) : (
-            <Text size="xs" c="dimmed" style={{ opacity: 0.7 }}>
-              {chatTimeStr(m.created_at)}
-            </Text>
+            <>
+              {m.edited && <EditedMark />}
+              <Text size="xs" c="dimmed" style={{ opacity: 0.7 }}>
+                {chatTimeStr(m.created_at)}
+              </Text>
+            </>
           )}
         </Group>
       </div>

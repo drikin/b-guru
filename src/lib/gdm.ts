@@ -18,6 +18,7 @@ import { resolveDisplayNames } from "./display-name";
 import { emailToUserIds } from "./user";
 import { featureEnabledFor } from "./feature-flag";
 import { emitPersonal } from "./personal-live";
+import { getReactions, type ReactionSummary } from "./reactions";
 import { pushGdm, syncRead } from "./push-notify";
 import { asksBeagle, stripBeagleCall } from "./beagle-call";
 import { sanitizeBeagleAnswer } from "./beagle-ondevice";
@@ -32,6 +33,8 @@ import {
   DmError,
   checkDmImages,
   checkDmRate,
+  checkReactRate,
+  toggleReactionOr400,
   dmEnabledFor,
   isActiveMember,
   normEmail,
@@ -82,6 +85,11 @@ export type GMessageDto = {
   images: string[];
   created_at: string;
   is_author: boolean;
+  /** 送った本人が直した（チャットと同じ「タイポを修正」、「編集済み」と出す）。 */
+  edited: boolean;
+  edited_at: string | null;
+  /** リアクション（チャットと同じ形。mine は見る人から見て）。一覧の last_message などでは空。 */
+  reactions: ReactionSummary[];
   /** 🐶 ビーグルの答え（kind は古いアプリのため "text" のまま、送り主は「ビーグル」）。 */
   is_beagle?: boolean;
   client_id?: string;
@@ -90,7 +98,16 @@ export type GroupSummaryDto = { group: GroupDto; last_message: GMessageDto | nul
 
 type GroupRow = { id: number; name: string | null; creator_email: string; created_at: Date | string; photo?: string | null; beagle?: boolean };
 type MemberRow = { email: string; joined_at: Date | string; joined_from_id: number; muted: boolean; last_read_id: number };
-type MsgRow = { id: number; group_id: number; sender_email: string | null; kind: string; body: string; images?: string[] | null; created_at: Date | string };
+type MsgRow = {
+  id: number;
+  group_id: number;
+  sender_email: string | null;
+  kind: string;
+  body: string;
+  images?: string[] | null;
+  created_at: Date | string;
+  edited_at?: Date | string | null;
+};
 
 /** 名前・ID の引き当て（DTO を作るのに要るもの）。 */
 type Lookup = { ids: Map<string, string>; names: Map<string, string | null> };
@@ -169,7 +186,13 @@ export function toGroupDto(g: GroupRow, members: MemberRow[], viewerEmail: strin
   };
 }
 
-export function toGMessageDto(r: MsgRow, viewerEmail: string, lk: Lookup, clientId?: string | null): GMessageDto {
+export function toGMessageDto(
+  r: MsgRow,
+  viewerEmail: string,
+  lk: Lookup,
+  clientId?: string | null,
+  reactions: ReactionSummary[] = []
+): GMessageDto {
   const from = r.sender_email ? normEmail(r.sender_email) : null;
   const mine = !!from && from === normEmail(viewerEmail);
   if (r.kind === "beagle") {
@@ -184,6 +207,9 @@ export function toGMessageDto(r: MsgRow, viewerEmail: string, lk: Lookup, client
       images: [],
       created_at: new Date(r.created_at).toISOString(),
       is_author: false,
+      edited: false,
+      edited_at: null,
+      reactions,
       is_beagle: true,
     };
   }
@@ -198,6 +224,9 @@ export function toGMessageDto(r: MsgRow, viewerEmail: string, lk: Lookup, client
     images: r.images ?? [],
     created_at: new Date(r.created_at).toISOString(),
     is_author: mine,
+    edited: !!r.edited_at,
+    edited_at: r.edited_at ? new Date(r.edited_at).toISOString() : null,
+    reactions: r.kind === "system" ? [] : reactions,
   };
   if (mine && clientId) dto.client_id = clientId;
   return dto;
@@ -331,7 +360,7 @@ async function insertMessage(
 ): Promise<{ row: MsgRow; members: MemberRow[]; lk: Lookup }> {
   const ins = await pool.query(
     `INSERT INTO gdm_messages (group_id, sender_email, kind, body, images) VALUES ($1, $2, $3, $4, $5::text[])
-     RETURNING id, group_id, sender_email, kind, body, images, created_at`,
+     RETURNING id, group_id, sender_email, kind, body, images, created_at, edited_at`,
     [gid, senderEmail, kind, body, images]
   );
   const row = ins.rows[0] as MsgRow;
@@ -496,7 +525,7 @@ export async function getGroupThread(
   const me = normEmail(actor.email);
   const limit = Math.min(Math.max(opts.limit ?? DM_PAGE_LIMIT, 1), DM_PAGE_LIMIT);
   const res = await pool.query(
-    `SELECT id, group_id, sender_email, kind, body, images, created_at FROM gdm_messages
+    `SELECT id, group_id, sender_email, kind, body, images, created_at, edited_at FROM gdm_messages
       WHERE group_id = $1 AND id > $2 AND created_at >= now() - ($3::text)::interval
         AND ($4::int IS NULL OR id < $4)
       ORDER BY id DESC LIMIT $5`,
@@ -504,7 +533,8 @@ export async function getGroupThread(
   );
   const rows = (res.rows as MsgRow[]).reverse();
   const lk = await lookup([...members.map((m) => m.email), ...rows.flatMap((r) => (r.sender_email ? [r.sender_email] : []))]);
-  const messages = rows.map((r) => toGMessageDto(r, me, lk));
+  const reacts = await getReactions("gdm", rows.map((r) => r.id), me);
+  const messages = rows.map((r) => toGMessageDto(r, me, lk, null, reacts.get(r.id) ?? []));
   const lastRead = Math.max(Number(self.last_read_id), Number(self.joined_from_id));
   const unread = messages.filter((m) => m.kind === "text" && !m.is_author && m.id > lastRead).length;
   return { group: toGroupDto(group, members, me, lk), messages, unread_count: unread, last_read_id: Number(self.last_read_id), can_send: gdmEnabledFor(me) };
@@ -773,7 +803,7 @@ export async function removeMember(actor: DmActor, rawGid: unknown, rawUserId: u
 export async function getGroupMessage(actor: DmActor, id: number): Promise<{ message: GMessageDto; group: GroupDto } | null> {
   const me = normEmail(actor.email);
   const r = await pool.query(
-    `SELECT m.id, m.group_id, m.sender_email, m.kind, m.body, m.images, m.created_at
+    `SELECT m.id, m.group_id, m.sender_email, m.kind, m.body, m.images, m.created_at, m.edited_at
        FROM gdm_messages m JOIN gdm_members gm ON gm.group_id = m.group_id AND gm.email = $2
       WHERE m.id = $1 AND m.id > gm.joined_from_id AND m.created_at >= now() - ($3::text)::interval`,
     [id, me, DM_TTL]
@@ -783,7 +813,87 @@ export async function getGroupMessage(actor: DmActor, id: number): Promise<{ mes
   const loaded = await loadGroup(row.group_id);
   if (!loaded) return null;
   const lk = await lookup([...loaded.members.map((m) => m.email), ...(row.sender_email ? [row.sender_email] : [])]);
-  return { message: toGMessageDto(row, me, lk), group: toGroupDto(loaded.group, loaded.members, me, lk) };
+  const reacts = await getReactions("gdm", [row.id], me);
+  return { message: toGMessageDto(row, me, lk, null, reacts.get(row.id) ?? []), group: toGroupDto(loaded.group, loaded.members, me, lk) };
+}
+
+/** 編集・リアクションの対象の 1 件（メンバーで、入ってからの、30 日以内の発言）。無ければ 404（グループも明かさない）。 */
+async function loadVisibleMessage(actor: DmActor, rawId: unknown): Promise<MsgRow> {
+  const id = Number(rawId);
+  if (!Number.isInteger(id) || id <= 0 || id > 2147483647) throw new DmError(400, "invalid_request", "不正な ID です");
+  const r = await pool.query(
+    `SELECT m.id, m.group_id, m.sender_email, m.kind, m.body, m.images, m.created_at, m.edited_at
+       FROM gdm_messages m JOIN gdm_members gm ON gm.group_id = m.group_id AND gm.email = $2
+      WHERE m.id = $1 AND m.id > gm.joined_from_id AND m.created_at >= now() - ($3::text)::interval`,
+    [id, normEmail(actor.email), DM_TTL]
+  );
+  const row = r.rows[0] as MsgRow | undefined;
+  if (!row) throw new DmError(404, "not_found", "発言が見つかりません");
+  return row;
+}
+
+/** この発言を見られるいまのメンバー（入る前の発言は見せない）。 */
+function viewersOf(row: MsgRow, members: MemberRow[]): string[] {
+  return members.filter((m) => Number(m.joined_from_id) < row.id).map((m) => normEmail(m.email));
+}
+
+/** ✏️ 自分の発言を直す（チャットの「タイポを修正」と同じ）。本文だけ、写真はそのまま。写真があれば本文を空にもできる。
+ *  ビーグルが答えた質問は直せない（答えがかみ合わなくなる。チャットと同じ）。見られるメンバーへ `action: "edit"`。 */
+export async function editGroupMessage(actor: DmActor, rawId: unknown, rawBody: unknown): Promise<GMessageDto> {
+  const me = normEmail(actor.email);
+  if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
+  const row = await loadVisibleMessage(actor, rawId);
+  if (row.kind !== "text" || normEmail(row.sender_email ?? "") !== me) throw new DmError(403, "forbidden", "自分の発言だけ直せます");
+  const answered = await pool.query(`SELECT 1 FROM beagle_ai_log WHERE app LIKE 'gdm:%' AND question_id = $1 LIMIT 1`, [row.id]);
+  if ((answered.rowCount ?? 0) > 0) throw new DmError(403, "forbidden", "ビーグルが答えた質問は直せません");
+  const checked = normalizeDmBody(rawBody);
+  const body = checked.ok ? checked.body : checked.error === "empty" && (row.images?.length ?? 0) > 0 ? "" : null;
+  if (body == null) {
+    throw new DmError(400, "invalid_request", !checked.ok && checked.error === "empty" ? "本文が空です" : `本文が長すぎます（${DM_MAX_BODY} 文字まで）`);
+  }
+  const up = await pool.query(
+    `UPDATE gdm_messages SET body = $2, edited_at = now()
+      WHERE id = $1 AND sender_email = $3 AND kind = 'text' AND created_at >= now() - ($4::text)::interval
+      RETURNING id, group_id, sender_email, kind, body, images, created_at, edited_at`,
+    [row.id, body, me, DM_TTL]
+  );
+  const next = up.rows[0] as MsgRow | undefined;
+  if (!next) throw new DmError(404, "not_found", "発言が見つかりません");
+  const loaded = await loadGroup(next.group_id);
+  const members = loaded?.members ?? [];
+  const lk = await lookup([...members.map((m) => m.email), me]);
+  let mine: GMessageDto | null = null;
+  for (const viewer of viewersOf(next, members)) {
+    const list = (await getReactions("gdm", [next.id], viewer)).get(next.id) ?? [];
+    const dto = toGMessageDto(next, viewer, lk, null, list);
+    if (viewer === me) mine = dto;
+    emitPersonal(viewer, { type: "gdm", data: { action: "edit", group_id: next.group_id, message: dto } });
+  }
+  return mine ?? toGMessageDto(next, me, lk);
+}
+
+/** 😀 リアクションを付ける・外す（チャットと同じ絵文字・カスタム絵文字。ビーグルの答えにも付けられる、グループの知らせ行には付けない）。
+ *  見られるメンバーへ `action: "reaction"`（mine は見る人ごと）。 */
+export async function reactGroupMessage(
+  actor: DmActor,
+  rawId: unknown,
+  rawEmoji: unknown
+): Promise<{ added: boolean; reactions: ReactionSummary[] }> {
+  const me = normEmail(actor.email);
+  if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
+  const emoji = typeof rawEmoji === "string" ? rawEmoji : "";
+  if (!emoji) throw new DmError(400, "invalid_request", "emoji が必要です");
+  const row = await loadVisibleMessage(actor, rawId);
+  if (row.kind === "system") throw new DmError(400, "invalid_request", "この行にはリアクションできません");
+  const rate = await checkReactRate(me);
+  if (!rate.allowed) throw new DmError(429, "rate_limited", "リアクションが多すぎます。しばらく待ってください", rate.retryAfter);
+  const r = await toggleReactionOr400("gdm", row.id, me, emoji);
+  const loaded = await loadGroup(row.group_id);
+  for (const viewer of viewersOf(row, loaded?.members ?? [])) {
+    const list = viewer === me ? r.reactions : ((await getReactions("gdm", [row.id], viewer)).get(row.id) ?? []);
+    emitPersonal(viewer, { type: "gdm", data: { action: "reaction", group_id: row.group_id, message_id: row.id, reactions: list } });
+  }
+  return r;
 }
 
 /** 30 日を過ぎた発言を消す（1 対 1 の掃除から呼ぶ）。 */
@@ -808,7 +918,11 @@ export function gdmCapability(enabled: boolean, scopes: string[]) {
     photo_max_bytes: GDM_PHOTO_MAX_BYTES,
     // 🐶 PATCH {path}/:gid { beagle: true|false }。答えは is_beagle の発言（kind "text"）。
     beagle: true,
+    // ✏️ PATCH {path}/messages/:id { body } → { message }（自分の発言だけ）。😀 POST {path}/messages/:id/reactions { emoji } → { added, reactions }。
+    edit: true,
+    reactions: true,
     // stream: event "gdm" — { action: "create" | "read" | "group" | "removed", ... }（docs/group-dm-spec.md）
+    //   / { action: "edit", group_id, message } / { action: "reaction", group_id, message_id, reactions }
     stream_event: "gdm",
   };
 }
@@ -949,7 +1063,7 @@ export async function answerGroupBeagle(gid: number, questionId: number, askerEm
   if (!(await beagleUnderLimits(asker, false))) return false;
 
   const hist = await pool.query(
-    `SELECT id, group_id, sender_email, kind, body, images, created_at FROM gdm_messages
+    `SELECT id, group_id, sender_email, kind, body, images, created_at, edited_at FROM gdm_messages
       WHERE group_id = $1 AND id < $2 AND created_at >= now() - ($3::text)::interval
       ORDER BY id DESC LIMIT $4`,
     [gid, questionId, DM_TTL, GDM_BEAGLE_HISTORY]
