@@ -803,6 +803,7 @@ private fun Composer(
         if (uris.isNotEmpty()) scope.launch { photos.add(context, uris, maxPhotos, caps?.chatImageMaxSide ?: 1280) }
     }
     val camera = rememberCameraCapture { ctx, uri -> photos.add(ctx, listOf(uri), maxPhotos, caps?.chatImageMaxSide ?: 1280) }
+    val pasteImages = rememberPasteImages(photos, maxPhotos, caps?.chatImageMaxSide ?: 1280, enabled = canAttach)
     val matches = if (editing) emptyList() else Mention.activeQuery(draft)?.let { q ->
         Mention.candidates(store.members, q.second, store.recentAuthors)
     } ?: emptyList()
@@ -845,19 +846,16 @@ private fun Composer(
                         }) { Text("🐶", fontSize = 20.sp) }
                     }
                     run {
-                        // Setting the value from outside (clear after send) restarts the
-                        // IME input, so leftover voice / IME composition does not survive.
-                        TextField(
+                        // Setting the value from outside (clear after send) replaces the field's
+                        // text, so leftover voice / IME composition does not survive.
+                        // 📷 An image pasted / inserted by the keyboard becomes a photo (not while editing).
+                        PhotoTextField(
                             value = field,
                             onValueChange = onField,
+                            onImages = pasteImages,
                             placeholder = { Text(composerPlaceholder(if (editing) "編集内容" else "メッセージ")) },
                             maxLines = 6,
                             keyboardOptions = ComposerKeyboardOptions,
-                            shape = RoundedCornerShape(20.dp),
-                            colors = TextFieldDefaults.colors(
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                            ),
                             modifier = Modifier
                                 .weight(1f)
                                 .focusRequester(focus)
@@ -1064,7 +1062,7 @@ private fun MessageRow(
  *  `local` (this device's previews) wins over `urls` so a just-sent message never flashes. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatImages(urls: List<String>, local: List<ImageBitmap>, onOpen: ((Int) -> Unit)?, onLongPress: () -> Unit) {
+internal fun ChatImages(urls: List<String>, local: List<ImageBitmap>, onOpen: ((Int) -> Unit)?, onLongPress: () -> Unit) {
     val count = if (local.isNotEmpty()) local.size else urls.size
     if (count == 1) {
         // Remote sizes are unknown until loaded, so those use a 4:3 crop; previews keep their shape.
@@ -1085,7 +1083,7 @@ private fun ChatImages(urls: List<String>, local: List<ImageBitmap>, onOpen: ((I
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ChatImageCell(url: String?, local: ImageBitmap?, size: Modifier, maxPx: Int, onTap: (() -> Unit)?, onLongPress: () -> Unit) {
+internal fun ChatImageCell(url: String?, local: ImageBitmap?, size: Modifier, maxPx: Int, onTap: (() -> Unit)?, onLongPress: () -> Unit) {
     val m = size.clip(RoundedCornerShape(10.dp)).combinedClickable(onClick = { onTap?.invoke() }, onLongClick = onLongPress)
     if (local != null) Image(local, contentDescription = "写真", modifier = m, contentScale = ContentScale.Crop)
     else RemoteImage(url, m, maxPx = maxPx) { Box(m.background(MaterialTheme.colorScheme.surfaceVariant)) }
@@ -1093,7 +1091,7 @@ private fun ChatImageCell(url: String?, local: ImageBitmap?, size: Modifier, max
 
 /** Attached photos above the text field, each with ✕, and a spinner while decoding. */
 @Composable
-private fun ComposerPhotos(photos: ChatAttachments) {
+internal fun ComposerPhotos(photos: ChatAttachments) {
     if (photos.photos.isEmpty() && photos.loading == 0) return
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
         photos.photos.forEachIndexed { i, p ->

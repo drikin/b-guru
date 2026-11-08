@@ -72,6 +72,8 @@ data class GMessage(
     val clientId: String? = null,
     /** 🐶 Beagle's answer (kind stays "text"). */
     val isBeagle: Boolean = false,
+    /** 📷 /api/media/dm-… (read with the token); [] on servers before DM photos. */
+    val images: List<String> = emptyList(),
 ) {
     val isSystem: Boolean get() = kind == "system"
     val senderName: String get() = fromName?.trim()?.takeIf { it.isNotEmpty() } ?: "会員"
@@ -108,6 +110,8 @@ data class GRow(
     val message: GMessage,
     val state: SendState = SendState.SENT,
     val key: String = message.clientId ?: "gdm-${message.id}",
+    /** 📷 This device's previews of the photos I sent. */
+    val localImages: List<androidx.compose.ui.graphics.ImageBitmap> = emptyList(),
 )
 
 /** One line of the DM list: a 1 対 1 conversation or a group, newest first. */
@@ -134,7 +138,10 @@ object GDMLogic {
     fun reconcile(rows: List<GRow>, m: GMessage): List<GRow> {
         fun isTwin(r: GRow) = r.message.id < 0 && m.clientId != null && r.message.clientId == m.clientId && m.isAuthor
         if (rows.any { it.message.id == m.id }) {
-            return rows.filterNot(::isTwin).map { if (it.message.id == m.id) it.copy(message = m, state = SendState.SENT) else it }
+            val previews = rows.firstOrNull(::isTwin)?.localImages.orEmpty()
+            return rows.filterNot(::isTwin).map {
+                if (it.message.id == m.id) it.copy(message = m, state = SendState.SENT, localImages = it.localImages.ifEmpty { previews }) else it
+            }
         }
         val i = rows.indexOfFirst(::isTwin)
         if (i >= 0) return rows.toMutableList().also { it[i] = it[i].copy(message = m, state = SendState.SENT) }
@@ -196,7 +203,7 @@ object GDMLogic {
     /** The list's last-message line. */
     fun preview(m: GMessage?): String {
         if (m == null) return "まだメッセージはありません"
-        val t = m.body.replace('\n', ' ').trim()
+        val t = DMLogic.shownBody(m.body, m.images).replace('\n', ' ').trim()
         return when {
             m.isSystem -> t
             m.isAuthor -> "あなた: $t"
@@ -255,8 +262,9 @@ object GDMLogic {
 
     // Notifications: one per group (the server's thread-id / collapse gdm-<group_id>).
     fun notificationTitle(title: String?): String = title?.trim()?.takeIf { it.isNotEmpty() } ?: FALLBACK_TITLE
-    fun notificationText(fromName: String?, body: String): String {
-        val b = if (body.length > NOTIFY_TEXT_MAX) body.take(NOTIFY_TEXT_MAX) + "…" else body
+    fun notificationText(fromName: String?, body: String, images: List<String> = emptyList()): String {
+        val shown = DMLogic.shownBody(body, images)
+        val b = if (shown.length > NOTIFY_TEXT_MAX) shown.take(NOTIFY_TEXT_MAX) + "…" else shown
         return "${fromName?.trim()?.takeIf { it.isNotEmpty() } ?: "会員"}: $b"
     }
     fun notificationId(groupId: Long): Int = 8_000_000 + (groupId % 1_000_000).toInt()
@@ -279,6 +287,12 @@ class GDMStore(private val api: ApiClient) {
     /** capabilities `gdm.beagle` (and a token that may send): offer the 🐶 switch. */
     var canSetBeagle by mutableStateOf(false); private set
     private var base = "/api/agent/gdm"
+    /** 📷 Photos (docs/dm-photos-spec.md): the DM's upload path and limit (capabilities `dm`). */
+    var canSendImages by mutableStateOf(false); private set
+    var maxImages by mutableIntStateOf(4); private set
+    var imageMaxSide by mutableIntStateOf(1280); private set
+    private var imageUpload = "/api/agent/dm/upload"
+    private val outbox = HashMap<String, DMOutgoing>()
 
     var groups by mutableStateOf<List<GroupSummary>>(emptyList()); private set
     var unreadTotal by mutableIntStateOf(0); private set
@@ -323,6 +337,10 @@ class GDMStore(private val api: ApiClient) {
         canSetPhoto = caps.canSetGDMPhoto
         canSetBeagle = caps.canSetGDMBeagle
         photoMaxBytes = caps.gdmPhotoMaxBytes
+        canSendImages = caps.canSendGDM && caps.canSendDMImages
+        maxImages = caps.dmMaxImages
+        imageMaxSide = caps.chatImageMaxSide
+        imageUpload = caps.dmImageUpload ?: imageUpload
         base = caps.gdmPath
         if (!enabled) { groups = emptyList(); unreadTotal = 0; openId = null; return }
         refreshList()
@@ -394,7 +412,8 @@ class GDMStore(private val api: ApiClient) {
                 val r = api.gdmThread(id, base)
                 if (openId != id) return@launch
                 val local = rows.filter { it.message.id < 0 }
-                var next = r.messages.map { GRow(it) }
+                val previews = rows.filter { it.localImages.isNotEmpty() }.associate { it.message.id to it.localImages }
+                var next = r.messages.map { GRow(it, localImages = previews[it.id].orEmpty()) }
                 local.forEach { l -> if (next.none { it.message.clientId != null && it.message.clientId == l.message.clientId }) next = next + l }
                 rows = GDMLogic.fresh(next, Instant.now(), ttlHours)
                 canSendHere = r.canSend
@@ -478,17 +497,20 @@ class GDMStore(private val api: ApiClient) {
 
     // MARK: sending
 
-    fun send(raw: String, restore: (String) -> Unit) {
+    /** Text and/or photos (📷 docs/dm-photos-spec.md): the bubble with the previews at once, the photos upload first. */
+    fun send(raw: String, photos: List<ChatPhoto> = emptyList(), restore: (String, List<ChatPhoto>) -> Unit) {
         val id = openId ?: return
         val body = raw.trim().take(maxBody)
-        if (body.isEmpty() || !canSendCap || !canSendHere) return
+        val shots = if (canSendImages) photos.take(maxImages) else emptyList()
+        if (!DMLogic.canSend(body, shots.size) || !canSendCap || !canSendHere) return
         val clientId = UUID.randomUUID().toString()
         tempSeq += 1
         val me = GDMLogic.me(openGroup)
         val pending = GMessage(id = -tempSeq, groupId = id, fromId = me?.userId ?: myUserId, fromName = me?.name, fromAvatar = me?.avatar,
             body = body, createdAt = Instant.now().toString(), isAuthor = true, clientId = clientId)
         error = null
-        rows = rows + GRow(pending, SendState.PENDING)
+        outbox[clientId] = DMOutgoing(shots)
+        rows = rows + GRow(pending, SendState.PENDING, localImages = shots.map { it.preview })
         post(id, pending, restore)
     }
 
@@ -496,34 +518,41 @@ class GDMStore(private val api: ApiClient) {
         val id = openId ?: return
         if (row.message.id >= 0) return
         setState(row.message.clientId, SendState.PENDING)
-        post(id, row.message) { }
+        post(id, row.message) { _, _ -> }
     }
 
     fun discard(row: GRow) {
+        row.message.clientId?.let(outbox::remove)
         rows = rows.filterNot { it.message.id < 0 && it.message.clientId == row.message.clientId }
     }
 
-    private fun post(id: Long, pending: GMessage, restore: (String) -> Unit) {
+    private fun post(id: Long, pending: GMessage, restore: (String, List<ChatPhoto>) -> Unit) {
         val clientId = pending.clientId ?: return
+        val out = outbox[clientId] ?: DMOutgoing(emptyList())
         if (demo) {
+            outbox.remove(clientId)
             val stored = pending.copy(id = (demoThreads.values.flatten().maxOfOrNull { it.id } ?: 0L) + rows.size + 1)
             demoThreads[id] = demoThreads[id].orEmpty() + stored
             rows = GDMLogic.reconcile(rows, stored)
-            GDMLogic.upsert(groups, stored, viewing = true)?.let { groups = it }
+            GDMLogic.upsert(groups, stored.copy(images = out.photos.map { "local" }), viewing = true)?.let { groups = it }
             return
         }
         scope.launch {
             try {
-                val m = api.gdmSend(id, pending.body, clientId, base)
+                val urls = out.urls ?: if (out.photos.isEmpty()) emptyList() else
+                    api.uploadChatImages(out.photos.map { it.jpeg }, imageUpload).also { out.urls = it }
+                val m = api.gdmSend(id, pending.body, clientId, base, urls)
+                outbox.remove(clientId)
                 if (openId == id) rows = GDMLogic.reconcile(rows, m)
                 GDMLogic.upsert(groups, m, viewing = true)?.let { groups = it }
             } catch (e: ApiError) {
                 if (e is ApiError.Http && e.serverMessage != null) error = e.serverMessage
-                if (e is ApiError.Http && e.status == 404) { dropped(id); return@launch }
+                if (e is ApiError.Http && e.status == 404) { outbox.remove(clientId); dropped(id); return@launch }
                 if (e.isPermanent) {
+                    outbox.remove(clientId)
                     rows = rows.filterNot { it.message.id < 0 && it.message.clientId == clientId }
                     if (e is ApiError.Http && e.status == 403) canSendHere = false
-                    restore(pending.body)
+                    restore(pending.body, out.photos)
                 } else {
                     setState(clientId, SendState.FAILED)
                 }
@@ -671,10 +700,11 @@ class GDMStore(private val api: ApiClient) {
     private val demoThreads = HashMap<Long, List<GMessage>>()
 
     /** Debug only: one group among the demo chat's people (two unread), offline. */
-    fun loadDemo() {
+    fun loadDemo(images: String? = null) {
         demo = true
         enabled = true
         canSendCap = true
+        canSendImages = true
         canSetPhoto = true
         canSetBeagle = true
         val now = Instant.now()
@@ -682,14 +712,14 @@ class GDMStore(private val api: ApiClient) {
         val members = listOf(GMember("me", "ドリキン", isCreator = true, isMe = true), GMember("mazzo", "mazzo"), GMember("takuto", "takuto"), GMember("coban", "coban"))
         val g = GDMGroup(1, "配信の相談", "配信の相談", members, members.size, isCreator = true, createdAt = at(200))
         var id = 100L
-        fun m(from: GMember?, body: String, minAgo: Long) = GMessage(++id, 1, if (from == null) "system" else "text", from?.userId, from?.name, null,
-            body, at(minAgo), isAuthor = from?.isMe == true)
+        fun m(from: GMember?, body: String, minAgo: Long, photos: List<String> = emptyList()) = GMessage(++id, 1, if (from == null) "system" else "text", from?.userId, from?.name, null,
+            body, at(minAgo), isAuthor = from?.isMe == true, images = photos)
         demoThreads[1] = listOf(
             m(null, "ドリキンさんがグループを作りました", 200),
             m(members[0], "来週の配信、ゲストどうしましょう", 120),
             m(members[1], "takuto さんどうですか", 30),
             m(members[2], "いいですよ！", 8),
-        )
+        ) + (if (images == null) emptyList() else listOf(m(members[3], "", 6, listOf("$images/photo4.jpg", "$images/photo1.jpg", "$images/photo2.jpg"))))
         groups = listOf(GroupSummary(g, demoThreads[1]!!.last(), 2))
         unreadTotal = 2
         listLoaded = true

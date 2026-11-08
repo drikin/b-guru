@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -55,6 +57,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -84,12 +88,16 @@ fun DMOffer(onDM: (() -> Unit)?, content: @Composable () -> Unit) {
     }
 }
 
-/** The DM screens over the whole app (list → conversation / 👥 group). Nothing when no DM is open.
+/** The ✉️ page (after 💬; the right pane on a wide screen): the list (1 対 1 and 👥 groups), and a conversation /
+ *  group opened from it in place (back and ← return to the list). [visible] = this page is the one on screen
+ *  (only then is a conversation read, and back belongs to it). [tabSwitch] = the tab switch, in the list's bar.
  *  [members] = the chat's members (the people a group can be made with). */
 @Composable
-fun DMOverlay(dm: DMStore, members: List<MentionMember> = emptyList()) {
-    val route = dm.route ?: return
-    BackHandler { dm.back() }
+fun DMPage(dm: DMStore, members: List<MentionMember>, visible: Boolean, tabSwitch: (@Composable () -> Unit)?) {
+    val route = dm.route ?: DMStore.Route.Inbox
+    BackHandler(enabled = visible && dm.stack.any { it != DMStore.Route.Inbox }) { dm.back() }
+    // Shown again: the list is fresh (the stream keeps it so while the app is open; this catches up after errors).
+    LaunchedEffect(visible) { if (visible && route == DMStore.Route.Inbox) { dm.refreshList(); dm.groups.refreshList() } }
     // Hide what passes the ttl while it stays open (and on screen: back from the
     // background it prunes at once).
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -98,10 +106,10 @@ fun DMOverlay(dm: DMStore, members: List<MentionMember> = emptyList()) {
     }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when (route) {
-            DMStore.Route.Inbox -> DMInbox(dm)
-            is DMStore.Route.Conversation -> androidx.compose.runtime.key(route.peer.userId) { DMConversationScreen(dm, route.peer) }
+            DMStore.Route.Inbox -> DMInbox(dm, tabSwitch, members)
+            is DMStore.Route.Conversation -> androidx.compose.runtime.key(route.peer.userId) { DMConversationScreen(dm, route.peer, visible) }
             DMStore.Route.NewGroup -> GDMPickerScreen(dm, members, groupId = null)
-            is DMStore.Route.Group -> androidx.compose.runtime.key(route.id) { GDMGroupScreen(dm, route.id) }
+            is DMStore.Route.Group -> androidx.compose.runtime.key(route.id) { GDMGroupScreen(dm, route.id, visible) }
             is DMStore.Route.GroupMembers -> androidx.compose.runtime.key(route.id) { GDMMembersScreen(dm, route.id) }
             is DMStore.Route.AddMembers -> androidx.compose.runtime.key(route.id) { GDMPickerScreen(dm, members, groupId = route.id) }
         }
@@ -110,15 +118,20 @@ fun DMOverlay(dm: DMStore, members: List<MentionMember> = emptyList()) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DMInbox(dm: DMStore) {
+private fun DMInbox(dm: DMStore, tabSwitch: (@Composable () -> Unit)?, members: List<MentionMember>) {
+    var newDM by rememberSaveable { mutableStateOf(false) }
+    if (newDM) NewDMDialog(dm, members, onDismiss = { newDM = false })
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("DM", maxLines = 1) },
-                navigationIcon = { IconButton(onClick = { dm.back() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "戻る") } },
+                // On its page the bar carries the tab switch (no ←: it is a tab, not a screen over the app).
+                title = { if (tabSwitch != null) tabSwitch() else Text("DM", maxLines = 1) },
+                navigationIcon = { if (tabSwitch == null) IconButton(onClick = { dm.back() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "戻る") } },
                 actions = {
+                    // ＋ 新規 DM: pick a person by name, then their conversation opens here.
+                    if (dm.canSendCap) TextButton(onClick = { newDM = true }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("＋ 新規 DM", maxLines = 1, softWrap = false) }
                     // 👥 グループ DM (capabilities.gdm): make one.
-                    if (dm.groups.enabled && dm.groups.canSendCap) TextButton(onClick = { dm.openNewGroup() }) { Text("＋ グループ") }
+                    if (dm.groups.enabled && dm.groups.canSendCap) TextButton(onClick = { dm.openNewGroup() }, contentPadding = PaddingValues(horizontal = 6.dp)) { Text("＋ グループ", maxLines = 1, softWrap = false) }
                 },
             )
         },
@@ -154,6 +167,61 @@ private fun DMInbox(dm: DMStore) {
     }
 }
 
+/** ＋ 新規 DM: one name field. Nothing typed shows my DM partners only; typing finds members (never the whole
+ *  list up front). A tap opens that person's conversation on the ✉️ page. */
+@Composable
+private fun NewDMDialog(dm: DMStore, members: List<MentionMember>, onDismiss: () -> Unit) {
+    var query by rememberSaveable { mutableStateOf("") }
+    val peers = remember(dm.conversations) { dm.conversations.map { it.peer } }
+    val shown = remember(members, peers, query, dm.groups.myUserId) { DMLogic.newDMCandidates(members, peers, dm.groups.myUserId, query) }
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("新規 DM") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text("名前を入れて探す") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                )
+                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 320.dp)) {
+                    if (shown.isEmpty()) {
+                        item {
+                            Text(
+                                when {
+                                    query.isBlank() -> "名前を入れて探してください"
+                                    members.isEmpty() -> "読み込み中…"
+                                    else -> "見つかりません"
+                                },
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 12.dp),
+                            )
+                        }
+                    }
+                    items(shown, key = { it.userId }) { m ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                onDismiss()
+                                dm.openConversation(DMPeer(m.userId, m.name, m.avatar))
+                            }.padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Avatar(ApiClient.absolute(m.avatar) ?: m.avatar, m.name, 36.dp)
+                            Text(m.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("閉じる") } },
+    )
+}
+
 @Composable
 private fun DMConversationRow(c: DMConversation, onClick: () -> Unit) {
     val unread = c.unreadCount > 0
@@ -187,25 +255,19 @@ private fun DMConversationRow(c: DMConversation, onClick: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DMConversationScreen(dm: DMStore, peer: DMPeer) {
+private fun DMConversationScreen(dm: DMStore, peer: DMPeer, visible: Boolean) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
-    var draft by rememberSaveable(peer.userId) { mutableStateOf("") }
+    var draft by rememberSaveable(peer.userId, stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
+    // 📷 Photos for the next DM, and the photo open full screen.
+    val photos = remember(peer.userId) { ChatAttachments() }
+    var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
 
-    // On screen (resumed) = read: tells the store, and clears this person's notification.
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    DisposableEffect(lifecycle, peer.userId) {
-        fun on() { dm.setScreenVisible(peer.userId, true); Push.clearDMNotification(context, peer.userId) }
-        if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) on()
-        val obs = LifecycleEventObserver { _, e ->
-            when (e) {
-                Lifecycle.Event.ON_RESUME -> on()
-                Lifecycle.Event.ON_PAUSE -> dm.setScreenVisible(peer.userId, false)
-                else -> Unit
-            }
-        }
-        lifecycle.addObserver(obs)
-        onDispose { lifecycle.removeObserver(obs); dm.setScreenVisible(peer.userId, false) }
+    // On screen (resumed, and its page is the one shown) = read: tells the store, and clears this person's notification.
+    val onScreen = rememberShown(visible)
+    DisposableEffect(onScreen, peer.userId) {
+        if (onScreen) { dm.setScreenVisible(peer.userId, true); Push.clearDMNotification(context, peer.userId) }
+        onDispose { if (onScreen) dm.setScreenVisible(peer.userId, false) }
     }
 
     // Newest at the bottom (reverseLayout: index 0 is the newest). Follow new bubbles while at the
@@ -250,6 +312,7 @@ private fun DMConversationScreen(dm: DMStore, peer: DMPeer) {
                 }
                 items(reversed, key = { it.key }, contentType = { if (it.message.isAuthor) "mine" else "theirs" }) { row ->
                     DMBubble(row, onRetry = { dm.retry(row) }, onDiscard = { dm.discard(row) },
+                        onOpenImage = { urls, i -> viewing = urls to i },
                         modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth())
                 }
             }
@@ -257,27 +320,64 @@ private fun DMConversationScreen(dm: DMStore, peer: DMPeer) {
             DMComposer(
                 dm = dm,
                 draft = draft,
-                onDraft = { draft = it.take(dm.maxBody) },
+                photos = photos,
+                onDraft = { draft = it.limitTo(dm.maxBody) },
                 onSend = {
-                    val text = draft
-                    draft = ""
-                    dm.send(text) { body -> if (draft.isEmpty()) draft = body }
+                    val text = draft.text
+                    draft = TextFieldValue("")
+                    dm.send(text, photos.take()) { body, back ->
+                        if (draft.text.isEmpty()) draft = TextFieldValue(body, TextRange(body.length))
+                        photos.restore(back)
+                    }
                 },
             )
         }
     }
+    viewing?.let { (urls, at) -> ImageViewer(urls, at) { viewing = null } }
+}
+
+/** The activity is resumed and [visible] (its page is the one on screen). */
+@Composable
+internal fun rememberShown(visible: Boolean): Boolean {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var resumed by remember(lifecycle) { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
+    DisposableEffect(lifecycle) {
+        val obs = LifecycleEventObserver { _, e ->
+            when (e) {
+                Lifecycle.Event.ON_RESUME -> resumed = true
+                Lifecycle.Event.ON_PAUSE -> resumed = false
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(obs)
+        onDispose { lifecycle.removeObserver(obs) }
+    }
+    return resumed && visible
+}
+
+/** At most [max] characters (the cursor stays inside). */
+internal fun TextFieldValue.limitTo(max: Int): TextFieldValue = if (text.length <= max) this else TextFieldValue(text.take(max), selection)
+
+/** 📷 A DM's photos (1 対 1 and groups), like the chat's: this device's previews while sending, then the server's. */
+@Composable
+internal fun DMImages(images: List<String>, local: List<androidx.compose.ui.graphics.ImageBitmap>, onOpen: (List<String>, Int) -> Unit) {
+    if (images.isEmpty() && local.isEmpty()) return
+    ChatImages(urls = images, local = local, onOpen = if (images.isEmpty()) null else { i -> onOpen(images, i) }, onLongPress = {})
 }
 
 @Composable
-private fun DMBubble(row: DMRow, onRetry: () -> Unit, onDiscard: () -> Unit, modifier: Modifier) {
+private fun DMBubble(row: DMRow, onRetry: () -> Unit, onDiscard: () -> Unit, onOpenImage: (List<String>, Int) -> Unit, modifier: Modifier) {
     val m = row.message
     val mine = m.isAuthor
     Column(modifier, horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
         Column(
             Modifier.padding(start = if (mine) 48.dp else 0.dp, end = if (mine) 0.dp else 48.dp),
             horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text(
+            DMImages(m.images, row.localImages, onOpenImage)
+            // A photo-only DM has no text bubble.
+            if (m.body.isNotEmpty() || (m.images.isEmpty() && row.localImages.isEmpty())) Text(
                 remember(m.body) { linkified(m.body) },
                 fontSize = 16.sp,
                 modifier = Modifier
@@ -300,40 +400,43 @@ private fun DMBubble(row: DMRow, onRetry: () -> Unit, onDiscard: () -> Unit, mod
 }
 
 @Composable
-private fun DMComposer(dm: DMStore, draft: String, onDraft: (String) -> Unit, onSend: () -> Unit) {
+private fun DMComposer(dm: DMStore, draft: TextFieldValue, photos: ChatAttachments, onDraft: (TextFieldValue) -> Unit, onSend: () -> Unit) {
     val allowed = dm.canSendCap && dm.canSendHere
+    val canAttach = allowed && dm.canSendImages
+    val paste = rememberPasteImages(photos, dm.maxImages, dm.imageMaxSide, enabled = canAttach)
     Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(Modifier.widthIn(max = 760.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                dm.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                (dm.error ?: photos.error)?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 if (!allowed) {
                     Text(
                         if (!dm.canSendCap) "このアプリからは DM を送れません（読むだけ）" else "この人にはまだ DM を送れません",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                if (canAttach) ComposerPhotos(photos)
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextField(
+                    if (canAttach) PhotoAttachButtons(photos, dm.maxImages, dm.imageMaxSide)
+                    PhotoTextField(
                         value = draft,
                         onValueChange = onDraft,
+                        onImages = paste,
                         enabled = allowed,
                         placeholder = { Text("DM（30 日で消えます）") },
                         maxLines = 6,
-                        shape = RoundedCornerShape(20.dp),
-                        colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, disabledIndicatorColor = Color.Transparent),
                         modifier = Modifier.weight(1f),
                     )
-                    val canSend = allowed && draft.isNotBlank()
+                    val canSend = allowed && photos.loading == 0 && DMLogic.canSend(draft.text, if (canAttach) photos.photos.size else 0)
                     IconButton(onClick = onSend, enabled = canSend) {
                         Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "送信", tint = if (canSend) AccentGreen else MaterialTheme.colorScheme.outline)
                     }
                 }
                 Row {
                     Text("DM は 30 日で消えます", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.weight(1f))
-                    if (draft.length > dm.maxBody * 0.8) Text("${draft.length} / ${dm.maxBody}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    if (draft.text.length > dm.maxBody * 0.8) Text("${draft.text.length} / ${dm.maxBody}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 }
             }
         }

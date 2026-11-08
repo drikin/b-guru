@@ -126,6 +126,9 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val ttlHours: Int? = null,
         val rateLimitPerHour: Int? = null,
         val streamEvent: String? = null,
+        /** 📷 Photos in DMs and group DMs (docs/dm-photos-spec.md): only servers that say where to upload them. */
+        val maxImages: Int? = null,
+        val uploadPath: String? = null,
     )
     /** 👥 グループ DM (docs/group-dm-spec.md), behind GROUP_DM_ENABLED (and DM_ENABLED). `send` = this token may send (chat scope). */
     @Serializable data class GDMFeatures(
@@ -332,6 +335,10 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val dmMaxBody get() = features?.dm?.maxBody?.takeIf { it > 0 } ?: 1000
     val dmTtlHours get() = features?.dm?.ttlHours?.takeIf { it > 0 } ?: (30 * 24)
     /** Only paths on our own server (the request carries the token). */
+    /** 📷 Photos in 1 対 1 and group DMs: hidden until the server says where to upload them (only our own server: the upload carries the token). */
+    val dmImageUpload get() = features?.dm?.uploadPath?.takeIf { it.startsWith("/api/") }
+    val canSendDMImages get() = canSendDM && dmImageUpload != null
+    val dmMaxImages get() = features?.dm?.maxImages?.takeIf { it > 0 } ?: 4
     val dmPath get() = features?.dm?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/dm"
     /** 👥 グループ DM is on for this member (absent or enabled false: nothing of it is shown). Needs ✉️ DM too. */
     val gdmEnabled get() = dmEnabled && (features?.gdm?.enabled ?: false)

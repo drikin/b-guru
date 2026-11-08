@@ -335,7 +335,7 @@ object Push {
             else runBlocking { withTimeoutOrNull(8000) { runCatching { api.dmMessage(messageId, base) }.getOrNull() } }
         val peerId = r?.message?.peerId?.ifEmpty { null } ?: r?.peer?.userId ?: peerIdHint ?: return
         if (store?.dm?.visiblePeerId == peerId) return
-        val (title, text) = PushContent.dmContent(r?.peer?.name, r?.message?.body)
+        val (title, text) = PushContent.dmContent(r?.peer?.name, r?.message?.body, r?.message?.images.orEmpty())
         val open = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(EXTRA_DM_PEER_ID, peerId)
@@ -385,7 +385,7 @@ object Push {
         val notifId = GDMLogic.notificationId(groupId)
         val m = r?.message
         val title = if (m == null) GDMLogic.FALLBACK_TITLE else GDMLogic.notificationTitle(r.group?.displayTitle)
-        val line = if (m == null) GDMLogic.FALLBACK_TEXT else GDMLogic.notificationText(m.fromName, m.body)
+        val line = if (m == null) GDMLogic.FALLBACK_TEXT else GDMLogic.notificationText(m.fromName, m.body, m.images)
         // The lines still on screen for this group (a later message adds to them, like one conversation).
         val nm = context.getSystemService(NotificationManager::class.java)
         val previous = runCatching {
@@ -528,9 +528,9 @@ object PushContent {
 
     /** Title and text of a DM notification: the sender and the text when they could be read,
      *  else 「B-guru DM」「DM が届きました」. */
-    fun dmContent(name: String?, body: String?): Pair<String, String> =
+    fun dmContent(name: String?, body: String?, images: List<String> = emptyList()): Pair<String, String> =
         if (body == null) DMLogic.FALLBACK_TITLE to DMLogic.FALLBACK_TEXT
-        else DMLogic.notificationTitle(name) to DMLogic.notificationText(body)
+        else DMLogic.notificationTitle(name) to DMLogic.notificationText(body, images)
 
     fun defaultTitle(kind: String) = when (kind) {
         "reply" -> "B-guru"

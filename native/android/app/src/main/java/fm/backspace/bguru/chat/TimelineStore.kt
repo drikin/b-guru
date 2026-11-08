@@ -12,9 +12,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Chat or timeline (phone pages / the switch at the top). */
-enum class MainTab { TIMELINE, CHAT }
-
 /** The timeline: root posts by latest activity, like the iOS / Mac apps
  *  (native/shared/TimelineStore.swift). Not streamed: refreshed on appear, on
  *  pull, when the app comes back and every minute while on screen. */

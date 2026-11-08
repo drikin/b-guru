@@ -77,11 +77,8 @@ class MainActivity : ComponentActivity() {
                 val timeline = session.timeline
                 if (store != null && timeline != null) {
                     LaunchedEffect(store) { Push.askPermissionIfNeeded(this@MainActivity) }
-                    androidx.compose.foundation.layout.Box {
-                        MainScreen(store, timeline, session.jukebox, onSignOut = session::signOut)
-                        // ✉️ DM list / conversation over everything (back returns to the chat).
-                        DMOverlay(store.dm, store.members)
-                    }
+                    // ✉️ DM is a tab of MainScreen (the page after 💬), not a screen over the app.
+                    MainScreen(store, timeline, session.jukebox, onSignOut = session::signOut)
                 } else {
                     LoginScreen(onToken = session::signIn)
                 }
@@ -95,21 +92,22 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Demo only — open a screen at launch (scripts/orientation-check.sh walks them):
-     *  `--es demo_tab timeline|chat|jukebox`, `--ez demo_jukebox_play true`,
+     *  `--es demo_tab timeline|chat|dm|jukebox`, `--ez demo_jukebox_play true`,
      *  `--es demo_open shogi|minigame|offkai|offkai_album|offkai_none|viewer` (viewer: the first photo; needs
      *  `--es demo_images`; offkai_none: no event on, the start form and the archive),
      *  `--es demo_ops …` (the timeline's operations, TimelineStore.demoOps). */
     private fun demoScreen(session: Session) {
         val store = session.store ?: return
         when (intent.getStringExtra("demo_tab")) {
-            "timeline" -> store.demoPage = 0
-            "jukebox" -> store.demoPage = 2
+            "timeline" -> store.demoPage = MainTab.TIMELINE
+            "dm" -> store.demoPage = MainTab.DM
+            "jukebox" -> store.demoPage = MainTab.JUKEBOX
         }
         if (intent.getBooleanExtra("demo_jukebox_play", false)) session.jukebox?.let { jb -> (jb.current ?: jb.items.firstOrNull())?.let(jb::play) }
         // `--es demo_ops menu|edit|delete|picker|poll_edit|club|pins|…` (TimelineStore.demoOps): the 段階 3
         // operations on the timeline, offline.
         intent.getStringExtra("demo_ops")?.let { what ->
-            store.demoPage = 0
+            store.demoPage = MainTab.TIMELINE
             session.timeline?.demoOps(what)
         }
         // `--ez demo_overlay true`: the chat-overlay form (docs/chat-overlay-spec.md) whatever the capabilities say,

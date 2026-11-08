@@ -303,9 +303,11 @@ class ApiClient(val token: String) : PostOpsApi {
     suspend fun dmConversations(base: String = "/api/agent/dm"): DMListResponse = get(base)
     suspend fun dmThread(userId: String, base: String = "/api/agent/dm", limit: Int = 200): DMThreadResponse =
         get("$base/${userId.encodedPath()}", mapOf("limit" to "$limit"))
-    suspend fun dmSend(userId: String, body: String, clientId: String, base: String = "/api/agent/dm"): DMMessage =
+    /** [images] = URLs from [uploadChatImages] to the DM upload path (docs/dm-photos-spec.md); [body] may be "" with photos. */
+    suspend fun dmSend(userId: String, body: String, clientId: String, base: String = "/api/agent/dm", images: List<String> = emptyList()): DMMessage =
         decode<DMSendResponse>(send(request("POST", "$base/${userId.encodedPath()}", buildJsonObject {
             put("body", body); put("client_id", clientId)
+            if (images.isNotEmpty()) put("images", JsonArray(images.map { JsonPrimitive(it) }))
         }))).message
     /** Returns the total unread across all conversations. */
     suspend fun dmMarkRead(userId: String, lastReadId: Long, base: String = "/api/agent/dm"): Int =
@@ -332,9 +334,10 @@ class ApiClient(val token: String) : PostOpsApi {
         decode<GDMGroupResponse>(send(request("PATCH", "$base/$groupId", buildJsonObject { put("muted", muted) }))).group
     suspend fun gdmSetBeagle(groupId: Long, on: Boolean, base: String = "/api/agent/gdm"): GDMGroup =
         decode<GDMGroupResponse>(send(request("PATCH", "$base/$groupId", buildJsonObject { put("beagle", on) }))).group
-    suspend fun gdmSend(groupId: Long, body: String, clientId: String, base: String = "/api/agent/gdm"): GMessage =
+    suspend fun gdmSend(groupId: Long, body: String, clientId: String, base: String = "/api/agent/gdm", images: List<String> = emptyList()): GMessage =
         decode<GDMSendResponse>(send(request("POST", "$base/$groupId/messages", buildJsonObject {
             put("body", body); put("client_id", clientId)
+            if (images.isNotEmpty()) put("images", JsonArray(images.map { JsonPrimitive(it) }))
         }))).message
     suspend fun gdmMarkRead(groupId: Long, lastReadId: Long, base: String = "/api/agent/gdm"): GDMReadResponse =
         decode(send(request("POST", "$base/$groupId/read", buildJsonObject { put("last_read_id", lastReadId) })))

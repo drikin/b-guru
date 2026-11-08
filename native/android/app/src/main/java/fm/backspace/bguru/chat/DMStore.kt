@@ -36,6 +36,8 @@ data class DMMessage(
     val createdAt: String = "",
     val isAuthor: Boolean = false,
     val clientId: String? = null,
+    /** 📷 /api/media/dm-… (read with the token); [] on servers before DM photos. */
+    val images: List<String> = emptyList(),
 )
 
 @Serializable data class DMConversation(val peer: DMPeer, val lastMessage: DMMessage, val unreadCount: Int = 0)
@@ -72,6 +74,8 @@ data class DMRow(
     val message: DMMessage,
     val state: SendState = SendState.SENT,
     val key: String = message.clientId ?: "dm-${message.id}",
+    /** 📷 This device's previews of the photos I sent (shown until the bubble goes; no flash on the swap). */
+    val localImages: List<androidx.compose.ui.graphics.ImageBitmap> = emptyList(),
 )
 
 // MARK: pure rules (unit-tested: DMLogicTest)
@@ -84,7 +88,10 @@ object DMLogic {
     fun reconcile(rows: List<DMRow>, m: DMMessage): List<DMRow> {
         fun isTwin(r: DMRow) = r.message.id < 0 && m.clientId != null && r.message.clientId == m.clientId && m.isAuthor
         if (rows.any { it.message.id == m.id }) {
-            return rows.filterNot(::isTwin).map { if (it.message.id == m.id) it.copy(message = m, state = SendState.SENT) else it }
+            val previews = rows.firstOrNull(::isTwin)?.localImages.orEmpty()
+            return rows.filterNot(::isTwin).map {
+                if (it.message.id == m.id) it.copy(message = m, state = SendState.SENT, localImages = it.localImages.ifEmpty { previews }) else it
+            }
         }
         val i = rows.indexOfFirst(::isTwin)
         if (i >= 0) return rows.toMutableList().also { it[i] = it[i].copy(message = m, state = SendState.SENT) }
@@ -128,19 +135,38 @@ object DMLogic {
 
     /** Notification texts — the same as the server's dmNotificationText (iPhone shows the same). */
     fun notificationTitle(name: String?): String = "${name?.trim()?.takeIf { it.isNotEmpty() } ?: "会員"}さんからの DM"
-    fun notificationText(body: String): String = if (body.length > NOTIFY_TEXT_MAX) body.take(NOTIFY_TEXT_MAX) + "…" else body
+    fun notificationText(body: String, images: List<String> = emptyList()): String {
+        val b = shownBody(body, images)
+        return if (b.length > NOTIFY_TEXT_MAX) b.take(NOTIFY_TEXT_MAX) + "…" else b
+    }
+
+    /** 📷 What the list / a notification says for a message: its text, or 「📷 写真」 for a photo-only one. */
+    const val PHOTO_LABEL = "📷 写真"
+    fun shownBody(body: String, images: List<String>): String = if (body.isBlank() && images.isNotEmpty()) PHOTO_LABEL else body
+
+    /** 📷 Can this go out: text, or at least one photo (the server takes `body: ""` with photos). */
+    fun canSend(body: String, photoCount: Int): Boolean = body.isNotBlank() || photoCount > 0
     const val FALLBACK_TITLE = "B-guru DM"
     const val FALLBACK_TEXT = "DM が届きました"
 
     /** One notification per peer (a later DM from the same person replaces it). */
     fun notificationId(peerId: String): Int = 5_000_000 + (peerId.hashCode() and 0x7fffffff) % 1_000_000
 
+    /** ＋ 新規 DM (drikin 2026-11-08): who the name field offers — the group picker's rule (web `pickerCandidates`):
+     *  nothing typed = only my DM partners (the member total stays private); typed = partners and members whose
+     *  name contains it, at most [GDMLogic.PICKER_LIMIT]; never me, never ビーグル. */
+    fun newDMCandidates(members: List<MentionMember>, peers: List<DMPeer>, me: String?, query: String): List<MentionMember> =
+        GDMLogic.pickerList(GDMLogic.candidates(members, peers), peers.map { it.userId }.toSet(), emptyList(), setOfNotNull(me), query)
+
     /** The list's last-message line: one line, mine marked. */
     fun preview(m: DMMessage): String {
-        val t = m.body.replace('\n', ' ').trim()
+        val t = shownBody(m.body, m.images).replace('\n', ' ').trim()
         return if (m.isAuthor) "あなた: $t" else t
     }
 }
+
+/** 📷 A send's photos (1 対 1 and groups): the JPEGs until they are uploaded, then their URLs (a retry only re-posts). */
+internal class DMOutgoing(val photos: List<ChatPhoto>, var urls: List<String>? = null)
 
 /** ✉️ 簡易 DM: the conversation list, the open conversation and the unread total. Main thread only.
  *  Sending is optimistic like the chat: the bubble shows at once and the stored message (the POST's
@@ -169,12 +195,20 @@ class DMStore(private val api: ApiClient) {
     var maxBody by mutableIntStateOf(1000); private set
     var ttlHours by mutableIntStateOf(30 * 24); private set
     private var base = "/api/agent/dm"
+    /** 📷 Photos (docs/dm-photos-spec.md): only when the server says where to upload them. Groups use the same. */
+    var canSendImages by mutableStateOf(false); private set
+    var maxImages by mutableIntStateOf(4); private set
+    var imageMaxSide by mutableIntStateOf(1280); private set
 
     var conversations by mutableStateOf<List<DMConversation>>(emptyList()); private set
     var unreadTotal by mutableIntStateOf(0); private set
     var listLoaded by mutableStateOf(false); private set
 
-    /** What is on screen above the chat (empty: nothing DM). Back pops one. */
+    /** ✉️ is a page of its own (after 💬; 「アプリ版の DM を素直にチャットの右のタブに移動」 2026-11-08): something
+     *  asked to show DM (a notification, a name in the chat, a demo) — MainScreen moves to that page and clears it. */
+    var showPage by mutableStateOf(false)
+
+    /** What the ✉️ page shows (empty: the list). Back pops one. */
     var stack by mutableStateOf<List<Route>>(emptyList()); private set
     val route: Route? get() = stack.lastOrNull()
     val openPeer: DMPeer? get() = (route as? Route.Conversation)?.peer
@@ -196,6 +230,9 @@ class DMStore(private val api: ApiClient) {
     private var threadJob: Job? = null
     private var tempSeq = 0L
     private var lastReadSent = 0L
+    private var imageUpload = "/api/agent/dm/upload"
+    /** 📷 My sends' photos, kept until the DM lands (or is discarded) so 再送 can re-upload; `urls` once uploaded. */
+    private val outbox = HashMap<String, DMOutgoing>()
 
     fun configure(caps: Capabilities) {
         enabled = caps.dmEnabled
@@ -203,6 +240,10 @@ class DMStore(private val api: ApiClient) {
         maxBody = caps.dmMaxBody
         ttlHours = caps.dmTtlHours
         base = caps.dmPath
+        canSendImages = caps.canSendDMImages
+        maxImages = caps.dmMaxImages
+        imageMaxSide = caps.chatImageMaxSide
+        imageUpload = caps.dmImageUpload ?: imageUpload
         groups.configure(caps)
         if (!enabled) { stack = emptyList(); return }
         refreshList()
@@ -215,6 +256,7 @@ class DMStore(private val api: ApiClient) {
 
     fun openList() {
         if (!enabled) return
+        showPage = true
         stack = listOf(Route.Inbox)
         groups.closeGroup()
         refreshList()
@@ -226,6 +268,7 @@ class DMStore(private val api: ApiClient) {
         val known = conversations.firstOrNull { it.peer.userId == peer.userId }?.peer
         val p = if (peer.name == null && known != null) known else peer
         val current = openPeer
+        showPage = true
         if (current?.userId == p.userId) return
         // From the list: back goes to it; from the chat or a notification: back closes.
         stack = (if (route == Route.Inbox) listOf(Route.Inbox) else emptyList()) + Route.Conversation(p)
@@ -242,6 +285,7 @@ class DMStore(private val api: ApiClient) {
     fun openGroup(id: Long) {
         if (id <= 0) return
         if (!groups.enabled) { if (!enabled && !groups.demo) pendingGroup = id; return }
+        showPage = true
         if (route == Route.Group(id)) return
         stack = (if (route == Route.Inbox) listOf(Route.Inbox) else emptyList()) + Route.Group(id)
         groups.open(id)
@@ -327,7 +371,8 @@ class DMStore(private val api: ApiClient) {
                 val r = api.dmThread(peerId, base)
                 if (openPeer?.userId != peerId) return@launch
                 val local = rows.filter { it.message.id < 0 }
-                var next = r.messages.map { DMRow(it) }
+                val previews = rows.filter { it.localImages.isNotEmpty() }.associate { it.message.id to it.localImages }
+                var next = r.messages.map { DMRow(it, localImages = previews[it.id].orEmpty()) }
                 local.forEach { l -> if (next.none { it.message.clientId != null && it.message.clientId == l.message.clientId }) next = next + l }
                 rows = DMLogic.fresh(next, Instant.now(), ttlHours)
                 canSendHere = r.canSend
@@ -394,16 +439,20 @@ class DMStore(private val api: ApiClient) {
 
     // MARK: sending
 
-    fun send(raw: String, restore: (String) -> Unit) {
+    /** Text and/or photos (📷 docs/dm-photos-spec.md). The bubble with the local previews shows at once;
+     *  the photos upload first, then the DM posts with their URLs. */
+    fun send(raw: String, photos: List<ChatPhoto> = emptyList(), restore: (String, List<ChatPhoto>) -> Unit) {
         val peer = openPeer ?: return
         val body = raw.trim().take(maxBody)
-        if (body.isEmpty() || !canSendCap || !canSendHere) return
+        val shots = if (canSendImages) photos.take(maxImages) else emptyList()
+        if (!DMLogic.canSend(body, shots.size) || !canSendCap || !canSendHere) return
         val clientId = UUID.randomUUID().toString()
         tempSeq += 1
         val pending = DMMessage(id = -tempSeq, peerId = peer.userId, toId = peer.userId, body = body,
             createdAt = Instant.now().toString(), isAuthor = true, clientId = clientId)
         error = null
-        rows = rows + DMRow(pending, SendState.PENDING)
+        outbox[clientId] = DMOutgoing(shots)
+        rows = rows + DMRow(pending, SendState.PENDING, localImages = shots.map { it.preview })
         post(peer, pending, restore)
     }
 
@@ -411,33 +460,41 @@ class DMStore(private val api: ApiClient) {
         val peer = openPeer ?: return
         if (row.message.id >= 0) return
         setState(row.message.clientId, SendState.PENDING)
-        post(peer, row.message) { }
+        post(peer, row.message) { _, _ -> }
     }
 
     fun discard(row: DMRow) {
+        row.message.clientId?.let(outbox::remove)
         rows = rows.filterNot { it.message.id < 0 && it.message.clientId == row.message.clientId }
     }
 
-    private fun post(peer: DMPeer, pending: DMMessage, restore: (String) -> Unit) {
+    private fun post(peer: DMPeer, pending: DMMessage, restore: (String, List<ChatPhoto>) -> Unit) {
         val clientId = pending.clientId ?: return
+        val out = outbox[clientId] ?: DMOutgoing(emptyList())
         if (demo) {
+            outbox.remove(clientId)
+            // Demo: the photos stay as this device's previews (there is no server to upload to).
             val stored = pending.copy(id = (demoThreads.values.flatten().maxOfOrNull { it.id } ?: 0L) + rows.size + 1, fromId = "me")
             demoThreads[peer.userId] = demoThreads[peer.userId].orEmpty() + stored
             rows = DMLogic.reconcile(rows, stored)
-            conversations = DMLogic.upsert(conversations, peer, stored, viewing = true)
+            conversations = DMLogic.upsert(conversations, peer, stored.copy(images = out.photos.map { "local" }), viewing = true)
             return
         }
         scope.launch {
             try {
-                val m = api.dmSend(peer.userId, pending.body, clientId, base)
+                val urls = out.urls ?: if (out.photos.isEmpty()) emptyList() else
+                    api.uploadChatImages(out.photos.map { it.jpeg }, imageUpload).also { out.urls = it }
+                val m = api.dmSend(peer.userId, pending.body, clientId, base, urls)
+                outbox.remove(clientId)
                 if (openPeer?.userId == peer.userId) rows = DMLogic.reconcile(rows, m)
                 conversations = DMLogic.upsert(conversations, peer, m, viewing = true)
             } catch (e: ApiError) {
                 if (e is ApiError.Http && e.serverMessage != null) error = e.serverMessage
                 if (e.isPermanent) {
+                    outbox.remove(clientId)
                     rows = rows.filterNot { it.message.id < 0 && it.message.clientId == clientId }
                     if (e is ApiError.Http && e.status == 403) canSendHere = false
-                    restore(pending.body)
+                    restore(pending.body, out.photos)
                 } else {
                     setState(clientId, SendState.FAILED)
                 }
@@ -473,21 +530,27 @@ class DMStore(private val api: ApiClient) {
     private val demoThreads = HashMap<String, List<DMMessage>>()
 
     /** Debug only: sample conversations among the demo chat's people (one unread), offline. */
-    fun loadDemo() {
+    fun loadDemo(images: String? = null) {
         demo = true
         enabled = true
         canSendCap = true
+        canSendImages = true
         val now = Instant.now()
         fun at(minAgo: Long) = now.minusSeconds(minAgo * 60).toString()
         var id = 0L
-        fun m(peer: String, mine: Boolean, body: String, minAgo: Long) = DMMessage(++id,
-            fromId = if (mine) "me" else peer, toId = if (mine) peer else "me", peerId = peer, body = body, createdAt = at(minAgo), isAuthor = mine)
+        fun m(peer: String, mine: Boolean, body: String, minAgo: Long, images: List<String> = emptyList()) = DMMessage(++id,
+            fromId = if (mine) "me" else peer, toId = if (mine) peer else "me", peerId = peer, body = body, createdAt = at(minAgo), isAuthor = mine, images = images)
+        // 📷 Photos served from this Mac (`--es demo_images`), like the chat's demo photos.
+        val photos = if (images == null) emptyList() else listOf(
+            m("mazzo", false, "", 4, listOf("$images/photo1.jpg")),
+            m("mazzo", true, "オフ会の写真です", 3, listOf("$images/photo2.jpg", "$images/photo3.jpg")),
+        )
         demoThreads["mazzo"] = listOf(
             m("mazzo", false, "さっきの将棋、いい勝負でしたね", 95),
             m("mazzo", true, "ありがとうございます！次は負けません", 90),
             m("mazzo", false, "Android 版の DM、試してます。届いてますか？", 6),
             m("mazzo", false, "1 か月で消えるのはいいですね", 5),
-        )
+        ) + photos
         demoThreads["takuto"] = listOf(
             m("takuto", false, "通知の件、ありがとうございました", 300),
             m("takuto", true, "いえいえ、また何かあれば DM ください", 280),
@@ -505,6 +568,6 @@ class DMStore(private val api: ApiClient) {
         }.sortedByDescending { it.lastMessage.createdAt }, now, ttlHours)
         unreadTotal = DMLogic.totalUnread(conversations)
         listLoaded = true
-        groups.loadDemo()
+        groups.loadDemo(images)
     }
 }

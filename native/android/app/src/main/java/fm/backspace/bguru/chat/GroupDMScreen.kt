@@ -43,6 +43,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -126,26 +128,20 @@ internal fun GDMInboxRow(s: GroupSummary, onClick: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun GDMGroupScreen(dm: DMStore, id: Long) {
+internal fun GDMGroupScreen(dm: DMStore, id: Long, visible: Boolean) {
     val g = dm.groups
     val context = LocalContext.current
     val listState = rememberLazyListState()
-    var draft by rememberSaveable(id) { mutableStateOf("") }
+    var draft by rememberSaveable(id, stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue("")) }
+    // 📷 Photos for the next message, and the photo open full screen.
+    val photos = remember(id) { ChatAttachments() }
+    var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
 
-    // On screen (resumed) = read: tells the store, and clears this group's notification.
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    DisposableEffect(lifecycle, id) {
-        fun on() { g.setScreenVisible(id, true); Push.clearGDMNotification(context, id) }
-        if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) on()
-        val obs = LifecycleEventObserver { _, e ->
-            when (e) {
-                Lifecycle.Event.ON_RESUME -> on()
-                Lifecycle.Event.ON_PAUSE -> g.setScreenVisible(id, false)
-                else -> Unit
-            }
-        }
-        lifecycle.addObserver(obs)
-        onDispose { lifecycle.removeObserver(obs); g.setScreenVisible(id, false) }
+    // On screen (resumed, and its page is the one shown) = read: tells the store, and clears this group's notification.
+    val shown = rememberShown(visible)
+    DisposableEffect(shown, id) {
+        if (shown) { g.setScreenVisible(id, true); Push.clearGDMNotification(context, id) }
+        onDispose { if (shown) g.setScreenVisible(id, false) }
     }
 
     LaunchedEffect(g) {
@@ -205,6 +201,7 @@ internal fun GDMGroupScreen(dm: DMStore, id: Long) {
                     val showHeader = prev == null || prev.isSystem || prev.fromId != row.message.fromId
                     if (row.message.isSystem) GDMSystemLine(row.message, Modifier.widthIn(max = 760.dp).fillMaxWidth())
                     else GDMBubble(row, showHeader, onRetry = { g.retry(row) }, onDiscard = { g.discard(row) },
+                        onOpenImage = { urls, i -> viewing = urls to i },
                         modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth())
                 }
             }
@@ -212,15 +209,20 @@ internal fun GDMGroupScreen(dm: DMStore, id: Long) {
             GDMComposer(
                 g = g,
                 draft = draft,
-                onDraft = { draft = it.take(g.maxBody) },
+                photos = photos,
+                onDraft = { draft = it.limitTo(g.maxBody) },
                 onSend = {
-                    val text = draft
-                    draft = ""
-                    g.send(text) { body -> if (draft.isEmpty()) draft = body }
+                    val text = draft.text
+                    draft = TextFieldValue("")
+                    g.send(text, photos.take()) { body, back ->
+                        if (draft.text.isEmpty()) draft = TextFieldValue(body, TextRange(body.length))
+                        photos.restore(back)
+                    }
                 },
             )
         }
     }
+    viewing?.let { (urls, at) -> ImageViewer(urls, at) { viewing = null } }
 }
 
 /** 「A さんが B さんを追加しました」: centred, small. */
@@ -240,7 +242,7 @@ private fun GDMSystemLine(m: GMessage, modifier: Modifier) {
 }
 
 @Composable
-private fun GDMBubble(row: GRow, showHeader: Boolean, onRetry: () -> Unit, onDiscard: () -> Unit, modifier: Modifier) {
+private fun GDMBubble(row: GRow, showHeader: Boolean, onRetry: () -> Unit, onDiscard: () -> Unit, onOpenImage: (List<String>, Int) -> Unit, modifier: Modifier) {
     val m = row.message
     val mine = m.isAuthor
     Row(modifier, horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
@@ -267,7 +269,12 @@ private fun GDMBubble(row: GRow, showHeader: Boolean, onRetry: () -> Unit, onDis
                 Text(m.senderName, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(bottom = 2.dp))
             }
-            Text(
+            if (m.images.isNotEmpty() || row.localImages.isNotEmpty()) {
+                DMImages(m.images, row.localImages, onOpenImage)
+                Spacer(Modifier.size(4.dp))
+            }
+            // A photo-only message has no text bubble.
+            if (m.body.isNotEmpty() || (m.images.isEmpty() && row.localImages.isEmpty())) Text(
                 remember(m.body) { linkified(m.body) },
                 fontSize = 16.sp,
                 modifier = Modifier
@@ -290,40 +297,43 @@ private fun GDMBubble(row: GRow, showHeader: Boolean, onRetry: () -> Unit, onDis
 }
 
 @Composable
-private fun GDMComposer(g: GDMStore, draft: String, onDraft: (String) -> Unit, onSend: () -> Unit) {
+private fun GDMComposer(g: GDMStore, draft: TextFieldValue, photos: ChatAttachments, onDraft: (TextFieldValue) -> Unit, onSend: () -> Unit) {
     val allowed = g.canSendCap && g.canSendHere
+    val canAttach = allowed && g.canSendImages
+    val paste = rememberPasteImages(photos, g.maxImages, g.imageMaxSide, enabled = canAttach)
     Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(Modifier.widthIn(max = 760.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                g.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                (g.error ?: photos.error)?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 if (!allowed) {
                     Text(
                         if (!g.canSendCap) "このアプリからは DM を送れません（読むだけ）" else "このグループにはまだ送れません",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                if (canAttach) ComposerPhotos(photos)
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextField(
+                    if (canAttach) PhotoAttachButtons(photos, g.maxImages, g.imageMaxSide)
+                    PhotoTextField(
                         value = draft,
                         onValueChange = onDraft,
+                        onImages = paste,
                         enabled = allowed,
                         placeholder = { Text(if (g.openId?.let { g.group(it) }?.beagle == true) "@ビーグル で質問・要約（30 日で消えます）" else "グループ DM（30 日で消えます）") },
                         maxLines = 6,
-                        shape = RoundedCornerShape(20.dp),
-                        colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, disabledIndicatorColor = Color.Transparent),
                         modifier = Modifier.weight(1f),
                     )
-                    val canSend = allowed && draft.isNotBlank()
+                    val canSend = allowed && photos.loading == 0 && DMLogic.canSend(draft.text, if (canAttach) photos.photos.size else 0)
                     IconButton(onClick = onSend, enabled = canSend) {
                         Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "送信", tint = if (canSend) AccentGreen else MaterialTheme.colorScheme.outline)
                     }
                 }
                 Row {
                     Text("DM は 30 日で消えます", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline, modifier = Modifier.weight(1f))
-                    if (draft.length > g.maxBody * 0.8) Text("${draft.length} / ${g.maxBody}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    if (draft.text.length > g.maxBody * 0.8) Text("${draft.text.length} / ${g.maxBody}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 }
             }
         }

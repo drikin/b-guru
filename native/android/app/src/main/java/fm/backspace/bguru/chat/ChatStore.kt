@@ -162,8 +162,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     val lastOwnMessage: ChatMessage?
         get() = rows.lastOrNull { it.message.isAuthor && it.message.id > 0 }?.message
 
-    /** Demo only: the page to show at launch (0 timeline, 1 chat, 2 jukebox), and the picture viewer. */
-    var demoPage by mutableStateOf<Int?>(null)
+    /** Demo only: the tab to show at launch, and the picture viewer. */
+    var demoPage by mutableStateOf<MainTab?>(null)
     var demoViewer by mutableStateOf(false)
 
     /** Debug only: sample chat, sends "succeed" locally (no network). */
@@ -206,7 +206,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             gdm = Capabilities.GDMFeatures(enabled = true, path = "/api/agent/gdm", send = true, maxBody = 1000, maxName = 40, maxMembers = 100, ttlHours = 24, rateLimitPerHour = 60, streamEvent = "gdm"),
             offkai = Capabilities.OffkaiFeatures(enabled = true, path = "/api/agent/offkai", control = true),
         ))
-        dm.loadDemo()
+        dm.loadDemo(images)
         // ☗ 将棋: sample games (one in progress against me, one to watch) and the chat's game card.
         if (withShogi) shogi.loadDemo("me", "ドリキン", shogiScenario)
         if (withMinigame) minigame.loadDemo()

@@ -49,6 +49,22 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
+/** The tabs in order: 📰 💬 ✉️ 📻 (✉️ right after 💬 — 「アプリ版の DM を素直にチャットの右のタブに移動」
+ *  drikin 2026-11-08; ✉️ only with DM on, 📻 only with the jukebox on). Unit-tested: MainTabsTest. */
+enum class MainTab { TIMELINE, CHAT, DM, JUKEBOX }
+
+object MainTabs {
+    /** Phone pages, in order. */
+    fun pages(dm: Boolean, jukebox: Boolean): List<MainTab> =
+        listOfNotNull(MainTab.TIMELINE, MainTab.CHAT, MainTab.DM.takeIf { dm }, MainTab.JUKEBOX.takeIf { jukebox })
+
+    /** Wide screen: the right side's switch (the timeline is always on the left). */
+    fun right(dm: Boolean, jukebox: Boolean): List<MainTab> = pages(dm, jukebox).drop(1)
+
+    /** The page of [tab], or -1 when that tab is not there. */
+    fun pageOf(tab: MainTab, dm: Boolean, jukebox: Boolean): Int = pages(dm, jukebox).indexOf(tab)
+}
+
 /** Phone: timeline and chat (and the jukebox, when the server turns it on) as pages —
  *  swipe left/right or use the switch at the top (like the iPhone app). Tablet / wide
  *  window: the timeline beside the chat (or the jukebox). The jukebox's mini player
@@ -59,14 +75,13 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
     val wide = LocalConfiguration.current.screenWidthDp >= 840
     val jb = jukebox?.takeIf { store.capabilities?.jukeboxEnabled == true }
 
-    // ✉️ DM はタブの並びの最後に（rbtnn さんの要望 2026-11-08）: 1 回押せば DM の一覧（グループも）が開く。
-    // ページではなく、アプリ全体の上に出る DM の画面（DMOverlay）を開くだけ。
+    // ✉️ DM is a tab right after 💬 (drikin 2026-11-08): the list and the conversations live on that page.
     val dm = store.dm.takeIf { it.enabled }
 
     @Composable
-    fun Segments(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    fun Segments(labels: List<String>, selected: Int, onSelect: (Int) -> Unit, badges: Map<Int, Int> = emptyMap()) {
         // Marks, not words now: segments sized to them, two or three (drikin 2026-10-20).
-        if (labels.size >= 2 || dm != null) { CompactSegments(labels, selected, onSelect, dm); return }
+        if (labels.size >= 2) { CompactSegments(labels, selected, onSelect, badges); return }
         SingleChoiceSegmentedButtonRow(Modifier.width(250.dp)) {
             labels.forEachIndexed { i, label ->
                 SegmentedButton(selected = selected == i, onClick = { onSelect(i) },
@@ -82,22 +97,27 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
             if (wide) {
-                var right by remember { mutableStateOf(0) } // 0 = chat, 1 = jukebox
-                LaunchedEffect(jb?.showTab) { if (jb?.showTab == true) { right = 1; jb.showTab = false; jb.revealTick++ } }
+                var right by remember { mutableStateOf(MainTab.CHAT) } // 💬, ✉️ or 📻
+                LaunchedEffect(jb?.showTab) { if (jb?.showTab == true) { right = MainTab.JUKEBOX; jb.showTab = false; jb.revealTick++ } }
+                // ✉️ from a notification / a name in the chat: the DM pane.
+                LaunchedEffect(dm?.showPage) { if (dm?.showPage == true) { right = MainTab.DM; dm.showPage = false } }
                 // 「チャットに引用」: show the chat (it takes the quote into its draft).
-                LaunchedEffect(ChatQuote.pending) { if (ChatQuote.pending != null) right = 0 }
+                LaunchedEffect(ChatQuote.pending) { if (ChatQuote.pending != null) right = MainTab.CHAT }
                 // ☗ 将棋 from a notification / the chat card: show the chat (the shogi panel is above it).
-                LaunchedEffect(store.shogi.revealTick) { if (store.shogi.revealTick > 0) right = 0 }
+                LaunchedEffect(store.shogi.revealTick) { if (store.shogi.revealTick > 0) right = MainTab.CHAT }
                 // 🍻 オフ会 from a notification: show the chat (the panel is above it).
-                LaunchedEffect(store.offkai.revealTick) { if (store.offkai.revealTick > 0) right = 0 }
+                LaunchedEffect(store.offkai.revealTick) { if (store.offkai.revealTick > 0) right = MainTab.CHAT }
                 // 🎧 音声をこの端末で続ける (voice_handoff): show the chat (the feature is on it).
-                LaunchedEffect(store.chatRevealTick) { if (store.chatRevealTick > 0) right = 0 }
+                LaunchedEffect(store.chatRevealTick) { if (store.chatRevealTick > 0) right = MainTab.CHAT }
                 // 📺 「みんなで見る」 over the chat (chat_overlay): the player is a window of the chat, so show the chat.
-                LaunchedEffect(store.watch.revealTick) { if (store.watch.revealTick > 0 && store.chatOverlay) right = 0 }
+                LaunchedEffect(store.watch.revealTick) { if (store.watch.revealTick > 0 && store.chatOverlay) right = MainTab.CHAT }
+                val rightTabs = MainTabs.right(dm != null, jb != null)
+                // A tab that went away (DM / the jukebox turned off): back to the chat.
+                if (right !in rightTabs) right = MainTab.CHAT
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
                 // A phone on its side with ☗ / 🎮 open: the board / game takes the timeline's place, beside the chat
                 // (ChatScreen puts it there at the full height; above the chat it would be cut off).
-                val panelBeside = right == 0 && store.panelOpen && SidePanelLayout.beside(maxWidth, maxHeight)
+                val panelBeside = right == MainTab.CHAT && store.panelOpen && SidePanelLayout.beside(maxWidth, maxHeight)
                 Row(Modifier.fillMaxSize()) {
                     if (!panelBeside) {
                         Row(Modifier.width(420.dp).fillMaxHeight()) {
@@ -105,18 +125,20 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
                         }
                         VerticalDivider()
                     }
-                    val chatMark = if (store.unreadCount > 0) "💬•" else "💬"
-                    val switch: (@Composable () -> Unit)? = when {
-                        jb != null -> { { Segments(listOf(chatMark, "📻"), right) { right = it } } }
-                        dm != null -> { { Segments(listOf(chatMark), 0) {} } } // 💬 と ✉️（DM の入口をタブに）
-                        else -> null
+                    val labels = rightTabs.map { tabLabel(it, store) }
+                    val badges = rightTabs.indexOf(MainTab.DM).takeIf { it >= 0 }?.let { mapOf(it to (dm?.badgeTotal ?: 0)) } ?: emptyMap()
+                    val switch: (@Composable () -> Unit)? = if (rightTabs.size < 2) null else {
+                        { Segments(labels, rightTabs.indexOf(right), { right = rightTabs[it] }, badges) }
                     }
-                    if (jb != null && right == 1) JukeboxScreen(jb, store.capabilities, switch, onOpenThread = { timeline.openThread = it })
-                    else PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch) }
+                    when {
+                        jb != null && right == MainTab.JUKEBOX -> JukeboxScreen(jb, store.capabilities, switch, onOpenThread = { timeline.openThread = it })
+                        dm != null && right == MainTab.DM -> DMPage(dm, store.members, visible = true, tabSwitch = switch)
+                        else -> PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch) }
+                    }
                 }
                 }
             } else {
-                Pages(store, timeline, jb, dm, onSignOut) { labels, selected, onSelect -> Segments(labels, selected, onSelect) }
+                Pages(store, timeline, jb, dm, onSignOut) { labels, selected, onSelect, badges -> Segments(labels, selected, onSelect, badges) }
             }
         }
         // No mini player under the timeline and the chat (drikin 2026-10-20): the jukebox
@@ -135,18 +157,12 @@ private fun Pages(
     jb: JukeboxStore?,
     dm: DMStore?,
     onSignOut: () -> Unit,
-    segments: @Composable (List<String>, Int, (Int) -> Unit) -> Unit,
+    segments: @Composable (List<String>, Int, (Int) -> Unit, Map<Int, Int>) -> Unit,
 ) {
-    val base = if (jb != null) 3 else 2
-    // ✉️ DM: one more page past the last tab, so a swipe from the last page reaches DM like a tap on ✉️
-    // (2026-11-08: スワイプで DM に行けない). Landing on it opens the DM screen over the app and
-    // slides back to the last tab, which is what shows again when DM is closed.
-    val dmPage = if (dm != null) base else -1
-    val count = if (dm != null) base + 1 else base
-    val pager = rememberPagerState(initialPage = 1) { count } // 0 = timeline, 1 = chat, 2 = jukebox (, last = ✉️)
-    LaunchedEffect(pager.settledPage, dmPage) {
-        if (dm != null && pager.settledPage == dmPage) { dm.openList(); pager.scrollToPage(dmPage - 1) }
-    }
+    val tabs = MainTabs.pages(dm != null, jb != null)
+    val dmPage = tabs.indexOf(MainTab.DM)
+    val jbPage = tabs.indexOf(MainTab.JUKEBOX)
+    val pager = rememberPagerState(initialPage = 1) { tabs.size } // 📰 💬 (✉️) (📻)
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
     // Switching pages hides the keyboard.
@@ -158,7 +174,11 @@ private fun Pages(
     // 「チャットに引用」 from a post's menu: show the chat (it takes the quote, then clears it).
     LaunchedEffect(ChatQuote.pending) { if (ChatQuote.pending != null) scope.launch { pager.animateScrollToPage(1) } }
     // Demo (`--es demo_tab`): start on that page.
-    LaunchedEffect(store.demoPage) { store.demoPage?.let { p -> pager.scrollToPage(p.coerceIn(0, base - 1)); store.demoPage = null } }
+    LaunchedEffect(store.demoPage, tabs) {
+        store.demoPage?.let { t -> tabs.indexOf(t).takeIf { it >= 0 }?.let { pager.scrollToPage(it) }; store.demoPage = null }
+    }
+    // ✉️ from a notification / a name in the chat / the demo: the DM page (the conversation opens there).
+    LaunchedEffect(dm?.showPage, dmPage) { if (dm?.showPage == true && dmPage >= 0) { dm.showPage = false; scope.launch { pager.animateScrollToPage(dmPage) } } }
     // ☗ 将棋 from a notification: show the chat (the shogi panel opens above it).
     LaunchedEffect(store.shogi.revealTick) { if (store.shogi.revealTick > 0) scope.launch { pager.animateScrollToPage(1) } }
     // 🍻 オフ会 from a notification: show the chat (the panel opens above it).
@@ -169,13 +189,13 @@ private fun Pages(
     // (the old form floats it over every page instead).
     LaunchedEffect(store.watch.revealTick) { if (store.watch.revealTick > 0 && store.chatOverlay) scope.launch { pager.animateScrollToPage(1) } }
     // The playback notification / the mini player: show the jukebox.
-    LaunchedEffect(jb?.showTab, base) { if (jb?.showTab == true && base == 3) { pager.animateScrollToPage(2); jb.showTab = false; jb.revealTick++ } }
+    LaunchedEffect(jb?.showTab, jbPage) { if (jb?.showTab == true && jbPage >= 0) { pager.animateScrollToPage(jbPage); jb.showTab = false; jb.revealTick++ } }
 
-    // 📰 タイムライン ・ 💬 チャット ・ 📻 プレイヤー — the same order and marks in every app (drikin 2026-10-20).
-    val chatLabel = if (store.unreadCount > 0) "💬•" else "💬"
-    val labels = if (jb != null) listOf("📰", chatLabel, "📻") else listOf("📰", chatLabel)
+    // 📰 タイムライン ・ 💬 チャット ・ ✉️ DM ・ 📻 プレイヤー — the same order and marks in every app (drikin 2026-10-20, ✉️ 2026-11-08).
+    val labels = tabs.map { tabLabel(it, store) }
+    val badges = if (dmPage >= 0) mapOf(dmPage to (dm?.badgeTotal ?: 0)) else emptyMap()
     val switch: @Composable () -> Unit = {
-        segments(labels, pager.currentPage) { i -> scope.launch { pager.animateScrollToPage(i) } }
+        segments(labels, pager.currentPage, { i -> scope.launch { pager.animateScrollToPage(i) } }, badges)
     }
     // The chat page is at least partly on screen (swiping to or from it counts): its room and
     // ☗ clock run only then — they are drawn live as the page slides in.
@@ -186,10 +206,8 @@ private fun Pages(
         when (page) {
             0 -> TimelineScreen(timeline, store.capabilities, tabSwitch = switch, onReconnect = onSignOut, visible = pager.currentPage == 0)
             1 -> PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch, visible = pager.currentPage == 1, onScreen = chatOnScreen) }
-            dmPage -> Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                Text("✉️ DM", style = MaterialTheme.typography.titleMedium)
-            }
-            else -> if (jb != null) JukeboxScreen(jb, store.capabilities, switch, visible = { pager.currentPage == 2 },
+            dmPage -> if (dm != null) DMPage(dm, store.members, visible = pager.currentPage == dmPage, tabSwitch = switch)
+            jbPage -> if (jb != null) JukeboxScreen(jb, store.capabilities, switch, visible = { pager.currentPage == jbPage },
                 onOpenThread = { timeline.openThread = it })
         }
     }
@@ -211,11 +229,18 @@ private fun PostLinksInApp(timeline: TimelineStore, content: @Composable () -> U
     CompositionLocalProvider(LocalUriHandler provides handler, content = content)
 }
 
-/** Three tabs in the top bar: segments sized to their words (equal widths would cut
- *  「ジュークボックス」 on a phone), drawn like the two-tab SegmentedButton row.
- *  [dm]: 最後に ✉️（押すと DM の一覧を開く、選ばれた状態にはならない。未読は 1 対 1 とグループの合計を赤い数で）。 */
+/** The mark of a tab in the switch (💬• = unread in the chat; ✉️'s count is a badge beside it). */
+private fun tabLabel(tab: MainTab, store: ChatStore): String = when (tab) {
+    MainTab.TIMELINE -> "📰"
+    MainTab.CHAT -> if (store.unreadCount > 0) "💬•" else "💬"
+    MainTab.DM -> "✉️"
+    MainTab.JUKEBOX -> "📻"
+}
+
+/** The tabs in the top bar: segments sized to their marks, drawn like the two-tab SegmentedButton row.
+ *  [badges]: a red count beside that tab's mark (✉️: 1 対 1 and groups together). */
 @Composable
-private fun CompactSegments(labels: List<String>, selected: Int, onSelect: (Int) -> Unit, dm: DMStore? = null) {
+private fun CompactSegments(labels: List<String>, selected: Int, onSelect: (Int) -> Unit, badges: Map<Int, Int> = emptyMap()) {
     val scheme = MaterialTheme.colorScheme
     val shape = androidx.compose.foundation.shape.RoundedCornerShape(50)
     Row(
@@ -223,37 +248,27 @@ private fun CompactSegments(labels: List<String>, selected: Int, onSelect: (Int)
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
         labels.forEachIndexed { i, label ->
+            val count = badges[i] ?: 0
             if (i > 0) Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.outline))
-            Box(
+            Row(
                 Modifier.fillMaxHeight()
                     .background(if (i == selected) AccentGreen.copy(alpha = 0.18f) else androidx.compose.ui.graphics.Color.Transparent) // the app's green, not Material's default
                     .selectable(selected = i == selected, role = androidx.compose.ui.semantics.Role.Tab) { onSelect(i) }
-                    .padding(horizontal = 9.dp),
-                contentAlignment = androidx.compose.ui.Alignment.Center,
-            ) {
-                Text(label, maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium,
-                    color = if (i == selected) AccentGreen else scheme.onSurface)
-            }
-        }
-        if (dm != null) {
-            val total = dm.badgeTotal
-            Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.outline))
-            Row(
-                Modifier.fillMaxHeight()
-                    .clickable(role = androidx.compose.ui.semantics.Role.Button) { dm.openList() }
-                    .semantics { contentDescription = if (total > 0) "DM（未読 $total）" else "DM" }
+                    .then(if (label == "✉️") Modifier.semantics { contentDescription = if (count > 0) "DM（未読 $count）" else "DM" } else Modifier)
                     .padding(horizontal = 9.dp),
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
             ) {
-                Text("✉️", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium)
-                if (total > 0) {
+                Text(label, maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium,
+                    color = if (i == selected) AccentGreen else scheme.onSurface)
+                if (count > 0) {
                     Box(
                         Modifier.padding(start = 3.dp).height(16.dp).widthIn(min = 16.dp)
                             .background(androidx.compose.ui.graphics.Color(0xFFDC2626), androidx.compose.foundation.shape.RoundedCornerShape(50))
                             .padding(horizontal = 4.dp),
                         contentAlignment = androidx.compose.ui.Alignment.Center,
                     ) {
-                        Text(if (total > 99) "99+" else "$total", color = androidx.compose.ui.graphics.Color.White, fontSize = 10.sp, maxLines = 1)
+                        // lineHeight: the inherited 24 sp would push the digit out of the 16 dp pill.
+                        Text(if (count > 99) "99+" else "$count", color = androidx.compose.ui.graphics.Color.White, fontSize = 10.sp, lineHeight = 12.sp, maxLines = 1)
                     }
                 }
             }
