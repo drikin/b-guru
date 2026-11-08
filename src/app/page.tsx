@@ -995,6 +995,9 @@ const BGURU_READ_KEY = "bguru_read_posts_v2";
 const BGURU_UNREAD_ON_KEY = "bguru_auto_unread_v1";
 const BGURU_FONT_SIZE_KEY = "bguru_font_size_v1";
 
+/** 右サイドバーのトレンド・ピン留め・ホットトピック。2026-11-08 オーナー「一旦非表示でいいかもしれません」で隠す（戻すときは true）。 */
+const SHOW_RIGHT_EXTRAS = false;
+
 /** 文字サイズ設定。iOS PWA で文字が小さく感じる問題への対策。 */
 type FontSize = "sm" | "md" | "lg" | "xl";
 const FONT_SIZE_OPTIONS: { value: FontSize; label: string }[] = [
@@ -5679,6 +5682,9 @@ export default function Home() {
   }, [auth]);
 
   const [onlineMembers, setOnlineMembers] = useState<OnlineMember[]>([]);
+  // 右のオンライン: アクティブ（タブを前に出している）人と、それ以外（離席中・状態不明。既定は畳む）
+  const onlineActive = useMemo(() => onlineMembers.filter((m) => m.visible === true), [onlineMembers]);
+  const onlineOthers = useMemo(() => onlineMembers.filter((m) => m.visible !== true), [onlineMembers]);
   /** The posts SSE stream is open (set by the stream effect). */
   const sseOpenRef = useRef(false);
   // Keyed on "signed in or not", not the auth object: auth is re-fetched now and
@@ -6690,6 +6696,7 @@ export default function Home() {
   }>({ clubs: [], categories: [] });
   const [, setCatalogTick] = useState(0); // ライブカタログ反映後の再レンダー用
   const [clubManagerOpen, setClubManagerOpen] = useState(false); // admin「部活管理」モーダル
+  const [onlineOthersOpen, setOnlineOthersOpen] = useState(false); // 右のオンライン: 離席中などを開くか
   const [settingsOpen, setSettingsOpen] = useState(false); // ⚙ 設定（左サイドバーから移した設定をまとめる）
   const [mutedWordsOpen, setMutedWordsOpen] = useState(false); // NG ワード（本人の設定、drikin 2026-10-29）
 
@@ -11531,6 +11538,7 @@ export default function Home() {
           )}
 
           {/* トレンド: 直近24hの投稿/コメントからAI抽出した検索キーワード（6時間ごと更新・タップで検索） */}
+          {SHOW_RIGHT_EXTRAS && (
           <Paper p="sm" radius="md" withBorder shadow="xs">
             <Group justify="space-between" align="center" mb={6} wrap="nowrap">
               <Group gap={6} align="center" wrap="nowrap">
@@ -11569,6 +11577,7 @@ export default function Home() {
             )}
           </Paper>
 
+          )}
           {/* Notifications panel (moved here from header popover) */}
           <Paper p={0} radius="md" withBorder shadow="xs">
             <Group justify="space-between" p="sm" style={{ borderBottom: "1px solid var(--border-default)" }}>
@@ -11670,7 +11679,7 @@ export default function Home() {
               </Group>
               {onlineMembers.length > 0 && (
                 <Text size="xs" c="dimmed">
-                  {onlineMembers.length}人
+                  {onlineActive.length}人
                 </Text>
               )}
             </Group>
@@ -11680,7 +11689,14 @@ export default function Home() {
               </Text>
             ) : (
               <Stack gap={4}>
-                {onlineMembers.map((m) => {
+                {onlineActive.length === 0 && (
+                  <Text size="xs" c="dimmed">
+                    いまアクティブな人はいません。
+                  </Text>
+                )}
+                {/* アクティブ（緑のドット）の人だけ出し、離席中・状態不明の人は「ほか N 人」に畳む（既定は閉じる）。
+                    2026-11-08 オーナー「アクティブな人以外は表示しないでいい気がします。もしくは折りたためるように」 */}
+                {(onlineOthersOpen ? [...onlineActive, ...onlineOthers] : onlineActive).map((m) => {
                   const isSelf = !!auth && m.userId === auth.userId;
                   // Three states, because "we don't know" is not the same as
                   // "in front" (drikin 2026-09-23: 「僕以外全員アクティブとは
@@ -11761,10 +11777,23 @@ export default function Home() {
                     </UnstyledButton>
                   );
                 })}
+                {onlineOthers.length > 0 && (
+                  <UnstyledButton
+                    onClick={() => setOnlineOthersOpen((v) => !v)}
+                    aria-expanded={onlineOthersOpen}
+                    style={{ fontSize: "0.75rem", color: "var(--text-muted)", padding: "3px 4px", textAlign: "left" }}
+                    data-cx="online-others-toggle"
+                  >
+                    {onlineOthersOpen ? "▾ 離席中などを隠す" : `▸ ほか ${onlineOthers.length} 人（離席中など）`}
+                  </UnstyledButton>
+                )}
               </Stack>
             )}
           </Paper>
 
+          {/* ピン留め・ホットトピック: 一旦隠す（SHOW_RIGHT_EXTRAS） */}
+          {SHOW_RIGHT_EXTRAS && (
+          <>
           <Paper p="sm" radius="md" withBorder shadow="xs">
             <Group justify="space-between" align="center" mb={4} wrap="nowrap">
               <Group gap={6} align="center" wrap="nowrap">
@@ -11843,6 +11872,8 @@ export default function Home() {
               </Stack>
             )}
           </Paper>
+          </>
+          )}
           </Stack>
         </ScrollArea>
       </AppShell.Aside>
