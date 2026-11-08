@@ -80,15 +80,7 @@ struct ChatView: View {
             ChatComposerBar(store: store, pin: pin, composer: composer, onClose: onClose)
         }
         .background(.regularMaterial)
-        // ✉️ 簡易 DM: the list / a conversation over the chat (the header's ✉️, a name in the chat).
-        .overlay {
-            if store.dm.route != nil {
-                DMScreen(dm: store.dm)
-                    .transition(.move(edge: .trailing))
-            }
-        }
-        .animation(.easeOut(duration: 0.18), value: store.dm.route == nil)
-        .onChange(of: store.isVisible, initial: true) { _, v in store.dm.appVisible = v }
+        // ✉️ 簡易 DM is a tab of its own (MainPanelView's DMTab, 2026-11-08); a name in the chat opens it there.
         // The column's height, for how big ☗ 将棋's board may get (half of it).
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
             store.shogi.setAreaHeight($0)

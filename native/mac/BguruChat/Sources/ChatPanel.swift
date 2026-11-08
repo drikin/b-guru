@@ -148,16 +148,18 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
             // 📰 → 💬 → 📻 (the tabs' order), one step per swipe (drikin 2026-10-19: with three
             // tabs the swipe only went between the first two).
             var order: [MainTab] = [.timeline, .chat]
+            if store.dm.enabled { order.append(.dm) }
             if store.capabilities?.jukeboxEnabled ?? false { order.append(.jukebox) }
             if let i = order.firstIndex(of: pin.tab) {
                 let next = max(0, min(order.count - 1, i + step))
                 if next != i { withAnimation(.easeOut(duration: 0.18)) { pin.tab = order[next] } }
             }
         }
-        // ⌘V with an image (and no text) on the pasteboard in the chat: attach it.
+        // ⌘V with an image (and no text) on the pasteboard in the chat: attach it — to the open DM /
+        // group conversation when one is over the chat (📷 DM の写真), else to the chat's message.
         if event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-           event.charactersIgnoringModifiers == "v", pin.chatShown, let data = Self.pastedImage() {
-            NotificationCenter.default.post(name: .chatPasteImage, object: data)
+           event.charactersIgnoringModifiers == "v", pin.chatShown || pin.tab == .dm, let data = Self.pastedImage() {
+            NotificationCenter.default.post(name: pin.tab == .dm ? .dmPasteImage : .chatPasteImage, object: data)
             return
         }
         // Mouse back button (button 4 = number 3): thread → timeline.
@@ -166,8 +168,8 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
             NotificationCenter.default.post(name: .timelineBack, object: nil)
             return
         }
-        // ← in a DM: one step back (the conversation → the list → closed), as in a timeline thread.
-        if event.type == .keyDown, event.keyCode == 123, pin.chatShown, store.dm.route != nil, leftArrowAllowed(event) {
+        // ← in a DM conversation: one step back (→ the list), as in a timeline thread.
+        if event.type == .keyDown, event.keyCode == 123, pin.tab == .dm, store.dm.route ?? .list != .list, leftArrowAllowed(event) {
             store.dm.back()
             return
         }
@@ -183,7 +185,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         }
         // Side by side, a click on the timeline (not into a field there) takes the caret out of the
         // chat's message box, so Space / J / K then scroll the timeline.
-        if event.type == .leftMouseDown, pin.split, pin.tab != .jukebox,
+        if event.type == .leftMouseDown, pin.sideBySide,
            event.locationInWindow.x < frame.width - SplitLayout.chatWidth(frame.width) {
             let before = firstResponder
             super.sendEvent(event)
@@ -608,6 +610,8 @@ final class PinState {
     /// The chat / the timeline is on the panel (its own tab, or both side by side).
     var chatShown: Bool { tab == .chat || (split && tab == .timeline) }
     var timelineShown: Bool { tab == .timeline || (split && tab == .chat) }
+    /// The timeline and the chat side by side now (📻 and ✉️ take the whole panel).
+    var sideBySide: Bool { split && tab != .jukebox && tab != .dm }
 }
 
 /// Two-finger horizontal swipe on the trackpad → switch chat ⇄ timeline, like
@@ -726,12 +730,13 @@ enum PanelMemory {
         case "timeline": .timeline
         case "chat": .chat
         case "jukebox": .jukebox
+        case "dm": .dm
         default: nil
         }
     }
 
     static func saveTab(_ t: MainTab) {
-        store?.set(t == .timeline ? "timeline" : t == .jukebox ? "jukebox" : "chat", forKey: tabKey)
+        store?.set(t == .timeline ? "timeline" : t == .jukebox ? "jukebox" : t == .dm ? "dm" : "chat", forKey: tabKey)
     }
 
     static var savedChatScreen: String? { store?.string(forKey: chatScreenKey) }

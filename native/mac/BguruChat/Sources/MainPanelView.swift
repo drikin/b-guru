@@ -42,6 +42,13 @@ struct MainPanelView: View {
             TabSlot(pin: pin, tab: .timeline) {
                 TimelineTab(store: store, timeline: timeline, pin: pin, onSignOut: onSignOut).equatable()
             }
+            // ✉️ DM: a tab of its own right after the chat (the list and a conversation, the whole panel).
+            // オーナー 2026-11-08「アプリ版のDMを素直にチャットの右のタブに移動」
+            if store.dm.enabled {
+                TabSlot(pin: pin, tab: .dm) {
+                    DMTab(store: store, pin: pin).equatable()
+                }
+            }
             SplitDivider(pin: pin)
             if jukeboxOn {
                 JukeboxSlot(store: store, pin: pin)
@@ -76,7 +83,8 @@ struct MainPanelView: View {
         .background {
             Button("") { tab = .timeline }.keyboardShortcut("1", modifiers: .command).hidden()
             Button("") { tab = .chat }.keyboardShortcut("2", modifiers: .command).hidden()
-            if jukeboxOn { Button("") { tab = .jukebox }.keyboardShortcut("3", modifiers: .command).hidden() }
+            if store.dm.enabled { Button("") { tab = .dm }.keyboardShortcut("3", modifiers: .command).hidden() }
+            if jukeboxOn { Button("") { tab = .jukebox }.keyboardShortcut("4", modifiers: .command).hidden() }
             // The text size (老眼対策): ⌘+ (also ⌘= / ⌘; on a JIS keyboard, where + is ⇧;), ⌘−, ⌘0.
             Button("") { TextScale.shared.larger() }.keyboardShortcut("+", modifiers: .command).hidden()
             Button("") { TextScale.shared.larger() }.keyboardShortcut("=", modifiers: .command).hidden()
@@ -101,7 +109,7 @@ private struct TabSlot<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        let side = pin.split && pin.tab != .jukebox
+        let side = pin.sideBySide
         let on = tab == .chat ? pin.chatShown : tab == .timeline ? pin.timelineShown : pin.tab == tab
         let width = !side ? nil : tab == .chat ? SplitLayout.chatWidth(pin.width) : pin.width - SplitLayout.chatWidth(pin.width) - 1
         content
@@ -121,7 +129,7 @@ enum SplitLayout {
 private struct SplitDivider: View {
     let pin: PinState
     var body: some View {
-        if pin.split && pin.tab != .jukebox {
+        if pin.sideBySide {
             Rectangle().fill(Color(nsColor: .separatorColor))
                 .frame(width: 1)
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -163,6 +171,10 @@ private struct PanelTabWatcher: View {
         let seen = pin.windowVisible
         visibility.set(timeline: seen && pin.timelineShown, chat: seen && pin.chatShown,
                        jukebox: seen && pin.tab == .jukebox, room: seen && pin.chatShown)
+        // ✉️ read marks (and no notification for what is on screen) only while the DM tab shows.
+        let dmShown = seen && pin.tab == .dm
+        if store.dm.appVisible != dmShown { store.dm.appVisible = dmShown }
+        if dmShown, store.dm.route == nil { store.dm.showList() }
         // Every minute only while the timeline can be seen (the tab stays built when hidden,
         // so appearing / disappearing said nothing about that).
         // Web 版のタイムラインのときは Web が自分で新着を取る。
@@ -199,6 +211,8 @@ private struct PanelTabWatcher: View {
             .onChange(of: pin.windowVisible) { _, _ in updateVisibility() }
             .onChange(of: pin.split) { _, _ in updateVisibility() }
             .onChange(of: jukeboxOn) { _, on in if !on && pin.tab == .jukebox { pin.tab = .chat } }
+            // A name in the chat, a notification, …: DMStore.open → the ✉️ tab shows it.
+            .onChange(of: store.dm.openRequest, initial: true) { _, n in if n > 0 { pin.tab = .dm } }
             .onChange(of: pin.tab) { _, t in
                 updateVisibility()
                 if t == .jukebox { pin.wantsHeight?(780) }
@@ -209,6 +223,8 @@ private struct PanelTabWatcher: View {
                 restoreChatScreen()
                 // Remembered on the jukebox, but the jukebox is not on for this member (any more).
                 if pin.tab == .jukebox, caps != nil, !(caps?.jukeboxEnabled ?? false) { pin.tab = .chat }
+                // Remembered on ✉️, but DM is not on for this member.
+                if pin.tab == .dm, caps != nil, !(caps?.features?.dm?.enabled ?? false) { pin.tab = .chat }
             }
             // Inside the chat: ☗ / 🎮 open again where they were left (the room follows the
             // server: entering it shows you to everyone, so it is never entered by itself).
@@ -252,20 +268,24 @@ struct PanelTabSwitch: View {
         if pin.split {
             // Side by side: one switch (over the chat) — 📰💬 both, or 📻.
             if pane != .timeline {
-                HStack(spacing: 4) {
-                    PanelTabs(selection: Binding(get: { pin.tab == .jukebox ? .jukebox : .chat }, set: { pin.tab = $0 }), items: [
-                        (.chat, store.unreadCount > 0 ? "📰💬●" : "📰💬", "タイムラインとチャット（⌘1 / ⌘2）"),
-                    ] + (jukeboxOn ? [(.jukebox, "📻", "プレイヤー（⌘3）")] : []))
-                    PanelDMTab(store: store, pin: pin)
-                }
+                PanelTabs(selection: Binding(get: { pin.tab == .jukebox || pin.tab == .dm ? pin.tab : .chat }, set: { pin.tab = $0 }), items: [
+                    (.chat, store.unreadCount > 0 ? "📰💬●" : "📰💬", "タイムラインとチャット（⌘1 / ⌘2）"),
+                ] + dmItem + jukeboxItem)
             }
         } else {
-            HStack(spacing: 4) {
-                tabs
-                PanelDMTab(store: store, pin: pin)
-            }
+            tabs
         }
     }
+
+    /// ✉️ with the unread count (1:1 and groups together) when DM is on.
+    private var dmItem: [(MainTab, String, String)] {
+        let dm = store.dm
+        guard dm.enabled else { return [] }
+        let n = dm.totalUnread
+        return [(.dm, n > 0 ? "✉️ \(n > 99 ? "99+" : "\(n)")" : "✉️", n > 0 ? "DM、未読 \(n) 件（⌘3）" : "DM（⌘3）")]
+    }
+
+    private var jukeboxItem: [(MainTab, String, String)] { jukeboxOn ? [(.jukebox, "📻", "プレイヤー（⌘4）")] : [] }
 
     private var tabs: some View {
         // 📰 タイムライン ・ 💬 チャット ・ 📻 プレイヤー — the same order and marks in every app
@@ -274,47 +294,18 @@ struct PanelTabSwitch: View {
         PanelTabs(selection: $pin.tab, items: [
             (.timeline, "📰", "タイムライン（⌘1）"),
             (.chat, store.unreadCount > 0 ? "💬●" : "💬", "チャット（⌘2）"),
-        ] + (jukeboxOn ? [(.jukebox, "📻", "プレイヤー（⌘3）")] : []))
+        ] + dmItem + jukeboxItem)
     }
 }
 
-/// ✉️ DM: 切り替えの隣。押すとチャットのタブで DM の一覧（グループも）がチャットの上に開く（もう一度押すと閉じる）。
-/// 未読の数は 1 対 1 とグループの合計。rbtnn さんの要望 2026-11-08（「チャット → DM → グループ」が長い）。
-private struct PanelDMTab: View {
+/// ✉️ DM: the list and a conversation, the whole panel (no ✕: it is a tab; ← / ‹ go back to the list).
+private struct DMTab: View, @MainActor Equatable {
     let store: ChatStore
-    @Bindable var pin: PinState
-
+    let pin: PinState
+    static func == (a: Self, b: Self) -> Bool { a.store === b.store && a.pin === b.pin }
     var body: some View {
-        let dm = store.dm
-        if dm.enabled {
-            let on = pin.tab == .chat && dm.route != nil
-            let n = dm.totalUnread
-            Button {
-                if on { dm.close() } else { pin.tab = .chat; dm.openList() }
-            } label: {
-                HStack(spacing: 3) {
-                    Text("✉️").font(.app(size: 12))
-                    if n > 0 {
-                        Text(n > 99 ? "99+" : "\(n)")
-                            .font(.app(size: 10, weight: .bold)).monospacedDigit()
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 4).padding(.vertical, 1)
-                            .background(Capsule().fill(Color.red))
-                    }
-                }
-                .padding(.horizontal, 8)
-                .frame(height: 20)
-                .background(RoundedRectangle(cornerRadius: 5).fill(on ? Color.accentColor : Color.clear))
-                .padding(2)
-                .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.07)))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .fixedSize()
-            .help("DM（30 日で消えます）")
-            .accessibilityLabel(n > 0 ? "DM、未読 \(n) 件" : "DM")
-            .accessibilityAddTraits(on ? .isSelected : [])
-        }
+        DMScreen(dm: store.dm, tabPicker: AnyView(PanelTabSwitch(store: store, pin: pin, pane: .dm)))
+            .environment(\.dmPresentation, .tab)
     }
 }
 

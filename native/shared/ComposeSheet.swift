@@ -101,8 +101,12 @@ final class PostDraft {
         }
     }
 
-    /// A pasted image (macOS ⌘V of a screenshot).
+    /// A pasted image (⌘V / ペースト of a screenshot or a copied photo) or a camera shot.
     func add(imageData data: Data) {
+        guard images.count < maxImages else {
+            error = "写真は \(maxImages) 枚までです"
+            return
+        }
         Task {
             if !(await append(data)) { error = "画像を読み込めませんでした" } else { error = nil }
         }
@@ -200,6 +204,31 @@ final class OutgoingPhotos {
         self.previews = previews
         self.originals = originals
     }
+
+    /// ✉️ DM / 👥 グループ DM: small JPEGs (long side `maxSide`, no metadata — the chat's rule) uploaded
+    /// to `path` once; a retry reuses the URLs.
+    func uploaded(api: APIClient, path: String, maxSide: Int = 1280) async throws -> [String] {
+        if let urls { return urls }
+        let sources = originals
+        let jpegs = await Task.detached(priority: .userInitiated) {
+            sources.compactMap { PostDraft.uploadJPEG($0, maxSide: maxSide, quality: 0.8) }
+        }.value
+        guard jpegs.count == sources.count else { throw APIError.transport("画像を送れる形に変換できませんでした") }
+        let u = try await api.upload(images: jpegs, path: path)
+        urls = u
+        return u
+    }
+
+    #if DEBUG
+    /// Demo (nothing is sent): the previews go into the image cache under made-up paths.
+    static func debugCachedPaths(_ p: OutgoingPhotos) -> [String] {
+        p.previews.map { img in
+            let path = "selftest-media/dm-photo-\(UUID().uuidString).jpg"
+            MediaCache.shared.debugInsert(img, for: path)
+            return path
+        }
+    }
+    #endif
 }
 
 /// A picked photo received as a file (copied out of the picker's temporary location).

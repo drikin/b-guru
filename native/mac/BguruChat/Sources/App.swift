@@ -1464,7 +1464,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// ✉️ 簡易 DM from someone (not while that conversation is on screen): 「〇〇さんからの DM」 and the text.
     /// One notification per person (the next replaces it). DMs are to me, so quiet hours keep only the sound off.
     private func notifyDM(_ m: DMMessage, peer: DMPeer) {
-        let t = DMLogic.notificationText(name: peer.name, body: m.body)
+        let t = DMLogic.notificationText(name: peer.name, body: m.shownBody)
         let content = UNMutableNotificationContent()
         content.title = t.title
         content.body = t.body
@@ -1477,7 +1477,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// 👥 グループ DM: someone's message in a group (not while it is on screen, not when I muted it — the store
     /// leaves those out): the group's title and 「送り主: 本文」. One notification per group, like the 1:1 DM.
     private func notifyGDM(_ m: GDMMessage, group g: GDMGroup) {
-        let t = GDMLogic.notificationText(title: g.title, fromName: m.fromName, body: m.body)
+        let t = GDMLogic.notificationText(title: g.title, fromName: m.fromName, body: m.shownBody)
         let content = UNMutableNotificationContent()
         content.title = t.title
         content.body = t.body

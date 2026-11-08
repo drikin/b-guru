@@ -49,6 +49,8 @@ struct GDMMessage: Codable, Equatable, Sendable, Identifiable {
     var fromName: String?
     var fromAvatar: String?
     var body: String
+    /// 📷 Attached photos (/api/media/dm-…, up to 4; body may be "" then). Missing (older servers) = [].
+    var images: [String] = []
     var createdAt: String
     var isAuthor: Bool
     /// 🐶 Beagle's answer (kind stays "text" so older apps show it as a message from ビーグル).
@@ -58,12 +60,34 @@ struct GDMMessage: Codable, Equatable, Sendable, Identifiable {
     var pending = false
     var failed = false
 
-    enum CodingKeys: String, CodingKey { case id, groupId, kind, fromId, fromName, fromAvatar, body, createdAt, isAuthor, isBeagle, clientId }
+    enum CodingKeys: String, CodingKey { case id, groupId, kind, fromId, fromName, fromAvatar, body, images, createdAt, isAuthor, isBeagle, clientId }
+
+    /// The text for the list and notifications: the body, or 「📷 写真」 for photos alone.
+    var shownBody: String { DMPhotoText.shown(body: body, imageCount: images.count) }
 
     var isSystem: Bool { kind == "system" }
     var senderName: String {
         let n = (fromName ?? "").trimmingCharacters(in: .whitespaces)
         return n.isEmpty ? "会員" : n
+    }
+}
+
+extension GDMMessage {
+    /// `images` defaults to [] (older servers, system lines and stream events without it).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        groupId = try c.decode(Int.self, forKey: .groupId)
+        kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "text"
+        fromId = try c.decodeIfPresent(String.self, forKey: .fromId)
+        fromName = try c.decodeIfPresent(String.self, forKey: .fromName)
+        fromAvatar = try c.decodeIfPresent(String.self, forKey: .fromAvatar)
+        body = try c.decodeIfPresent(String.self, forKey: .body) ?? ""
+        images = (try? c.decodeIfPresent([String].self, forKey: .images)) ?? []
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        isAuthor = try c.decodeIfPresent(Bool.self, forKey: .isAuthor) ?? false
+        isBeagle = try c.decodeIfPresent(Bool.self, forKey: .isBeagle)
+        clientId = try c.decodeIfPresent(String.self, forKey: .clientId)
     }
 }
 
@@ -186,7 +210,7 @@ enum GDMLogic {
     static func preview(_ m: GDMMessage?) -> String {
         guard let m else { return "まだ発言はありません" }
         if m.isSystem { return m.body }
-        return (m.isAuthor ? "あなた" : m.senderName) + ": " + m.body
+        return (m.isAuthor ? "あなた" : m.senderName) + ": " + m.shownBody
     }
 
     /// The notification: the group's title, and 「送り主: 本文」 clipped (iPhone's NSE says the same).
@@ -245,6 +269,14 @@ enum GDMLogic {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let more = q.isEmpty ? pool.filter { peerIds.contains(id($0)) } : pool
         return chosen + Array(more.prefix(pickerLimit))
+    }
+
+    /// 「＋ 新規 DM」: one person to write to — the group picker's rule (nothing typed: only my 1:1 partners;
+    /// typed: matching names, at most `pickerLimit`; never ビーグル, never me). オーナー 2026-11-08.
+    static func newDMList<T>(_ list: [T], id: (T) -> String, name: (T) -> String, me: String?,
+                             peerIds: Set<String>, query: String) -> [T] {
+        pickerList(list, id: id, name: name, excluding: Set([me].compactMap { $0 }),
+                   peerIds: peerIds, selected: [], query: query)
     }
 
     /// Who can be picked: not me, not those already in, not Beagle; matched by name (case and spaces ignored).

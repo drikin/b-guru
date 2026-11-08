@@ -4,9 +4,8 @@ import SwiftUI
 
 /// Chat or timeline (iPhone pages, the Mac panel switch).
 enum MainTab: Hashable {
-    case timeline, chat, jukebox
-    /// iPhone: the page past the last tab — landing on it opens ✉️ DM (a swipe reaches DM like the button).
-    case dm
+    /// In the switch's order: 📰 💬 ✉️ 📻 (✉️ DM a tab of its own right after the chat, 2026-11-08).
+    case timeline, chat, dm, jukebox
 }
 
 /// The timeline (root posts, newest activity first) for the native apps.

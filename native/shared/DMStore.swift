@@ -1,93 +1,8 @@
 import Foundation
 import Observation
 
-// ✉️ 簡易 DM (server: src/lib/dm.ts, /api/agent/dm/**). 1:1 between members, text only,
-// gone after 30 days (ttl_hours in capabilities). Off unless capabilities' features.dm.enabled (DM_ENABLED on the server).
-
-struct DMPeer: Codable, Hashable, Sendable, Identifiable {
-    var userId: String
-    var name: String?
-    var avatar: String?
-    var id: String { userId }
-    var displayName: String { (name?.isEmpty == false ? name : nil) ?? "会員" }
-}
-
-struct DMMessage: Codable, Equatable, Sendable, Identifiable {
-    var id: Int
-    var fromId: String
-    var toId: String
-    var peerId: String
-    var body: String
-    var createdAt: String
-    var isAuthor: Bool
-    var clientId: String?
-    /// Local only: on its way (negative id) / could not be sent.
-    var pending = false
-    var failed = false
-
-    enum CodingKeys: String, CodingKey { case id, fromId, toId, peerId, body, createdAt, isAuthor, clientId }
-}
-
-struct DMConversation: Codable, Equatable, Sendable, Identifiable {
-    var peer: DMPeer
-    var lastMessage: DMMessage
-    var unreadCount: Int
-    var id: String { peer.userId }
-}
-
-struct DMListResponse: Decodable, Sendable {
-    var conversations: [DMConversation]
-    var unreadCount: Int
-}
-
-struct DMThreadResponse: Decodable, Sendable {
-    var peer: DMPeer
-    var messages: [DMMessage]
-    var unreadCount: Int?
-    var lastReadId: Int?
-    var canSend: Bool?
-}
-
-/// The pure parts (tested by eye in the demo, and kept apart so the store stays small).
-enum DMLogic {
-    /// From capabilities' features.dm.ttl_hours (30 days since 2026-10-27; 24 h before).
-    nonisolated(unsafe) static var ttl: TimeInterval = 30 * 24 * 60 * 60
-
-    nonisolated(unsafe) private static let isoFrac: ISO8601DateFormatter = { // read-only after setup (thread-safe for parsing)
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
-    nonisolated(unsafe) private static let iso = ISO8601DateFormatter()
-
-    static func date(_ s: String) -> Date? { isoFrac.date(from: s) ?? iso.date(from: s) }
-
-    /// Gone after the ttl (messages still being sent stay).
-    static func pruned(_ list: [DMMessage], now: Date = Date()) -> [DMMessage] {
-        list.filter { m in m.pending || m.failed || (date(m.createdAt).map { now.timeIntervalSince($0) < ttl } ?? true) }
-    }
-
-    /// A stored message replaces my pending bubble (same client_id) or the same id; else it is added. Id order, pending last.
-    static func reconcile(_ list: [DMMessage], with m: DMMessage) -> [DMMessage] {
-        let matches: (DMMessage) -> Bool = { $0.id == m.id || (m.clientId != nil && $0.clientId == m.clientId && $0.id < 0) }
-        var next = list.filter { !matches($0) }
-        next.append(m)
-        return next.sorted { a, b in (a.id < 0 ? Int.max : a.id) < (b.id < 0 ? Int.max : b.id) }
-    }
-
-    /// The list after a message: that conversation first, unread +1 when it is theirs and not on screen.
-    static func conversations(_ list: [DMConversation], after m: DMMessage, peer: DMPeer, viewing: Bool) -> [DMConversation] {
-        let before = list.first { $0.peer.userId == peer.userId }?.unreadCount ?? 0
-        let unread = m.isAuthor ? before : (viewing ? 0 : before + 1)
-        return [DMConversation(peer: peer, lastMessage: m, unreadCount: unread)] + list.filter { $0.peer.userId != peer.userId }
-    }
-
-    /// 「〇〇さんからの DM」 and the text, clipped (the notification; same as the server's dmNotificationText).
-    static func notificationText(name: String?, body: String) -> (title: String, body: String) {
-        let n = (name ?? "").trimmingCharacters(in: .whitespaces)
-        return ("\(n.isEmpty ? "会員" : n)さんからの DM", body.count > 240 ? String(body.prefix(240)) + "…" : body)
-    }
-}
+// ✉️ 簡易 DM (server: src/lib/dm.ts, /api/agent/dm/**). 1:1 between members, text and up to 4 photos
+// (docs/dm-photos-spec.md), gone after 30 days (ttl_hours in capabilities). Off unless capabilities' features.dm.enabled (DM_ENABLED on the server).
 
 extension APIClient {
     func dmList(path: String) async throws -> DMListResponse {
@@ -98,9 +13,11 @@ extension APIClient {
         try await send(request("GET", "\(path)/\(peerId)"))
     }
 
-    func dmSend(path: String, peerId: String, body: String, clientId: String) async throws -> DMMessage {
+    func dmSend(path: String, peerId: String, body: String, clientId: String, images: [String] = []) async throws -> DMMessage {
         struct R: Decodable { var message: DMMessage }
-        let r: R = try await send(request("POST", "\(path)/\(peerId)", json: ["body": body, "client_id": clientId]))
+        var json: [String: Any] = ["body": body, "client_id": clientId]
+        if !images.isEmpty { json["images"] = images }
+        let r: R = try await send(request("POST", "\(path)/\(peerId)", json: json))
         return r.message
     }
 
@@ -115,11 +32,18 @@ extension APIClient {
 @Observable
 final class DMStore {
     /// `group` / `groupMembers` / `newGroup`: 👥 グループ DM (GroupDMStore.swift), only while `groups.enabled`.
-    enum Route: Equatable { case list, thread(DMPeer), group(Int), groupMembers(Int), newGroup }
+    typealias Route = DMRoute
 
     private(set) var enabled = false
     private(set) var canSend = false
     private(set) var maxBody = 1000
+    /// 📷 Photos may be attached (features.dm.max_images > 0; old servers say nothing → off). Groups too.
+    private(set) var canSendImages = false
+    private(set) var maxImages = 4
+    /// Where the photos go first (features.dm.upload_path).
+    private(set) var uploadPath = "/api/agent/dm/upload"
+    /// Photos of messages still being sent, by clientId (previews for the bubble; kept for a retry).
+    private(set) var outgoingPhotos: [String: OutgoingPhotos] = [:]
     private(set) var conversations: [DMConversation] = []
     /// All my unread DMs (the badge).
     private(set) var unreadCount = 0
@@ -200,9 +124,13 @@ final class DMStore {
         enabled = on
         canSend = on && (f?.send ?? false)
         maxBody = f?.maxBody ?? 1000
+        maxImages = min(f?.maxImages ?? 0, 4)
+        canSendImages = canSend && maxImages > 0
+        if let p = f?.uploadPath, p.hasPrefix("/api/") { uploadPath = p }
         if let h = f?.ttlHours, h > 0 { DMLogic.ttl = TimeInterval(h) * 3600 }
         if let p = f?.path, p.hasPrefix("/api/") { path = p }
         groups.configure(caps?.features?.gdm, dmOn: on)
+        groups.configurePhotos(on: canSendImages, max: maxImages, uploadPath: uploadPath)
         if !on { route = nil; conversations = []; unreadCount = 0 }
         if on, !wasOn {
             Task { await reload() }
@@ -210,10 +138,16 @@ final class DMStore {
         }
     }
 
-    func openList() { route = .list }
-    func open(_ peer: DMPeer) { route = .thread(peer) }
+    /// Bumped by every open from outside the DM screens (a name in the chat, a notification, ✉️):
+    /// the app then brings the ✉️ tab forward (iPhone's page, iPad's left column, the Mac's tab).
+    private(set) var openRequest = 0
+
+    func openList() { route = .list; openRequest += 1 }
+    func open(_ peer: DMPeer) { route = .thread(peer); openRequest += 1 }
     /// A group (from the list or a notification; before capabilities are in, the server says whether it may).
-    func openGroup(_ id: Int) { route = .group(id) }
+    func openGroup(_ id: Int) { route = .group(id); openRequest += 1 }
+    /// Back to the list from inside the DM screens (does not ask for the tab).
+    func showList() { route = .list }
     func close() { route = nil }
     /// One step back: a conversation → the list → closed (the Mac's ←, drikin 2026-10-24); a group's members → the group.
     func back() {
@@ -275,14 +209,17 @@ final class DMStore {
 
     // MARK: Sending
 
-    func send(_ text: String) {
+    /// Optimistic: the bubble shows at once (with the photos' previews); photos are made small and uploaded first.
+    func send(_ text: String, photos: OutgoingPhotos? = nil) {
         guard canSend, let peer = openPeer else { return }
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty, body.count <= maxBody else { return }
+        let photos = canSendImages ? photos : nil
+        guard !body.isEmpty || photos != nil, body.count <= maxBody else { return }
         tempSeq += 1
         let temp = DMMessage(id: -tempSeq, fromId: "", toId: peer.userId, peerId: peer.userId, body: body,
                              createdAt: ISO8601DateFormatter().string(from: Date()), isAuthor: true,
                              clientId: UUID().uuidString, pending: true)
+        if let photos, let cid = temp.clientId { outgoingPhotos[cid] = photos }
         thread.append(temp)
         error = nil
         deliver(temp, to: peer)
@@ -297,21 +234,29 @@ final class DMStore {
 
     func discard(_ m: DMMessage) {
         thread.removeAll { $0.id < 0 && $0.clientId == m.clientId }
+        if let cid = m.clientId { outgoingPhotos[cid] = nil }
     }
 
     private func deliver(_ temp: DMMessage, to peer: DMPeer) {
         Task {
+            let photos = temp.clientId.flatMap { outgoingPhotos[$0] }
             if demo {
                 try? await Task.sleep(for: .milliseconds(250))
                 var stored = temp
                 stored.id = 10_000 + tempSeq
                 stored.pending = false
+                #if DEBUG
+                stored.images = photos.map(OutgoingPhotos.debugCachedPaths) ?? []
+                #endif
                 applyCreate(stored, peer: peer, unread: nil)
+                if let cid = temp.clientId { outgoingPhotos[cid] = nil }
                 return
             }
             do {
-                let m = try await api.dmSend(path: path, peerId: peer.userId, body: temp.body, clientId: temp.clientId ?? "")
+                let urls = try await photos?.uploaded(api: api, path: uploadPath) ?? []
+                let m = try await api.dmSend(path: path, peerId: peer.userId, body: temp.body, clientId: temp.clientId ?? "", images: urls)
                 applyCreate(m, peer: peer, unread: nil)
+                if let cid = temp.clientId { outgoingPhotos[cid] = nil }
             } catch {
                 if let i = thread.firstIndex(where: { $0.clientId == temp.clientId && $0.id < 0 }) {
                     thread[i].pending = false
@@ -400,6 +345,9 @@ final class DMStore {
         demo = true
         enabled = true
         canSend = true
+        canSendImages = true
+        maxImages = 4
+        groups.configurePhotos(on: true, max: 4, uploadPath: uploadPath)
         func at(_ minutesAgo: Double) -> String { ISO8601DateFormatter().string(from: Date().addingTimeInterval(-minutesAgo * 60)) }
         func m(_ id: Int, _ peer: String, _ body: String, mine: Bool, _ ago: Double) -> DMMessage {
             DMMessage(id: id, fromId: mine ? "me" : peer, toId: mine ? peer : "me", peerId: peer, body: body,
@@ -410,8 +358,20 @@ final class DMStore {
                       m(2, "mazzo", "ありがとうございます！ 次は負けません", mine: true, 90),
                       m(5, "mazzo", "今夜の配信、見に行きます", mine: false, 6),
                       m(6, "mazzo", "1 か月で消えるのはいいですね", mine: false, 5)],
-            "takuto": [m(3, "takuto", "レンズの件、あとで写真送りますね（DM は文字だけでした）", mine: false, 300),
-                       m(4, "takuto", "了解です！", mine: true, 290)],
+            "takuto": [m(3, "takuto", "レンズの件、あとで写真送りますね", mine: false, 300),
+                       m(4, "takuto", "了解です！", mine: true, 290),
+                       {
+                           var p = m(8, "takuto", "左が古いほう、右が新しいほうです", mine: false, 281)
+                           p.images = [TimelineDemoMedia.picture("dm-lens-2", 960, 1280, hue: 0.6), TimelineDemoMedia.picture("dm-lens-3", 1280, 720, hue: 0.85),
+                                       TimelineDemoMedia.picture("dm-lens-4", 1280, 1280, hue: 0.15)]
+                           return p
+                       }(),
+                       {
+                           // 📷 写真だけ（本文なし）: 一覧は「📷 写真」
+                           var p = m(9, "takuto", "", mine: false, 280)
+                           p.images = [TimelineDemoMedia.picture("dm-lens-1", 1280, 960, hue: 0.33)]
+                           return p
+                       }()],
             "coban": [m(7, "coban", "昨日はありがとうございました", mine: true, 600)],
             // more than 30 days ago: hidden
             "りとる": [m(0, "りとる", "これは 31 日前（見えない）", mine: false, 31 * 24 * 60)],
@@ -423,6 +383,8 @@ final class DMStore {
         }
         unreadCount = 2
         if !ProcessInfo.processInfo.arguments.contains("-demoGDMOff") { groups.debugLoadDemo() }
+        // A screen opened by the arguments below: the ✉️ tab comes forward (as DMStore.open does).
+        defer { if route != nil { openRequest += 1 } }
         // -demoDMGroup / -demoDMGroupMembers / -demoDMNewGroup: 👥 the first group, its members, a new group (screenshots).
         if ProcessInfo.processInfo.arguments.contains("-demoDMGroup") { route = .group(1); return }
         if ProcessInfo.processInfo.arguments.contains("-demoDMGroupMembers") { route = .groupMembers(1); return }
@@ -430,6 +392,8 @@ final class DMStore {
         // -demoDM: open the list at once; -demoDMThread: mazzo's conversation (screenshots).
         let args = ProcessInfo.processInfo.arguments
         if args.contains("-demoDMThread") { route = .thread(DMPeer(userId: "mazzo", name: "mazzo", avatar: nil)) }
+        // -demoDMPhotos: takuto's conversation (📷 photos in bubbles).
+        else if args.contains("-demoDMPhotos") { route = .thread(DMPeer(userId: "takuto", name: "takuto", avatar: nil)) }
         else if args.contains("-demoDM") { route = .list }
     }
     #endif

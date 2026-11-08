@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import GameController
+import UniformTypeIdentifiers
 
 /// The chat composer as a real UITextView, so Return on a hardware keyboard can
 /// send WITHOUT stealing the Return that confirms a Japanese conversion.
@@ -30,6 +31,9 @@ struct ComposerTextView: UIViewRepresentable {
     var onUpArrowWhenEmpty: () -> Bool = { false }
     /// Esc (hardware keyboard), not during a conversion. Return true when handled.
     var onEscape: () -> Bool = { false }
+    /// 📷 ペースト / ⌘V with an image (and no text) on the pasteboard: the image's bytes (attach it).
+    /// nil = text only, as before.
+    var onPasteImage: ((Data) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -54,6 +58,7 @@ struct ComposerTextView: UIViewRepresentable {
         tv.onUpArrowWhenEmpty = onUpArrowWhenEmpty
         tv.onEscape = onEscape
         tv.onCommandReturn = onSubmit
+        tv.onPasteImage = onPasteImage
         tv.placeholder = placeholder
         if tv.text != text {
             // Never fight an open conversion — except to clear after a send,
@@ -107,6 +112,8 @@ final class ComposerUITextView: UITextView {
     var onEscape: (() -> Bool)?
     /// ⌘Return on a hardware keyboard (sends, like Return).
     var onCommandReturn: (() -> Void)?
+    /// 📷 An image pasted (see ComposerTextView.onPasteImage).
+    var onPasteImage: ((Data) -> Void)?
     /// The placeholder without the key hint.
     var placeholder = "" { didSet { updatePlaceholder() } }
 
@@ -187,6 +194,38 @@ final class ComposerUITextView: UITextView {
         if presses.contains(where: { $0.key?.keyCode == .keyboardReturnOrEnter || $0.key?.keyCode == .keypadEnter }) {
             DispatchQueue.main.async { self.returnShift = false; self.hardwareReturn = false }
         }
+    }
+
+    // MARK: 📷 Pasting an image (drikin 2026-11-08「クリップボードの画像を貼れるようにして欲しい」)
+
+    /// The pasteboard holds an image and no text: text wins (copying from a web page can bring both),
+    /// as on the Mac (ChatPanel.pastedImage). Asking `has…` does not show the paste prompt.
+    private var pasteIsImage: Bool {
+        let pb = UIPasteboard.general
+        return onPasteImage != nil && pb.hasImages && !pb.hasStrings
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        // The plain text view greys out ペースト for an image; offer it when it can be attached.
+        if action == #selector(paste(_:)), pasteIsImage { return true }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    override func paste(_ sender: Any?) {
+        guard pasteIsImage, let onPasteImage, let data = Self.pastedImageData() else {
+            super.paste(sender)
+            return
+        }
+        onPasteImage(data)
+    }
+
+    /// The first image on the pasteboard as its own bytes (JPEG / PNG / HEIC / GIF as copied), else re-encoded.
+    static func pastedImageData() -> Data? {
+        let pb = UIPasteboard.general
+        for type in [UTType.jpeg, .png, .heic, .gif, .webP, .tiff] {
+            if let d = pb.data(forPasteboardType: type.identifier), !d.isEmpty { return d }
+        }
+        return pb.image?.jpegData(compressionQuality: 0.92)
     }
 
     override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {

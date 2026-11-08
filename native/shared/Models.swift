@@ -234,6 +234,10 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var send: Bool?
         var maxBody: Int?
         var ttlHours: Int?
+        /// 📷 Photos per message (docs/dm-photos-spec.md; absent on older servers → no photos). Groups too.
+        var maxImages: Int?
+        /// POST multipart `images` → { urls } (the chat's upload's shape).
+        var uploadPath: String?
     }
     /// 👥 グループ DM (features.gdm, GROUP_DM_ENABLED on the server; docs/group-dm-spec.md). Absent or
     /// enabled:false → nothing of it shows.

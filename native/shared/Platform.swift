@@ -251,6 +251,9 @@ struct PostTextInput: View {
     var minLines = 1
     var maxLines = 6
     let onSubmit: () -> Void
+    /// 📷 iOS: ペースト / ⌘V of an image (no text on the pasteboard) attaches it — nil: text only.
+    /// The Mac's ⌘V of an image is taken by the panel first (ChatPanel.sendEvent).
+    var onPasteImage: ((Data) -> Void)? = nil
     #if os(macOS)
     @FocusState private var focused: Bool
     #endif
@@ -258,7 +261,7 @@ struct PostTextInput: View {
     var body: some View {
         #if os(iOS)
         ComposerTextView(text: $text, isFocused: $isFocused, placeholder: placeholder,
-                         minLines: minLines, maxLines: maxLines, onSubmit: onSubmit)
+                         minLines: minLines, maxLines: maxLines, onSubmit: onSubmit, onPasteImage: onPasteImage)
         #else
         TextField(ComposerHint.with(placeholder), text: $text, axis: .vertical)
             .lineLimit(minLines...maxLines)

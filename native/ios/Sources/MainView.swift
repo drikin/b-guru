@@ -114,18 +114,19 @@ struct MainView: View {
                                 .modifier(AvoidsKeyboard(keyboard: keyboard))
                                 .frame(width: g.size.width, height: g.size.height)
                                 .id(MainTab.chat)
+                            // ✉️ DM: a page of its own right after 💬 (the list, a conversation pushed over it).
+                            // オーナー 2026-11-08「アプリ版のDMを素直にチャットの右のタブに移動」
+                            if store.dm.enabled {
+                                DMTabScreen(dm: store.dm, tabPicker: AnyView(picker))
+                                    .modifier(AvoidsKeyboard(keyboard: keyboard))
+                                    .frame(width: g.size.width, height: g.size.height)
+                                    .id(MainTab.dm)
+                            }
                             if jukeboxOn {
                                 JukeboxScreen(jukebox: store.jukebox, path: jukeboxPath, tabPicker: picker)
                                     .modifier(AvoidsKeyboard(keyboard: keyboard))
                                     .frame(width: g.size.width, height: g.size.height)
                                     .id(MainTab.jukebox)
-                            }
-                            // ✉️ DM: one more page past the last tab, so a swipe reaches DM like the ✉️ button
-                            // (2026-11-08: スワイプで DM に行けない). Settling on it opens DM and goes back to the last tab.
-                            if store.dm.enabled {
-                                Text("✉️ DM").font(.title3)
-                                    .frame(width: g.size.width, height: g.size.height)
-                                    .id(MainTab.dm)
                             }
                         }
                         .scrollTargetLayout()
@@ -146,7 +147,7 @@ struct MainView: View {
     }
 }
 
-/// iPad: the left column switches between the timeline and the jukebox.
+/// iPad: the left column switches between the timeline, ✉️ DM and the jukebox (the chat stays on the right).
 private struct LeftColumn: View {
     let store: ChatStore
     let timeline: TimelineStore
@@ -158,8 +159,10 @@ private struct LeftColumn: View {
         let picker = PagePicker(store: store, pager: pager, jukeboxOn: jukeboxOn, leftColumn: true)
         if pager.leftTab == .jukebox && jukeboxOn {
             JukeboxScreen(jukebox: store.jukebox, path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox", tabPicker: picker)
+        } else if pager.leftTab == .dm && store.dm.enabled {
+            DMTabScreen(dm: store.dm, tabPicker: AnyView(picker))
         } else {
-            TimelineScreen(timeline: timeline, capabilities: store.capabilities, tabPicker: jukeboxOn ? picker : nil, onReconnect: onSignOut)
+            TimelineScreen(timeline: timeline, capabilities: store.capabilities, tabPicker: jukeboxOn || store.dm.enabled ? picker : nil, onReconnect: onSignOut)
         }
     }
 }
@@ -180,15 +183,22 @@ private struct PagerWatcher: View {
     /// scrolled off screen does not update until it comes back.
     private func updateVisibility() {
         let active = scenePhase == .active
+        let dmShown: Bool
         if paged {
             let page = pager.settledTab
             visibility.set(timeline: page == .timeline && active, chat: page == .chat && active,
                            jukebox: page == .jukebox && active, room: page == .chat && active)
+            dmShown = page == .dm && active
         } else {
             let left = pager.leftTab
             visibility.set(timeline: left == .timeline && active, chat: active,
                            jukebox: left == .jukebox && active, room: active)
+            dmShown = left == .dm && active
         }
+        // ✉️ read marks (and 「表示中なら知らせない」) only while the DM page is what is on screen.
+        if store.dm.appVisible != dmShown { store.dm.appVisible = dmShown }
+        // The page came forward with nothing open: the list (read again).
+        if dmShown, store.dm.route == nil { store.dm.showList() }
         if store.isVisible != visibility.chat { store.isVisible = visibility.chat }
         if visibility.timeline { timeline.startPolling() } else { timeline.stopPolling() }
     }
@@ -207,7 +217,16 @@ private struct PagerWatcher: View {
             // チャットの上に重ねる形: off the chat page a floating 📺 shows whatever the chat has expanded.
             .onChange(of: paged ? pager.tab == .chat : true, initial: true) { _, on in store.overlay.chatPageShown = on }
             .onChange(of: jukeboxOn) { _, on in
-                if !on { if pager.tab == .jukebox { pager.tab = .chat }; pager.leftTab = .timeline }
+                if !on { if pager.tab == .jukebox { pager.tab = .chat }; if pager.leftTab == .jukebox { pager.leftTab = .timeline } }
+            }
+            .onChange(of: store.dm.enabled) { _, on in
+                if !on { if pager.tab == .dm { pager.tab = .chat }; if pager.leftTab == .dm { pager.leftTab = .timeline } }
+            }
+            // A name in the chat, a notification, …: DMStore.open → the ✉️ page shows it (also one made
+            // before this view was up: a notification that launched the app).
+            .onChange(of: store.dm.openRequest, initial: true) { _, n in
+                guard n > 0 else { return }
+                if paged { pager.tab = .dm } else { pager.leftTab = .dm }
             }
             .onChange(of: timeline.openThread) { _, id in
                 guard id != nil else { return }
@@ -224,57 +243,68 @@ private struct PagerWatcher: View {
                 settle = Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(350))
                     guard !Task.isCancelled, pager.tab == t else { return }
-                    if t == .dm {
-                        // Like the ✉️ button: DM is shown over the chat page (ChatScreen's sheet).
-                        pager.tab = .chat
-                        store.dm.openList()
-                        return
-                    }
                     pager.settledTab = t
                 }
             }
     }
 }
 
-/// 📰 タイムライン ・ 💬 チャット ・ 📻 プレイヤー — the same order and marks in every app
-/// (drikin 2026-10-20). Plain Text segments (a segmented picker is a UISegmentedControl).
-/// Its own view: it reads the page and the unread count, so only it redraws when they change.
-/// Unread is a dot over the 💬 segment, not "💬●": a label that changed width re-laid out
-/// the navigation bar of every page.
+/// 📰 タイムライン ・ 💬 チャット ・ ✉️ DM ・ 📻 プレイヤー — the same order and marks in every app
+/// (drikin 2026-10-20; ✉️ after 💬 since 2026-11-08). Plain Text segments (a segmented picker is a UISegmentedControl).
+/// Its own view: it reads the page and the unread counts, so only it redraws when they change.
+/// Unread is a mark over a segment (a dot on 💬, the count on ✉️), not in the label: a label that
+/// changed width re-laid out the navigation bar of every page.
 struct PagePicker: View, @MainActor Equatable {
     let store: ChatStore
     let pager: PagerState
     let jukeboxOn: Bool
-    /// iPad: the left column's 📰 / 📻 switch.
+    /// iPad: the left column's 📰 / ✉️ / 📻 switch.
     var leftColumn = false
 
     static func == (a: Self, b: Self) -> Bool {
         a.store === b.store && a.pager === b.pager && a.jukeboxOn == b.jukeboxOn && a.leftColumn == b.leftColumn
     }
 
+    /// One segment's width (the marks are one emoji each).
+    private static let segment: CGFloat = 52
+
     var body: some View {
+        let dmOn = store.dm.enabled
         if leftColumn {
+            let tabs: [MainTab] = [.timeline] + (dmOn ? [.dm] : []) + (jukeboxOn ? [.jukebox] : [])
+            let width = Self.segment * CGFloat(tabs.count) + 10
             Picker("表示", selection: Binding(get: { pager.leftTab }, set: { v in withAnimation(.easeOut(duration: 0.2)) { pager.leftTab = v } })) {
-                Text("📰").tag(MainTab.timeline)
-                Text("📻").tag(MainTab.jukebox)
+                ForEach(tabs, id: \.self) { Text(Self.mark($0)).tag($0) }
             }
             .pickerStyle(.segmented)
-            .frame(width: 130)
-        } else {
-            let width: CGFloat = jukeboxOn ? 180 : 130
-            HStack(spacing: 14) {
-                Picker("表示", selection: Binding(get: { pager.tab }, set: { v in withAnimation(.easeOut(duration: 0.2)) { pager.tab = v } })) {
-                    Text("📰").tag(MainTab.timeline)
-                    Text("💬").tag(MainTab.chat)
-                    if jukeboxOn { Text("📻").tag(MainTab.jukebox) }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: width)
-                .overlay(alignment: .topLeading) { UnreadDot(store: store, x: width / (jukeboxOn ? 3 : 2) * 2 - 12) }
-                .id(jukeboxOn) // a new control for a different number of segments, not an update
-                // ✉️ DM（未読の数つき）: どのページからでも 1 回で DM の一覧（グループも）。rbtnn さんの要望 2026-11-08
-                DMBadgeButton(dm: store.dm) { store.showChat?() }
+            .frame(width: width)
+            .overlay(alignment: .topLeading) {
+                if let i = tabs.firstIndex(of: .dm) { DMCountBadge(dm: store.dm, x: width / CGFloat(tabs.count) * CGFloat(i + 1) - 14) }
             }
+            .id(tabs) // a new control for a different number of segments, not an update
+        } else {
+            let tabs: [MainTab] = [.timeline, .chat] + (dmOn ? [.dm] : []) + (jukeboxOn ? [.jukebox] : [])
+            let width = Self.segment * CGFloat(tabs.count)
+            let step = width / CGFloat(tabs.count)
+            Picker("表示", selection: Binding(get: { pager.tab }, set: { v in withAnimation(.easeOut(duration: 0.2)) { pager.tab = v } })) {
+                ForEach(tabs, id: \.self) { Text(Self.mark($0)).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: width)
+            .overlay(alignment: .topLeading) { UnreadDot(store: store, x: step * 2 - 12) }
+            .overlay(alignment: .topLeading) {
+                if dmOn { DMCountBadge(dm: store.dm, x: step * 3 - 14) }
+            }
+            .id(tabs) // a new control for a different number of segments, not an update
+        }
+    }
+
+    private static func mark(_ t: MainTab) -> String {
+        switch t {
+        case .timeline: return "📰"
+        case .chat: return "💬"
+        case .dm: return "✉️"
+        case .jukebox: return "📻"
         }
     }
 }
@@ -292,6 +322,26 @@ private struct UnreadDot: View {
             .allowsHitTesting(false)
             .accessibilityHidden(store.unreadCount == 0)
             .accessibilityLabel("チャットに未読あり")
+    }
+}
+
+/// ✉️'s unread count (1:1 and groups together) over its segment — what the old ✉️ button showed.
+private struct DMCountBadge: View {
+    let dm: DMStore
+    let x: CGFloat
+    var body: some View {
+        let n = dm.totalUnread
+        Text(n > 99 ? "99+" : "\(n)")
+            .font(.system(size: 11, weight: .bold)).monospacedDigit()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 4).padding(.vertical, 1)
+            .background(Capsule().fill(Color.red))
+            .fixedSize()
+            .offset(x: x, y: -6)
+            .opacity(n > 0 ? 1 : 0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(n == 0)
+            .accessibilityLabel("DM、未読 \(n) 件")
     }
 }
 

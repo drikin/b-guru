@@ -139,19 +139,10 @@ struct ChatScreen: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 14) {
-                        // ✉️ DM は上の切り替え（📰 💬 📻 の隣）へ移した。iPad のチャット欄には切り替えが無いのでここに残す
-                        if tabPicker == nil { DMBadgeButton(dm: store.dm) }
-                        menu
-                    }
+                    // ✉️ DM は自分のタブ（iPhone は 💬 の右のページ、iPad は左の列の ✉️）。2026-11-08
+                    menu
                 }
             }
-        }
-        // ✉️ 簡易 DM: the list / a conversation over the chat.
-        .sheet(isPresented: Binding(get: { store.dm.route != nil }, set: { if !$0 { store.dm.close() } })) {
-            DMScreen(dm: store.dm)
-                .presentationDetents([.large])
-                .modifier(DMSceneVisibility(dm: store.dm))
         }
     }
 
@@ -392,7 +383,10 @@ private struct ChatComposerBar: View {
                         guard composer.editingId != nil else { return false }
                         composer.cancelEdit()
                         return true
-                    }
+                    },
+                    // 📷 ペースト / ⌘V of an image attaches it (as the photo button; text paste as before).
+                    onPasteImage: composer.editingId == nil && store.capabilities?.canSendChatImages == true
+                        ? { [photos] data in photos.add(imageData: data) } : nil
                 )
                     .padding(.vertical, 8)
                     .padding(.horizontal, 12)
@@ -512,11 +506,3 @@ private struct OffkaiArea: View {
     }
 }
 
-/// Read marks only while the app is in front.
-private struct DMSceneVisibility: ViewModifier {
-    let dm: DMStore
-    @Environment(\.scenePhase) private var phase
-    func body(content: Content) -> some View {
-        content.onChange(of: phase, initial: true) { _, p in dm.appVisible = p == .active }
-    }
-}

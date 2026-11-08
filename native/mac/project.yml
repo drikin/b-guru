@@ -164,6 +164,7 @@ targets:
     sources:
       - path: ../ios/NSE
       - path: ../shared/Keychain.swift
+      - path: ../shared/DMPhotoText.swift
     info:
       path: ../ios/NSE/Info.plist
       properties:
@@ -211,6 +212,8 @@ targets:
       - path: Tests
       - path: ../shared/ReadSync.swift
       - path: ../shared/GroupDMLogic.swift
+      - path: ../shared/DMLogic.swift
+      - path: ../shared/DMPhotoText.swift
       - path: ../shared/ChatSpeech.swift
       - path: BguruChat/Sources/KeepAwakeLogic.swift
       - path: BguruChat/Sources/BatteryBeagleLogic.swift

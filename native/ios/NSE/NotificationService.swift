@@ -107,7 +107,9 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
                   let m = r["message"] as? [String: Any],
                   let body = m["body"] as? String else { return nil }
             let raw = ((r["peer"] as? [String: Any])?["name"] as? String ?? "").trimmingCharacters(in: .whitespaces)
-            return ("\(raw.isEmpty ? "会員" : raw)さんからの DM", clip(body))
+            // 📷 写真だけ（本文なし）は「📷 写真」（DMPhotoText、アプリの一覧と同じ）
+            let text = DMPhotoText.shown(body: body, imageCount: DMPhotoText.imageCount(m["images"]))
+            return ("\(raw.isEmpty ? "会員" : raw)さんからの DM", clip(text))
         case "gdm":
             // 👥 グループ DM: the group's title, and 「送り主: 本文」 (GDMLogic.notificationText in the app).
             guard let id = q.gdmId,
@@ -116,7 +118,8 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
                   let body = m["body"] as? String else { return nil }
             let title = ((r["group"] as? [String: Any])?["title"] as? String ?? "").trimmingCharacters(in: .whitespaces)
             let raw = (m["from_name"] as? String ?? "").trimmingCharacters(in: .whitespaces)
-            return (title.isEmpty ? "B-guru グループ DM" : title, clip("\(raw.isEmpty ? "会員" : raw): \(body)"))
+            let text = DMPhotoText.shown(body: body, imageCount: DMPhotoText.imageCount(m["images"]))
+            return (title.isEmpty ? "B-guru グループ DM" : title, clip("\(raw.isEmpty ? "会員" : raw): \(text)"))
         case "shogi_offer", "shogi_turn":
             // ☗ 将棋: who asked (and how fast), or who just moved and what. The generic line
             // （「対局の申し込みが届きました」「あなたの番です」）stays when this cannot be read.

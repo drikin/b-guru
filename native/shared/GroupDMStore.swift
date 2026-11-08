@@ -22,9 +22,11 @@ extension APIClient {
         try await send(request("GET", "\(path)/\(groupId)"))
     }
 
-    func gdmSend(path: String, groupId: Int, body: String, clientId: String) async throws -> GDMMessage {
+    func gdmSend(path: String, groupId: Int, body: String, clientId: String, images: [String] = []) async throws -> GDMMessage {
         struct R: Decodable { var message: GDMMessage }
-        let r: R = try await send(request("POST", "\(path)/\(groupId)/messages", json: ["body": body, "client_id": clientId]))
+        var json: [String: Any] = ["body": body, "client_id": clientId]
+        if !images.isEmpty { json["images"] = images }
+        let r: R = try await send(request("POST", "\(path)/\(groupId)/messages", json: json))
         return r.message
     }
 
@@ -85,6 +87,12 @@ final class GroupDMStore {
     private(set) var photoEditable = false
     private(set) var beagleAvailable = false
     private(set) var maxPhotoBytes = 15 * 1024 * 1024
+    /// 📷 Photos in messages (the 1:1 DM's features.dm.max_images / upload_path; set by DMStore).
+    private(set) var canSendImages = false
+    private(set) var maxImages = 4
+    private var uploadPath = "/api/agent/dm/upload"
+    /// Photos of messages still being sent, by clientId (previews for the bubble; kept for a retry).
+    private(set) var outgoingPhotos: [String: OutgoingPhotos] = [:]
     /// My groups, newest first.
     private(set) var summaries: [GDMSummary] = []
     /// All my groups' unread (`group_unread_count`; added to the 1:1 count for the ✉️ badge).
@@ -166,6 +174,13 @@ final class GroupDMStore {
         if !on { pruneTask?.cancel() }
     }
 
+    /// 📷 From the 1:1 DM's capabilities (the same upload and limits for groups).
+    func configurePhotos(on: Bool, max: Int, uploadPath: String) {
+        canSendImages = on && canSend
+        maxImages = max
+        self.uploadPath = uploadPath
+    }
+
     func reload() async {
         guard enabled, !demo else { return }
         if let r = try? await api.gdmList(path: path) {
@@ -243,15 +258,18 @@ final class GroupDMStore {
 
     // MARK: Sending
 
-    func send(_ text: String) {
+    /// Optimistic: the bubble shows at once (with the photos' previews); photos are made small and uploaded first.
+    func send(_ text: String, photos: OutgoingPhotos? = nil) {
         guard canSend, groupCanSend, let id = openId else { return }
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !body.isEmpty, body.count <= maxBody else { return }
+        let photos = canSendImages ? photos : nil
+        guard !body.isEmpty || photos != nil, body.count <= maxBody else { return }
         tempSeq += 1
         let me = group?.me
         let temp = GDMMessage(id: -tempSeq, groupId: id, kind: "text", fromId: me?.userId, fromName: me?.name, fromAvatar: me?.avatar,
                               body: body, createdAt: ISO8601DateFormatter().string(from: Date()), isAuthor: true,
                               clientId: UUID().uuidString, pending: true)
+        if let photos, let cid = temp.clientId { outgoingPhotos[cid] = photos }
         thread.append(temp)
         error = nil
         deliver(temp)
@@ -266,21 +284,29 @@ final class GroupDMStore {
 
     func discard(_ m: GDMMessage) {
         thread.removeAll { $0.id < 0 && $0.clientId == m.clientId }
+        if let cid = m.clientId { outgoingPhotos[cid] = nil }
     }
 
     private func deliver(_ temp: GDMMessage) {
         Task {
+            let photos = temp.clientId.flatMap { outgoingPhotos[$0] }
             if demo {
                 try? await Task.sleep(for: .milliseconds(250))
                 var stored = temp
                 stored.id = 20_000 + tempSeq
                 stored.pending = false
+                #if DEBUG
+                stored.images = photos.map(OutgoingPhotos.debugCachedPaths) ?? []
+                #endif
                 applyCreate(stored, total: nil)
+                if let cid = temp.clientId { outgoingPhotos[cid] = nil }
                 return
             }
             do {
-                let m = try await api.gdmSend(path: path, groupId: temp.groupId, body: temp.body, clientId: temp.clientId ?? "")
+                let urls = try await photos?.uploaded(api: api, path: uploadPath) ?? []
+                let m = try await api.gdmSend(path: path, groupId: temp.groupId, body: temp.body, clientId: temp.clientId ?? "", images: urls)
                 applyCreate(m, total: nil)
+                if let cid = temp.clientId { outgoingPhotos[cid] = nil }
             } catch {
                 if let i = thread.firstIndex(where: { $0.clientId == temp.clientId && $0.id < 0 }) {
                     thread[i].pending = false
@@ -543,6 +569,7 @@ final class GroupDMStore {
         canSend = true
         photoEditable = true
         beagleAvailable = true
+        canSendImages = true
         func at(_ minutesAgo: Double) -> String { ISO8601DateFormatter().string(from: Date().addingTimeInterval(-minutesAgo * 60)) }
         func mem(_ id: String, creator: Bool = false, me: Bool = false) -> GDMMember {
             GDMMember(userId: id, name: me ? "ドリキン" : id, avatar: nil, isCreator: creator, isMe: me)
@@ -559,7 +586,13 @@ final class GroupDMStore {
             1: [m(1, 1, nil, "mazzo さんがグループを作りました", 200),
                 m(2, 1, "mazzo", "土曜の朝、晴れたら行きましょう", 30),
                 m(3, 1, "me", "いいですね！ レンズ何持っていきます？", 25),
-                m(4, 1, "takuto", "35mm だけで行きます", 4)],
+                m(4, 1, "takuto", "35mm だけで行きます", 4),
+                {
+                    // 📷 写真だけの発言（本文なし）: 一覧は「takuto: 📷 写真」
+                    var p = m(8, 1, "takuto", "", 3)
+                    p.images = [TimelineDemoMedia.picture("gdm-msg-1", 1280, 960, hue: 0.1), TimelineDemoMedia.picture("gdm-msg-2", 960, 1280, hue: 0.7)]
+                    return p
+                }()],
             2: [m(5, 2, nil, "ドリキン さんが coban さんを追加しました", 900),
                 m(6, 2, "coban", "昨日はありがとうございました", 600)],
         ]

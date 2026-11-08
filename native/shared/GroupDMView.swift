@@ -52,12 +52,23 @@ struct GDMThreadView: View {
     /// What was just sent, to swallow a late echo of it (dictation finalising after Send; as in DMThreadView).
     @State private var justSent: (text: String, at: Date)?
     @State private var focused = false
+    /// 📷 Photos for the next message (the chat's tray; the 1:1 DM's limits).
+    @State private var photos: PostDraft
+    /// A photo opened full screen.
+    @State private var viewing: ImageViewerItem?
+
+    init(dm: DMStore, groups: GroupDMStore, groupId: Int) {
+        self.dm = dm
+        _groups = Bindable(groups)
+        self.groupId = groupId
+        _photos = State(initialValue: PostDraft(maxImages: max(1, groups.maxImages)))
+    }
 
     private var title: String { (groups.group ?? groups.summary(groupId)?.group)?.displayTitle ?? "グループ" }
 
     var body: some View {
         VStack(spacing: 0) {
-            DMHeader(title: title, onBack: dm.openList, onClose: dm.close) {
+            DMHeader(title: title, onBack: dm.showList, onClose: dm.close) {
                 GDMGroupPhoto(path: (groups.group ?? groups.summary(groupId)?.group)?.photoPath, size: 26, plain: true)
             } trailing: {
                 Button { dm.route = .groupMembers(groupId) } label: {
@@ -87,6 +98,8 @@ struct GDMThreadView: View {
                                 let prev = i > 0 ? groups.thread[i - 1] : nil
                                 let showsSender = !m.isAuthor && (prev == nil || prev!.isSystem || prev!.fromId != m.fromId)
                                 GDMBubble(m: m, showsSender: showsSender,
+                                          localImages: m.clientId.flatMap { groups.outgoingPhotos[$0]?.previews } ?? [],
+                                          onOpenImage: { i in viewing = ImageViewerItem(images: m.images, index: i) },
                                           onRetry: { groups.retry(m) }, onDiscard: { groups.discard(m) })
                             }
                         }
@@ -106,13 +119,21 @@ struct GDMThreadView: View {
             Divider()
             composer
         }
+        .imageViewer($viewing)
+        .dmPhotoInput(photos, enabled: canAttach)
     }
+
+    /// 📷 Photos can go with the next message.
+    private var canAttach: Bool { groups.canSendImages && groups.canSend && groups.groupCanSend }
 
     @ViewBuilder private var composer: some View {
         if groups.canSend && groups.groupCanSend {
             VStack(alignment: .leading, spacing: 4) {
+                if canAttach { DMDraftTray(draft: photos) }
                 HStack(alignment: .bottom, spacing: 8) {
-                    PostTextInput(text: $draft, isFocused: $focused, placeholder: (groups.summary(groups.openId ?? -1)?.group.beagle == true) ? "\(title) へ（@ビーグル で質問・要約）" : "\(title) へ", onSubmit: send)
+                    if canAttach { DMAttachButtons(draft: photos) }
+                    PostTextInput(text: $draft, isFocused: $focused, placeholder: (groups.summary(groups.openId ?? -1)?.group.beagle == true) ? "\(title) へ（@ビーグル で質問・要約）" : "\(title) へ",
+                                  onSubmit: send, onPasteImage: canAttach ? { photos.add(imageData: $0) } : nil)
                         .font(.app(.body))
                         .padding(.horizontal, 10).padding(.vertical, 7)
                         .background(RoundedRectangle(cornerRadius: 16).fill(Color.primary.opacity(0.06)))
@@ -146,13 +167,13 @@ struct GDMThreadView: View {
 
     private var canSendDraft: Bool {
         let t = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !t.isEmpty && t.count <= groups.maxBody
+        return (!t.isEmpty || (canAttach && !photos.images.isEmpty)) && t.count <= groups.maxBody
     }
 
     private func send() {
         guard canSendDraft else { return }
         let text = draft
-        groups.send(text)
+        groups.send(text, photos: canAttach ? photos.takePhotos() : nil)
         justSent = (text, Date())
         draft = ""
         DispatchQueue.main.async {
@@ -191,8 +212,14 @@ private struct GDMBubble: View {
     let m: GDMMessage
     /// The sender's name and face (the first of a run from the same person).
     let showsSender: Bool
+    /// Previews of photos still being sent (the stored message has their URLs instead).
+    var localImages: [PlatformImage] = []
+    /// Tap on a photo: open it full screen (index into `m.images`).
+    var onOpenImage: ((Int) -> Void)? = nil
     let onRetry: () -> Void
     let onDiscard: () -> Void
+
+    private var hasPhotos: Bool { !m.images.isEmpty || !localImages.isEmpty }
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
@@ -216,19 +243,26 @@ private struct GDMBubble: View {
                 if showsSender {
                     Text(m.senderName).font(.app(.caption, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
                 }
-                Text(MessageRow.attributed(m.body))
-                    .font(.app(.body))
-                    #if os(macOS)
-                    .textSelection(.enabled)
-                    #endif
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(m.isAuthor ? Color.accentGreen.opacity(0.14) : Color.primary.opacity(0.06))
-                    )
-                    .contextMenu {
-                        Button("テキストをコピー", systemImage: "doc.on.doc") { Platform.copy(m.body) }
-                    }
+                if hasPhotos {
+                    // 📷 the chat's photo grid (one big, or two columns), tap = full screen.
+                    ChatPhotos(paths: m.images, local: m.images.isEmpty ? localImages : [], onOpen: onOpenImage)
+                        .padding(.bottom, m.body.isEmpty ? 0 : 2)
+                }
+                if !m.body.isEmpty || !hasPhotos {
+                    Text(MessageRow.attributed(m.body))
+                        .font(.app(.body))
+                        #if os(macOS)
+                        .textSelection(.enabled)
+                        #endif
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(m.isAuthor ? Color.accentGreen.opacity(0.14) : Color.primary.opacity(0.06))
+                        )
+                        .contextMenu {
+                            Button("テキストをコピー", systemImage: "doc.on.doc") { Platform.copy(m.body) }
+                        }
+                }
                 if m.failed {
                     HStack(spacing: 6) {
                         Text("送信できませんでした").font(.app(.caption)).foregroundStyle(.red)
@@ -243,7 +277,7 @@ private struct GDMBubble: View {
             if !m.isAuthor { Spacer(minLength: 40) }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(m.isAuthor ? "自分" : m.senderName)、\(m.body)\(m.failed ? "、送信失敗" : "")")
+        .accessibilityLabel("\(m.isAuthor ? "自分" : m.senderName)、\(m.body)\(m.images.isEmpty ? "" : "、写真 \(m.images.count) 枚")\(m.failed ? "、送信失敗" : "")")
     }
 }
 
@@ -307,7 +341,7 @@ struct GDMNewGroupView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            DMHeader(title: "新しいグループ", onBack: dm.openList, onClose: dm.close) {
+            DMHeader(title: "新しいグループ", onBack: dm.showList, onClose: dm.close) {
                 Text("👥").font(.app(.body))
             } trailing: {
                 Button("作る") { create() }
