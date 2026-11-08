@@ -38,6 +38,10 @@ data class DMMessage(
     val clientId: String? = null,
     /** 📷 /api/media/dm-… (read with the token); [] on servers before DM photos. */
     val images: List<String> = emptyList(),
+    /** ✏️ / 😀 (docs/dm-chat-parity-spec.md): absent on older servers. */
+    val edited: Boolean = false,
+    val editedAt: String? = null,
+    val reactions: List<Reaction> = emptyList(),
 )
 
 @Serializable data class DMConversation(val peer: DMPeer, val lastMessage: DMMessage, val unreadCount: Int = 0)
@@ -62,6 +66,9 @@ data class DMMessage(
     val peerId: String? = null,
     val lastReadId: Long? = null,
     val unreadCount: Int? = null,
+    /** `reaction`: the message and its chips as the viewer sees them. */
+    val messageId: Long? = null,
+    val reactions: List<Reaction>? = null,
 )
 
 @Serializable data class DMReadyUnread(val unreadCount: Int? = null)
@@ -97,6 +104,25 @@ object DMLogic {
         if (i >= 0) return rows.toMutableList().also { it[i] = it[i].copy(message = m, state = SendState.SENT) }
         return rows + DMRow(m)
     }
+
+    /** ✏️ An edited message (PATCH reply / stream `edit`) replaces the bubble with the same id; the bubble's
+     *  local previews stay. A message not on screen changes nothing. */
+    fun applyEdit(rows: List<DMRow>, m: DMMessage): List<DMRow> =
+        rows.map { if (it.message.id == m.id && m.id > 0) it.copy(message = m.copy(clientId = it.message.clientId ?: m.clientId)) else it }
+
+    /** 😀 The chips of one message (POST reply / stream `reaction`). */
+    fun applyReactions(rows: List<DMRow>, id: Long, reactions: List<Reaction>): List<DMRow> =
+        rows.map { if (it.message.id == id) it.copy(message = it.message.copy(reactions = reactions)) else it }
+
+    /** ✏️ The list's last-message line follows an edit of that message. */
+    fun editConversation(list: List<DMConversation>, m: DMMessage): List<DMConversation> =
+        list.map { if (it.lastMessage.id == m.id) it.copy(lastMessage = it.lastMessage.copy(body = m.body, edited = m.edited, editedAt = m.editedAt)) else it }
+
+    /** ✏️ What may be edited: my own stored message. */
+    fun canEdit(row: DMRow): Boolean = row.message.isAuthor && row.message.id > 0 && row.state == SendState.SENT
+
+    /** ✏️ An edit can be saved: text, or none when the message has photos (the server takes "" then). */
+    fun canSaveEdit(text: String, hasImages: Boolean): Boolean = text.isNotBlank() || hasImages
 
     /** Still within the TTL (ttl_hours, 30 days). An unparseable time is kept (the server sweeps anyway). */
     fun isFresh(createdAt: String, now: Instant, ttlHours: Int): Boolean {
@@ -199,6 +225,9 @@ class DMStore(private val api: ApiClient) {
     var canSendImages by mutableStateOf(false); private set
     var maxImages by mutableIntStateOf(4); private set
     var imageMaxSide by mutableIntStateOf(1280); private set
+    /** ✏️ / 😀 like the chat (capabilities `dm.edit` / `dm.reactions`). */
+    var canEdit by mutableStateOf(false); private set
+    var canReact by mutableStateOf(false); private set
 
     var conversations by mutableStateOf<List<DMConversation>>(emptyList()); private set
     var unreadTotal by mutableIntStateOf(0); private set
@@ -244,6 +273,8 @@ class DMStore(private val api: ApiClient) {
         maxImages = caps.dmMaxImages
         imageMaxSide = caps.chatImageMaxSide
         imageUpload = caps.dmImageUpload ?: imageUpload
+        canEdit = caps.canEditDM
+        canReact = caps.canReactDM
         groups.configure(caps)
         if (!enabled) { stack = emptyList(); return }
         refreshList()
@@ -421,6 +452,12 @@ class DMStore(private val api: ApiClient) {
                 conversations = DMLogic.markRead(conversations, peerId, e.lastReadId ?: 0)
                 e.unreadCount?.let { unreadTotal = it }
             }
+            // ✏️ / 😀 (docs/dm-chat-parity-spec.md): the bubble / its chips change in place (no unread, no push).
+            "edit" -> e.message?.let { m ->
+                rows = DMLogic.applyEdit(rows, m)
+                conversations = DMLogic.editConversation(conversations, m)
+            }
+            "reaction" -> e.messageId?.let { id -> rows = DMLogic.applyReactions(rows, id, e.reactions.orEmpty()) }
         }
     }
 
@@ -506,6 +543,49 @@ class DMStore(private val api: ApiClient) {
         rows = rows.map { if (it.message.id < 0 && it.message.clientId == clientId) it.copy(state = s) else it }
     }
 
+    // MARK: ✏️ edit / 😀 reactions (like ChatStore.edit / toggleReaction)
+
+    /** My message's text; optimistic, back to the old one when the server refuses. */
+    fun edit(id: Long, raw: String) {
+        val old = rows.firstOrNull { it.message.id == id }?.message ?: return
+        val text = raw.trim().take(maxBody)
+        if (!canEdit || !old.isAuthor || !DMLogic.canSaveEdit(text, old.images.isNotEmpty()) || text == old.body) return
+        val next = old.copy(body = text, edited = true)
+        rows = DMLogic.applyEdit(rows, next)
+        error = null
+        if (demo) {
+            demoThreads[old.peerId] = demoThreads[old.peerId].orEmpty().map { if (it.id == id) next else it }
+            conversations = DMLogic.editConversation(conversations, next)
+            return
+        }
+        scope.launch {
+            try {
+                val m = api.dmEdit(id, text, base)
+                rows = DMLogic.applyEdit(rows, m)
+                conversations = DMLogic.editConversation(conversations, m)
+            } catch (e: ApiError) {
+                rows = DMLogic.applyEdit(rows, old)
+                error = (e as? ApiError.Http)?.serverMessage ?: "編集できませんでした"
+            }
+        }
+    }
+
+    fun toggleReaction(id: Long, emoji: String) {
+        if (!canReact || id <= 0) return
+        val old = rows.firstOrNull { it.message.id == id }?.message?.reactions ?: return
+        rows = DMLogic.applyReactions(rows, id, ChatStore.toggled(old, emoji))
+        if (demo) return
+        scope.launch {
+            try {
+                val r = api.dmToggleReaction(id, emoji, base)
+                rows = DMLogic.applyReactions(rows, id, r.reactions)
+            } catch (e: ApiError) {
+                rows = DMLogic.applyReactions(rows, id, old)
+                (e as? ApiError.Http)?.serverMessage?.let { error = it }
+            }
+        }
+    }
+
     // MARK: read
 
     private fun markReadSoon(peerId: String) {
@@ -535,6 +615,8 @@ class DMStore(private val api: ApiClient) {
         enabled = true
         canSendCap = true
         canSendImages = true
+        canEdit = true
+        canReact = true
         val now = Instant.now()
         fun at(minAgo: Long) = now.minusSeconds(minAgo * 60).toString()
         var id = 0L
@@ -548,7 +630,8 @@ class DMStore(private val api: ApiClient) {
         demoThreads["mazzo"] = listOf(
             m("mazzo", false, "さっきの将棋、いい勝負でしたね", 95),
             m("mazzo", true, "ありがとうございます！次は負けません", 90),
-            m("mazzo", false, "Android 版の DM、試してます。届いてますか？", 6),
+            m("mazzo", false, "Android 版の DM、試してます。届いてますか？", 6).copy(reactions = listOf(Reaction("👍", 1, mine = true, reactors = listOf("ドリキン")))),
+            m("mazzo", true, "この投稿を見て https://bsm.backspace.fm/#/post/1", 5).copy(edited = true),
             m("mazzo", false, "1 か月で消えるのはいいですね", 5),
         ) + photos
         demoThreads["takuto"] = listOf(

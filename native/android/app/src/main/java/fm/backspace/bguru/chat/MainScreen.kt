@@ -132,7 +132,7 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
                     }
                     when {
                         jb != null && right == MainTab.JUKEBOX -> JukeboxScreen(jb, store.capabilities, switch, onOpenThread = { timeline.openThread = it })
-                        dm != null && right == MainTab.DM -> DMPage(dm, store.members, visible = true, tabSwitch = switch)
+                        dm != null && right == MainTab.DM -> PostLinksInApp(timeline) { DMPage(dm, store.members, visible = true, tabSwitch = switch) }
                         else -> PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch) }
                     }
                 }
@@ -206,7 +206,8 @@ private fun Pages(
         when (page) {
             0 -> TimelineScreen(timeline, store.capabilities, tabSwitch = switch, onReconnect = onSignOut, visible = pager.currentPage == 0)
             1 -> PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch, visible = pager.currentPage == 1, onScreen = chatOnScreen) }
-            dmPage -> if (dm != null) DMPage(dm, store.members, visible = pager.currentPage == dmPage, tabSwitch = switch)
+            // B-guru post links in DMs open the thread in the app too (like the chat).
+            dmPage -> if (dm != null) PostLinksInApp(timeline) { DMPage(dm, store.members, visible = pager.currentPage == dmPage, tabSwitch = switch) }
             jbPage -> if (jb != null) JukeboxScreen(jb, store.capabilities, switch, visible = { pager.currentPage == jbPage },
                 onOpenThread = { timeline.openThread = it })
         }

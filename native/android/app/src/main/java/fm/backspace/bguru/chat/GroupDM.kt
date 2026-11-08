@@ -74,6 +74,10 @@ data class GMessage(
     val isBeagle: Boolean = false,
     /** 📷 /api/media/dm-… (read with the token); [] on servers before DM photos. */
     val images: List<String> = emptyList(),
+    /** ✏️ / 😀 (docs/dm-chat-parity-spec.md): absent on older servers. */
+    val edited: Boolean = false,
+    val editedAt: String? = null,
+    val reactions: List<Reaction> = emptyList(),
 ) {
     val isSystem: Boolean get() = kind == "system"
     val senderName: String get() = fromName?.trim()?.takeIf { it.isNotEmpty() } ?: "会員"
@@ -102,6 +106,9 @@ data class GMessage(
     val lastReadId: Long? = null,
     val unreadCount: Int? = null,
     val groupUnreadCount: Int? = null,
+    /** `reaction`: the message and its chips as the viewer sees them. */
+    val messageId: Long? = null,
+    val reactions: List<Reaction>? = null,
 )
 
 /** A bubble / system line in a group. `key` stays the same across the pending → stored swap. */
@@ -146,6 +153,49 @@ object GDMLogic {
         val i = rows.indexOfFirst(::isTwin)
         if (i >= 0) return rows.toMutableList().also { it[i] = it[i].copy(message = m, state = SendState.SENT) }
         return rows + GRow(m)
+    }
+
+    /** ✏️ An edited message replaces the bubble with the same id (its local previews stay). */
+    fun applyEdit(rows: List<GRow>, m: GMessage): List<GRow> =
+        rows.map { if (it.message.id == m.id && m.id > 0) it.copy(message = m.copy(clientId = it.message.clientId ?: m.clientId)) else it }
+
+    /** 😀 The chips of one message. */
+    fun applyReactions(rows: List<GRow>, id: Long, reactions: List<Reaction>): List<GRow> =
+        rows.map { if (it.message.id == id) it.copy(message = it.message.copy(reactions = reactions)) else it }
+
+    /** ✏️ The list's last-message line follows an edit of that message. */
+    fun editSummaries(list: List<GroupSummary>, m: GMessage): List<GroupSummary> =
+        list.map { s -> if (s.lastMessage?.id == m.id) s.copy(lastMessage = s.lastMessage.copy(body = m.body, edited = m.edited, editedAt = m.editedAt)) else s }
+
+    /** ✏️ Mine, stored, a text message (not a system line, not Beagle's answer). The server also refuses a question
+     *  Beagle already answered (403: the edit rolls back with its words). */
+    fun canEdit(row: GRow): Boolean {
+        val m = row.message
+        return m.isAuthor && !m.isSystem && !m.isBeagle && m.id > 0 && row.state == SendState.SENT
+    }
+
+    /** 😀 Any stored message but the system lines (Beagle's answers too). */
+    fun canReact(row: GRow): Boolean = !row.message.isSystem && row.message.id > 0 && row.state == SendState.SENT
+
+    /** ↩️ 返信 like the chat's: someone else's stored message (not a system line, not Beagle's). */
+    fun canReply(row: GRow): Boolean {
+        val m = row.message
+        return !m.isAuthor && !m.isSystem && !m.isBeagle && m.id > 0 && row.state == SendState.SENT && !m.fromName.isNullOrBlank()
+    }
+
+    /** @ メンション: [body] mentions [myName] (`@name` as a whole word, or `@[Name With Space]`), any case. */
+    fun mentionsMe(body: String, myName: String?): Boolean {
+        val name = myName?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+        if (body.contains("@[$name]", ignoreCase = true)) return true
+        var i = body.indexOf("@$name", ignoreCase = true)
+        while (i >= 0) {
+            val end = i + 1 + name.length
+            val before = if (i == 0) ' ' else body[i - 1]
+            val after = body.getOrNull(end)
+            if ((before.isWhitespace() || i == 0) && (after == null || after.isWhitespace() || after == '@')) return true
+            i = body.indexOf("@$name", i + 1, ignoreCase = true)
+        }
+        return false
     }
 
     /** Hide what is past the TTL locally too; my bubbles still sending / failed always stay. */
@@ -286,6 +336,9 @@ class GDMStore(private val api: ApiClient) {
     var photoMaxBytes = 15L * 1024 * 1024; private set
     /** capabilities `gdm.beagle` (and a token that may send): offer the 🐶 switch. */
     var canSetBeagle by mutableStateOf(false); private set
+    /** ✏️ / 😀 like the chat (capabilities `gdm.edit` / `gdm.reactions`). */
+    var canEdit by mutableStateOf(false); private set
+    var canReact by mutableStateOf(false); private set
     private var base = "/api/agent/gdm"
     /** 📷 Photos (docs/dm-photos-spec.md): the DM's upload path and limit (capabilities `dm`). */
     var canSendImages by mutableStateOf(false); private set
@@ -336,6 +389,8 @@ class GDMStore(private val api: ApiClient) {
         ttlHours = caps.gdmTtlHours
         canSetPhoto = caps.canSetGDMPhoto
         canSetBeagle = caps.canSetGDMBeagle
+        canEdit = caps.canEditGDM
+        canReact = caps.canReactGDM
         photoMaxBytes = caps.gdmPhotoMaxBytes
         canSendImages = caps.canSendGDM && caps.canSendDMImages
         maxImages = caps.dmMaxImages
@@ -464,6 +519,12 @@ class GDMStore(private val api: ApiClient) {
                 if (openId == g.id) openGroup = g
             }
             "removed" -> e.groupId?.let(::dropped)
+            // ✏️ / 😀 (docs/dm-chat-parity-spec.md): in place (no unread, no push).
+            "edit" -> e.message?.let { m ->
+                rows = GDMLogic.applyEdit(rows, m)
+                groups = GDMLogic.editSummaries(groups, m)
+            }
+            "reaction" -> e.messageId?.let { id -> rows = GDMLogic.applyReactions(rows, id, e.reactions.orEmpty()) }
         }
     }
 
@@ -562,6 +623,51 @@ class GDMStore(private val api: ApiClient) {
 
     private fun setState(clientId: String?, s: SendState) {
         rows = rows.map { if (it.message.id < 0 && it.message.clientId == clientId) it.copy(state = s) else it }
+    }
+
+    // MARK: ✏️ edit / 😀 reactions (like ChatStore.edit / toggleReaction)
+
+    fun edit(id: Long, raw: String) {
+        val row = rows.firstOrNull { it.message.id == id } ?: return
+        val old = row.message
+        val text = raw.trim().take(maxBody)
+        if (!canEdit || !GDMLogic.canEdit(row) || !DMLogic.canSaveEdit(text, old.images.isNotEmpty()) || text == old.body) return
+        val next = old.copy(body = text, edited = true)
+        rows = GDMLogic.applyEdit(rows, next)
+        error = null
+        if (demo) {
+            demoThreads[old.groupId] = demoThreads[old.groupId].orEmpty().map { if (it.id == id) next else it }
+            groups = GDMLogic.editSummaries(groups, next)
+            return
+        }
+        scope.launch {
+            try {
+                val m = api.gdmEdit(id, text, base)
+                rows = GDMLogic.applyEdit(rows, m)
+                groups = GDMLogic.editSummaries(groups, m)
+            } catch (e: ApiError) {
+                rows = GDMLogic.applyEdit(rows, old)
+                error = (e as? ApiError.Http)?.serverMessage ?: "編集できませんでした"
+            }
+        }
+    }
+
+    fun toggleReaction(id: Long, emoji: String) {
+        if (!canReact) return
+        val row = rows.firstOrNull { it.message.id == id } ?: return
+        if (!GDMLogic.canReact(row)) return
+        val old = row.message.reactions
+        rows = GDMLogic.applyReactions(rows, id, ChatStore.toggled(old, emoji))
+        if (demo) return
+        scope.launch {
+            try {
+                val r = api.gdmToggleReaction(id, emoji, base)
+                rows = GDMLogic.applyReactions(rows, id, r.reactions)
+            } catch (e: ApiError) {
+                rows = GDMLogic.applyReactions(rows, id, old)
+                (e as? ApiError.Http)?.serverMessage?.let { error = it }
+            }
+        }
     }
 
     // MARK: read
@@ -707,6 +813,8 @@ class GDMStore(private val api: ApiClient) {
         canSendImages = true
         canSetPhoto = true
         canSetBeagle = true
+        canEdit = true
+        canReact = true
         val now = Instant.now()
         fun at(minAgo: Long) = now.minusSeconds(minAgo * 60).toString()
         val members = listOf(GMember("me", "ドリキン", isCreator = true, isMe = true), GMember("mazzo", "mazzo"), GMember("takuto", "takuto"), GMember("coban", "coban"))
@@ -717,8 +825,9 @@ class GDMStore(private val api: ApiClient) {
         demoThreads[1] = listOf(
             m(null, "ドリキンさんがグループを作りました", 200),
             m(members[0], "来週の配信、ゲストどうしましょう", 120),
-            m(members[1], "takuto さんどうですか", 30),
-            m(members[2], "いいですよ！", 8),
+            m(members[1], "@takuto さんどうですか", 30),
+            m(members[2], "いいですよ！ @ドリキン さん、資料は https://www.youtube.com/watch?v=dQw4w9WgXcQ です", 8).copy(edited = true,
+                reactions = listOf(Reaction("🎉", 2, mine = true, reactors = listOf("ドリキン", "mazzo")))),
         ) + (if (images == null) emptyList() else listOf(m(members[3], "", 6, listOf("$images/photo4.jpg", "$images/photo1.jpg", "$images/photo2.jpg"))))
         groups = listOf(GroupSummary(g, demoThreads[1]!!.last(), 2))
         unreadTotal = 2

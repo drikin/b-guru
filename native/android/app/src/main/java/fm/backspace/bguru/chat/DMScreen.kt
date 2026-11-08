@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material3.Badge
 import androidx.compose.material3.DropdownMenu
@@ -262,6 +263,10 @@ private fun DMConversationScreen(dm: DMStore, peer: DMPeer, visible: Boolean) {
     // 📷 Photos for the next DM, and the photo open full screen.
     val photos = remember(peer.userId) { ChatAttachments() }
     var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
+    // ✏️ The message being edited (the chat's editingId), and 「テキストを選択」.
+    var editingId by remember(peer.userId) { mutableStateOf<Long?>(null) }
+    var selecting by remember { mutableStateOf<DMMessage?>(null) }
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
 
     // On screen (resumed, and its page is the one shown) = read: tells the store, and clears this person's notification.
     val onScreen = rememberShown(visible)
@@ -311,21 +316,37 @@ private fun DMConversationScreen(dm: DMStore, peer: DMPeer, visible: Boolean) {
                     }
                 }
                 items(reversed, key = { it.key }, contentType = { if (it.message.isAuthor) "mine" else "theirs" }) { row ->
-                    DMBubble(row, onRetry = { dm.retry(row) }, onDiscard = { dm.discard(row) },
+                    DMBubble(row, canReact = dm.canReact, canEdit = dm.canEdit, editing = editingId == row.message.id,
+                        onReact = { dm.toggleReaction(row.message.id, it) },
+                        onEdit = {
+                            editingId = row.message.id
+                            draft = TextFieldValue(row.message.body, TextRange(row.message.body.length))
+                            runCatching { focus.requestFocus() }
+                        },
+                        onSelect = { selecting = row.message },
+                        onRetry = { dm.retry(row) }, onDiscard = { dm.discard(row) },
                         onOpenImage = { urls, i -> viewing = urls to i },
                         modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth())
                 }
             }
             HorizontalDivider()
+            val editingRow = editingId?.let { id -> dm.rows.firstOrNull { it.message.id == id } }
             DMComposer(
                 dm = dm,
                 draft = draft,
                 photos = photos,
+                editing = editingRow?.let { it.message.images.isNotEmpty() },
+                focus = focus,
+                onCancelEdit = { editingId = null; draft = TextFieldValue("") },
                 onDraft = { draft = it.limitTo(dm.maxBody) },
                 onSend = {
                     val text = draft.text
+                    val id = editingId
                     draft = TextFieldValue("")
-                    dm.send(text, photos.take()) { body, back ->
+                    if (id != null) {
+                        editingId = null
+                        dm.edit(id, text)
+                    } else dm.send(text, photos.take()) { body, back ->
                         if (draft.text.isEmpty()) draft = TextFieldValue(body, TextRange(body.length))
                         photos.restore(back)
                     }
@@ -334,6 +355,7 @@ private fun DMConversationScreen(dm: DMStore, peer: DMPeer, visible: Boolean) {
         }
     }
     viewing?.let { (urls, at) -> ImageViewer(urls, at) { viewing = null } }
+    selecting?.let { m -> SelectTextDialog(if (m.isAuthor) "自分" else shown.displayName, m.body) { selecting = null } }
 }
 
 /** The activity is resumed and [visible] (its page is the one on screen). */
@@ -366,23 +388,32 @@ internal fun DMImages(images: List<String>, local: List<androidx.compose.ui.grap
 }
 
 @Composable
-private fun DMBubble(row: DMRow, onRetry: () -> Unit, onDiscard: () -> Unit, onOpenImage: (List<String>, Int) -> Unit, modifier: Modifier) {
+private fun DMBubble(
+    row: DMRow,
+    canReact: Boolean,
+    canEdit: Boolean,
+    editing: Boolean,
+    onReact: (String) -> Unit,
+    onEdit: () -> Unit,
+    onSelect: () -> Unit,
+    onRetry: () -> Unit,
+    onDiscard: () -> Unit,
+    onOpenImage: (List<String>, Int) -> Unit,
+    modifier: Modifier,
+) {
     val m = row.message
     val mine = m.isAuthor
+    val stored = m.id > 0 && row.state == SendState.SENT
     Column(modifier, horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
         Column(
             Modifier.padding(start = if (mine) 48.dp else 0.dp, end = if (mine) 0.dp else 48.dp),
             horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            DMImages(m.images, row.localImages, onOpenImage)
-            // A photo-only DM has no text bubble.
-            if (m.body.isNotEmpty() || (m.images.isEmpty() && row.localImages.isEmpty())) Text(
-                remember(m.body) { linkified(m.body) },
-                fontSize = 16.sp,
-                modifier = Modifier
-                    .background(if (mine) AccentGreen.copy(alpha = 0.14f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            // The chat's bubble, menu and chips (1 対 1: no 返信 — the other person is already set).
+            DMMessageBody(
+                body = m.body, images = m.images, localImages = row.localImages, mine = mine, mentionsMe = false, editing = editing,
+                reactions = m.reactions, canReact = canReact && stored, canEdit = canEdit && DMLogic.canEdit(row),
+                onReact = onReact, onEdit = onEdit, onReply = null, onSelect = onSelect, onOpenImage = onOpenImage,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
                 when (row.state) {
@@ -392,7 +423,10 @@ private fun DMBubble(row: DMRow, onRetry: () -> Unit, onDiscard: () -> Unit, onO
                         Text("取り消す", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.clickable(onClick = onDiscard))
                     }
                     SendState.PENDING -> Text("送信中…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-                    SendState.SENT -> Text(remember(m.createdAt) { dmTime(m.createdAt, withDay = true) }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    SendState.SENT -> {
+                        EditedMark(m.edited)
+                        Text(remember(m.createdAt) { dmTime(m.createdAt, withDay = true) }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    }
                 }
             }
         }
@@ -400,9 +434,20 @@ private fun DMBubble(row: DMRow, onRetry: () -> Unit, onDiscard: () -> Unit, onO
 }
 
 @Composable
-private fun DMComposer(dm: DMStore, draft: TextFieldValue, photos: ChatAttachments, onDraft: (TextFieldValue) -> Unit, onSend: () -> Unit) {
+private fun DMComposer(
+    dm: DMStore,
+    draft: TextFieldValue,
+    photos: ChatAttachments,
+    /** ✏️ Editing: null = not; else whether the message has photos (then the text may be emptied). */
+    editing: Boolean?,
+    focus: androidx.compose.ui.focus.FocusRequester,
+    onCancelEdit: () -> Unit,
+    onDraft: (TextFieldValue) -> Unit,
+    onSend: () -> Unit,
+) {
     val allowed = dm.canSendCap && dm.canSendHere
-    val canAttach = allowed && dm.canSendImages
+    // Photos are hidden while editing: an edit changes the text only (the chat's rule).
+    val canAttach = allowed && dm.canSendImages && editing == null
     val paste = rememberPasteImages(photos, dm.maxImages, dm.imageMaxSide, enabled = canAttach)
     Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
         Column(
@@ -417,6 +462,7 @@ private fun DMComposer(dm: DMStore, draft: TextFieldValue, photos: ChatAttachmen
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                if (editing != null) EditingBanner(onCancelEdit)
                 if (canAttach) ComposerPhotos(photos)
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (canAttach) PhotoAttachButtons(photos, dm.maxImages, dm.imageMaxSide)
@@ -425,13 +471,15 @@ private fun DMComposer(dm: DMStore, draft: TextFieldValue, photos: ChatAttachmen
                         onValueChange = onDraft,
                         onImages = paste,
                         enabled = allowed,
-                        placeholder = { Text("DM（30 日で消えます）") },
+                        placeholder = { Text(if (editing != null) "編集内容" else "DM（30 日で消えます）") },
                         maxLines = 6,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).focusRequester(focus),
                     )
-                    val canSend = allowed && photos.loading == 0 && DMLogic.canSend(draft.text, if (canAttach) photos.photos.size else 0)
+                    val canSend = allowed && if (editing != null) DMLogic.canSaveEdit(draft.text, editing)
+                        else photos.loading == 0 && DMLogic.canSend(draft.text, if (canAttach) photos.photos.size else 0)
                     IconButton(onClick = onSend, enabled = canSend) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "送信", tint = if (canSend) AccentGreen else MaterialTheme.colorScheme.outline)
+                        Icon(if (editing != null) Icons.Default.Check else Icons.AutoMirrored.Filled.Send, contentDescription = if (editing != null) "保存" else "送信",
+                            tint = if (canSend) AccentGreen else MaterialTheme.colorScheme.outline)
                     }
                 }
                 Row {

@@ -129,6 +129,9 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         /** 📷 Photos in DMs and group DMs (docs/dm-photos-spec.md): only servers that say where to upload them. */
         val maxImages: Int? = null,
         val uploadPath: String? = null,
+        /** ✏️ PATCH {path}/messages/:id / 😀 POST {path}/messages/:id/reactions (docs/dm-chat-parity-spec.md). Absent = hidden. */
+        val edit: Boolean? = null,
+        val reactions: Boolean? = null,
     )
     /** 👥 グループ DM (docs/group-dm-spec.md), behind GROUP_DM_ENABLED (and DM_ENABLED). `send` = this token may send (chat scope). */
     @Serializable data class GDMFeatures(
@@ -146,6 +149,9 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val photoMaxBytes: Long? = null,
         /** 🐶 PATCH {path}/:gid { beagle }。 */
         val beagle: Boolean? = null,
+        /** ✏️ PATCH {path}/messages/:id / 😀 POST {path}/messages/:id/reactions (docs/dm-chat-parity-spec.md). Absent = hidden. */
+        val edit: Boolean? = null,
+        val reactions: Boolean? = null,
     )
     /** 🎮 散財ダッシュ (docs/minigame-spec.md), behind MINIGAME_ENABLED. `play` = may play (chat scope). */
     @Serializable data class MinigameFeatures(
@@ -332,6 +338,9 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     /** ✉️ DM is on for this member (absent or enabled false: nothing DM is shown). */
     val dmEnabled get() = features?.dm?.enabled ?: false
     val canSendDM get() = dmEnabled && (features?.dm?.send ?: false)
+    /** ✏️ / 😀 in 1 対 1 DMs: the server says so and the token may write (chat scope). */
+    val canEditDM get() = canSendDM && (features?.dm?.edit ?: false)
+    val canReactDM get() = canSendDM && (features?.dm?.reactions ?: false)
     val dmMaxBody get() = features?.dm?.maxBody?.takeIf { it > 0 } ?: 1000
     val dmTtlHours get() = features?.dm?.ttlHours?.takeIf { it > 0 } ?: (30 * 24)
     /** Only paths on our own server (the request carries the token). */
@@ -343,6 +352,8 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     /** 👥 グループ DM is on for this member (absent or enabled false: nothing of it is shown). Needs ✉️ DM too. */
     val gdmEnabled get() = dmEnabled && (features?.gdm?.enabled ?: false)
     val canSendGDM get() = gdmEnabled && (features?.gdm?.send ?: false)
+    val canEditGDM get() = canSendGDM && (features?.gdm?.edit ?: false)
+    val canReactGDM get() = canSendGDM && (features?.gdm?.reactions ?: false)
     val gdmMaxBody get() = features?.gdm?.maxBody?.takeIf { it > 0 } ?: 1000
     val gdmMaxName get() = features?.gdm?.maxName?.takeIf { it > 0 } ?: 40
     val gdmMaxMembers get() = features?.gdm?.maxMembers?.takeIf { it > 0 } ?: 100

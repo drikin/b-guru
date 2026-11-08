@@ -27,6 +27,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Button
@@ -136,6 +138,11 @@ internal fun GDMGroupScreen(dm: DMStore, id: Long, visible: Boolean) {
     // 📷 Photos for the next message, and the photo open full screen.
     val photos = remember(id) { ChatAttachments() }
     var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
+    // ✏️ The message being edited (the chat's editingId), and 「テキストを選択」.
+    var editingId by remember(id) { mutableStateOf<Long?>(null) }
+    var selecting by remember { mutableStateOf<GMessage?>(null) }
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    fun setDraft(text: String) { draft = TextFieldValue(text, TextRange(text.length)) }
 
     // On screen (resumed, and its page is the one shown) = read: tells the store, and clears this group's notification.
     val shown = rememberShown(visible)
@@ -152,6 +159,7 @@ internal fun GDMGroupScreen(dm: DMStore, id: Long, visible: Boolean) {
     }
 
     val group = g.group(id)
+    val myName = GDMLogic.me(group)?.name
     Scaffold(
         topBar = {
             TopAppBar(
@@ -200,21 +208,42 @@ internal fun GDMGroupScreen(dm: DMStore, id: Long, visible: Boolean) {
                     val prev = reversed.getOrNull(i + 1)?.message
                     val showHeader = prev == null || prev.isSystem || prev.fromId != row.message.fromId
                     if (row.message.isSystem) GDMSystemLine(row.message, Modifier.widthIn(max = 760.dp).fillMaxWidth())
-                    else GDMBubble(row, showHeader, onRetry = { g.retry(row) }, onDiscard = { g.discard(row) },
+                    else GDMBubble(row, showHeader, myName = myName, canReact = g.canReact, canEdit = g.canEdit,
+                        editing = editingId == row.message.id,
+                        onReact = { g.toggleReaction(row.message.id, it) },
+                        onEdit = { editingId = row.message.id; setDraft(row.message.body); runCatching { focus.requestFocus() } },
+                        // ↩️ the chat's 返信: 「@名前 」 at the start of the draft (an edit in progress is dropped).
+                        onReply = {
+                            val t = Mention.token(row.message.senderName)
+                            val current = if (editingId != null) "" else draft.text
+                            editingId = null
+                            if (!current.startsWith(t)) setDraft(t + current.trim()) else setDraft(current)
+                            runCatching { focus.requestFocus() }
+                        },
+                        onSelect = { selecting = row.message },
+                        onRetry = { g.retry(row) }, onDiscard = { g.discard(row) },
                         onOpenImage = { urls, i -> viewing = urls to i },
                         modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth())
                 }
             }
             HorizontalDivider()
+            val editingRow = editingId?.let { eid -> g.rows.firstOrNull { it.message.id == eid } }
             GDMComposer(
                 g = g,
                 draft = draft,
                 photos = photos,
+                editing = editingRow?.let { it.message.images.isNotEmpty() },
+                focus = focus,
+                onCancelEdit = { editingId = null; draft = TextFieldValue("") },
                 onDraft = { draft = it.limitTo(g.maxBody) },
                 onSend = {
                     val text = draft.text
+                    val eid = editingId
                     draft = TextFieldValue("")
-                    g.send(text, photos.take()) { body, back ->
+                    if (eid != null) {
+                        editingId = null
+                        g.edit(eid, text)
+                    } else g.send(text, photos.take()) { body, back ->
                         if (draft.text.isEmpty()) draft = TextFieldValue(body, TextRange(body.length))
                         photos.restore(back)
                     }
@@ -223,6 +252,7 @@ internal fun GDMGroupScreen(dm: DMStore, id: Long, visible: Boolean) {
         }
     }
     viewing?.let { (urls, at) -> ImageViewer(urls, at) { viewing = null } }
+    selecting?.let { m -> SelectTextDialog(if (m.isAuthor) "自分" else m.senderName, m.body) { selecting = null } }
 }
 
 /** 「A さんが B さんを追加しました」: centred, small. */
@@ -242,7 +272,22 @@ private fun GDMSystemLine(m: GMessage, modifier: Modifier) {
 }
 
 @Composable
-private fun GDMBubble(row: GRow, showHeader: Boolean, onRetry: () -> Unit, onDiscard: () -> Unit, onOpenImage: (List<String>, Int) -> Unit, modifier: Modifier) {
+private fun GDMBubble(
+    row: GRow,
+    showHeader: Boolean,
+    myName: String?,
+    canReact: Boolean,
+    canEdit: Boolean,
+    editing: Boolean,
+    onReact: (String) -> Unit,
+    onEdit: () -> Unit,
+    onReply: () -> Unit,
+    onSelect: () -> Unit,
+    onRetry: () -> Unit,
+    onDiscard: () -> Unit,
+    onOpenImage: (List<String>, Int) -> Unit,
+    modifier: Modifier,
+) {
     val m = row.message
     val mine = m.isAuthor
     Row(modifier, horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
@@ -269,17 +314,13 @@ private fun GDMBubble(row: GRow, showHeader: Boolean, onRetry: () -> Unit, onDis
                 Text(m.senderName, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(bottom = 2.dp))
             }
-            if (m.images.isNotEmpty() || row.localImages.isNotEmpty()) {
-                DMImages(m.images, row.localImages, onOpenImage)
-                Spacer(Modifier.size(4.dp))
-            }
-            // A photo-only message has no text bubble.
-            if (m.body.isNotEmpty() || (m.images.isEmpty() && row.localImages.isEmpty())) Text(
-                remember(m.body) { linkified(m.body) },
-                fontSize = 16.sp,
-                modifier = Modifier
-                    .background(if (mine) AccentGreen.copy(alpha = 0.14f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            // The chat's bubble, menu and chips; @me is marked like the chat's mention.
+            val mentionsMe = remember(m.body, myName) { !mine && GDMLogic.mentionsMe(m.body, myName) }
+            DMMessageBody(
+                body = m.body, images = m.images, localImages = row.localImages, mine = mine, mentionsMe = mentionsMe, editing = editing,
+                reactions = m.reactions, canReact = canReact && GDMLogic.canReact(row), canEdit = canEdit && GDMLogic.canEdit(row),
+                onReact = onReact, onEdit = onEdit, onReply = if (GDMLogic.canReply(row)) onReply else null,
+                onSelect = onSelect, onOpenImage = onOpenImage,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
                 when (row.state) {
@@ -289,7 +330,10 @@ private fun GDMBubble(row: GRow, showHeader: Boolean, onRetry: () -> Unit, onDis
                         Text("取り消す", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.clickable(onClick = onDiscard))
                     }
                     SendState.PENDING -> Text("送信中…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-                    SendState.SENT -> Text(remember(m.createdAt) { dmTime(m.createdAt, withDay = true) }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    SendState.SENT -> {
+                        EditedMark(m.edited)
+                        Text(remember(m.createdAt) { dmTime(m.createdAt, withDay = true) }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                    }
                 }
             }
         }
@@ -297,9 +341,20 @@ private fun GDMBubble(row: GRow, showHeader: Boolean, onRetry: () -> Unit, onDis
 }
 
 @Composable
-private fun GDMComposer(g: GDMStore, draft: TextFieldValue, photos: ChatAttachments, onDraft: (TextFieldValue) -> Unit, onSend: () -> Unit) {
+private fun GDMComposer(
+    g: GDMStore,
+    draft: TextFieldValue,
+    photos: ChatAttachments,
+    /** ✏️ Editing: null = not; else whether the message has photos (then the text may be emptied). */
+    editing: Boolean?,
+    focus: androidx.compose.ui.focus.FocusRequester,
+    onCancelEdit: () -> Unit,
+    onDraft: (TextFieldValue) -> Unit,
+    onSend: () -> Unit,
+) {
     val allowed = g.canSendCap && g.canSendHere
-    val canAttach = allowed && g.canSendImages
+    // Photos are hidden while editing: an edit changes the text only (the chat's rule).
+    val canAttach = allowed && g.canSendImages && editing == null
     val paste = rememberPasteImages(photos, g.maxImages, g.imageMaxSide, enabled = canAttach)
     Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
         Column(
@@ -314,6 +369,7 @@ private fun GDMComposer(g: GDMStore, draft: TextFieldValue, photos: ChatAttachme
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                if (editing != null) EditingBanner(onCancelEdit)
                 if (canAttach) ComposerPhotos(photos)
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (canAttach) PhotoAttachButtons(photos, g.maxImages, g.imageMaxSide)
@@ -322,13 +378,19 @@ private fun GDMComposer(g: GDMStore, draft: TextFieldValue, photos: ChatAttachme
                         onValueChange = onDraft,
                         onImages = paste,
                         enabled = allowed,
-                        placeholder = { Text(if (g.openId?.let { g.group(it) }?.beagle == true) "@ビーグル で質問・要約（30 日で消えます）" else "グループ DM（30 日で消えます）") },
+                        placeholder = { Text(when {
+                            editing != null -> "編集内容"
+                            g.openId?.let { g.group(it) }?.beagle == true -> "@ビーグル で質問・要約（30 日で消えます）"
+                            else -> "グループ DM（30 日で消えます）"
+                        }) },
                         maxLines = 6,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).focusRequester(focus),
                     )
-                    val canSend = allowed && photos.loading == 0 && DMLogic.canSend(draft.text, if (canAttach) photos.photos.size else 0)
+                    val canSend = allowed && if (editing != null) DMLogic.canSaveEdit(draft.text, editing)
+                        else photos.loading == 0 && DMLogic.canSend(draft.text, if (canAttach) photos.photos.size else 0)
                     IconButton(onClick = onSend, enabled = canSend) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "送信", tint = if (canSend) AccentGreen else MaterialTheme.colorScheme.outline)
+                        Icon(if (editing != null) Icons.Default.Check else Icons.AutoMirrored.Filled.Send, contentDescription = if (editing != null) "保存" else "送信",
+                            tint = if (canSend) AccentGreen else MaterialTheme.colorScheme.outline)
                     }
                 }
                 Row {

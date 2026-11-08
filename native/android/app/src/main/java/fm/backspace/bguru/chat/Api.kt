@@ -314,6 +314,12 @@ class ApiClient(val token: String) : PostOpsApi {
         decode<DMReadResponse>(send(request("POST", "$base/${userId.encodedPath()}/read", buildJsonObject { put("last_read_id", lastReadId) }))).unreadCount
     /** One DM (for a notification): the message and the other person. */
     suspend fun dmMessage(id: Long, base: String = "/api/agent/dm"): DMMessageResponse = get("$base/messages/$id")
+    /** ✏️ My DM's text (docs/dm-chat-parity-spec.md); "" is allowed when it has photos. */
+    suspend fun dmEdit(id: Long, body: String, base: String = "/api/agent/dm"): DMMessage =
+        decode<DMSendResponse>(send(request("PATCH", "$base/messages/$id", buildJsonObject { put("body", body) }))).message
+    /** 😀 Toggle my reaction on a DM (same emoji values as the chat). */
+    suspend fun dmToggleReaction(id: Long, emoji: String, base: String = "/api/agent/dm"): ReactionToggleResponse =
+        decode(send(request("POST", "$base/messages/$id/reactions", buildJsonObject { put("emoji", emoji) })))
 
     // MARK: 👥 グループ DM (src/lib/gdm-api.ts) — `base` is capabilities' gdm path
 
@@ -361,6 +367,12 @@ class ApiClient(val token: String) : PostOpsApi {
         decode<GDMGroupResponse>(send(request("DELETE", "$base/$groupId/photo"))).group
     /** One message (for a notification): the message and its group. */
     suspend fun gdmMessage(id: Long, base: String = "/api/agent/gdm"): GDMMessageResponse = get("$base/messages/$id")
+    /** ✏️ My group message's text (docs/dm-chat-parity-spec.md). */
+    suspend fun gdmEdit(id: Long, body: String, base: String = "/api/agent/gdm"): GMessage =
+        decode<GDMSendResponse>(send(request("PATCH", "$base/messages/$id", buildJsonObject { put("body", body) }))).message
+    /** 😀 Toggle my reaction on a group message. */
+    suspend fun gdmToggleReaction(id: Long, emoji: String, base: String = "/api/agent/gdm"): ReactionToggleResponse =
+        decode(send(request("POST", "$base/messages/$id/reactions", buildJsonObject { put("emoji", emoji) })))
 
     private fun String.encodedPath(): String = java.net.URLEncoder.encode(this, "UTF-8").replace("+", "%20")
 

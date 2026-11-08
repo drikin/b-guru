@@ -573,21 +573,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
     }
     }
 
-    selecting?.let { m ->
-        AlertDialog(
-            onDismissRequest = { selecting = null },
-            title = { Text(m.authorName ?: "メッセージ") },
-            text = { SelectionContainer { Text(m.visibleBody) } },
-            confirmButton = {
-                val clipboard = LocalClipboard.current
-                TextButton(onClick = {
-                    scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("message", m.visibleBody))) }
-                    selecting = null
-                }) { Text("すべてコピー") }
-            },
-            dismissButton = { TextButton(onClick = { selecting = null }) { Text("閉じる") } },
-        )
-    }
+    selecting?.let { m -> SelectTextDialog(m.authorName ?: "メッセージ", m.visibleBody) { selecting = null } }
     // Demo (`--es demo_open viewer`): the viewer on the first photo in the chat.
     LaunchedEffect(store.demoViewer, store.rows.size) {
         if (!store.demoViewer) return@LaunchedEffect
@@ -1017,16 +1003,7 @@ private fun MessageRow(
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     if (canReact && stored) {
-                        // The web's 「よく使う」 12 in two rows, then ＋ for the whole picker (same as the timeline's).
-                        EmojiSets.QUICK.chunked(6).forEachIndexed { row, list ->
-                            Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                list.forEach { e ->
-                                    Text(e, fontSize = 22.sp, modifier = Modifier.clickable { menu = false; onReact(e) }.padding(6.dp))
-                                }
-                                if (row == 1) Text("＋", fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.clickable { menu = false; picker = true }.padding(6.dp))
-                            }
-                        }
+                        ReactionQuickRows(onReact = { e -> menu = false; onReact(e) }, onMore = { menu = false; picker = true })
                         HorizontalDivider()
                     }
                     if (onReply != null && !mine && stored) {
@@ -1111,6 +1088,40 @@ internal fun ComposerPhotos(photos: ChatAttachments) {
     }
 }
 
+/** The long-press menu's reactions: the web's 「よく使う」 12 in two rows, then ＋ for the whole picker
+ *  (same as the timeline's). Shared by the chat and the DMs. */
+@Composable
+internal fun ReactionQuickRows(onReact: (String) -> Unit, onMore: () -> Unit) {
+    EmojiSets.QUICK.chunked(6).forEachIndexed { row, list ->
+        Row(Modifier.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            list.forEach { e ->
+                Text(e, fontSize = 22.sp, modifier = Modifier.clickable { onReact(e) }.padding(6.dp))
+            }
+            if (row == 1) Text("＋", fontSize = 20.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.clickable(onClick = onMore).padding(6.dp))
+        }
+    }
+}
+
+/** 「テキストを選択」: the text in a dialog where it can be selected, and すべてコピー. Chat and DMs. */
+@Composable
+internal fun SelectTextDialog(title: String, body: String, onDismiss: () -> Unit) {
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { SelectionContainer { Text(body) } },
+        confirmButton = {
+            TextButton(onClick = {
+                scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("message", body))) }
+                onDismiss()
+            }) { Text("すべてコピー") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("閉じる") } },
+    )
+}
+
 @Composable
 internal fun ReactionChip(r: Reaction, enabled: Boolean, onTap: () -> Unit) {
     val border = if (r.mine) AccentGreen else MaterialTheme.colorScheme.outlineVariant
@@ -1134,7 +1145,7 @@ private val HM = DateTimeFormatter.ofPattern("H:mm").withZone(ZoneId.systemDefau
 
 private fun time(iso: String): String = runCatching { HM.format(Instant.parse(iso)) }.getOrDefault("")
 
-private fun isEmojiOnly(s: String): Boolean {
+internal fun isEmojiOnly(s: String): Boolean {
     val t = s.trim()
     if (t.isEmpty() || t.codePointCount(0, t.length) > 6) return false
     return t.codePoints().allMatch { cp ->
