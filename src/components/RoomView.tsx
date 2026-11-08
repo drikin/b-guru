@@ -10,6 +10,7 @@
  * State lives in lib/room-client.ts (outside React); the map draws the animated
  * actors from there every frame. Voice proximity is applied by the store. */
 import { createPortal } from "react-dom";
+import { setBigView, useBigView } from "@/lib/big-view";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Button, CloseButton, Group, Popover, SegmentedControl, Slider, Switch, Text, Tooltip } from "@mantine/core";
 import {
@@ -37,6 +38,7 @@ import {
   loadVoice,
   micActive,
   setUserGain,
+  resetUserGains,
   setVoiceNotice,
   setVoiceSfx,
   subscribe as subscribeVoice,
@@ -143,6 +145,16 @@ export function RoomOverlayContent() {
   );
 }
 
+/** 赤くない知らせ（ステージの自動マイクなど、数秒で消える）。 */
+function RoomInfo({ s }: { s: RoomSnapshot }) {
+  if (!s.info) return null;
+  return (
+    <Text size="xs" c="green.7" role="status">
+      {s.info}
+    </Text>
+  );
+}
+
 function RoomChrome({ s, extra }: { s: RoomSnapshot; extra?: ReactNode }) {
   const v = useVoice();
   const speaking = useMemo(() => speakingIds(v, s.me), [v, s.me]);
@@ -197,6 +209,7 @@ function RoomChrome({ s, extra }: { s: RoomSnapshot; extra?: ReactNode }) {
             />
           </Group>
         )}
+        {inRoom && <RoomInfo s={s} />}
       </div>
       {inRoom && <RoomMap s={s} speaking={speaking} />}
     </>
@@ -217,12 +230,22 @@ function RoomControls({ s, v, me, speaking }: { s: RoomSnapshot; v: VoiceSnapsho
           size="compact-sm"
           variant={listening ? "light" : "filled"}
           color="green"
-          disabled={s.busy}
-          loading={listening && (v.phase === "connecting" || v.phase === "reconnecting")}
+          // loading にすると Mantine は文字を消してしまう（「接続中…」が見えなかった）ので、押せなくするだけ
+          disabled={s.busy || (listening && v.phase === "connecting")}
           aria-pressed={listening}
           onClick={() => void setListening(!listening)}
         >
-          {listening ? (connected ? "🎧 聞いている" : "🎧 接続中…") : "🎧 ボイスに入る"}
+          {listening ? (
+            v.phase === "connected" ? (
+              <>
+                🎧 聞いている<span className={css.wideOnly}>（押すと見るだけ）</span>
+              </>
+            ) : (
+              "🎧 接続中…"
+            )
+          ) : (
+            "🎧 ボイスに入る"
+          )}
         </Button>
       </Tooltip>
       <Tooltip label={!listening ? "見るだけの間はマイクを使えません" : micOn ? "マイクを切る" : "マイクをオンにして話す"} openDelay={400}>
@@ -341,6 +364,11 @@ function HearPopover({ s, v: voice, me, speaking }: { s: RoomSnapshot; v: VoiceS
         <Text size="xs" c="dimmed" mt={6}>
           つまみはその人の声の大きさです（自分にだけ効きます）。
         </Text>
+        {Object.keys(voice.gains).length > 0 && (
+          <Button size="compact-xs" variant="subtle" color="gray" mt={4} onClick={() => resetUserGains()}>
+            🔉 音量を全部もとに戻す（{Object.keys(voice.gains).length} 人）
+          </Button>
+        )}
         <Switch
           mt={8}
           size="xs"
@@ -406,6 +434,7 @@ function drawRoom(
   beagle: BeagleState
 ) {
   const zoom = v.zoom;
+  const gains = getVoiceSnapshot().gains;
   const W = map.w * TILE;
   const H = map.h * TILE;
   const actors = getActors();
@@ -469,7 +498,9 @@ function drawRoom(
     drawPerson(ctx, x, y, look, m.mode === "text" ? "up" : a.dir, step, sitting);
     ctx.restore();
     const fg = isMe ? ROOM_COLORS.ink : vol > 0 || m.mode === "text" ? ROOM_COLORS.fg : ROOM_COLORS.dim;
-    drawNameTag(ctx, `${statusMark(m, talking)} ${shortRoomName(m.name)}`, x + 8, y - 7, isMe ? "rgba(242,178,76,.85)" : "rgba(18,14,20,.5)", fg);
+    // 自分で音量を 0 にした人には 🔇（次に来たときも静かなままなのに気づけるように）
+    const muted = gains[a.id] === 0;
+    drawNameTag(ctx, `${muted ? "🔇" : statusMark(m, talking)} ${shortRoomName(m.name)}`, x + 8, y - 7, isMe ? "rgba(242,178,76,.85)" : "rgba(18,14,20,.5)", fg);
   }
 
   // Bubbles, then reactions, on top of everything.
@@ -522,7 +553,6 @@ interface MenuState {
 
 /* 拡大・縮小と「広げる」はブラウザに覚える（アプリと同じキー名）。 */
 const ZOOM_KEY = "roomZoomScale";
-const EXPAND_KEY = "roomExpanded";
 function readNum(key: string, def: number): number {
   try {
     const v = Number(localStorage.getItem(key));
@@ -530,13 +560,6 @@ function readNum(key: string, def: number): number {
     return raw !== null && Number.isFinite(v) && v >= 0 ? v : def;
   } catch {
     return def;
-  }
-}
-function readFlag(key: string): boolean {
-  try {
-    return localStorage.getItem(key) === "1";
-  } catch {
-    return false;
   }
 }
 function save(key: string, v: string) {
@@ -566,7 +589,12 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
   const view = useRef({ zoom: 3, camX: 0, camY: 0, dpr: 1, auto: 3, fit: 1, scale: 1 });
   const [atFit, setAtFit] = useState(false);
   // マップは部室を読み込んだあと（ブラウザの中）でしか描かないので、覚えている値は最初から読んでよい
-  const [expanded, setExpanded] = useState(() => typeof window !== "undefined" && readFlag(EXPAND_KEY));
+  // 大きく表示（将棋・散財ダッシュと同時に 1 つ、Esc で戻る）。開いた状態は覚えない（次に来たらチャットが覆われていて驚く。UX レビュー 2026-11-08）
+  const expanded = useBigView("room");
+  const setExpanded = (on: boolean) => setBigView(on ? "room" : null);
+  const v = useVoice();
+  // タッチの端末ではキーボードの案内を出さない（狭い画面で長い帯になる）
+  const [finePointer] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches);
   useEffect(() => {
     view.current.scale = readNum(ZOOM_KEY, 1);
   }, []);
@@ -615,18 +643,6 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
     ro.observe(box);
     return () => ro.disconnect();
   }, [map.w, map.h, expanded]);
-
-  // 大きな窓は Esc でも閉じる
-  useEffect(() => {
-    if (!expanded) return;
-    const key = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || isTyping(e.target)) return;
-      setExpanded(false);
-      save(EXPAND_KEY, "0");
-    };
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [expanded]);
 
   // ⌘/Ctrl + ホイール・トラックパッドのピンチ（ブラウザは ctrl 付きのホイールで送ってくる）で拡大・縮小。
   useEffect(() => {
@@ -828,19 +844,37 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
           aria-label={expanded ? "マップを元の大きさに戻す" : "マップを大きく表示"}
           title={expanded ? "元の大きさに戻す（Esc）" : "マップを大きく表示"}
           aria-pressed={expanded}
-          onClick={() => {
-            const next = !expanded;
-            setExpanded(next);
-            save(EXPAND_KEY, next ? "1" : "0");
-          }}
+          onClick={() => setExpanded(!expanded)}
         >
           {expanded ? "⤡" : "⤢"}
         </button>
       </div>
-      {hint && (
-        <div className={`${css.overlay} ${css.hint}`}>タップした所へ歩く・人をタップで手を振る・矢印キー / WASD・1〜6 でリアクション</div>
+      {/* 大きな窓の中にも、マイクなどの操作と知らせを出す（地図だけが前に出てマイクの状態が見えなくなっていた。UX レビュー 2026-11-08） */}
+      {expanded && (
+        <div className={css.bigBar}>
+          <RoomControls s={s} v={v} me={me} speaking={speaking} />
+          {(s.notice ?? v.notice) && (
+            <div className={css.bigNotice} role="status">
+              {s.notice ?? v.notice}
+            </div>
+          )}
+          {s.info && (
+            <div className={css.bigInfo} role="status">
+              {s.info}
+            </div>
+          )}
+        </div>
       )}
-      {zone && !hint && <div className={`${css.overlay} ${css.zone}`}>{zone.name}にいます</div>}
+      {hint && !expanded && (
+        <div className={`${css.overlay} ${css.hint}`}>
+          {finePointer ? "タップした所へ歩く・人をタップで手を振る・矢印キー / WASD・1〜6 でリアクション" : "タップで歩く・人をタップで手を振る"}
+        </div>
+      )}
+      {zone && (!hint || expanded) && (
+        <div className={`${css.overlay} ${css.zone}`}>
+          {zone.kind === "stage" ? (v.micOn ? "🎙 ステージ：部室の全員に聞こえています" : "ステージ（🎙 オフ）") : `${zone.name}にいます`}
+        </div>
+      )}
       <div className={css.react} role="group" aria-label="リアクション">
         {s.reactions.map((e, i) => (
           <button key={e} type="button" aria-label={`${e}（${i + 1}）`} title={`${e}（${i + 1}）`} onClick={() => void sendReaction(e)}>

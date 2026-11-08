@@ -92,7 +92,7 @@ import { ShogiChatCard, ShogiPanel } from "@/components/shogi/ShogiPanel";
 import { GameToggles, MinigamePanel } from "@/components/minigame/MinigamePanel";
 import { DmDrawer, DmNameMenu, DmTabLabel, useDmEnabled } from "@/components/dm/DMPanel";
 import { applyDmEvent, openDmList } from "@/lib/dm-client";
-import { applyGdmEvent } from "@/lib/gdm-client";
+import { applyGdmEvent, closeGroup } from "@/lib/gdm-client";
 import { applyMinigameEvent, reloadMinigame } from "@/lib/minigame-client";
 import { applyWatchEvent, isYoutubeVideoUrl, reloadWatch } from "@/lib/watch-client";
 import { WatchPanel, WatchTogetherButton } from "@/components/watch/WatchPanel";
@@ -12031,7 +12031,7 @@ export default function Home() {
                     value={chatView ? "chat" : bmView ? "bm" : favView ? "fav" : "timeline"}
                     onChange={(v) => {
                       // ✉️ DM は画面を切り替えず、右から DM の一覧を出す（1 タップ）
-                      if (v === "dm") { openDmList(); return; }
+                      if (v === "dm") { closeGroup(); openDmList(); return; }
                       const toChat = v === "chat";
                       chatViewRef.current = toChat;
                       setChatView(toChat);

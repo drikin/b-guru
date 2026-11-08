@@ -8,7 +8,7 @@
 import { createPortal } from "react-dom";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ActionIcon, Badge, Button, CloseButton, Group, Switch, Text, useComputedColorScheme } from "@mantine/core";
-import { BIG_VIEW_STYLE, bigViewHeight, setBigView, useBigView } from "@/lib/big-view";
+import { bigViewHeight, setBigView, useBigHost, useBigView } from "@/lib/big-view";
 import ShogiBoard from "./ShogiBoard";
 import {
   acceptShogiGame,
@@ -90,17 +90,17 @@ export function ShogiToggle({ row = false }: { row?: boolean }) {
 }
 
 /** 将棋の画面はチャット欄の高さの約半分まで（ルームの地図と同じ考え方）。残りでチャットが見える。 */
-function usePanelMax(ref: React.RefObject<HTMLDivElement | null>, on: boolean): number {
+function usePanelMax(slotEl: HTMLDivElement | null, on: boolean): number {
   const [max, setMax] = useState(420);
   useEffect(() => {
-    const col = ref.current?.parentElement;
+    const col = slotEl?.parentElement;
     if (!on || !col || typeof ResizeObserver === "undefined") return;
     const update = () => setMax(Math.round(Math.max(420, Math.min(660, col.clientHeight * 0.52))));
     update();
     const ro = new ResizeObserver(update);
     ro.observe(col);
     return () => ro.disconnect();
-  }, [ref, on]);
+  }, [slotEl, on]);
   return max;
 }
 
@@ -110,7 +110,8 @@ export function ShogiPanel() {
   const ref = useRef<HTMLDivElement>(null);
   const on = s.status === "enabled" && s.open;
   const big = useBigView("shogi");
-  const small = usePanelMax(ref, on);
+  const { host, slot, slotEl } = useBigHost(big);
+  const small = usePanelMax(slotEl, on);
   const max = big ? bigViewHeight() : small;
   useEffect(() => {
     if (!on && big) setBigView(null);
@@ -129,7 +130,7 @@ export function ShogiPanel() {
           ? { height: max, display: "flex", flexDirection: "column" as const, overflow: "hidden" }
           : { maxHeight: max, overflowY: "auto" as const, overscrollBehavior: "contain" as const }),
         boxSizing: "border-box",
-        ...(big ? BIG_VIEW_STYLE : {}),
+        ...(big ? { flex: 1, minHeight: 0, borderBottom: "none" } : {}),
       }}
     >
       <Group gap={6} justify="space-between" wrap="nowrap" mb={4}>
@@ -161,7 +162,12 @@ export function ShogiPanel() {
     </div>
   );
   // 大きく表示はページ直下に出す（チャットの上に重ねる層の重なり順の中だと、左のメニューや上のタブの下に隠れる）
-  return big && typeof document !== "undefined" ? createPortal(panel, document.body) : panel;
+  return (
+    <>
+      <div ref={slot} />
+      {host ? createPortal(panel, host) : panel}
+    </>
+  );
 }
 
 function GameTabs({ s }: { s: ShogiSnapshot }) {

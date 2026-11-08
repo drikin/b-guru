@@ -17,9 +17,13 @@ export async function POST(req: NextRequest) {
   if (list.length >= 40) return new NextResponse(null, { status: 204 });
   list.push(now);
   hits.set(email, list);
+  // 大きな本文は読まずに断る（security-reviewer 2026-11-08）
+  if (Number(req.headers.get("content-length") ?? "0") > 4096) return new NextResponse(null, { status: 413 });
   let body: unknown = null;
   try {
-    body = await req.json();
+    const raw = await req.text();
+    if (raw.length > 4096) return new NextResponse(null, { status: 413 });
+    body = JSON.parse(raw);
   } catch {
     /* ignore */
   }

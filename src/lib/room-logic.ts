@@ -243,8 +243,14 @@ export function nextRoomScale(action: "in" | "out" | "fit", auto: number, fit: n
 /** 頭の上の名前（ドリキン 2026-11-08「でかすぎて見にくい・長い人は折りたたむ」）: 全角 6 字ぶん（半角は半分）で切って「…」。
  *  全部の名前は、人をタップしたときのメニューに出る。 */
 export const ROOM_NAME_WIDTH = 12;
+/** 見た目の 1 文字（書記素）ごとに分ける（家族の絵文字・国旗の途中で切らない）。 */
+function graphemes(s: string): string[] {
+  const Seg = (Intl as unknown as { Segmenter?: new (l?: string, o?: { granularity: string }) => { segment(s: string): Iterable<{ segment: string }> } }).Segmenter;
+  if (Seg) return Array.from(new Seg("ja", { granularity: "grapheme" }).segment(s), (x) => x.segment);
+  return [...s];
+}
 export function shortRoomName(name: string, width = ROOM_NAME_WIDTH): string {
-  const chars = [...(name ?? "").replace(/\s+/g, " ").trim()];
+  const chars = graphemes((name ?? "").replace(/\s+/g, " ").trim());
   const w = (ch: string) => (/^[\x20-\x7e]$/.test(ch) ? 1 : 2);
   const total = chars.reduce((n, ch) => n + w(ch), 0);
   if (total <= width) return chars.join("");

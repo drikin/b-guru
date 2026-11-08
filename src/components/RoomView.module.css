@@ -206,3 +206,38 @@
 .zoom button:active {
   transform: scale(0.92);
 }
+
+/* 大きな窓の中の操作（🎧・🎙・👂）と知らせ（左上） */
+.bigBar {
+  position: absolute;
+  left: max(8px, env(safe-area-inset-left, 0px));
+  top: 8px;
+  z-index: 2;
+  display: grid;
+  gap: 4px;
+  max-width: calc(100% - 220px);
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--bg-surface, rgba(255, 255, 255, 0.94));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.bigNotice {
+  font-size: 0.75rem;
+  color: var(--mantine-color-red-7, #c92a2a);
+}
+
+.bigInfo {
+  font-size: 0.75rem;
+  color: var(--mantine-color-green-8, #2b8a3e);
+}
+
+/* 「（押すと見るだけ）」は広い画面だけ */
+.wideOnly {
+  display: none;
+}
+@media (min-width: 720px) {
+  .wideOnly {
+    display: inline;
+  }
+}

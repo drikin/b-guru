@@ -82,7 +82,7 @@ export function DmTabLabel() {
   const unread = s0.unread + (g.status === "enabled" ? g.unread : 0);
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }} title="DM（30 日で消えます）" data-cx="dm-tab">
-      DM
+      ✉️ DM
       {unread > 0 && (
         <span
           style={{

@@ -8,7 +8,7 @@
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ActionIcon, Tooltip, useComputedColorScheme } from "@mantine/core";
-import { BIG_VIEW_STYLE, bigViewHeight, setBigView, useBigView } from "@/lib/big-view";
+import { bigViewHeight, setBigView, useBigHost, useBigView } from "@/lib/big-view";
 import type { DashGame } from "@/lib/minigame/game";
 import {
   WebHost,
@@ -90,17 +90,17 @@ export function GameToggles({ row = false }: { row?: boolean }) {
 }
 
 /** ゲームの高さの上限: チャット欄の高さの半分（残りでチャットが見える。アプリと同じ。ゲームは横幅いっぱいまで広がる）。 */
-function usePanelMax(ref: React.RefObject<HTMLDivElement | null>, on: boolean): number {
+function usePanelMax(slotEl: HTMLDivElement | null, on: boolean): number {
   const [max, setMax] = useState(260);
   useEffect(() => {
-    const col = ref.current?.parentElement;
+    const col = slotEl?.parentElement;
     if (!on || !col || typeof ResizeObserver === "undefined") return;
     const update = () => setMax(Math.round(Math.max(150, Math.min(520, col.clientHeight * 0.5))));
     update();
     const ro = new ResizeObserver(update);
     ro.observe(col);
     return () => ro.disconnect();
-  }, [ref, on]);
+  }, [slotEl, on]);
   return max;
 }
 
@@ -109,8 +109,9 @@ export function MinigamePanel() {
   const shogiOpen = useSyncExternalStore(subscribeShogi, () => getShogiSnapshot().open, () => false);
   const ref = useRef<HTMLDivElement>(null);
   const on = s.status === "enabled" && s.open;
-  const big = useBigView("game");
-  const small = usePanelMax(ref, on);
+  const big = useBigView("game", false);
+  const { host, slot, slotEl } = useBigHost(big);
+  const small = usePanelMax(slotEl, on);
   const max = big ? bigViewHeight() : small;
   useEffect(() => {
     if (!on && big) setBigView(null);
@@ -131,7 +132,7 @@ export function MinigamePanel() {
         overflow: "hidden",
         boxSizing: "border-box",
         position: "relative",
-        ...(big ? { ...BIG_VIEW_STYLE, display: "flex", alignItems: "center" } : {}),
+        ...(big ? { flex: 1, minHeight: 0, display: "flex", alignItems: "center", borderBottom: "none" } : {}),
       }}
     >
       <ActionIcon
@@ -149,7 +150,12 @@ export function MinigamePanel() {
     </div>
   );
   // 大きく表示はページ直下に出す（チャットの上に重ねる層の重なり順の中だと、左のメニューや上のタブの下に隠れる）
-  return big && typeof document !== "undefined" ? createPortal(panel, document.body) : panel;
+  return (
+    <>
+      <div ref={slot} />
+      {host ? createPortal(panel, host) : panel}
+    </>
+  );
 }
 
 function GameView({ s, maxHeight }: { s: MinigameSnapshot; maxHeight: number }) {

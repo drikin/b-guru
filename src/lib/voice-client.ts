@@ -189,6 +189,7 @@ export function voiceLoaded() {
 
 export async function joinVoice(): Promise<void> {
   if (snap.phase !== "idle") return;
+  const before = ++attempt; // 読み直しの間に「見るだけ」などで抜けたら、ここで止まる（qa-engineer 2026-11-08）
   // 「使えるか」をまだ読めていない（再起動中の 502 などで失敗したまま）なら、ここで読み直す。
   // 読めないまま入ろうとすると一瞬で失敗して「見るだけにしました」に戻されていた（2026-11-08 オフ会の報告）
   if (!loaded || !snap.enabled) {
@@ -198,8 +199,9 @@ export async function joinVoice(): Promise<void> {
       await loadVoice();
     }
     voiceDiag("join_after_load", { loaded, enabled: snap.enabled });
-    if (!snap.enabled || snap.phase !== "idle") return;
+    if (before !== attempt || !snap.enabled || snap.phase !== "idle") return;
   }
+  if (before !== attempt) return;
   const mine = ++attempt;
   movedAway = false;
   removedLast = false;
@@ -217,7 +219,8 @@ export async function joinVoice(): Promise<void> {
     await connect(d.url, d.token, mine);
   } catch (e) {
     if (mine !== attempt) return;
-    voiceDiag("connect_failed", { error: String((e as Error)?.message ?? e).slice(0, 160) });
+    // 接続先の URL は残さない
+    voiceDiag("connect_failed", { error: String((e as Error)?.message ?? e).replace(/wss?:\/\/\S+/g, "<url>").slice(0, 160) });
     await teardown();
     set({ notice: "ボイスルームにつながりませんでした" });
     console.warn("[voice]", e);
@@ -329,9 +332,9 @@ async function connect(url: string, token: string, mine: number) {
   set({ phase: "connected", micOn: false, needsAudioUnlock: !r.canPlaybackAudio });
   voiceDiag("connected");
   playVoiceSfx("in", true);
-  // つながっている間は 20 秒ごとに様子を送る（聞こえる相手が 0 のまま、などを見る）
+  // つながっている間は 60 秒ごとに様子を送る（聞こえる相手が 0 のまま、などを見る）
   if (diagTimer) clearInterval(diagTimer);
-  diagTimer = setInterval(() => (room ? voiceDiag("tick") : diagTimer && clearInterval(diagTimer)), 20_000);
+  diagTimer = setInterval(() => (room ? voiceDiag("tick") : diagTimer && clearInterval(diagTimer)), 60_000);
   await refreshDevices();
   if (snap.outputId) await r.switchActiveDevice("audiooutput", snap.outputId).catch(() => {});
   refreshMembers();
@@ -709,6 +712,13 @@ export function setUserGain(id: string, gain: number): void {
   else gains[id] = g;
   set({ gains });
   lsSet(LS_GAINS, JSON.stringify(gains));
+  applyRoomVolumes();
+}
+
+/** 自分で決めた音量を全部もとに戻す。 */
+export function resetUserGains(): void {
+  set({ gains: {} });
+  lsSet(LS_GAINS, "{}");
   applyRoomVolumes();
 }
 

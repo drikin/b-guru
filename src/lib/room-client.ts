@@ -39,6 +39,7 @@ import {
   subscribe as subscribeVoice,
   voiceMovedAway,
   voiceWasRemoved,
+  playVoiceSfx,
 } from "./voice-client";
 
 export type RoomStatus = "unknown" | "enabled" | "disabled";
@@ -57,6 +58,8 @@ export interface RoomSnapshot {
   /** An enter / text / voice request is on its way. */
   busy: boolean;
   notice: string | null;
+  /** 知らせ（赤くない、数秒で消える）: ステージでマイクを自動で入れた・切った、など。 */
+  info: string | null;
 }
 
 export interface Actor {
@@ -94,6 +97,7 @@ let snap: RoomSnapshot = {
   wantListening: readListening(),
   busy: false,
   notice: null,
+  info: null,
 };
 const SERVER_SNAPSHOT = snap;
 const listeners = new Set<() => void>();
@@ -110,9 +114,20 @@ let rejoinAt = 0;
 /** サーバが再起動して私を忘れた（部室にいたのにテキスト扱い）: テキストに戻さず入り直す。音声はそのまま。 */
 function rejoinAfterRestart(): void {
   const now = Date.now();
-  if (now - rejoinAt < 10_000 || snap.busy) return; // 繰り返さない
+  if (now - rejoinAt < 10_000) return; // 繰り返さない
+  if (snap.busy) {
+    // 切り替えの最中: 少し待ってもう一度だけ
+    setTimeout(() => snap.view === "room" && myMember()?.mode !== "room" && rejoinAfterRestart(), 1500);
+    return;
+  }
   rejoinAt = now;
-  void enterRoom();
+  void enterRoom().then(async () => {
+    // マイクがオンのまま（LiveKit は切れていない）なら、サーバにも伝え直す（再起動でサーバは mic=false になっている）
+    if (getVoiceSnapshot().micOn && roomActive()) {
+      const r = await post({ action: "voice", mic: true });
+      if (r.ok) upsertMe(r.data.member as RoomMember);
+    }
+  });
 }
 let resyncing = false;
 /** We are in (or joining) the voice on purpose; a drop otherwise means 見るだけ. */
@@ -195,8 +210,9 @@ export function reloadRoomIfOn(): void {
 }
 
 function disableRoom() {
-  if (snap.view === "room") void leaveVoice("room_disabled");
+  // expectVoice を先に下ろす（下ろす前に音声が idle になると、自動の入り直しに入ってしまう。security-reviewer 2026-11-08）
   expectVoice = false;
+  if (snap.view === "room") void leaveVoice("room_disabled");
   actors.clear();
   setVoiceHooks(null);
   setRoomProximity(null);
@@ -419,9 +435,10 @@ export async function setListening(listening: boolean): Promise<void> {
 /** joinVoice(), and if we end up outside the voice anyway (voice off for this
  *  member, token refused, no connection) fall back to 👀 見るだけ. */
 async function joinVoiceForRoom() {
+  if (!roomActive() || !expectVoice) return;
   await joinVoice();
   // 一度でつながらなければ、少し待ってもう一度（混んでいる・再起動の直後など）。それでもだめなら見るだけに
-  if (expectVoice && roomActive() && getVoiceSnapshot().phase === "idle") {
+  if (expectVoice && roomActive() && getVoiceSnapshot().phase === "idle" && getVoiceSnapshot().notice !== "BSM 会員資格が確認できません") {
     await new Promise((r) => setTimeout(r, 2000));
     if (expectVoice && roomActive() && getVoiceSnapshot().phase === "idle") await joinVoice();
   }
@@ -453,22 +470,86 @@ function voiceDropped() {
 }
 
 /** The mic: the server first (speaker limits), then LiveKit. */
-/** ステージの乗り降りでマイクを切り替える。見るだけ・音声に入っていないときは何もしない。 */
-async function stageMic(on: boolean): Promise<void> {
-  const mine = myMember();
-  if (!mine || mine.mode !== "room" || !mine.listening) return;
-  const v = getVoiceSnapshot();
-  if (v.phase !== "connected" || v.micBusy) return;
-  if (on && !v.micOn) {
-    await setRoomMic(true);
-    // オンにしている間に降りていたら切る
-    const now = myMember();
-    const map = snap.map;
-    if (now && map && zoneOf(map.zones, now.x, now.y)?.kind !== "stage" && getVoiceSnapshot().micOn) await setRoomMic(false);
-  } else if (!on && v.micOn) await setRoomMic(false);
+/* ---- ステージの自動マイク（ドリキン 2026-11-08「上がったらマイクオン、降りたら自動で切る」）----
+ * - 上がって 1 秒立ち止まったらオン（歩く途中で通っただけでは入れない）。入れたら知らせと音
+ * - 降りたらすぐ切る。ただし切るのは自動で入れたときだけ（自分で入れたマイクは切らない）
+ * - ステージの上で自分で切ったら、ステージを出るまで自動では入れない */
+const STAGE_DWELL_MS = 1000;
+let stageAuto = false;
+let stageOptOut = false;
+let stageTimer: ReturnType<typeof setTimeout> | null = null;
+let infoTimer: ReturnType<typeof setTimeout> | null = null;
+
+function showInfo(text: string) {
+  set({ info: text });
+  if (infoTimer) clearTimeout(infoTimer);
+  infoTimer = setTimeout(() => set({ info: null }), 6000);
 }
 
-export async function setRoomMic(on: boolean): Promise<void> {
+function onStageNow(): boolean {
+  const me = myMember();
+  return !!(me && snap.map && me.mode === "room" && zoneOf(snap.map.zones, me.x, me.y)?.kind === "stage");
+}
+
+/** 自分が動いた（サーバが位置を受け取った）あとに呼ぶ。 */
+function stageMoved() {
+  if (stageTimer) clearTimeout(stageTimer);
+  stageTimer = null;
+  if (!onStageNow()) {
+    stageOptOut = false;
+    if (stageAuto) {
+      stageAuto = false;
+      if (getVoiceSnapshot().micOn) {
+        void setRoomMic(false, true).then(() => {
+          showInfo("ステージを降りたので、マイクを切りました");
+          if (onStageNow()) stageMoved(); // 切っている間にまた上がっていた
+        });
+      }
+    }
+    return;
+  }
+  stageTimer = setTimeout(() => {
+    stageTimer = null;
+    void stageMicOn();
+  }, STAGE_DWELL_MS);
+}
+
+async function stageMicOn(): Promise<void> {
+  if (!onStageNow() || stageOptOut) return;
+  const mine = myMember();
+  if (!mine?.listening) return;
+  const v = getVoiceSnapshot();
+  if (v.phase !== "connected" || v.micOn) return;
+  if (v.micBusy) {
+    // ほかの切り替えの最中: 終わってから決め直す
+    stageTimer = setTimeout(() => {
+      stageTimer = null;
+      void stageMicOn();
+    }, 500);
+    return;
+  }
+  await setRoomMic(true, true);
+  if (!getVoiceSnapshot().micOn) {
+    // 上限・ブラウザの拒否（知らせは setRoomMic が出す）: このステージにいる間はもう自動で入れない
+    stageOptOut = true;
+    return;
+  }
+  if (!onStageNow()) {
+    await setRoomMic(false, true); // 入れている間に降りていた
+    return;
+  }
+  stageAuto = true;
+  playVoiceSfx("in", true);
+  showInfo("ステージに上がったので、マイクをオンにしました（部室の全員に届きます）。🎙 で切れます");
+}
+
+/** マイクのオン・オフ。auto はステージの自動の切り替え（本人の操作ではない）。 */
+export async function setRoomMic(on: boolean, auto = false): Promise<void> {
+  if (!auto) {
+    // 本人の操作: ステージの自動はここで手を引く
+    stageAuto = false;
+    if (!on && onStageNow()) stageOptOut = true;
+  }
   if (!roomActive()) return;
   if (on) {
     micAskedAt = Date.now();
@@ -605,8 +686,8 @@ function stepMe(a: Actor, map: RoomMapDto) {
       void resync();
       return;
     }
-    // ステージに上がったらマイクをオン、降りたら切る（ドリキン 2026-11-08）。サーバが位置を知ってから
-    if (onStage !== wasStage) void stageMic(onStage);
+    // ステージの自動マイク（サーバが位置を知ってから）
+    if (onStage || wasStage) stageMoved();
   });
 }
 
@@ -717,10 +798,11 @@ if (typeof window !== "undefined") {
         // スマホなど別の端末で続けている: サーバの「自分」はそちらなので、ここでは何も書かない。
         expectVoice = false;
         set({ wantListening: false, notice: v.notice });
-      } else if (!voiceWasRemoved() && Date.now() - autoRejoinAt > 30_000) {
+      } else if ((was === "connected" || was === "reconnecting") && !voiceWasRemoved() && Date.now() - autoRejoinAt > 30_000) {
         // 回線などで切れた: 見るだけに落とす前に、まず自動で入り直す（2026-11-08 オフ会「いきなり落ちた」）
         autoRejoinAt = Date.now();
-        void joinVoiceForRoom();
+        // 大勢が同時に切れたとき（LiveKit の再起動など）一斉に入り直さないよう、0〜3 秒ずらす
+        setTimeout(() => void joinVoiceForRoom(), Math.random() * 3000);
       } else voiceDropped();
     }
   });
