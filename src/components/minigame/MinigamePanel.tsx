@@ -5,8 +5,10 @@
  *   MinigameToggle  「🎮」（アイコンだけ。ラベル「ゲーム」。MINIGAME_ENABLED で出していない人には出さない）
  *   MinigamePanel   ゲームの部品（lib/minigame/game.ts。アプリの WebView と同じ）。開いている間だけ作り、閉じたら捨てる。
  * 状態は lib/minigame-client.ts（React の外）。 */
+import { createPortal } from "react-dom";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ActionIcon, Tooltip, useComputedColorScheme } from "@mantine/core";
+import { BIG_VIEW_STYLE, bigViewHeight, setBigView, useBigView } from "@/lib/big-view";
 import type { DashGame } from "@/lib/minigame/game";
 import {
   WebHost,
@@ -107,13 +109,18 @@ export function MinigamePanel() {
   const shogiOpen = useSyncExternalStore(subscribeShogi, () => getShogiSnapshot().open, () => false);
   const ref = useRef<HTMLDivElement>(null);
   const on = s.status === "enabled" && s.open;
-  const max = usePanelMax(ref, on);
+  const big = useBigView("game");
+  const small = usePanelMax(ref, on);
+  const max = big ? bigViewHeight() : small;
+  useEffect(() => {
+    if (!on && big) setBigView(null);
+  }, [on, big]);
   // ☗ を開いたらこちらは閉じる（2 つ重ねない）。
   useEffect(() => {
     if (shogiOpen && getSnapshot().open) setMinigameOpen(false);
   }, [shogiOpen]);
   if (!on) return null;
-  return (
+  const panel = (
     <div
       ref={ref}
       data-cx="minigame-panel"
@@ -123,11 +130,26 @@ export function MinigamePanel() {
         flex: "0 0 auto",
         overflow: "hidden",
         boxSizing: "border-box",
+        position: "relative",
+        ...(big ? { ...BIG_VIEW_STYLE, display: "flex", alignItems: "center" } : {}),
       }}
     >
+      <ActionIcon
+        variant="filled"
+        color="dark"
+        size="sm"
+        style={{ position: "absolute", top: 8, right: 8, zIndex: 2, opacity: 0.75 }}
+        aria-label={big ? "散財ダッシュを元の大きさに戻す" : "散財ダッシュを大きく表示"}
+        title={big ? "元の大きさに戻す（Esc）" : "大きく表示"}
+        onClick={() => setBigView(big ? null : "game")}
+      >
+        {big ? "⤡" : "⤢"}
+      </ActionIcon>
       <GameView s={s} maxHeight={max - 12} />
     </div>
   );
+  // 大きく表示はページ直下に出す（チャットの上に重ねる層の重なり順の中だと、左のメニューや上のタブの下に隠れる）
+  return big && typeof document !== "undefined" ? createPortal(panel, document.body) : panel;
 }
 
 function GameView({ s, maxHeight }: { s: MinigameSnapshot; maxHeight: number }) {

@@ -5,8 +5,10 @@
  *   ShogiPanel      ロビー（募集・指名・届いた申し込み・対局中・最近の結果）と盤（対局・観戦・再生）
  *   ShogiChatCard   チャットに流れる kind "shogi" の対局中カード（盤の小さな絵・観戦する）
  * 状態は lib/shogi-client.ts（React の外）。盤は lib/shogi-board/board.ts（アプリの WebView と同じ部品）。 */
+import { createPortal } from "react-dom";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ActionIcon, Badge, Button, CloseButton, Group, Switch, Text, useComputedColorScheme } from "@mantine/core";
+import { BIG_VIEW_STYLE, bigViewHeight, setBigView, useBigView } from "@/lib/big-view";
 import ShogiBoard from "./ShogiBoard";
 import {
   acceptShogiGame,
@@ -107,9 +109,14 @@ export function ShogiPanel() {
   const s = useShogi();
   const ref = useRef<HTMLDivElement>(null);
   const on = s.status === "enabled" && s.open;
-  const max = usePanelMax(ref, on);
+  const big = useBigView("shogi");
+  const small = usePanelMax(ref, on);
+  const max = big ? bigViewHeight() : small;
+  useEffect(() => {
+    if (!on && big) setBigView(null);
+  }, [on, big]);
   if (!on) return null;
-  return (
+  const panel = (
     <div
       ref={ref}
       data-cx="shogi-panel"
@@ -122,11 +129,24 @@ export function ShogiPanel() {
           ? { height: max, display: "flex", flexDirection: "column" as const, overflow: "hidden" }
           : { maxHeight: max, overflowY: "auto" as const, overscrollBehavior: "contain" as const }),
         boxSizing: "border-box",
+        ...(big ? BIG_VIEW_STYLE : {}),
       }}
     >
       <Group gap={6} justify="space-between" wrap="nowrap" mb={4}>
         <GameTabs s={s} />
-        <CloseButton size="sm" aria-label="将棋を閉じる" onClick={() => setShogiOpen(false)} />
+        <Group gap={2} wrap="nowrap">
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            size="sm"
+            aria-label={big ? "将棋を元の大きさに戻す" : "将棋を大きく表示"}
+            title={big ? "元の大きさに戻す（Esc）" : "大きく表示"}
+            onClick={() => setBigView(big ? null : "shogi")}
+          >
+            {big ? "⤡" : "⤢"}
+          </ActionIcon>
+          <CloseButton size="sm" aria-label="将棋を閉じる" onClick={() => setShogiOpen(false)} />
+        </Group>
       </Group>
       {s.notice && (
         <Group gap={4} wrap="nowrap" align="flex-start" mb={4}>
@@ -140,6 +160,8 @@ export function ShogiPanel() {
       {s.selectedId ? <GameView key={s.selectedId} s={s} /> : <Lobby s={s} />}
     </div>
   );
+  // 大きく表示はページ直下に出す（チャットの上に重ねる層の重なり順の中だと、左のメニューや上のタブの下に隠れる）
+  return big && typeof document !== "undefined" ? createPortal(panel, document.body) : panel;
 }
 
 function GameTabs({ s }: { s: ShogiSnapshot }) {

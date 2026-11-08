@@ -68,6 +68,53 @@ export function DmToggle() {
   );
 }
 
+/** 上のタブ（タイムライン・☆・🔖・チャット）に並べる ✉️ DM（rbtnn さん 2026-11-08「チャット→DM→グループのタップ数が長い」）。
+ *  1 タップで DM の一覧を開く。未読は 1 対 1 とグループの合計。 */
+export function DmTabLabel() {
+  const s0 = useDm();
+  const g = useGdm();
+  useEffect(() => {
+    if (s0.status === "unknown") void loadDm();
+  }, [s0.status]);
+  useEffect(() => {
+    if (s0.status === "enabled" && g.status === "unknown") void loadGdm();
+  }, [s0.status, g.status]);
+  const unread = s0.unread + (g.status === "enabled" ? g.unread : 0);
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }} title="DM（30 日で消えます）" data-cx="dm-tab">
+      DM
+      {unread > 0 && (
+        <span
+          style={{
+            minWidth: 18,
+            height: 18,
+            borderRadius: 9,
+            padding: "0 5px",
+            background: "#e03131",
+            color: "#fff",
+            fontSize: "0.6875rem",
+            fontWeight: 700,
+            lineHeight: "18px",
+            textAlign: "center",
+            display: "inline-block",
+          }}
+        >
+          {unread > 99 ? "99+" : unread}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** DM が使えるか（上のタブに ✉️ DM を出すかどうか。状態が変わったときだけ描き直す）。 */
+export function useDmEnabled(): boolean {
+  const unknown = useSyncExternalStore(subscribe, () => getSnapshot().status === "unknown", () => true);
+  useEffect(() => {
+    if (unknown) void loadDm();
+  }, [unknown]);
+  return useSyncExternalStore(subscribe, () => getSnapshot().status === "enabled", () => false);
+}
+
 /** チャットの発言の名前・アイコン → 「DM を送る」。使えない人・自分・B-guru にはそのまま出す。 */
 export function DmNameMenu({ peer, children }: { peer: DmPeer | null; children: ReactNode }) {
   const s = useDm();

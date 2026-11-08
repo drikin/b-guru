@@ -90,8 +90,8 @@ import { OverlayLayer, OverlaySwitches, OverlayVoiceFallback } from "@/component
 import { applyRoomEvent, reloadRoomIfOn, roomChatBubble } from "@/lib/room-client";
 import { ShogiChatCard, ShogiPanel } from "@/components/shogi/ShogiPanel";
 import { GameToggles, MinigamePanel } from "@/components/minigame/MinigamePanel";
-import { DmDrawer, DmNameMenu } from "@/components/dm/DMPanel";
-import { applyDmEvent } from "@/lib/dm-client";
+import { DmDrawer, DmNameMenu, DmTabLabel, useDmEnabled } from "@/components/dm/DMPanel";
+import { applyDmEvent, openDmList } from "@/lib/dm-client";
 import { applyGdmEvent } from "@/lib/gdm-client";
 import { applyMinigameEvent, reloadMinigame } from "@/lib/minigame-client";
 import { applyWatchEvent, isYoutubeVideoUrl, reloadWatch } from "@/lib/watch-client";
@@ -5737,6 +5737,8 @@ export default function Home() {
   // replaces the old "wave" (👋) feature: the bubble sits where the wave
   // animation used to float, and clicking an online member opens the chat.
   const [chatView, setChatView] = useState(false);
+  // ✉️ DM を上のタブに並べるか（rbtnn さん 2026-11-08）
+  const dmEnabled = useDmEnabled();
   // Mac アプリの中の Web 版タイムライン（試験的、ドリキン 2026-10-31）: チャットはアプリのものを使う。
   //   上部の「チャット」は出さず、チャットを開く操作（将棋・在線の人・ボイスの知らせ等）はアプリに頼む。
   const [macApp, setMacApp] = useState(false);
@@ -12028,6 +12030,8 @@ export default function Home() {
                     fullWidth={false}
                     value={chatView ? "chat" : bmView ? "bm" : favView ? "fav" : "timeline"}
                     onChange={(v) => {
+                      // ✉️ DM は画面を切り替えず、右から DM の一覧を出す（1 タップ）
+                      if (v === "dm") { openDmList(); return; }
                       const toChat = v === "chat";
                       chatViewRef.current = toChat;
                       setChatView(toChat);
@@ -12107,6 +12111,7 @@ export default function Home() {
                         ),
                         value: "chat",
                       },
+                      ...(dmEnabled ? [{ label: <DmTabLabel />, value: "dm" }] : []),
                     ].filter((t) => !(macApp && t.value === "chat"))}
                   />
                 </Box>
@@ -12191,6 +12196,8 @@ export default function Home() {
                 </Box>
               )}
 
+              {/* DM の引き出しはどの画面でも（上のタブの ✉️ DM から開ける） */}
+              <DmDrawer />
               {showChatView ? (
                 <div
                   key="chat-main"
@@ -12246,7 +12253,6 @@ export default function Home() {
                       <OffkaiPanel />
                     </>
                   )}
-                  <DmDrawer />
                   {/* Message list (the overlay's layer sits on top of it) */}
                   <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
                   {chatOverlay && <OverlayLayer />}
