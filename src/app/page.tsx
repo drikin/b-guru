@@ -3343,7 +3343,7 @@ function ProfileView({
                   avatarSrc={avatarSrc}
                   isThreadRoot={false}
                   reactionBar={renderReactionBar?.(post.id)}
-                  showReplyButton={false}
+                  showReplyButton={!post.parentId}
                   onOpenThread={onOpenThread}
                   onOpenThreadReply={onOpenThreadReply}
                   onReply={onReply}
@@ -3932,8 +3932,8 @@ const TimelineFeed = memo(function TimelineFeed({
       >
         {g.posts.map((post, i) => (
           <Fragment key={post.id}>
-            {/* The author's own card (no reply button here; "ささやく" offers a
-             * quiet, in-place reply that does NOT bump the group to the top) */}
+            {/* The author's own card. 💬 返信 opens the thread with the reply box;
+             * "ささやく" still offers a quiet, in-place reply that does NOT bump the group to the top. */}
             <FeedPostCard
               post={post}
               auth={auth}
@@ -3941,7 +3941,8 @@ const TimelineFeed = memo(function TimelineFeed({
               searchQuery={searchQuery}
               avatarSrc={avatarSrc}
               isThreadRoot={false}
-              showReplyButton={false}
+              // 💬 返信ボタン（2026-11-08 オーナー「リプライ：分かりやすく記事にリプライボタンをつける」）
+              showReplyButton={!post.parentId}
               reactionBar={renderReactionBar?.(post.id)}
               reactionBarSource={renderReactionBar}
               onOpenThread={onOpenThread}
@@ -12791,30 +12792,43 @@ export default function Home() {
                     }}
                   />
                 ) : (
-                  <Box style={{ display: "flex", justifyContent: "center", padding: "4px 0", lineHeight: 0 }}>
-                    <UnstyledButton
-                      onClick={() => setComposerOpen(true)}
-                      aria-label="新しい投稿を作成"
-                      title="新しい投稿を作成"
-                      style={{ cursor: "pointer", padding: 2, background: "transparent", border: "none", lineHeight: 1 }}
-                    >
-                      <Box
-                        
-                    className="bguru-bark-btn"
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: "50%",
-                      color: "var(--text-green-soft)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
+                  // X のように入力欄を最初から出しておく（2026-11-08 オーナー「投稿：タイムラインの一番上に入力窓をもう出しちゃう」）。
+                  // 押す・フォーカスすると、写真や部活の選べる今までの入力欄に広がる（入力欄は自動でフォーカスされる）。
+                  <Paper
+                    p="sm"
+                    radius="md"
+                    withBorder
+                    shadow="xs"
+                    data-cx="composer-collapsed"
+                    style={{ cursor: "text" }}
+                    onClick={() => setComposerOpen(true)}
                   >
-                        <BarkIcon size={20} color="#1F90FF" />
-                      </Box>
-                    </UnstyledButton>
-                  </Box>
+                    <Group gap="sm" wrap="nowrap" align="center">
+                      <Avatar src={avatarSrc} alt={displayName} radius="xl" size="md" color="green">
+                        {displayName.charAt(0).toUpperCase()}
+                      </Avatar>
+                      <UnstyledButton
+                        aria-label="新しい投稿を作成"
+                        onFocus={() => setComposerOpen(true)}
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          textAlign: "left",
+                          padding: "8px 12px",
+                          borderRadius: 999,
+                          border: "1px solid var(--border-default)",
+                          background: "var(--bg-subtle)",
+                          color: "var(--text-muted)",
+                          fontSize: "0.9375rem",
+                        }}
+                      >
+                        今なにしてる？
+                      </UnstyledButton>
+                      <Button color="green" radius="xl" size="sm" onClick={() => setComposerOpen(true)} leftSection={<BarkIcon size={14} color="currentColor" />}>
+                        吠える
+                      </Button>
+                    </Group>
+                  </Paper>
                 )
               )}
 
