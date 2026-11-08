@@ -172,7 +172,7 @@ fun ShogiBackHandler(shogi: ShogiStore) {
 /** The shogi screen above the chat. As tall as it needs (one band + the board), never more than
  *  [maxHeight] (the board shrinks itself into it): the chat below keeps most of the screen. */
 @Composable
-fun ShogiPanel(store: ChatStore, visible: Boolean, maxHeight: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier, onScreen: Boolean = visible) {
+fun ShogiPanel(store: ChatStore, visible: Boolean, maxHeight: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier, onScreen: Boolean = visible, expandable: Boolean = false) {
     val shogi = store.shogi
     Surface(modifier, color = MaterialTheme.colorScheme.surfaceContainerLow) {
         Box {
@@ -199,6 +199,10 @@ fun ShogiPanel(store: ChatStore, visible: Boolean, maxHeight: androidx.compose.u
                     Text(n, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.inverseOnSurface,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
                 }
+            }
+            // ⤢ 広げる（rbtnn さん 2026-11-08）: 高さだけ変わり、盤（key(g.id) の WebView）は作り直さない
+            if (expandable) {
+                ExpandButton(PanelExpand.shogi, "将棋", Modifier.align(Alignment.TopEnd).padding(4.dp)) { PanelExpand.shogi = !PanelExpand.shogi }
             }
         }
     }

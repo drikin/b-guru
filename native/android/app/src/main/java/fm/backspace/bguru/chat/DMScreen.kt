@@ -28,7 +28,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -69,23 +68,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-
-/** ✉️ in the chat's top bar: opens the DM list; the badge is the unread total. */
-@Composable
-fun DMHeaderButton(dm: DMStore) {
-    if (!dm.enabled) return
-    // 1 対 1 and 👥 groups together.
-    val total = dm.badgeTotal
-    IconButton(onClick = { dm.openList() }) {
-        BadgedBox(badge = {
-            if (total > 0) Badge(containerColor = Color(0xFFDC2626), contentColor = Color.White) {
-                Text(if (total > 99) "99+" else "$total")
-            }
-        }) {
-            Icon(Icons.Default.Email, contentDescription = if (total > 0) "DM（未読 $total）" else "DM")
-        }
-    }
-}
 
 /** A member's avatar / name in the chat: tap or long-press offers 「DM を送る」. */
 @OptIn(ExperimentalFoundationApi::class)

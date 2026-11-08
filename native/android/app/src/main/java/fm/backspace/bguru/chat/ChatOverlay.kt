@@ -501,7 +501,9 @@ private fun ExpandedCard(store: ChatStore, a: OverlayActivity, activities: List<
     // About half the screen (spec: iPhone ~50 %), leaving at least a few lines of the chat under it.
     val screenH = LocalConfiguration.current.screenHeightDp.dp
     val roomPrefs = rememberRoomViewPrefs()
-    val roomExpanded = a.id == ActivityId.ROOM && store.room.roomView && roomPrefs.expanded
+    val roomExpanded = a.id == ActivityId.ROOM && store.room.roomView && roomPrefs.expanded ||
+        // ☗ / 🎮 の ⤢ 広げる（rbtnn さん 2026-11-08）: 部室と同じ高さ。カードの高さだけ変わり、中身は作り直さない
+        a.id == ActivityId.SHOGI && PanelExpand.shogi || a.id == ActivityId.GAME && PanelExpand.game
     // 🏠 「広げる」 (⤢ on the map, drikin 2026-11-08): most of the area, a few lines of the chat left.
     val h = if (roomExpanded) RoomViewPrefs.expandedHeight(areaH.value, minChatDp = 64f).dp
         else (screenH * 0.5f).coerceAtMost(areaH - 64.dp).coerceAtLeast(minOf(areaH, 220.dp))
@@ -520,9 +522,9 @@ private fun ExpandedCard(store: ChatStore, a: OverlayActivity, activities: List<
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 val ch = maxHeight
                 when (a.id) {
-                    ActivityId.SHOGI -> ShogiPanel(store, visible, ch, Modifier.fillMaxWidth().heightIn(max = ch), onScreen = onScreen)
+                    ActivityId.SHOGI -> ShogiPanel(store, visible, ch, Modifier.fillMaxWidth().heightIn(max = ch), onScreen = onScreen, expandable = true)
                     ActivityId.GAME -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-                        MinigamePanel(store, active = visible && !o.typing, maxHeight = ch, modifier = Modifier.fillMaxWidth())
+                        MinigamePanel(store, active = visible && !o.typing, maxHeight = ch, modifier = Modifier.fillMaxWidth(), expandable = true)
                     }
                     ActivityId.OFFKAI -> OffkaiPanel(store.offkai, Modifier.fillMaxSize())
                     ActivityId.WATCH -> WatchPlayerHost(store.watch, Modifier.fillMaxSize())

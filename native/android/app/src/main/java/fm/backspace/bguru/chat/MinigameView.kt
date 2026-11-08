@@ -16,6 +16,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
@@ -76,10 +79,11 @@ private class MinigameBridgeJs(private val host: GameHost) {
 }
 
 /** The game, as tall as it says (`size`), never more than [maxHeight] (passed to it as max_height).
- *  Paused while [active] is false (another page, the app in the background, typing in the chat). */
+ *  Paused while [active] is false (another page, the app in the background, typing in the chat).
+ *  [expandable]: 右上に ⤢（広げる）を出す。広げても高さ（max_height）を送り直すだけで、WebView は作り直さない。 */
 @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface", "ClickableViewAccessibility")
 @Composable
-fun MinigamePanel(store: ChatStore, active: Boolean, maxHeight: Dp, modifier: Modifier = Modifier) {
+fun MinigamePanel(store: ChatStore, active: Boolean, maxHeight: Dp, modifier: Modifier = Modifier, expandable: Boolean = false) {
     val mg = store.minigame
     val host = remember { GameHost() }
     val scope = rememberCoroutineScope()
@@ -139,6 +143,7 @@ fun MinigamePanel(store: ChatStore, active: Boolean, maxHeight: Dp, modifier: Mo
     }
     val h = host.heightCss
     Surface(modifier, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+      Box {
         AndroidView(
             modifier = Modifier.fillMaxWidth().height((if (h > 0) minOf(h, maxPx) else maxPx).dp),
             factory = { ctx ->
@@ -202,6 +207,10 @@ fun MinigamePanel(store: ChatStore, active: Boolean, maxHeight: Dp, modifier: Mo
                 w.destroy()
             },
         )
+        if (expandable) {
+            ExpandButton(PanelExpand.game, "散財ダッシュ", Modifier.align(Alignment.TopEnd).padding(6.dp)) { PanelExpand.game = !PanelExpand.game }
+        }
+      }
     }
 }
 

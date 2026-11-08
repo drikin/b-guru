@@ -318,7 +318,6 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                     if (store.readAloud) IconButton(onClick = { store.changeReadAloud(false) }) {
                         Text("🔈", fontSize = 18.sp, modifier = Modifier.semantics { contentDescription = "読み上げ中（タップで止める）" })
                     }
-                    DMHeaderButton(store.dm)
                     ChatMenu(onSignOut, readAloud = store.readAloud, onReadAloud = store::changeReadAloud, onVoiceChanged = store::readAloudVoiceChanged)
                 },
             )
@@ -508,9 +507,11 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                 // half the column, 150–520 dp — the chat stays in sight; the game fills the width up to it,
                 // drikin 2026-10-24). Typing in the chat pauses it.
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                    val cap = (maxHeight * 0.5f).coerceIn(150.dp, 520.dp)
+                    // ⤢ 広げる: 部室の広げると同じく列の大半（同じ場所のまま高さだけ変えるので、遊んでいる回は消えない）
+                    val cap = if (PanelExpand.game) RoomViewPrefs.expandedHeight(maxHeight.value).dp
+                        else (maxHeight * 0.5f).coerceIn(150.dp, 520.dp)
                     Column(Modifier.fillMaxSize()) {
-                        MinigamePanel(store, active = visible && !composerFocused, maxHeight = cap, modifier = Modifier.fillMaxWidth())
+                        MinigamePanel(store, active = visible && !composerFocused, maxHeight = cap, modifier = Modifier.fillMaxWidth(), expandable = true)
                         chatPane(Modifier.weight(1f).fillMaxWidth())
                     }
                 }
@@ -531,9 +532,11 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                         // (drikin 2026-10-21「少し縦に圧縮してもいい」). 2026-10-24 (bigger for older eyes, the
                         // hands now above / below the board on a narrow screen): 52 % on a phone so the chat
                         // under it shows a few messages, 60 % on a taller column — the same as the iPhone / Mac.
-                        val cap = maxHeight * (if (maxHeight < 760.dp) 0.52f else 0.6f)
+                        // ⤢ 広げる: 部室の広げると同じく列の大半（盤は作り直さない）
+                        val cap = if (PanelExpand.shogi) RoomViewPrefs.expandedHeight(maxHeight.value).dp
+                            else maxHeight * (if (maxHeight < 760.dp) 0.52f else 0.6f)
                         Column(Modifier.fillMaxSize()) {
-                            ShogiPanel(store, visible, cap, Modifier.fillMaxWidth().heightIn(max = cap), onScreen = onScreen)
+                            ShogiPanel(store, visible, cap, Modifier.fillMaxWidth().heightIn(max = cap), onScreen = onScreen, expandable = true)
                             chatPane(Modifier.weight(1f).fillMaxWidth())
                         }
                     }

@@ -2,6 +2,11 @@ package fm.backspace.bguru.chat
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -54,10 +59,14 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
     val wide = LocalConfiguration.current.screenWidthDp >= 840
     val jb = jukebox?.takeIf { store.capabilities?.jukeboxEnabled == true }
 
+    // ✉️ DM はタブの並びの最後に（rbtnn さんの要望 2026-11-08）: 1 回押せば DM の一覧（グループも）が開く。
+    // ページではなく、アプリ全体の上に出る DM の画面（DMOverlay）を開くだけ。
+    val dm = store.dm.takeIf { it.enabled }
+
     @Composable
     fun Segments(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
         // Marks, not words now: segments sized to them, two or three (drikin 2026-10-20).
-        if (labels.size >= 2) { CompactSegments(labels, selected, onSelect); return }
+        if (labels.size >= 2 || dm != null) { CompactSegments(labels, selected, onSelect, dm); return }
         SingleChoiceSegmentedButtonRow(Modifier.width(250.dp)) {
             labels.forEachIndexed { i, label ->
                 SegmentedButton(selected = selected == i, onClick = { onSelect(i) },
@@ -96,8 +105,11 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
                         }
                         VerticalDivider()
                     }
-                    val switch: (@Composable () -> Unit)? = if (jb == null) null else {
-                        { Segments(listOf(if (store.unreadCount > 0) "💬•" else "💬", "📻"), right) { right = it } }
+                    val chatMark = if (store.unreadCount > 0) "💬•" else "💬"
+                    val switch: (@Composable () -> Unit)? = when {
+                        jb != null -> { { Segments(listOf(chatMark, "📻"), right) { right = it } } }
+                        dm != null -> { { Segments(listOf(chatMark), 0) {} } } // 💬 と ✉️（DM の入口をタブに）
+                        else -> null
                     }
                     if (jb != null && right == 1) JukeboxScreen(jb, store.capabilities, switch, onOpenThread = { timeline.openThread = it })
                     else PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch) }
@@ -188,9 +200,10 @@ private fun PostLinksInApp(timeline: TimelineStore, content: @Composable () -> U
 }
 
 /** Three tabs in the top bar: segments sized to their words (equal widths would cut
- *  「ジュークボックス」 on a phone), drawn like the two-tab SegmentedButton row. */
+ *  「ジュークボックス」 on a phone), drawn like the two-tab SegmentedButton row.
+ *  [dm]: 最後に ✉️（押すと DM の一覧を開く、選ばれた状態にはならない。未読は 1 対 1 とグループの合計を赤い数で）。 */
 @Composable
-private fun CompactSegments(labels: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+private fun CompactSegments(labels: List<String>, selected: Int, onSelect: (Int) -> Unit, dm: DMStore? = null) {
     val scheme = MaterialTheme.colorScheme
     val shape = androidx.compose.foundation.shape.RoundedCornerShape(50)
     Row(
@@ -208,6 +221,29 @@ private fun CompactSegments(labels: List<String>, selected: Int, onSelect: (Int)
             ) {
                 Text(label, maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium,
                     color = if (i == selected) AccentGreen else scheme.onSurface)
+            }
+        }
+        if (dm != null) {
+            val total = dm.badgeTotal
+            Box(Modifier.width(1.dp).fillMaxHeight().background(scheme.outline))
+            Row(
+                Modifier.fillMaxHeight()
+                    .clickable(role = androidx.compose.ui.semantics.Role.Button) { dm.openList() }
+                    .semantics { contentDescription = if (total > 0) "DM（未読 $total）" else "DM" }
+                    .padding(horizontal = 9.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                Text("✉️", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium)
+                if (total > 0) {
+                    Box(
+                        Modifier.padding(start = 3.dp).height(16.dp).widthIn(min = 16.dp)
+                            .background(androidx.compose.ui.graphics.Color(0xFFDC2626), androidx.compose.foundation.shape.RoundedCornerShape(50))
+                            .padding(horizontal = 4.dp),
+                        contentAlignment = androidx.compose.ui.Alignment.Center,
+                    ) {
+                        Text(if (total > 99) "99+" else "$total", color = androidx.compose.ui.graphics.Color.White, fontSize = 10.sp, maxLines = 1)
+                    }
+                }
             }
         }
     }
