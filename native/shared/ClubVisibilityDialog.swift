@@ -16,6 +16,7 @@ struct ClubVisibilityDialog: View {
     @State private var failed = false
     @State private var error: String?
     @State private var changed = false
+    @State private var busy = false
 
     static let unsetKey = "__unset__"
 
@@ -37,6 +38,19 @@ struct ClubVisibilityDialog: View {
                         .font(.app(.footnote)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 16).padding(.vertical, 10)
+                    // 全部 ON・全部 OFF（2026-11-08 オーナー「全部ON・全部OFFのボタンをつけてほしい」）
+                    HStack(spacing: 8) {
+                        Button("全部 ON") { setAll(hidden: false) }
+                            .disabled(!loaded || failed || busy || hidden.isEmpty)
+                            .accessibilityIdentifier("club-all-on")
+                        Button("全部 OFF") { setAll(hidden: true) }
+                            .disabled(!loaded || failed || busy || rows.allSatisfy { hidden.contains($0.key) })
+                            .accessibilityIdentifier("club-all-off")
+                        Spacer()
+                    }
+                    .buttonStyle(.bordered)
+                    .font(.app(.callout))
+                    .padding(.horizontal, 16).padding(.bottom, 8)
                     if let error {
                         Text(error).font(.app(.footnote)).foregroundStyle(.red)
                             .padding(.horizontal, 16).padding(.bottom, 8)
@@ -77,6 +91,23 @@ struct ClubVisibilityDialog: View {
             loaded = true
         } catch {
             failed = true
+        }
+    }
+
+    private func setAll(hidden h: Bool) {
+        let before = hidden
+        hidden = h ? Set(rows.map(\.key)) : []
+        error = nil
+        busy = true
+        Task {
+            do {
+                hidden = try await timeline.api.setAllClubsHidden(path: path, hidden: h)
+                changed = true
+            } catch {
+                hidden = before
+                self.error = PostActionsModel.message(error, fallback: "保存できませんでした")
+            }
+            busy = false
         }
     }
 

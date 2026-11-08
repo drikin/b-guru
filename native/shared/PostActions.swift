@@ -185,6 +185,12 @@ extension APIClient {
         _ = try await perform(request("PUT", path, json: ["club": club, "hidden": hidden]), as: R.self)
     }
 
+    /// 全部 OFF（hidden: true）・全部 ON（false）をまとめて。返るのは隠している部活のキー（2026-11-08）。
+    func setAllClubsHidden(path: String, hidden: Bool) async throws -> Set<String> {
+        struct R: Decodable { var hidden: [String] }
+        return Set(try await perform(request("PUT", path, json: ["all": true, "hidden": hidden]), as: R.self).hidden)
+    }
+
     /// NG ワード（capabilities `muted_words`）: 今の一覧と上限。
     func mutedWords(path: String) async throws -> MutedWordsInfo {
         try await perform(request("GET", path), as: MutedWordsInfo.self)

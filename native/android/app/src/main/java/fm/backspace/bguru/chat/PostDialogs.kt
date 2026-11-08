@@ -61,6 +61,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Surface
@@ -538,6 +539,14 @@ private fun ClubVisibilitySheet(timeline: TimelineStore) {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
             }
             val hidden = timeline.hiddenClubs
+            // 全部 ON・全部 OFF（2026-11-08 オーナー「全部ON・全部OFFのボタンをつけてほしい」）
+            if (hidden != null) {
+                val allKeys = timeline.clubVisibilityRows().map { it.first }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { timeline.setAllClubsHidden(false) }, enabled = !timeline.clubVisibilityBusy && hidden.isNotEmpty()) { Text("全部 ON") }
+                    OutlinedButton(onClick = { timeline.setAllClubsHidden(true) }, enabled = !timeline.clubVisibilityBusy && !hidden.containsAll(allKeys)) { Text("全部 OFF") }
+                }
+            }
             if (hidden == null) {
                 if (timeline.clubVisibilityError == null) CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally).padding(24.dp))
             } else LazyColumn(Modifier.fillMaxWidth()) {

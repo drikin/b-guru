@@ -13,6 +13,30 @@ export async function getHiddenClubs(email: string): Promise<Set<string>> {
   return new Set(res.rows.map((r) => r.club_key));
 }
 
+/** 全部まとめて（2026-11-08 オーナー「全部ON・全部OFFのボタン」）。hidden=false は行を全部消す（＝全部表示）、
+ *  true は渡した部活（active な部活と「未設定」）を全部隠す。1 回のトランザクション。 */
+export async function setAllClubsHidden(email: string, keys: string[], hidden: boolean): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`DELETE FROM club_visibility WHERE email = $1`, [email]);
+    if (hidden && keys.length > 0) {
+      await client.query(
+        `INSERT INTO club_visibility (email, club_key, hidden)
+         SELECT $1, k, TRUE FROM unnest($2::text[]) AS k
+         ON CONFLICT (email, club_key) DO UPDATE SET hidden = TRUE, updated_at = now()`,
+        [email, keys]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 /** Toggle one club's visibility for this user. Returns the new hidden state. */
 export async function setClubHidden(
   email: string,

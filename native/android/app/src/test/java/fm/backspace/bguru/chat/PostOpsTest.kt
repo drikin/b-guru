@@ -20,6 +20,8 @@ class PostOpsTest {
         override suspend fun setClub(id: Long, key: String?) = answer("setClub", key)
         override suspend fun hiddenClubs(path: String) = answer("hiddenClubs", setOf("car"))
         override suspend fun setClubHidden(path: String, club: String, hidden: Boolean) = answer("setClubHidden:$club:$hidden", hidden)
+        override suspend fun setAllClubsHidden(path: String, hidden: Boolean) =
+            answer("setAllClubsHidden:$hidden", if (hidden) setOf("apple", "car", "__unset__") else emptySet())
         override suspend fun mutedWords(path: String) = answer("mutedWords", MutedWordsResponse(listOf("ネタバレ"), 50, 40))
         override suspend fun setMutedWords(path: String, words: List<String>) = answer("setMutedWords:${words.joinToString(",")}", words.map { it.lowercase() })
         override suspend fun vote(id: Long, optionId: Long): PostPoll? = answer("vote", null)
@@ -57,6 +59,19 @@ class PostOpsTest {
         assertEquals(setOf("apple"), s.hiddenClubs)
         assertEquals(listOf("hiddenClubs", "setClubHidden:apple:true", "setClubHidden:car:false"), fake.calls)
         assertNull(s.clubVisibilityError)
+    }
+
+    // 全部 ON・全部 OFF（2026-11-08）
+    @Test fun clubVisibilityAllOnAndOff() {
+        val fake = FakeOps(error = null)
+        val s = clubStore(fake)
+        s.loadHiddenClubs()
+        s.setAllClubsHidden(true)
+        assertEquals(setOf("apple", "car", "__unset__"), s.hiddenClubs)
+        s.setAllClubsHidden(false)
+        assertEquals(emptySet<String>(), s.hiddenClubs)
+        assertEquals(listOf("hiddenClubs", "setAllClubsHidden:true", "setAllClubsHidden:false"), fake.calls)
+        assertEquals(false, s.clubVisibilityBusy)
     }
 
     @Test fun clubVisibilityGoesBackOnFailure() {

@@ -413,6 +413,28 @@ class TimelineStore(
         }
     }
 
+    /** 全部 ON・全部 OFF（2026-11-08 オーナー）。すぐ見た目を変え、だめなら戻す。 */
+    var clubVisibilityBusy by mutableStateOf(false); private set
+    fun setAllClubsHidden(hidden: Boolean) {
+        val before = hiddenClubs ?: return
+        hiddenClubs = if (hidden) clubVisibilityRows().map { it.first }.toSet() else emptySet()
+        clubVisibilityError = null
+        if (demo) { demoHidden = hiddenClubs!!; return }
+        val path = capabilities?.clubVisibilityPath ?: return
+        clubVisibilityBusy = true
+        scope.launch {
+            try {
+                hiddenClubs = ops.setAllClubsHidden(path, hidden)
+                clubVisibilityChanged = true
+            } catch (e: Exception) {
+                hiddenClubs = before
+                clubVisibilityError = PostActions.errorText(e, "保存できませんでした")
+            } finally {
+                clubVisibilityBusy = false
+            }
+        }
+    }
+
     /** NG ワード: this member's words (the server's form); null while loading. */
     var mutedWords by mutableStateOf<kotlin.collections.List<String>?>(null); private set
     var mutedWordsMax by mutableStateOf(50); private set

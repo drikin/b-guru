@@ -106,6 +106,8 @@ interface PostOpsApi {
     /** 部活の表示・非表示（capabilities `club_visibility`）。 */
     suspend fun hiddenClubs(path: String): Set<String>
     suspend fun setClubHidden(path: String, club: String, hidden: Boolean): Boolean
+    /** 全部 OFF（hidden = true）・全部 ON（false）をまとめて。返るのは隠している部活のキー（2026-11-08）。 */
+    suspend fun setAllClubsHidden(path: String, hidden: Boolean): Set<String>
     /** NG ワード（capabilities `muted_words`）。置き換えるとサーバがそろえた形が返る。 */
     suspend fun mutedWords(path: String): MutedWordsResponse
     suspend fun setMutedWords(path: String, words: List<String>): List<String>
@@ -462,6 +464,9 @@ class ApiClient(val token: String) : PostOpsApi {
 
     override suspend fun setClubHidden(path: String, club: String, hidden: Boolean): Boolean =
         decode<ClubHiddenResponse>(send(request("PUT", path, buildJsonObject { put("club", club); put("hidden", hidden) }))).hidden
+
+    override suspend fun setAllClubsHidden(path: String, hidden: Boolean): Set<String> =
+        decode<HiddenClubsResponse>(send(request("PUT", path, buildJsonObject { put("all", true); put("hidden", hidden) }))).hidden.toSet()
 
     override suspend fun mutedWords(path: String): MutedWordsResponse = get<MutedWordsResponse>(path)
 

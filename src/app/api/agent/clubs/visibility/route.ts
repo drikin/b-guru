@@ -1,6 +1,7 @@
 /* 部活の表示・非表示（本人の設定。Web の /api/clubs/visibility と同じ表）。
  *   GET /api/agent/clubs/visibility                      → { apiVersion, hidden: [key...] }（スコープ read）
  *   PUT /api/agent/clubs/visibility { club, hidden }     → { apiVersion, club, hidden }
+ *   PUT /api/agent/clubs/visibility { all: true, hidden } → { apiVersion, hidden: [key...] }（全部 OFF / 全部 ON）
  * 切り替えはアプリのログインで発行した鍵（app_issued）＋ post だけ。枠は post_light。
  * 隠した部活のほかの人の投稿はタイムラインに出ない（自分の投稿は出る）。 */
 import { NextRequest } from "next/server";

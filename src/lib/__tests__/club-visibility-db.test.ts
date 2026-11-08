@@ -122,4 +122,27 @@ d("部活の表示・非表示（DB）", () => {
     expect((await m.api.setVisibilityApi(ctx, { club: "no-such-club", hidden: true })).status).toBe(400);
     expect((await m.api.setVisibilityApi(ctx, { club: "no-such-club", hidden: false })).status).toBe(200);
   });
+
+  it("全部 OFF・全部 ON（まとめて）", async () => {
+    const ctx = { email: ME } as never;
+    await m.db.pool.query(`INSERT INTO clubs (key, name, category, definition, active, manual, sort)
+      VALUES ('cv-test-club', 'テスト部', 'x', 'x', TRUE, FALSE, 999) ON CONFLICT (key) DO UPDATE SET active = TRUE`);
+    const off = await m.api.setVisibilityApi(ctx, { all: true, hidden: true });
+    expect(off.status).toBe(200);
+    const hidden = off.body.hidden as string[];
+    expect(hidden).toContain("__unset__");
+    expect(hidden).toContain("cv-test-club");
+    expect((await m.api.getVisibilityApi(ctx)).body.hidden).toEqual(hidden);
+    // 自分の投稿は全部 OFF でも出る
+    const mine = await post(ME, "自分の", "cv-test-club");
+    const other = await post(OTHER, "ほかの人の", "cv-test-club");
+    for (const ids of Object.values(await timelineIds())) {
+      expect(ids).toContain(mine);
+      expect(ids).not.toContain(other);
+    }
+
+    const on = await m.api.setVisibilityApi(ctx, { all: true, hidden: false });
+    expect(on.body).toEqual({ apiVersion: 1, hidden: [] });
+    await m.db.pool.query(`DELETE FROM clubs WHERE key = 'cv-test-club'`);
+  });
 });
