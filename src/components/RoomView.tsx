@@ -11,7 +11,7 @@
  * actors from there every frame. Voice proximity is applied by the store. */
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { Button, CloseButton, Group, Popover, SegmentedControl, Text, Tooltip } from "@mantine/core";
+import { Button, CloseButton, Group, Popover, SegmentedControl, Slider, Switch, Text, Tooltip } from "@mantine/core";
 import {
   clearRoomNotice,
   getActors,
@@ -36,7 +36,9 @@ import {
   handoffVoice,
   loadVoice,
   micActive,
+  setUserGain,
   setVoiceNotice,
+  setVoiceSfx,
   subscribe as subscribeVoice,
   unlockAudio,
   voiceLoaded,
@@ -240,7 +242,7 @@ function RoomControls({ s, v, me, speaking }: { s: RoomSnapshot; v: VoiceSnapsho
           🎙 {micOn ? "オン" : "オフ"}
         </Button>
       </Tooltip>
-      <HearPopover s={s} me={me} speaking={speaking} />
+      <HearPopover s={s} v={v} me={me} speaking={speaking} />
       {connected && (
         <Tooltip label="スマホで続ける（スマホに届く知らせをタップすると切り替わります）" openDelay={400}>
           <Button size="compact-sm" variant="subtle" color="gray" aria-label="スマホで続ける" onClick={() => void handoffVoice()}>
@@ -252,8 +254,42 @@ function RoomControls({ s, v, me, speaking }: { s: RoomSnapshot; v: VoiceSnapsho
   );
 }
 
+/** 人のメニューの音量（音声の状態を読む）。 */
+function MenuGain({ id, name }: { id: string; name: string }) {
+  const v = useVoice();
+  return (
+    <div style={{ padding: "2px 2px 0" }}>
+      <GainSlider id={id} name={name} gain={v.gains[id] ?? 1} />
+    </div>
+  );
+}
+
+/** 相手ごとの音量のつまみ（0〜100%、自分だけ）。 */
+function GainSlider({ id, name, gain }: { id: string; name: string; gain: number }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <span aria-hidden style={{ width: 16 }}>
+        {gain === 0 ? "🔇" : "🔉"}
+      </span>
+      <Slider
+        style={{ flex: 1 }}
+        size="xs"
+        color="green"
+        min={0}
+        max={100}
+        step={10}
+        value={Math.round(gain * 100)}
+        onChange={(n) => setUserGain(id, n / 100)}
+        label={(n) => `${n}%`}
+        aria-label={`${name} の音量`}
+      />
+      <span style={{ width: 34, textAlign: "right", fontVariantNumeric: "tabular-nums", fontSize: "0.7rem" }}>{Math.round(gain * 100)}%</span>
+    </div>
+  );
+}
+
 /** Who I can hear, and how loud (a popover; small on phones). */
-function HearPopover({ s, me, speaking }: { s: RoomSnapshot; me: RoomMember | null; speaking: Set<string> }) {
+function HearPopover({ s, v: voice, me, speaking }: { s: RoomSnapshot; v: VoiceSnapshot; me: RoomMember | null; speaking: Set<string> }) {
   const list = s.members
     .filter((m) => m.userId !== s.me)
     .map((m) => ({ m, v: me?.listening ? volumeFor(me, m) : 0 }))
@@ -284,21 +320,35 @@ function HearPopover({ s, me, speaking }: { s: RoomSnapshot; me: RoomMember | nu
         ) : (
           <div style={{ display: "grid", gap: 6 }}>
             {list.map(({ m, v }) => (
-              <div key={m.userId} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.75rem" }}>
-                <span style={{ width: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {speaking.has(m.userId) ? "🔊 " : ""}
-                  {m.name}
-                </span>
-                <span className={css.bar}>
-                  <i style={{ width: `${Math.round(v * 100)}%` }} />
-                </span>
-                <span style={{ width: 34, textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--mantine-color-dimmed)" }}>
-                  {Math.round(v * 100)}%
-                </span>
+              <div key={m.userId} style={{ display: "grid", gap: 2, fontSize: "0.75rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ width: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {speaking.has(m.userId) ? "🔊 " : ""}
+                    {m.name}
+                  </span>
+                  <span className={css.bar} title="距離による大きさ">
+                    <i style={{ width: `${Math.round(v * 100)}%` }} />
+                  </span>
+                  <span style={{ width: 34, textAlign: "right", fontVariantNumeric: "tabular-nums", color: "var(--mantine-color-dimmed)" }}>
+                    {Math.round(v * 100)}%
+                  </span>
+                </div>
+                <GainSlider id={m.userId} name={m.name} gain={voice.gains[m.userId] ?? 1} />
               </div>
             ))}
           </div>
         )}
+        <Text size="xs" c="dimmed" mt={6}>
+          つまみはその人の声の大きさです（自分にだけ効きます）。
+        </Text>
+        <Switch
+          mt={8}
+          size="xs"
+          color="green"
+          checked={voice.sfx}
+          onChange={(e) => setVoiceSfx(e.currentTarget.checked)}
+          label="🔔 出入りの効果音（近くの人と自分）"
+        />
         <Text size="xs" c="dimmed" mt={8}>
           {rule}
         </Text>
@@ -719,7 +769,7 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
         name: m.name,
         text: m.mode === "text",
         left: Math.max(4, Math.min(e.clientX - r.left, bw - 150)),
-        top: Math.max(4, Math.min(e.clientY - r.top, bh - 110)),
+        top: Math.max(4, Math.min(e.clientY - r.top, bh - 150)),
       });
       return;
     }
@@ -831,6 +881,7 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
           >
             そばへ行く
           </button>
+          {!menu.text && <MenuGain id={menu.userId} name={menu.name} />}
         </div>
       )}
     </section>

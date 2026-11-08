@@ -48,11 +48,17 @@ export interface VoiceSnapshot {
   needsAudioUnlock: boolean; // the browser blocked playback until a click
   inputs: DeviceChoice[];
   outputs: DeviceChoice[]; // empty when the browser cannot pick speakers (Safari)
+  /** 相手ごとの音量（自分だけ、0…1、無ければ 1）。ブラウザに覚える（2026-11-08 オフ会「ブラウザで音量を変えたい」）。 */
+  gains: Record<string, number>;
+  /** 出入りの効果音（既定はオン）。 */
+  sfx: boolean;
   inputId: string;
   outputId: string;
 }
 
 const LS_IN = "bguru-voice-input";
+const LS_GAINS = "bguru-voice-gains";
+const LS_SFX = "bguru-voice-sfx";
 const LS_OUT = "bguru-voice-output";
 const lsGet = (k: string) => {
   try {
@@ -84,6 +90,8 @@ let snap: VoiceSnapshot = {
   needsAudioUnlock: false,
   inputs: [],
   outputs: [],
+  gains: {},
+  sfx: true,
   inputId: "",
   outputId: "",
 };
@@ -159,6 +167,8 @@ export async function loadVoice(): Promise<void> {
       roomInfo: d.room ?? null,
       inputId: lsGet(LS_IN),
       outputId: lsGet(LS_OUT),
+      gains: readGains(),
+      sfx: lsGet(LS_SFX) !== "0",
     });
   } catch {
     /* offline: try again on the next stream reconnect */
@@ -235,12 +245,17 @@ async function connect(url: string, token: string, mine: number) {
     .on(lk.RoomEvent.TrackUnsubscribed, (track) => {
       track.detach().forEach((el) => el.remove());
     })
-    .on(lk.RoomEvent.ParticipantConnected, () => {
+    .on(lk.RoomEvent.ParticipantConnected, (p) => {
       if (room !== r) return;
       applyRoomVolumes();
       refreshMembers();
+      if (snap.phase === "connected" && audibleToMe(p.identity)) playVoiceSfx("in");
     })
-    .on(lk.RoomEvent.ParticipantDisconnected, changed)
+    .on(lk.RoomEvent.ParticipantDisconnected, (p) => {
+      if (room !== r) return;
+      changed();
+      if (audibleToMe(p.identity)) playVoiceSfx("out");
+    })
     .on(lk.RoomEvent.ActiveSpeakersChanged, changed)
     .on(lk.RoomEvent.TrackMuted, (pub, participant) => {
       // An admin turned my mic off from the server: follow it.
@@ -313,6 +328,7 @@ async function connect(url: string, token: string, mine: number) {
   await r.startAudio().catch(() => {});
   set({ phase: "connected", micOn: false, needsAudioUnlock: !r.canPlaybackAudio });
   voiceDiag("connected");
+  playVoiceSfx("in", true);
   // つながっている間は 20 秒ごとに様子を送る（聞こえる相手が 0 のまま、などを見る）
   if (diagTimer) clearInterval(diagTimer);
   diagTimer = setInterval(() => (room ? voiceDiag("tick") : diagTimer && clearInterval(diagTimer)), 20_000);
@@ -362,7 +378,10 @@ export async function handoffVoice(): Promise<void> {
 }
 
 export async function leaveVoice(why = "leave"): Promise<void> {
-  if (room) voiceDiag("leave", { why });
+  if (room) {
+    voiceDiag("leave", { why });
+    if (snap.phase === "connected") playVoiceSfx("out", true);
+  }
   await teardown();
 }
 
@@ -655,14 +674,86 @@ export function setRoomProximity(p: RoomProximity | null): void {
 function applyRoomVolumes(): void {
   const r = room;
   const p = proximity;
-  if (!r || !p) return;
+  if (!r) return;
   for (const rp of r.remoteParticipants.values()) {
     try {
-      rp.setVolume(p.volumes.get(rp.identity) ?? 0);
+      // 部室は距離の音量 × 自分で決めた音量。ボイスルーム（部室でない）は自分で決めた音量だけ
+      const near = p ? (p.volumes.get(rp.identity) ?? 0) : 1;
+      rp.setVolume(near * gainOf(rp.identity));
     } catch {
       /* participant going away */
     }
   }
+}
+
+// ---- 相手ごとの音量（自分だけ） ----
+
+function readGains(): Record<string, number> {
+  try {
+    const o = JSON.parse(lsGet(LS_GAINS) || "{}") as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(o)) if (typeof v === "number" && v >= 0 && v <= 1) out[k] = v;
+    return out;
+  } catch {
+    return {};
+  }
+}
+function gainOf(id: string): number {
+  return snap.gains[id] ?? 1;
+}
+/** 相手の声の大きさ（0…1）。1 は覚えない（いつもの大きさ）。 */
+export function setUserGain(id: string, gain: number): void {
+  const g = Math.max(0, Math.min(1, Math.round(gain * 100) / 100));
+  const gains = { ...snap.gains };
+  if (g >= 1) delete gains[id];
+  else gains[id] = g;
+  set({ gains });
+  lsSet(LS_GAINS, JSON.stringify(gains));
+  applyRoomVolumes();
+}
+
+// ---- 出入りの効果音（その場で作る短い音。音の素材は使わない） ----
+
+export function setVoiceSfx(on: boolean): void {
+  set({ sfx: on });
+  lsSet(LS_SFX, on ? "1" : "0");
+}
+let sfxCtx: AudioContext | null = null;
+let sfxLast = 0;
+/** in: 上がる 2 音、out: 下がる 2 音。自分の出入りは少し大きく。1.2 秒に 1 回まで（大勢の出入りで鳴りっぱなしにしない）。 */
+export function playVoiceSfx(kind: "in" | "out", mine = false): void {
+  if (!snap.sfx || typeof window === "undefined") return;
+  const now = Date.now();
+  if (!mine && now - sfxLast < 1200) return;
+  sfxLast = now;
+  try {
+    const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AC) return;
+    sfxCtx ??= new AC();
+    const ctx = sfxCtx;
+    if (ctx.state === "suspended") void ctx.resume().catch(() => {});
+    const notes = kind === "in" ? [660, 990] : [740, 494];
+    const peak = mine ? 0.12 : 0.06;
+    notes.forEach((f, i) => {
+      const t = ctx.currentTime + i * 0.09;
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(peak, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      o.connect(g).connect(ctx.destination);
+      o.start(t);
+      o.stop(t + 0.18);
+    });
+  } catch {
+    /* no audio: fine */
+  }
+}
+/** その人の出入りを鳴らすか: 部室では声が届く範囲の人だけ、ボイスルームでは全員。 */
+function audibleToMe(id: string): boolean {
+  return proximity ? (proximity.volumes.get(id) ?? 0) > 0 : true;
 }
 
 function flushRoomPermissions(): void {
