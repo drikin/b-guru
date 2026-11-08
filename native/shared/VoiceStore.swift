@@ -62,6 +62,21 @@ final class VoiceStore {
     @ObservationIgnored var onParticipantsChanged: (() -> Void)?
     /// The call went on on another device of mine (DUPLICATE_IDENTITY): the club room shows it too.
     @ObservationIgnored var onContinuedElsewhere: (() -> Void)?
+    /// 部室で聞いているのに、つながっていた音声が切れた（管理者に退出させられたら true）。別の端末で続けたときは呼ばない。
+    @ObservationIgnored var onDropped: ((_ removed: Bool) -> Void)?
+    /// 部室の音声として入っている（音量は距離 × 自分で決めた音量、出入りの効果音は声が届く人だけ）。
+    /// RoomStore が入る前に立てる。抜けると下りる。
+    @ObservationIgnored var clubRoom = false
+    /// 部室の距離の音量（user id → 0…1）。まだ決まっていなければ nil。
+    @ObservationIgnored private var nearVolumes: [String: Double]?
+    /// 最後に入ろうとして、会員資格が確認できなかった（部室は試し直さない）。
+    @ObservationIgnored private(set) var membershipEnded = false
+    /// 相手ごとの音量（自分だけ、0…1、無ければ 1）。端末に覚える（Web と同じ、2026-11-08）。
+    private(set) var gains: [String: Double] = VoiceGains.sanitized(UserDefaults.standard.dictionary(forKey: VoiceGains.key))
+    /// 出入りの効果音（既定はオン、端末に覚える）。
+    private(set) var sfxOn = UserDefaults.standard.object(forKey: "voiceSfx") as? Bool ?? true
+    @ObservationIgnored private var sfxGate = RateGate(interval: 1.2)
+    @ObservationIgnored private let sfx = VoiceSfxPlayer()
     /// 「スマホで続ける」 (Mac; set by ChatStore).
     @ObservationIgnored var handoff: VoiceHandoff?
     static let continuedElsewhere = "別の端末で続けています"
@@ -133,6 +148,7 @@ final class VoiceStore {
         guard phase == .idle, canJoin else { return }
         onWillJoin?()
         notice = nil
+        membershipEnded = false
         phase = .connecting
         attempt += 1
         let mine = attempt
@@ -145,6 +161,8 @@ final class VoiceStore {
         } catch let e as APIError {
             guard mine == attempt else { return }
             phase = .idle
+            clubRoom = false
+            if case let .http(_, code, _) = e, code == "membership_ended" { membershipEnded = true }
             notice = Self.message(for: e)
         } catch {
             guard mine == attempt else { return }
@@ -200,6 +218,7 @@ final class VoiceStore {
         if myUserId == nil { myUserId = room.localParticipant.identity?.stringValue }
         micOn = false
         phase = .connected
+        playSfx(.join, mine: true)
         #if os(macOS)
         AudioManager.shared.onDeviceUpdate = { [weak self] _ in
             Task { @MainActor in self?.refreshDevices() }
@@ -211,7 +230,62 @@ final class VoiceStore {
     }
 
     func leave() async {
+        if phase == .connected, room != nil {
+            playSfx(.leave, mine: true)
+            #if os(iOS)
+            // LiveKit は抜けると音声のセッションを止める（isAutomaticDeactivationEnabled）。効果音が途中で切れないよう少し待つ
+            try? await Task.sleep(for: .milliseconds(250))
+            #endif
+        }
         await teardown()
+    }
+
+    // MARK: 相手ごとの音量・出入りの効果音
+
+    /// 相手の声の大きさ（0…1）。1 は覚えない（いつもの大きさ）。
+    func setGain(_ userId: String, _ gain: Double) {
+        gains = VoiceGains.setting(gains, id: userId, to: gain)
+        if gains.isEmpty { UserDefaults.standard.removeObject(forKey: VoiceGains.key) }
+        else { UserDefaults.standard.set(gains, forKey: VoiceGains.key) }
+        applyVolumes()
+    }
+
+    func gain(_ userId: String) -> Double { gains[userId] ?? 1 }
+
+    func setSfx(_ on: Bool) {
+        sfxOn = on
+        UserDefaults.standard.set(on, forKey: "voiceSfx")
+    }
+
+    /// 自分の出入りは毎回、ほかの人の分は 1.2 秒に 1 回まで（大勢の出入りで鳴りっぱなしにしない）。
+    func playSfx(_ kind: VoiceSfxTone.Kind, mine: Bool) {
+        guard sfxOn else { return }
+        if !mine, !sfxGate.allow() { return }
+        sfx.play(kind, mine: mine)
+    }
+
+    /// その人の出入りを鳴らすか: 部室では声が届く範囲の人だけ、ボイスルームでは全員。
+    private func audibleToMe(_ id: String) -> Bool {
+        clubRoom ? (nearVolumes?[id] ?? 0) > 0 : true
+    }
+
+    /// 音量 = 距離の音量（部室のときだけ）× 自分で決めた音量。部室で距離がまだ決まっていなければ触らない。
+    private func applyVolumes() {
+        guard let room else { return }
+        if clubRoom && nearVolumes == nil { return }
+        for p in room.remoteParticipants.values {
+            guard let id = p.identity?.stringValue else { continue }
+            let near = clubRoom ? (nearVolumes?[id] ?? 0) : 1
+            let v = near * gain(id)
+            for pub in p.audioTracks {
+                if let t = pub.track as? RemoteAudioTrack, abs(t.volume - v) > 0.005 { t.volume = v }
+            }
+        }
+    }
+
+    fileprivate func participantCame(_ from: Room, _ id: String?, joined: Bool) {
+        guard let room, room === from, phase == .connected, let id else { return }
+        if audibleToMe(id) { playSfx(joined ? .join : .leave, mine: false) }
     }
 
     /// The first unmute starts the mic and publishes the track, which takes a
@@ -285,6 +359,8 @@ final class VoiceStore {
     private func teardown() async {
         attempt += 1
         allowedSids = nil
+        nearVolumes = nil
+        clubRoom = false
         let r = room
         room = nil
         observer = nil
@@ -372,7 +448,11 @@ final class VoiceStore {
         FileHandle.standardError.write(Data("[voice] disconnected: \(String(describing: error))\n".utf8))
         #endif
         guard let room, room === from else { return } // late event from an earlier room
-        if error?.type == .duplicateIdentity {
+        // つながっていた・つなぎ直し中から切れたときだけ（つなぐ途中の失敗は join の側で扱う）
+        let wasLive = phase == .connected || phase == .reconnecting
+        let duplicate = error?.type == .duplicateIdentity
+        let removed = error?.type == .participantRemoved
+        if duplicate {
             // The same member joined from another device (「スマホで続ける」, or simply opened it there):
             // LiveKit lets one connection per identity, so this one was let go. Not a failure, and no rejoin
             // (that would take it back from the other device).
@@ -383,7 +463,10 @@ final class VoiceStore {
         } else if error != nil {
             notice = "ボイスルームの接続が切れました"
         }
-        Task { await teardown() }
+        Task {
+            await teardown()
+            if wasLive, !duplicate { onDropped?(removed) }
+        }
     }
 
     // MARK: Club room proximity
@@ -393,13 +476,9 @@ final class VoiceStore {
     /// refuses my track to anyone not listed, whatever their app asks for.
     func applyProximity(volumes: [String: Double], allowed: Set<String>) async {
         guard let room else { return }
-        for p in room.remoteParticipants.values {
-            guard let id = p.identity?.stringValue else { continue }
-            let v = volumes[id] ?? 0
-            for pub in p.audioTracks {
-                if let t = pub.track as? RemoteAudioTrack, abs(t.volume - v) > 0.02 { t.volume = v }
-            }
-        }
+        clubRoom = true
+        nearVolumes = volumes
+        applyVolumes()
         let sids = Set(room.remoteParticipants.values.filter { allowed.contains($0.identity?.stringValue ?? "") }.compactMap { $0.sid?.stringValue })
         guard sids != allowedSids else { return }
         allowedSids = sids
@@ -412,6 +491,8 @@ final class VoiceStore {
     private func refreshMembers() {
         defer { onParticipantsChanged?() }
         guard let room else { members = []; return }
+        // ボイスルーム（部室でない）: 入ってきた人・新しい音声にも自分で決めた音量を
+        if !clubRoom { applyVolumes() }
         let known = Dictionary((roomInfo?.participants ?? []).map { ($0.userId, $0) }, uniquingKeysWith: { a, _ in a })
         func member(_ p: Participant, isMe: Bool) -> Member? {
             guard let id = p.identity?.stringValue else { return nil }
@@ -463,8 +544,17 @@ final class VoiceStore {
         private func changed(_ room: Room) { Task { @MainActor [weak self] in self?.store?.roomChanged(room) } }
 
         func room(_ room: Room, didUpdateConnectionState connectionState: ConnectionState, from oldConnectionState: ConnectionState) { changed(room) }
-        func room(_ room: Room, participantDidConnect participant: RemoteParticipant) { changed(room) }
-        func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) { changed(room) }
+        func room(_ room: Room, participantDidConnect participant: RemoteParticipant) {
+            let id = participant.identity?.stringValue
+            Task { @MainActor [weak self] in self?.store?.participantCame(room, id, joined: true) }
+            changed(room)
+        }
+        func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) {
+            let id = participant.identity?.stringValue
+            Task { @MainActor [weak self] in self?.store?.participantCame(room, id, joined: false) }
+            changed(room)
+        }
+        func room(_ room: Room, participant: RemoteParticipant, didSubscribeTrack publication: RemoteTrackPublication) { changed(room) }
         func room(_ room: Room, didUpdateSpeakingParticipants participants: [Participant]) { changed(room) }
         func room(_ room: Room, participant: RemoteParticipant, didPublishTrack publication: RemoteTrackPublication) { changed(room) }
         func room(_ room: Room, participant: RemoteParticipant, didUnpublishTrack publication: RemoteTrackPublication) { changed(room) }
@@ -509,5 +599,27 @@ private final class MicMeter: NSObject, AudioRenderer, @unchecked Sendable {
         let db = 20 * log10(max(rms, 1e-6))
         // -50 dBFS (room noise) → 0, -10 dBFS (close, loud speech) → 1.
         onLevel(min(max((db + 50) / 40, 0), 1))
+    }
+}
+
+/// 出入りの効果音を鳴らす（VoiceSfxTone で作った WAV を AVAudioPlayer で）。音声のセッションの設定には触らない
+/// （LiveKit が決めた今のセッションのまま鳴らす）。鳴るのはつながっている間と、抜ける直前だけ。
+@MainActor
+private final class VoiceSfxPlayer {
+    private var cache: [String: Data] = [:]
+    private var playing: [AVAudioPlayer] = []
+
+    func play(_ kind: VoiceSfxTone.Kind, mine: Bool) {
+        let key = "\(kind)-\(mine)"
+        let data: Data
+        if let hit = cache[key] { data = hit } else {
+            data = VoiceSfxTone.wav(VoiceSfxTone.samples(kind, mine: mine))
+            cache[key] = data
+        }
+        playing.removeAll { !$0.isPlaying }
+        guard let p = try? AVAudioPlayer(data: data) else { return }
+        p.prepareToPlay()
+        p.play()
+        playing.append(p) // 鳴り終わるまで手放さない
     }
 }

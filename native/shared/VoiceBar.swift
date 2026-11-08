@@ -287,6 +287,7 @@ private struct VoiceMemberList: View {
             .padding(12)
             Divider()
             List(voice.members) { m in
+                VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 10) {
                     AvatarView(url: m.avatar, name: m.name, size: 28)
                         .overlay(Circle().stroke(Color.accentGreen, lineWidth: m.speaking ? 2.5 : 0))
@@ -310,8 +311,16 @@ private struct VoiceMemberList: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
+                    // その人の音量（自分にだけ効く）
+                    if !m.isMe { VoiceGainSlider(voice: voice, userId: m.userId, name: m.name).padding(.leading, 38) }
+                }
             }
             .listStyle(.plain)
+            Divider()
+            Toggle("🔔 出入りの効果音", isOn: Binding(get: { voice.sfxOn }, set: { voice.setSfx($0) }))
+                .font(.app(.caption))
+                .tint(Color.accentGreen)
+                .padding(.horizontal, 12).padding(.vertical, 8)
         }
         #if os(macOS)
         .frame(width: 320, height: 420)
@@ -344,6 +353,27 @@ private struct MemberActions: View {
         }
         Button("管理者に通報…", systemImage: "flag") {
             voice.reportTarget = voice.members.first { $0.userId == userId }
+        }
+    }
+}
+
+/// 相手ごとの音量のつまみ（0〜100%、10 刻み、自分にだけ効く。端末に覚える）。
+struct VoiceGainSlider: View {
+    @Bindable var voice: VoiceStore
+    let userId: String
+    let name: String
+
+    var body: some View {
+        let gain = voice.gain(userId)
+        HStack(spacing: 6) {
+            Text(gain == 0 ? "🔇" : "🔉").font(.app(.caption)).accessibilityHidden(true)
+            Slider(value: Binding(get: { (gain * 100).rounded() }, set: { voice.setGain(userId, $0 / 100) }), in: 0...100, step: 10)
+                .tint(Color.accentGreen)
+                .controlSize(.small)
+                .accessibilityLabel("\(name) の音量")
+                .accessibilityValue("\(Int((gain * 100).rounded()))%")
+            Text("\(Int((gain * 100).rounded()))%").font(.app(.caption2)).monospacedDigit()
+                .frame(width: 34, alignment: .trailing)
         }
     }
 }

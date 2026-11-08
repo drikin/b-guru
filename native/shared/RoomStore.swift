@@ -40,6 +40,19 @@ final class RoomStore {
     let voice: VoiceStore
     private var myWalk: Task<Void, Never>?
     private var proximityTask: Task<Void, Never>?
+    private var noticeTask: Task<Void, Never>?
+    /// サーバの起動ごとの印（GET /api/agent/room の boot）。変わったら再起動。
+    private var lastBoot: String?
+    /// 再起動のあとの入り直し（10 秒に 1 回まで）・音声の自動の入り直し（30 秒に 1 回まで）。
+    private var rejoinGate = RateGate(interval: 10)
+    private var voiceRejoinGate = RateGate(interval: 30)
+    /// 部室に入る（入り直す）途中。
+    private var entering = false
+    // ステージの自動マイク（StageMic）: 自動で入れた / 本人が切った（または入れられなかった）/ 切り替え中 / 1 秒待ち。
+    private var stageAuto = false
+    private var stageSuppressed = false
+    private var stageBusy = false
+    private var stageTimer: Task<Void, Never>?
 
     init(api: APIClient, voice: VoiceStore) {
         self.api = api
@@ -52,9 +65,11 @@ final class RoomStore {
             self.myWalk?.cancel()
             self.myWalk = nil
             self.mode = .text
+            self.resetStage()
             self.notice = VoiceStore.continuedElsewhere
             self.revision += 1
         }
+        voice.onDropped = { [weak self] removed in self?.voiceDropped(removed: removed) }
     }
 
     var me: RoomMember? { meId.flatMap { members[$0] } }
@@ -68,6 +83,8 @@ final class RoomStore {
 
     func load() async {
         guard enabled, !offline, let r = try? await api.room() else { return }
+        let restarted = RoomRestart.restarted(previous: lastBoot, current: r.boot)
+        if let b = r.boot { lastBoot = b }
         geometry = RoomGeometry(map: r.map)
         meId = r.me
         if let rs = r.reactions, !rs.isEmpty { reactionChoices = rs }
@@ -76,7 +93,18 @@ final class RoomStore {
         // While I walk, my local position wins over a snapshot taken mid-walk.
         if let id = meId, myWalk != nil, let mine = members[id] { next[id] = mine }
         members = next
-        if let id = meId, let m = members[id] { mode = m.inRoom ? .room : .text }
+        if let id = meId, let m = members[id] {
+            if mode == .room, !m.inRoom, restarted, !entering {
+                // サーバが再起動して私を忘れた（部室にいたのにテキスト扱い）: テキストに戻さず入り直す。音声はそのまま
+                rejoinAfterRestart()
+            } else if mode == .room, !m.inRoom, !entering {
+                // ほかの端末で（テキストに戻した）
+                mode = .text
+                resetStage()
+            } else if !entering {
+                mode = m.inRoom ? .room : .text
+            }
+        }
         revision += 1
         applyProximity()
     }
@@ -95,6 +123,11 @@ final class RoomStore {
             if let m = e.member { members[m.userId] = nil; walks[m.userId] = nil }
         default:
             guard let m = e.member else { return }
+            if e.action == "join", m.userId == meId, !m.inRoom, mode == .room {
+                // 「join」で私がテキスト = サーバが私を覚えていない（再起動）。ほかの端末の操作なら update で来る
+                rejoinAfterRestart()
+                return
+            }
             received(m)
         }
         revision += 1
@@ -223,8 +256,10 @@ final class RoomStore {
     // MARK: Enter / leave
 
     func enter() async {
-        guard enabled, mode == .text else { return }
+        guard enabled, mode == .text, !entering else { return }
         notice = nil
+        entering = true
+        defer { entering = false }
         do {
             let r: RoomActionResponse
             if offline, let id = meId, var m = members[id], let geo = geometry {
@@ -241,10 +276,90 @@ final class RoomStore {
                 walks[m.userId] = Walk(from: (Double(door.x), Double(door.y)), steps: geo.path(from: door.x, door.y, to: m.x, m.y), start: Date())
             }
             revision += 1
-            if listening { await voice.join() }
+            entering = false
+            if listening { await joinVoiceForRoom() }
             await applyProximityNow()
         } catch {
             notice = "部室に入れませんでした"
+        }
+    }
+
+    /// サーバの再起動で私が忘れられたとき: テキストに戻さず、部室に入り直す（音声は切らない）。10 秒に 1 回まで。
+    private func rejoinAfterRestart() {
+        guard !entering, !offline, rejoinGate.allow() else { return }
+        Task { await reenter() }
+    }
+
+    private func reenter() async {
+        guard mode == .room, !entering else { return }
+        entering = true
+        defer { entering = false }
+        guard let r = try? await api.roomAction(["action": "enter", "listening": listening]), let m = r.member else { return }
+        guard mode == .room else { return }
+        members[m.userId] = m
+        if let geo = geometry, let door = r.from {
+            walks[m.userId] = Walk(from: (Double(door.x), Double(door.y)), steps: geo.path(from: door.x, door.y, to: m.x, m.y), start: Date())
+        }
+        revision += 1
+        if voice.micOn {
+            // サーバは私のマイクも忘れている: オンを送り直す（断られたら、こちらも切る）
+            do {
+                let r = try await api.roomAction(["action": "voice", "mic": true])
+                if let m = r.member { received(m) }
+            } catch {
+                await voice.setMic(false)
+                stageAuto = false
+            }
+        }
+        if listening && !voice.inRoom { await joinVoiceForRoom() }
+        await applyProximityNow()
+    }
+
+    /// 部室の音声に入る。一度でつながらなければ 2 秒後にもう一度（会員資格が確認できないときは試し直さない）。
+    /// それでもだめなら見るだけに。
+    private func joinVoiceForRoom() async {
+        voice.clubRoom = true
+        await voice.join()
+        if wantsVoice, voice.phase == .idle, !voice.membershipEnded {
+            try? await Task.sleep(for: .seconds(2))
+            if wantsVoice, voice.phase == .idle {
+                voice.clubRoom = true
+                await voice.join()
+            }
+        }
+        if wantsVoice, voice.phase == .idle { fallBackToSeeOnly() }
+    }
+
+    /// 部室で聞いているつもり。
+    private var wantsVoice: Bool { mode == .room && listening && !offline }
+
+    /// つながっていた音声が切れた（VoiceStore.onDropped）: 見るだけに落とす前に、1 回自動で入り直す（30 秒に 1 回まで）。
+    /// 管理者に退出させられたときは入り直さない（別の端末で続けたときは onContinuedElsewhere の側）。
+    private func voiceDropped(removed: Bool) {
+        guard wantsVoice else { return }
+        stageAuto = false
+        if !removed, voiceRejoinGate.allow() {
+            // 大勢が同時に切れたときに一斉に入り直さないよう、0〜3 秒ずらす
+            let wait = Double.random(in: 0...3)
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(wait))
+                guard let self, self.wantsVoice, self.voice.phase == .idle else { return }
+                await self.joinVoiceForRoom()
+                await self.applyProximityNow()
+            }
+        } else {
+            fallBackToSeeOnly()
+        }
+    }
+
+    /// 見るだけにする（端末に覚えた「聞く」はそのまま。次に入るときはまた聞く）。
+    private func fallBackToSeeOnly() {
+        listening = false
+        resetStage()
+        notice = voice.notice ?? "ボイスにつながりませんでした（見るだけにしました）"
+        let api = self.api
+        Task { [weak self] in
+            if let r = try? await api.roomAction(["action": "voice", "listening": false]), let m = r.member { self?.received(m) }
         }
     }
 
@@ -253,6 +368,7 @@ final class RoomStore {
         myWalk?.cancel()
         myWalk = nil
         mode = .text
+        resetStage()
         if voice.inRoom { await voice.leave() }
         if offline, let id = meId { members[id]?.mode = "text"; members[id]?.x = 8; members[id]?.y = 3; walks[id] = nil }
         else if let r = try? await api.roomAction(["action": "text"]), let m = r.member { members[m.userId] = m; walks[m.userId] = nil }
@@ -264,7 +380,7 @@ final class RoomStore {
         UserDefaults.standard.set(on, forKey: "roomListening")
         guard mode == .room else { return }
         if let r = try? await api.roomAction(["action": "voice", "listening": on]), let m = r.member { received(m) }
-        if on { await voice.join() } else { await voice.leave() }
+        if on { await joinVoiceForRoom() } else { resetStage(); await voice.leave() }
         applyProximity()
     }
 
@@ -294,7 +410,7 @@ final class RoomStore {
     func continueHere(mic: Bool) async {
         notice = nil
         if !listening { await setListening(true) }
-        if mode == .text { await enter() } else if !voice.inRoom { await voice.join() }
+        if mode == .text { await enter() } else if !voice.inRoom { await joinVoiceForRoom() }
         if mic, mode == .room { await setMic(true) }
     }
 
@@ -354,12 +470,109 @@ final class RoomStore {
                 let api = self.api
                 if !self.offline {
                     Task {
-                        do { _ = try await api.roomAction(["action": "move", "x": x, "y": y]) } catch { await self.load() }
+                        do {
+                            _ = try await api.roomAction(["action": "move", "x": x, "y": y])
+                            // ステージの乗り降り（サーバが位置を知ってから）
+                            self.stageCheck()
+                        } catch { await self.load() }
                     }
                 }
                 try? await Task.sleep(for: .seconds(Self.stepTime))
             }
             self?.myWalk = nil
+        }
+    }
+
+    // MARK: ステージの自動マイク（ドリキン 2026-11-08、Web と同じ）
+
+    /// マイクのボタン（本人の操作）。ステージの上で切ったら、ステージを出るまで自動では入れない。
+    /// 自分で入れたマイクは、ステージを降りても切らない。
+    func userSetMic(_ on: Bool) async {
+        stageAuto = false
+        stageTimer?.cancel()
+        stageTimer = nil
+        if !on, onStage { stageSuppressed = true }
+        await setMic(on)
+        // 許可を拒否されたなど、入れられなかった
+        if on, !voice.micOn, onStage { stageSuppressed = true }
+    }
+
+    private var onStage: Bool {
+        guard let geo = geometry, let m = me, m.inRoom else { return false }
+        return geo.zone(m.x, m.y)?.kind == "stage"
+    }
+
+    /// 見るだけ・音声につながっていない・マイクを切り替えている最中は何もしない。
+    private var stageReady: Bool {
+        mode == .room && listening && (me?.listening ?? false) && voice.phase == .connected && !voice.micBusy && !offline
+    }
+
+    private func resetStage() {
+        stageTimer?.cancel()
+        stageTimer = nil
+        stageAuto = false
+        stageSuppressed = false
+    }
+
+    /// 今いる場所から「あるべき状態」を決め直す（位置がサーバに届いたあと・自動の切り替えのあと）。
+    func stageCheck() {
+        let here = onStage
+        if !here {
+            stageSuppressed = false
+            stageTimer?.cancel()
+            stageTimer = nil
+        }
+        if stageAuto && !voice.micOn { stageAuto = false } // サーバや管理者に切られた
+        guard !stageBusy, stageReady else { return }
+        switch StageMic.decide(onStage: here, micOn: voice.micOn, auto: stageAuto, suppressed: stageSuppressed) {
+        case .turnOff:
+            Task { await stageSwitch(false) }
+        case .scheduleOn:
+            // 1 秒立ち止まったら（歩く途中で通っただけでは入れない）。一歩ごとに待ち直す
+            stageTimer?.cancel()
+            stageTimer = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(StageMic.dwell))
+                guard let self, !Task.isCancelled else { return }
+                self.stageTimer = nil
+                guard self.myWalk == nil, self.onStage else { return }
+                await self.stageSwitch(true)
+            }
+        case .none:
+            break
+        }
+    }
+
+    private func stageSwitch(_ on: Bool) async {
+        guard !stageBusy, stageReady else { return }
+        let want = StageMic.decide(onStage: onStage, micOn: voice.micOn, auto: stageAuto, suppressed: stageSuppressed)
+        guard want == (on ? .scheduleOn : .turnOff) else { stageCheck(); return }
+        stageBusy = true
+        if on {
+            await setMic(true)
+            if voice.micOn {
+                stageAuto = true
+                flash("ステージに上がったので、マイクをオンにしました（部室の全員に届きます）。🎙 で切れます")
+                voice.playSfx(.join, mine: true)
+            } else {
+                stageSuppressed = true // 許可がない・上限など。今のマイクのボタンと同じ知らせ
+            }
+        } else {
+            await setMic(false)
+            stageAuto = false
+            flash("ステージを降りたので、マイクを切りました")
+        }
+        stageBusy = false
+        stageCheck() // 上がる・降りるを素早く繰り返しても食い違わないように
+    }
+
+    /// 普通の知らせ（エラーではない）を 6 秒ほど出して消す。
+    private func flash(_ text: String) {
+        notice = text
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard let self, !Task.isCancelled, self.notice == text else { return }
+            self.notice = nil
         }
     }
 

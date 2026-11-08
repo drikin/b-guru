@@ -39,7 +39,13 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -196,6 +202,15 @@ fun RoomPanel(room: RoomStore, voice: VoiceStore, visible: Boolean, modifier: Mo
     val config = LocalConfiguration.current
     val hasKeyboard = config.keyboard == Configuration.KEYBOARD_QWERTY && config.hardKeyboardHidden == Configuration.HARDKEYBOARDHIDDEN_NO
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    // ステージの自動マイクで権限がないとき: マイクのボタンと同じく許可を尋ねる
+    val stageMicPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { room.stageMicPermission(it) }
+    LaunchedEffect(room.stageMicAsk) {
+        if (room.stageMicAsk) {
+            room.stageMicAsk = false
+            stageMicPermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    var hearOpen by remember { mutableStateOf(false) }
 
     Column(modifier.clipToBounds().background(RoomBg)) {
         // 🎧 / 👀, 🎙, where I am.
@@ -205,12 +220,19 @@ fun RoomPanel(room: RoomStore, voice: VoiceStore, visible: Boolean, modifier: Mo
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             val listening = room.listening
-            Chip(if (listening) "🎧 聞いている" else "👀 見るだけ", on = listening) { room.changeListening(!listening) }
-            val micEnabled = listening && voice.phase == VoiceStore.Phase.CONNECTED && !room.micBusy && !voice.micBusy
-            Chip(if (voice.micOn) "🎙 マイク オン" else "🎙 マイク オフ", on = voice.micOn, enabled = micEnabled, onClick = actions.toggleMic)
-            if (voice.phase == VoiceStore.Phase.CONNECTING || voice.phase == VoiceStore.Phase.RECONNECTING) {
-                Text("接続中…", color = RoomMuted, fontSize = 12.sp)
+            // 今の状態ではなく「押すと何が起きるか」が分かるように（Web と同じ、2026-11-08 オフ会）:
+            // 見るだけの間は目立つ「ボイスに入る」、つないでいる間は「接続中…」、つながったら「聞いている」
+            val listenLabel = when {
+                !listening -> "🎧 ボイスに入る"
+                voice.phase == VoiceStore.Phase.CONNECTED -> "🎧 聞いている"
+                voice.enabled && voice.canJoin -> "🎧 接続中…"
+                else -> "🎧 聞いている"
             }
+            Chip(listenLabel, on = listening, strong = !listening) { room.changeListening(!listening) }
+            val micEnabled = listening && voice.phase == VoiceStore.Phase.CONNECTED && !room.micBusy && !voice.micBusy
+            Chip(if (voice.micOn) "🎙 オン" else "🎙 オフ", on = voice.micOn, enabled = micEnabled, onClick = actions.toggleMic)
+            // 聞こえている人（距離の音量と、相手ごとの音量のつまみ・出入りの効果音）
+            Chip("👂 ${room.heard().size}", on = false) { hearOpen = true }
             Spacer(Modifier.weight(1f))
             if (zone != null) {
                 Text(
@@ -221,6 +243,10 @@ fun RoomPanel(room: RoomStore, voice: VoiceStore, visible: Boolean, modifier: Mo
         }
         (room.notice ?: voice.notice)?.let {
             Text(it, color = Amber, fontSize = 12.sp, modifier = Modifier.fillMaxWidth().background(RoomPanelColor).padding(horizontal = 10.dp, vertical = 2.dp))
+        }
+        // 普通の知らせ（ステージの自動マイクなど）。約 6 秒で消える
+        room.info?.let {
+            Text(it, color = RoomFg, fontSize = 12.sp, modifier = Modifier.fillMaxWidth().background(RoomPanelColor).padding(horizontal = 10.dp, vertical = 2.dp))
         }
         Box(
             Modifier.weight(1f).fillMaxWidth()
@@ -241,6 +267,7 @@ fun RoomPanel(room: RoomStore, voice: VoiceStore, visible: Boolean, modifier: Mo
             }
             if (!hasKeyboard) DPad(room, Modifier.align(Alignment.BottomEnd).padding(10.dp))
         }
+        if (hearOpen) HearSheet(room, voice, onClose = { hearOpen = false })
         // Reactions (keys 1–6 on a keyboard).
         Row(
             Modifier.fillMaxWidth().background(RoomPanelColor).padding(horizontal = 8.dp, vertical = 4.dp),
@@ -278,15 +305,87 @@ private fun roomKey(room: RoomStore, key: Key, down: Boolean, up: Boolean): Bool
     return false
 }
 
+/** [strong]: 塗りつぶしの緑（押してほしいボタン）。 */
 @Composable
-private fun Chip(text: String, on: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+private fun Chip(text: String, on: Boolean, enabled: Boolean = true, strong: Boolean = false, onClick: () -> Unit) {
     Box(
         Modifier
-            .background(if (on) VoiceGreen.copy(alpha = 0.22f) else Color(0x22F3E9D8), RoundedCornerShape(6.dp))
-            .border(1.dp, if (on) VoiceGreen else Color(0x55F3E9D8), RoundedCornerShape(6.dp))
+            .background(if (strong) VoiceGreen else if (on) VoiceGreen.copy(alpha = 0.22f) else Color(0x22F3E9D8), RoundedCornerShape(6.dp))
+            .border(1.dp, if (on || strong) VoiceGreen else Color(0x55F3E9D8), RoundedCornerShape(6.dp))
             .pointerInput(enabled, onClick) { detectTapGestures { if (enabled) onClick() } }
             .padding(horizontal = 8.dp, vertical = 5.dp),
-    ) { Text(text, color = if (enabled) RoomFg else RoomMuted, fontSize = 13.sp, maxLines = 1) }
+    ) {
+        Text(
+            text, color = if (!enabled) RoomMuted else if (strong) RoomBg else RoomFg, fontSize = 13.sp, maxLines = 1,
+            fontWeight = if (strong) FontWeight.Bold else null,
+        )
+    }
+}
+
+/** 相手ごとの音量のつまみ（0〜100%、10 刻み、自分にだけ効く）。 */
+@Composable
+private fun GainSlider(voice: VoiceStore, id: String, name: String, dark: Boolean) {
+    val gain = voice.gains[id] ?: 1f
+    val fg = if (dark) RoomFg else MaterialTheme.colorScheme.onSurface
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(if (gain == 0f) "🔇" else "🔉", fontSize = 13.sp)
+        Slider(
+            value = gain * 100f,
+            onValueChange = { voice.setUserGain(id, (it / 10f).roundToInt() / 10f) },
+            valueRange = 0f..100f,
+            steps = 9,
+            colors = SliderDefaults.colors(thumbColor = VoiceGreen, activeTrackColor = VoiceGreen),
+            modifier = Modifier.weight(1f).height(28.dp).semantics { contentDescription = "$name の音量" },
+        )
+        Text("${(gain * 100).roundToInt()}%", color = fg, fontSize = 12.sp, modifier = Modifier.width(40.dp))
+    }
+}
+
+/** 聞こえている人: 距離による大きさ、相手ごとの音量のつまみ、出入りの効果音のスイッチ。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun HearSheet(room: RoomStore, voice: VoiceStore, onClose: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onClose) {
+        val list = room.heard()
+        val me = room.myMember
+        val zone = me?.let { room.zoneAt(it.x, it.y) }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("聞こえている人", style = MaterialTheme.typography.titleMedium)
+            if (list.isEmpty()) {
+                Text(
+                    if (room.listening) "近くに声の聞こえる人はいません" else "見るだけの間は声が聞こえません",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            list.forEach { (m, v) ->
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val talking = voice.members.any { it.userId == m.userId && it.speaking }
+                        Text((if (talking) "🔊 " else "") + m.name, maxLines = 1, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        // 距離による大きさ
+                        Box(Modifier.width(80.dp).height(6.dp).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f), RoundedCornerShape(3.dp))) {
+                            Box(Modifier.fillMaxWidth(v.toFloat().coerceIn(0f, 1f)).height(6.dp).background(VoiceGreen, RoundedCornerShape(3.dp)))
+                        }
+                        Text("${(v * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(40.dp))
+                    }
+                    GainSlider(voice, m.userId, m.name, dark = false)
+                }
+            }
+            Text("つまみはその人の声の大きさです（自分にだけ効きます）。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("🔔 出入りの効果音（近くの人と自分）", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Switch(checked = voice.sfx, onCheckedChange = voice::changeSfx, colors = SwitchDefaults.colors(checkedTrackColor = VoiceGreen))
+            }
+            Text(
+                when (zone?.kind) {
+                    "table" -> "テーブルの中の人とだけ話せます（外には聞こえません）"
+                    "stage" -> "ステージの声は部室の全員に届きます"
+                    else -> "まわり ${room.map?.hearRadius ?: 4} マスの人の声が聞こえます。離れるほど小さく、ステージの声は全員に届きます。"
+                },
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 /** −／＋ (×1.25), 全体 (the whole map ↔ as before) and ⤢／⤡ (広げる). They work on the scale of the
@@ -429,6 +528,8 @@ private fun RoomCanvas(room: RoomStore, voice: VoiceStore, visible: Boolean, foc
                     )
                     DropdownMenuItem(text = { Text("👋 手を振る") }, onClick = { menu = null; room.react("👋", to = id) })
                     if (m?.inRoom == true) DropdownMenuItem(text = { Text("そばへ行く") }, onClick = { menu = null; room.goNear(id) })
+                    // その人の声の大きさ（自分にだけ効く）
+                    if (m?.inRoom == true) Box(Modifier.width(220.dp).padding(horizontal = 12.dp)) { GainSlider(voice, id, m.name, dark = false) }
                 }
             }
         }
@@ -522,12 +623,11 @@ private class RoomPainter {
             val mine = a.id == room.me
             val v = if (mine) 1.0 else room.volumeFor(a.id)
             val mark = RoomStore.statusMark(m, a.id in speaking)
-            label(
-                // Its bottom on the head (as before at 1.0); the text may be larger than the art zoomed out.
-                "$mark ${m.name}", sx(x + 8f), sy(y.toFloat()) - 9f * tz, tz,
-                if (mine) 0xEBF2B24C else 0xC7120E14,
+            // 頭の上の名前札: 小さく・背景は薄く、長い名前は切る（全部の名前は人をタップしたメニューに出る）
+            nameTag(
+                "$mark ${RoomVoiceLogic.shortRoomName(m.name)}", sx(x + 8f), sy(y.toFloat()) - 7f * tz, tz,
+                if (mine) 0xD9F2B24C else 0x80120E14,
                 if (mine) 0xFF1D1820 else if (v > 0 || !m.inRoom) 0xFFF3E9D8 else 0xFF9A8FA0,
-                center = true,
             )
         }
         val now = RoomStore.now()
@@ -557,6 +657,17 @@ private class RoomPainter {
         p.color = bg.toInt()
         c.drawRect(lx, y, lx + w, y + 9f * zoom, p)
         c.drawText(s, lx + 2 * zoom, y + 7f * zoom, text)
+    }
+
+    /** 頭の上の名前札: ふつうのラベルより小さく（6 / 高さ 7）、背景を薄く。Web の drawNameTag と同じ。 */
+    private fun nameTag(s: String, x: Float, y: Float, zoom: Float, bg: Long, fg: Long) {
+        text.textSize = 6f * zoom
+        text.color = fg.toInt()
+        val w = text.measureText(s) + 3 * zoom
+        val lx = x - w / 2
+        p.color = bg.toInt()
+        c.drawRect(lx, y, lx + w, y + 7f * zoom, p)
+        c.drawText(s, lx + 1.5f * zoom, y + 5.5f * zoom, text)
     }
 
     private fun bubble(s: String, x: Float, y: Float, zoom: Float) {

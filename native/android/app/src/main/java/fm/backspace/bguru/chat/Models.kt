@@ -430,6 +430,8 @@ data class RoomStateResponse(
     val members: List<RoomMember> = emptyList(),
     val me: String = "",
     val reactions: List<String> = emptyList(),
+    /** サーバの起動ごとの印（再起動で変わる）。変わったら「テキストに戻された」と受け取らず入り直す。 */
+    val boot: String? = null,
 )
 
 @Serializable data class RoomActionResponse(val ok: Boolean = false, val member: RoomMember? = null, val from: RoomPoint? = null, val to: RoomPoint? = null)

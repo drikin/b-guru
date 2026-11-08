@@ -66,6 +66,10 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
     /** One line under the room controls (refusals, 429 texts). */
     var notice by mutableStateOf<String?>(null)
     var hint by mutableStateOf(false); private set
+    /** 普通の知らせ（赤いエラーではない）。約 6 秒で消える（ステージの自動マイクなど）。 */
+    var info by mutableStateOf<String?>(null); private set
+    /** ステージでマイクを入れたいが権限がない: 部屋の画面がマイクの許可を尋ねる（尋ねたら false に戻す）。 */
+    var stageMicAsk by mutableStateOf(false)
     var demo = false; private set
 
     /** Plain (non-state) animation state, read by the Canvas every frame. */
@@ -82,6 +86,20 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
     private var hintJob: Job? = null
     private var request = 0
     private var ownReacts = mutableListOf<Pair<String, Long>>()
+    private var infoJob: Job? = null
+
+    /** サーバの起動ごとの印（GET の boot）。 */
+    private var lastBoot: String? = null
+    /** 再起動のあとの入り直し（10 秒に 1 回まで）。 */
+    private var rejoinAt = 0L
+    /** 音声が切れたときの自動の入り直し（30 秒に 1 回まで）。 */
+    private var autoRejoinAt = 0L
+
+    /** ステージの自動マイク: 自動で入れたマイクか（自分で入れたマイクは降りても切らない）。 */
+    private var stageAuto = false
+    /** ステージの上で本人が切った（または入れられなかった）: ステージを出るまで自動では入れない。 */
+    private var stageOptOut = false
+    private var stageJob: Job? = null
 
     val myMember: RoomMember? get() = me?.let { members.firstOrNull { m -> m.userId == it } }
     val myActor: Actor? get() = me?.let(actors::get)
@@ -101,6 +119,7 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
         } else {
             voice.proximity = null
             voice.allowedListeners = null
+            voice.onDropped = null
             roomView = false
         }
     }
@@ -108,6 +127,7 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
     private fun hookVoice() {
         voice.proximity = ::volumeFor
         voice.allowedListeners = ::allowedListeners
+        voice.onDropped = ::voiceDropped
     }
 
     /** GET and replace everything (first load and after every reconnect). */
@@ -118,28 +138,49 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
         } catch (e: CancellationException) {
             throw e
         } catch (e: ApiError.Http) {
-            if (e.status == 404) { enabled = false; roomView = false; voice.proximity = null; voice.allowedListeners = null }
+            if (e.status == 404) { enabled = false; roomView = false; voice.proximity = null; voice.allowedListeners = null; voice.onDropped = null }
             return
         } catch (_: Exception) {
             return
         }
-        applySnapshot(s, snapMe = false)
+        applySnapshot(s, snapMe = false, restarted = noteBoot(s.boot))
     }
 
-    private fun applySnapshot(s: RoomStateResponse, snapMe: Boolean) {
+    /** boot が前回と変わった = サーバが再起動した。 */
+    private fun noteBoot(boot: String?): Boolean {
+        val restarted = boot != null && lastBoot != null && boot != lastBoot
+        if (boot != null) lastBoot = boot
+        return restarted
+    }
+
+    private fun applySnapshot(s: RoomStateResponse, snapMe: Boolean, restarted: Boolean = false) {
         map = s.map
         if (s.me.isNotEmpty()) me = s.me
         if (s.reactions.isNotEmpty()) reactions = s.reactions
         setupBeagle(s.map)
         val first = mem.isEmpty()
         val old = HashMap(mem)
+        // サーバが再起動して私を忘れた（部室にいたのにテキスト扱い）: テキストに戻さず入り直す。音声はそのまま
+        val forgot = restarted && roomView && requestInFlight == 0 &&
+            s.members.firstOrNull { it.userId == me }?.inRoom == false
         mem.clear()
         for (m in s.members) mem[m.userId] = m
+        if (forgot) me?.let { id -> old[id]?.let { mem[id] = it } } // 入り直すまでは今の自分のまま
         actors.keys.retainAll(mem.keys)
         for (m in s.members) {
-            if (m.userId == me) mine(old[m.userId], m, snap = snapMe || first) else others(old[m.userId], m, snap = first)
+            if (m.userId == me) { if (!forgot) mine(old[m.userId], m, snap = snapMe || first) }
+            else others(old[m.userId], m, snap = first)
         }
         publish()
+        if (forgot) rejoinAfterRestart()
+    }
+
+    /** 再起動のあとの入り直し（10 秒に 1 回まで、ほかの操作の途中はしない）。 */
+    private fun rejoinAfterRestart() {
+        val now = now()
+        if (now - rejoinAt < 10_000 || requestInFlight > 0 || !roomView || demo) return
+        rejoinAt = now
+        postEnter(rejoin = true)
     }
 
     /** Stream `room` event. */
@@ -147,7 +188,14 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
         if (!enabled || demo) return
         val e = runCatching { ApiJson.decodeFromString<RoomEventData>(json) }.getOrNull() ?: return
         when (e.action) {
-            "join", "update" -> e.member?.let(::upsert)
+            "join", "update" -> e.member?.let { m ->
+                if (e.action == "join" && m.userId == me && !m.inRoom && roomView) {
+                    // 「join」で私がテキスト = サーバが私を覚えていない（再起動）。ほかの端末の操作なら update で来る
+                    rejoinAfterRestart()
+                    return
+                }
+                upsert(m)
+            }
             "leave" -> e.member?.let { m ->
                 if (m.userId == me) return
                 mem.remove(m.userId)
@@ -226,6 +274,7 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
         }
         // Mic turned off by the server (away 30 min, a speaker limit after a move).
         if (!m.mic && voice.micOn && !micBusy && !voice.micBusy && prev?.mic == true) {
+            stageAuto = false
             voice.setMic(false)
             notice = "マイクがオフになりました（離席が続いたか、話せる人数の上限のため）"
         }
@@ -276,6 +325,13 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
         val them = memberOf(id) ?: return 0.0
         if (!mine.inRoom || !them.inRoom || !roomView) return 0.0
         return audibility(mine.x, mine.y, them.x, them.y)
+    }
+
+    /** 聞こえている人と距離の音量（大きい順）。見るだけの間は誰もいない。 */
+    fun heard(): List<Pair<RoomMember, Double>> {
+        val mine = myMember ?: return emptyList()
+        if (!mine.listening || !listening) return emptyList()
+        return members.filter { it.userId != me }.map { it to volumeFor(it.userId) }.filter { it.second > 0 }.sortedByDescending { it.second }
     }
 
     /** Who may receive my mic: in the room view, listening, and would hear me where I stand. */
@@ -363,6 +419,11 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
             beagle?.bubble = Bubble("わん！", now() + 2500)
             return
         }
+        postEnter(rejoin = false)
+    }
+
+    /** POST enter。[rejoin]: サーバの再起動のあとの入り直し（音声は切らない・マイクがオンなら送り直す）。 */
+    private fun postEnter(rejoin: Boolean) {
         val n = ++request
         requestInFlight++
         scope.launch {
@@ -377,12 +438,17 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
                 val to = r.to
                 if (from != null && to != null) startEntry(a, from, to) else place(a, m.x, m.y)
                 publish()
-                if (m.listening) voice.join()
-                beagle?.bubble = Bubble("わん！", now() + 2500)
+                if (m.listening) voice.join() // つながっていれば何もしない
+                if (rejoin && voice.micOn) {
+                    // 入り直す前からマイクがオン: サーバにも送り直す（再起動でサーバはオフと思っている）
+                    runCatching { post(body("voice") { put("mic", true) }) }.getOrNull()?.member?.let(::upsert)
+                }
+                if (!rejoin) beagle?.bubble = Bubble("わん！", now() + 2500)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 if (n != request) return@launch
+                if (rejoin) return@launch // 次の再読み込み・イベントでもう一度（10 秒あける）
                 roomView = false
                 notice = errorText(e, "ルームに入れませんでした")
             } finally {
@@ -412,6 +478,7 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
     fun toText() {
         if (!roomView) return
         roomView = false
+        resetStage()
         held.clear()
         entering = null
         myActor?.path?.clear()
@@ -447,6 +514,7 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
         if (!roomView) return
         notice = null
         if (!on) {
+            resetStage()
             if (voice.micOn) voice.setMic(false)
             voice.leave()
         }
@@ -470,33 +538,169 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
     }
 
     /** Mic on asks the server first (speaker limits → its 429 text); off is immediate.
-     *  The caller already holds RECORD_AUDIO. */
-    fun setMic(on: Boolean) {
-        if (micBusy) return
+     *  The caller already holds RECORD_AUDIO. [auto]: ステージの自動の切り替え（本人の操作ではない）。
+     *  [done]: 終わったら呼ぶ（望みどおりになったか）。 */
+    fun setMic(on: Boolean, auto: Boolean = false, done: ((Boolean) -> Unit)? = null) {
+        if (!auto) {
+            // 本人の操作: ステージの自動はここで手を引く（上で切ったら、出るまで自動では入れない）
+            stageAuto = false
+            stageJob?.cancel()
+            if (!on && onStageNow()) stageOptOut = true
+        }
+        if (micBusy) { done?.invoke(false); return }
         notice = null
         if (!on) {
-            voice.setMic(false)
+            voice.setMic(false, done)
             if (demo) { updateMine { it.copy(mic = false) }; return }
             scope.launch { runCatching { post(body("voice") { put("mic", false) }) }.getOrNull()?.member?.let(::upsert) }
             return
         }
         if (demo) {
             updateMine { it.copy(mic = true) }
-            voice.setMic(true)
+            voice.setMic(true, done)
             return
         }
         micBusy = true
         scope.launch {
+            var handed = false
             try {
                 val r = post(body("voice") { put("mic", true) })
                 r.member?.let(::upsert)
-                voice.setMic(true)
+                handed = true
+                voice.setMic(true) { ok ->
+                    if (!ok) {
+                        // 端末がマイクを断った: サーバにもオフと伝える
+                        scope.launch { runCatching { post(body("voice") { put("mic", false) }) }.getOrNull()?.member?.let(::upsert) }
+                    }
+                    done?.invoke(ok)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 notice = errorText(e, "マイクをオンにできませんでした")
             } finally {
                 micBusy = false
+                if (!handed) done?.invoke(false)
+            }
+        }
+    }
+
+    // MARK: ステージの自動マイク（ドリキン 2026-11-08）
+    // 上がって 1 秒立ち止まったらオン（通っただけでは入れない）、降りたらすぐ切る（自動で入れたときだけ）。
+    // 上で本人が切った・入れられなかったときは、出るまで自動では入れない。
+
+    private fun onStageNow(): Boolean {
+        val m = myMember ?: return false
+        return roomView && m.inRoom && zoneAt(m.x, m.y)?.kind == "stage"
+    }
+
+    private fun resetStage() {
+        stageJob?.cancel()
+        stageJob = null
+        stageAuto = false
+        stageOptOut = false
+        stageMicAsk = false
+    }
+
+    /** 自分が動いた（サーバが位置を受け取った）あと、自動の切り替えが終わったあとに呼ぶ: 今いる場所から決め直す。 */
+    private fun stageMoved() {
+        stageJob?.cancel()
+        stageJob = null
+        if (!onStageNow()) {
+            stageOptOut = false
+            stageMicAsk = false
+            if (stageAuto) {
+                stageAuto = false
+                if (voice.micOn) setMic(false, auto = true) { ok ->
+                    if (ok) showInfo("ステージを降りたので、マイクを切りました")
+                    else {
+                        // 切り替えの途中だった: 少し待って決め直す
+                        stageAuto = true
+                        stageJob = scope.launch { delay(500); stageMoved() }
+                    }
+                }
+            }
+            return
+        }
+        if (stageAuto || stageOptOut || voice.micOn) return
+        stageJob = scope.launch {
+            delay(STAGE_DWELL_MS)
+            stageJob = null
+            stageMicOn()
+        }
+    }
+
+    private fun stageMicOn() {
+        if (!onStageNow() || stageOptOut || stageAuto) return
+        val mine = myMember ?: return
+        if (!mine.listening || voice.phase != VoiceStore.Phase.CONNECTED || voice.micBusy || micBusy || voice.micOn) return
+        if (!voice.hasMicPermission) {
+            // マイクのボタンと同じく許可を尋ねる。出るまで自動では入れない（許可されたら stageMicGranted）
+            stageOptOut = true
+            stageMicAsk = true
+            return
+        }
+        setMic(true, auto = true) { ok ->
+            if (!ok) {
+                stageOptOut = true // 上限・端末の拒否（知らせは setMic が出す）
+                return@setMic
+            }
+            if (!onStageNow()) {
+                // 入れている間に降りていた: 自動で入れた扱いにして、降りたときの切り方で切る
+                stageAuto = true
+                stageMoved()
+                return@setMic
+            }
+            stageAuto = true
+            voice.playSfx(goingIn = true, mine = true)
+            showInfo("ステージに上がったので、マイクをオンにしました（部室の全員に届きます）。🎙 で切れます")
+        }
+    }
+
+    /** ステージでマイクの許可を尋ねた答え。 */
+    fun stageMicPermission(granted: Boolean) {
+        if (!granted) {
+            notice = "マイクを使えません（設定でマイクを許可してください）"
+            return
+        }
+        if (!onStageNow()) return
+        stageOptOut = false
+        stageMicOn()
+    }
+
+    private fun showInfo(text: String) {
+        info = text
+        infoJob?.cancel()
+        infoJob = scope.launch { delay(6000); info = null }
+    }
+
+    // MARK: 音声が思いがけず切れた
+
+    /** 部室で聞いているつもりなのに切れた: 回線などなら 1 回自動で入り直す（30 秒に 1 回、0〜3 秒ずらす）。
+     *  それ以外（退出させられた・入れなかった・入り直しの直後）は見るだけに落とす。別の端末で続けたなら何も書かない。 */
+    private fun voiceDropped(d: VoiceStore.Drop) {
+        stageAuto = false
+        stageJob?.cancel()
+        if (!roomView || !listening || demo) return
+        when {
+            d == VoiceStore.Drop.ELSEWHERE -> {
+                // スマホなど別の端末で続けている: サーバの「自分」はそちらなので、ここでは何も書かない
+                listening = false
+            }
+            d == VoiceStore.Drop.LOST && now() - autoRejoinAt > 30_000 -> {
+                autoRejoinAt = now()
+                scope.launch {
+                    // 大勢が同時に切れたとき（LiveKit の再起動など）一斉に入り直さないよう、ずらす
+                    delay(Random.nextLong(0, 3000))
+                    if (roomView && listening && !voice.inRoom) voice.join()
+                }
+            }
+            else -> {
+                listening = false
+                if (voice.notice == null) notice = "ボイスにつながりませんでした（見るだけにしました）"
+                scope.launch {
+                    runCatching { post(body("voice") { put("listening", false) }) }.getOrNull()?.member?.let(::upsert)
+                }
             }
         }
     }
@@ -644,7 +848,7 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
                     if (mine) {
                         if (ok) {
                             iMoved = true
-                            if (entering == null) sendMove(a.x, a.y)
+                            if (entering == null) sendMove(a.x, a.y, a.fromX, a.fromY)
                         } else a.path.clear()
                     }
                 }
@@ -683,13 +887,17 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
         return true
     }
 
-    private fun sendMove(x: Int, y: Int) {
+    private fun sendMove(x: Int, y: Int, fromX: Int, fromY: Int) {
+        val wasStage = zoneAt(fromX, fromY)?.kind == "stage"
+        val toStage = zoneAt(x, y)?.kind == "stage"
         if (demo) { updateMine { it.copy(x = x, y = y) }; return }
         val id = me ?: return
         mem[id]?.let { mem[id] = it.copy(x = x, y = y) }
         scope.launch {
             try {
                 post(body("move") { put("x", x); put("y", y) })
+                // ステージの乗り降り・上での一歩: サーバが位置を知ってから決める（立ち止まりの 1 秒は歩くたびに数え直す）
+                if (wasStage || toStage) stageMoved()
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -781,6 +989,8 @@ class RoomStore(private val api: ApiClient, private val voice: VoiceStore) {
 
     companion object {
         const val STEP_MS = 170L
+        /** ステージで立ち止まってからマイクを入れるまで。 */
+        const val STAGE_DWELL_MS = 1000L
         const val REACT_MS = 1800L
         val DEFAULT_REACTIONS = listOf("👋", "❤️", "😂", "👏", "🎉", "🍻")
         private val SOLID = setOf('#', 'w', 'D', 'C', 'B', 'T', 'M', 'F', 'V', 'P')

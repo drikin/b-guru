@@ -538,6 +538,8 @@ struct RoomResponse: Decodable, Sendable {
     var members: [RoomMember]
     var me: String
     var reactions: [String]?
+    /// サーバの起動ごとの印（再起動で変わる）。古いサーバには無い。
+    var boot: String?
 }
 
 struct RoomActionResponse: Decodable, Sendable {

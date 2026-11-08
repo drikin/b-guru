@@ -201,6 +201,9 @@ enum RoomArt {
 struct RoomView: View {
     @Bindable var room: RoomStore
     @State private var menuFor: RoomMember?
+    /// 人のメニューを出す位置（地図の中のタップした所）。
+    @State private var menuAnchor: UnitPoint = .center
+    @State private var showHear = false
     @FocusState private var focused: Bool
     /// The chat (and the panel / app) can be seen: the map is drawn only then.
     @Environment(\.screenVisibility) private var visibility
@@ -220,6 +223,11 @@ struct RoomView: View {
             }
             .onGeometryChange(for: CGSize.self) { $0.size } action: { mapSize = $0 }
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            // 人をタップしたときのメニュー（手を振る・そばへ行く・その人の音量）
+            .popover(item: $menuFor, attachmentAnchor: .point(menuAnchor)) { m in
+                RoomPersonMenu(room: room, member: m) { menuFor = nil }
+                    .presentationCompactAdaptation(.popover)
+            }
             // 右上: −・＋・全体・広げる（左下のリアクション、右下の移動パッドとは重ならない）。
             .overlay(alignment: .topTrailing) { zoomBar.padding(6) }
             .overlay(alignment: .bottomLeading) { reactionsBar.padding(6) }
@@ -236,29 +244,15 @@ struct RoomView: View {
         .focusEffectDisabled()
         .onKeyPress(phases: [.down, .repeat]) { press in key(press) }
         .onAppear { focused = true }
-        .confirmationDialog(menuFor?.name ?? "", isPresented: Binding(get: { menuFor != nil }, set: { if !$0 { menuFor = nil } }), titleVisibility: .visible) {
-            if let m = menuFor {
-                Button("👋 手を振る") { room.sendReaction("👋", to: m.userId) }
-                Button("そばへ行く") { room.walk(toX: m.x, y: m.y) }
-            }
-        }
     }
 
     // MARK: Controls
 
     private var controls: some View {
         HStack(spacing: 8) {
+            voiceButton
             Button {
-                Task { await room.setListening(!room.listening) }
-            } label: {
-                Label(room.listening ? "聞いている" : "見るだけ", systemImage: room.listening ? "headphones" : "eye")
-                    .font(.app(.subheadline))
-            }
-            .buttonStyle(.bordered)
-            .tint(room.listening ? Color.accentGreen : .secondary)
-            .help(room.listening ? "押すと音を聞かずに見るだけにします" : "押すと近くの人の声が聞こえます")
-            Button {
-                Task { await room.setMic(!room.voice.micOn) }
+                Task { await room.userSetMic(!room.voice.micOn) }
             } label: {
                 Label(room.voice.micOn ? "マイク オン" : "マイク オフ", systemImage: room.voice.micOn ? "mic.fill" : "mic.slash")
                     .font(.app(.subheadline))
@@ -274,12 +268,56 @@ struct RoomView: View {
                 .buttonStyle(.bordered)
             }
             #endif
+            hearButton
             Spacer(minLength: 4)
             if let z = room.zoneName {
                 Text(z + "にいます").font(.app(.caption, weight: .bold)).foregroundStyle(Color.accentGreen)
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .overlay(Capsule().stroke(Color.accentGreen))
             }
+        }
+    }
+
+    /// ボイスのボタン: 見るだけ →「🎧 ボイスに入る」（目立つ色）、つないでいる間 →「🎧 接続中…」、
+    /// つながったら「🎧 聞いている」（押すと見るだけに）。
+    @ViewBuilder private var voiceButton: some View {
+        let phase = room.voice.phase
+        let joining = room.listening && (phase == .connecting || phase == .reconnecting)
+        let live = room.listening && phase == .connected
+        if live || joining {
+            Button {
+                Task { await room.setListening(false) }
+            } label: {
+                Text(live ? "🎧 聞いている" : "🎧 接続中…").font(.app(.subheadline))
+            }
+            .buttonStyle(.bordered)
+            .tint(Color.accentGreen)
+            .help("押すと見るだけにします（音を出さない）")
+        } else {
+            Button {
+                Task { await room.setListening(true) }
+            } label: {
+                Text("🎧 ボイスに入る").font(.app(.subheadline, weight: .bold))
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color.accentGreen)
+            .help("押すとボイスに入って近くの人の声を聞きます")
+        }
+    }
+
+    /// 👂 聞こえている人（距離の音量・その人の音量のつまみ・出入りの効果音）。
+    private var hearButton: some View {
+        Button {
+            showHear = true
+        } label: {
+            Text("👂 \(room.heard.count)").font(.app(.subheadline)).monospacedDigit()
+        }
+        .buttonStyle(.bordered)
+        .tint(.secondary)
+        .accessibilityLabel("聞こえている人 \(room.heard.count) 人")
+        .popover(isPresented: $showHear) {
+            RoomHearList(room: room)
+                .presentationCompactAdaptation(.popover)
         }
     }
 
@@ -406,6 +444,9 @@ struct RoomView: View {
         focused = true
         let (tx, ty) = RoomZoom.tile(at: p, z: z, cam: cam)
         if let who = room.members.values.first(where: { $0.userId != room.meId && $0.x == tx && $0.y == ty }) {
+            if size.width > 0, size.height > 0 {
+                menuAnchor = UnitPoint(x: min(max(p.x / size.width, 0), 1), y: min(max(p.y / size.height, 0), 1))
+            }
             menuFor = who
             return
         }
@@ -448,8 +489,9 @@ struct RoomView: View {
             RoomArt.person(&g, x, y, RoomArt.look(m.userId), room.facing(m.userId, at: now), room.step(m.userId, at: now), sitting: sitting)
             let mark = m.away ? "💤" : !m.inRoom ? "⌨️" : !m.listening ? "👀" : speaking.contains(m.userId) || (m.userId == room.meId && room.voice.micActive) ? "🔊" : "🎧"
             let mine = m.userId == room.meId
-            label(&g, "\(mark) \(mine ? "あなた" : m.name)", x: x + 8, y: y - 9, fg: mine ? col(0x1d1820) : .white,
-                  bg: mine ? col(0xf2b24c, 0.92) : col(0x120e14, 0.78), center: true)
+            // 頭の上の名前札は小さく・背景は薄く（長い名前は切る。全部の名前は人のメニューに出る）
+            nameTag(&g, "\(mark) \(mine ? "あなた" : RoomNameTag.short(m.name))", x: x + 8, y: y - 7,
+                    fg: mine ? col(0x1d1820) : .white, bg: mine ? col(0xf2b24c, 0.85) : col(0x120e14, 0.5))
         }
         for (m, p) in people {
             let x = p.x * 16 + 8, y = p.y * 16 - 12
@@ -469,6 +511,16 @@ struct RoomView: View {
         let lx = center ? x - size.width / 2 - 2 : x
         g.fill(Path(CGRect(x: lx, y: y, width: size.width + 4, height: 9)), with: .color(bg))
         g.draw(t, at: CGPoint(x: lx + 2, y: y + 4.5), anchor: .leading)
+    }
+
+    /// 頭の上の名前札: ふつうのラベルより小さく、背景を薄く（Web の drawNameTag）。
+    private func nameTag(_ g: inout GraphicsContext, _ s: String, x: CGFloat, y: CGFloat, fg: Color, bg: Color) {
+        let t = g.resolve(Text(s).font(.app(size: 6)).foregroundStyle(fg))
+        let size = RoomArt.labelSize("tag:" + s) { t.measure(in: CGSize(width: 400, height: 20)) }
+        let w = ceil(size.width) + 3
+        let lx = (x - w / 2).rounded()
+        g.fill(Path(CGRect(x: lx, y: y, width: w, height: 7)), with: .color(bg))
+        g.draw(t, at: CGPoint(x: lx + 1.5, y: y + 3.5), anchor: .leading)
     }
 
     private func bubble(_ g: inout GraphicsContext, _ s: String, x: Double, y: Double) {
@@ -510,6 +562,81 @@ struct RoomView: View {
 
 /// Smooth (30 a second) until `busyUntil`, then every 0.45 s on the beagle's step; nothing
 /// while paused.
+/// 部室で人をタップしたときのメニュー: 名前（切らずに全部）・手を振る・そばへ行く・その人の音量。
+private struct RoomPersonMenu: View {
+    @Bindable var room: RoomStore
+    let member: RoomMember
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(member.name).font(.app(.headline)).lineLimit(2)
+            HStack(spacing: 8) {
+                Button("👋 手を振る") { room.sendReaction("👋", to: member.userId); close() }
+                Button("そばへ行く") { room.walk(toX: member.x, y: member.y); close() }
+            }
+            .buttonStyle(.bordered)
+            if member.inRoom {
+                VoiceGainSlider(voice: room.voice, userId: member.userId, name: member.name)
+            }
+        }
+        .padding(12)
+        .frame(width: 250, alignment: .leading)
+    }
+}
+
+/// 👂 聞こえている人: 距離による大きさと、その人の音量のつまみ（自分にだけ効く）。出入りの効果音のスイッチも。
+private struct RoomHearList: View {
+    @Bindable var room: RoomStore
+
+    var body: some View {
+        let list = room.heard
+        let speaking = Set(room.voice.members.filter { $0.speaking }.map(\.userId))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("聞こえている人").font(.app(.subheadline, weight: .bold))
+                if list.isEmpty {
+                    Text(room.listening ? "近くに誰もいません。誰かのそばへ歩いてみてください。" : "見るだけにしています。")
+                        .font(.app(.caption)).foregroundStyle(.secondary)
+                }
+                ForEach(list, id: \.member.userId) { item in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text((speaking.contains(item.member.userId) ? "🔊 " : "") + item.member.name)
+                                .font(.app(.caption)).lineLimit(1)
+                            Spacer(minLength: 4)
+                            ProgressView(value: item.volume).frame(width: 60).tint(Color.accentGreen)
+                            Text("\(Int((item.volume * 100).rounded()))%").font(.app(.caption2)).monospacedDigit()
+                                .foregroundStyle(.secondary).frame(width: 34, alignment: .trailing)
+                        }
+                        .accessibilityElement(children: .combine)
+                        VoiceGainSlider(voice: room.voice, userId: item.member.userId, name: item.member.name)
+                    }
+                }
+                Text("つまみはその人の声の大きさです（自分にだけ効きます）。").font(.app(.caption2)).foregroundStyle(.secondary)
+                Toggle("🔔 出入りの効果音（近くの人と自分）", isOn: Binding(get: { room.voice.sfxOn }, set: { room.voice.setSfx($0) }))
+                    .font(.app(.caption))
+                    .tint(Color.accentGreen)
+                Text(rule).font(.app(.caption2)).foregroundStyle(.secondary)
+                Text("⌨️ テキスト　🎧 聞いている　🔊 話している　👀 見るだけ　💤 離席").font(.app(.caption2)).foregroundStyle(.secondary)
+            }
+            .padding(12)
+        }
+        .frame(width: 280)
+        .frame(maxHeight: 420)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var rule: String {
+        let zone = room.geometry.flatMap { geo in room.me.flatMap { geo.zone($0.x, $0.y) } }
+        switch zone?.kind {
+        case "table": return "テーブルの中の人とだけ話せます（外には聞こえません）"
+        case "stage": return "ステージの声は部室の全員に届きます"
+        default: return "まわり \(room.geometry?.map.hearRadius ?? 4) マスの人の声が聞こえます。離れるほど小さく、ステージの声は全員に届きます。"
+        }
+    }
+}
+
 struct RoomSchedule: TimelineSchedule {
     let busyUntil: Date
     let paused: Bool

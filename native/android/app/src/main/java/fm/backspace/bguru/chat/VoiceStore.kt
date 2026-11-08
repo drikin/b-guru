@@ -3,8 +3,11 @@ package fm.backspace.bguru.chat
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioTrack
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -37,6 +40,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import livekit.org.webrtc.AudioTrackSink
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -92,6 +96,26 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
     /** Someone the member chose to report (the bar shows the reason prompt). */
     var reportTarget by mutableStateOf<Member?>(null)
 
+    private val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    /** 相手ごとの音量（自分だけ、0…1、無ければ 1）。端末に覚える（2026-11-08 オフ会の要望、Web と同じ）。 */
+    var gains by mutableStateOf(RoomVoiceLogic.parseGains(prefs.getString(KEY_GAINS, null))); private set
+    /** 出入りの効果音（既定はオン）。 */
+    var sfx by mutableStateOf(prefs.getBoolean(KEY_SFX, true)); private set
+
+    /** 音声が思いがけず切れた・入れなかった（部室が「見るだけ」に落とすか、入り直すかを決める）。 */
+    enum class Drop {
+        /** つながっていた（つなぎ直し中だった）のに切れた: 回線など。 */
+        LOST,
+        /** 管理者に退出させられた。 */
+        REMOVED,
+        /** 同じ人が別の端末で続けた。 */
+        ELSEWHERE,
+        /** つなぐ途中で失敗した（入室券がもらえない・つながらない）。 */
+        FAILED,
+    }
+    /** RoomStore が部室にいる間だけ設定する。自分で切ったとき（leave）は呼ばない。 */
+    var onDropped: ((Drop) -> Unit)? = null
+
     val inRoom get() = phase != Phase.IDLE
     /** Only admins mute / remove / ban (the server enforces the same). */
     val canModerate get() = isAdmin
@@ -127,14 +151,79 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
         }
     }
 
+    /** 部室は距離の音量 × 自分で決めた音量。部室でないボイスルームは自分で決めた音量だけ。 */
     private fun applyVolumes() {
         val r = room ?: return
-        val f = proximity ?: return
+        val f = proximity
         for (p in r.remoteParticipants.values) {
             val id = p.identity?.value ?: continue
-            val v = f(id).coerceIn(0.0, 1.0)
+            val v = RoomVoiceLogic.playVolume(f?.invoke(id), gains[id] ?: 1f)
             for ((_, track) in p.audioTrackPublications) (track as? RemoteAudioTrack)?.setVolume(v)
         }
+    }
+
+    /** 相手の声の大きさ（0…1）。1 は覚えない（いつもの大きさ）。 */
+    fun setUserGain(id: String, gain: Float) {
+        gains = RoomVoiceLogic.withGain(gains, id, gain)
+        prefs.edit().putString(KEY_GAINS, RoomVoiceLogic.encodeGains(gains)).apply()
+        applyVolumes()
+    }
+
+    fun changeSfx(on: Boolean) {
+        sfx = on
+        prefs.edit().putBoolean(KEY_SFX, on).apply()
+    }
+
+    private var sfxLast = 0L
+
+    /** 出入りの効果音: in は上がる 2 音、out は下がる 2 音。自分の出入りは少し大きく、ほかの人は 1.2 秒に 1 回まで。
+     *  その場で PCM を作って AudioTrack で鳴らすだけ（AudioManager のモードには触らないので、通話の音声は変わらない）。 */
+    fun playSfx(goingIn: Boolean, mine: Boolean) {
+        if (!sfx) return
+        val now = System.currentTimeMillis()
+        if (!mine && now - sfxLast < RoomVoiceLogic.SFX_GAP_MS) return
+        sfxLast = now
+        // 通話中は通話と同じ出力（Bluetooth なども）へ。抜けたあとはふつうの効果音として
+        val inCall = room != null && !(mine && !goingIn)
+        scope.launch {
+            withContext(Dispatchers.Default) {
+                var track: AudioTrack? = null
+                try {
+                    val rate = 24_000
+                    val pcm = RoomVoiceLogic.sfxPcm(goingIn, mine, rate)
+                    track = AudioTrack.Builder()
+                        .setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(if (inCall) AudioAttributes.USAGE_VOICE_COMMUNICATION else AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                .build(),
+                        )
+                        .setAudioFormat(
+                            AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(rate)
+                                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build(),
+                        )
+                        .setTransferMode(AudioTrack.MODE_STATIC)
+                        .setBufferSizeInBytes(pcm.size * 2)
+                        .build()
+                    track.write(pcm, 0, pcm.size)
+                    track.play()
+                    delay(pcm.size * 1000L / rate + 150)
+                    track.stop()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (BuildConfig.DEBUG) android.util.Log.d("BguruVoice", "sfx failed", e)
+                } finally {
+                    track?.release()
+                }
+            }
+        }
+    }
+
+    /** その人の出入りを鳴らすか: 部室では声が届く範囲の人だけ、ボイスルームでは全員。 */
+    private fun audibleToMe(id: String?): Boolean {
+        val f = proximity ?: return true
+        return id != null && f(id) > 0
     }
 
     /** Only the people allowed to hear me may subscribe to my mic track. Sent when the set
@@ -227,11 +316,13 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
                 if (mine != attempt) return@launch
                 teardown()
                 notice = message(e)
+                onDropped?.invoke(Drop.FAILED)
             } catch (e: Exception) {
                 if (mine != attempt) return@launch
                 if (BuildConfig.DEBUG) android.util.Log.d("BguruVoice", "connect failed", e)
                 teardown()
                 notice = "ボイスルームにつながりませんでした"
+                onDropped?.invoke(Drop.FAILED)
             }
         }
     }
@@ -275,17 +366,17 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
         if (myUserId == null) myUserId = r.localParticipant.identity?.value
         micOn = false
         // Room mode: restrict who receives my mic before it can ever be published.
-        if (roomMode) {
-            sendPermissions(force = true)
-            applyVolumes()
-        }
+        if (roomMode) sendPermissions(force = true)
+        applyVolumes()
         phase = Phase.CONNECTED
         VoiceService.start(app, mic = false)
         refreshMembers()
+        playSfx(goingIn = true, mine = true)
     }
 
     fun leave(reason: String? = null) {
         if (phase == Phase.IDLE && room == null) return
+        if (phase == Phase.CONNECTED) playSfx(goingIn = false, mine = true)
         teardown()
         if (reason != null) notice = reason
     }
@@ -298,16 +389,19 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
 
     /** The first unmute starts the mic and publishes the track, which takes a second or
      *  two. The button flips at once (optimistic) and ignores taps until that finishes.
-     *  The caller has already got the RECORD_AUDIO permission. */
-    fun setMic(on: Boolean) {
-        val r = room ?: return
-        if ((phase != Phase.CONNECTED && phase != Phase.RECONNECTING) || micBusy) return
+     *  The caller has already got the RECORD_AUDIO permission.
+     *  [done]: 終わったら（すぐ断ったときも）呼ぶ。引数は望みどおりになったか。 */
+    fun setMic(on: Boolean, done: ((Boolean) -> Unit)? = null) {
+        val r = room ?: run { done?.invoke(!on); return }
+        if ((phase != Phase.CONNECTED && phase != Phase.RECONNECTING) || micBusy) { done?.invoke(micOn == on); return }
         if (on && !roomMode && members.count { !it.isMe && !it.muted } >= maxSpeakers) {
             notice = "話せるのは同時に $maxSpeakers 人までです。誰かがミュートするまでお待ちください"
+            done?.invoke(false)
             return
         }
         if (on && !hasMicPermission) {
             notice = "マイクを使えません（設定でマイクを許可してください）"
+            done?.invoke(false)
             return
         }
         micBusy = true
@@ -331,6 +425,7 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
                 micBusy = false
             }
             refreshMembers()
+            done?.invoke(micOn == on)
         }
     }
 
@@ -442,9 +537,22 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
                     DisconnectReason.DUPLICATE_IDENTITY -> VoiceHandoff.CONTINUED_ELSEWHERE
                     else -> "ボイスルームの接続が切れました"
                 }
+                // つながっていた（つなぎ直し中だった）ときだけ LOST。つなぐ途中なら FAILED（部室は入り直さない）
+                val drop = when {
+                    e.reason == DisconnectReason.PARTICIPANT_REMOVED -> Drop.REMOVED
+                    e.reason == DisconnectReason.DUPLICATE_IDENTITY -> Drop.ELSEWHERE
+                    phase == Phase.CONNECTED || phase == Phase.RECONNECTING -> Drop.LOST
+                    else -> Drop.FAILED
+                }
                 teardown()
+                onDropped?.invoke(drop)
                 return
             }
+            // ほかの人の出入り: 部室では声が届く人だけ、ボイスルームでは全員（小さめ、1.2 秒に 1 回まで）
+            is RoomEvent.ParticipantConnected ->
+                if (phase == Phase.CONNECTED && audibleToMe(e.participant.identity?.value)) playSfx(goingIn = true, mine = false)
+            is RoomEvent.ParticipantDisconnected ->
+                if (phase == Phase.CONNECTED && audibleToMe(e.participant.identity?.value)) playSfx(goingIn = false, mine = false)
             else -> Unit
         }
         // An admin turned my mic off from the server: follow it.
@@ -454,8 +562,8 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
             notice = "マイクがオフにされました（管理者の操作か、話せる人数の上限のため）"
         }
         refreshMembers()
-        // A newly subscribed track starts at full volume: set it for where they stand.
-        if (roomMode) applyVolumes()
+        // A newly subscribed track starts at full volume: set it for where they stand (and my own gain).
+        applyVolumes()
         // Participant state (mic on/off, subscribed track) settles a moment after the
         // event itself — read it again once it has, so a face never stays stale.
         settle?.cancel()
@@ -463,7 +571,7 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
             delay(400)
             if (room === r) {
                 refreshMembers()
-                if (roomMode) applyVolumes()
+                applyVolumes()
             }
         }
     }
@@ -501,6 +609,12 @@ class VoiceStore(private val api: ApiClient, private val app: Context) {
             else -> e.serverMessage ?: "ボイスルームに入れません"
         }
         is ApiError.Transport -> "ネットワークにつながりません"
+    }
+
+    companion object {
+        const val PREFS = "voice"
+        const val KEY_GAINS = "voiceGains"
+        const val KEY_SFX = "voiceSfx"
     }
 }
 
