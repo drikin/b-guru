@@ -490,6 +490,8 @@ private struct OverlayExpandedWindow: View {
     var onChip: (ActivityID) -> Void
 
     private var overlay: OverlayModel { store.overlay }
+    /// 部室の地図を「広げる」（RoomView の ⤢）。
+    @AppStorage(RoomZoom.expandedKey) private var roomExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -557,7 +559,7 @@ private struct OverlayExpandedWindow: View {
         case .room:
             if store.room.mode == .room {
                 RoomView(room: store.room)
-                    .frame(height: max(220, (store.shogi.areaHeight > 0 ? store.shogi.areaHeight : 700) * 0.45))
+                    .frame(height: max(220, (store.shogi.areaHeight > 0 ? store.shogi.areaHeight : 700) * (roomExpanded ? RoomZoom.expandedHeight : 0.45)))
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     OverlayRoomMini(overlay: overlay)

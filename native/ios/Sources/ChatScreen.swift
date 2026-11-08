@@ -17,6 +17,8 @@ struct ChatScreen: View {
     /// re-run this view and every row.
     @State private var composer = ChatComposerModel()
     @State private var viewing: ImageViewerItem?
+    /// 部室の地図を「広げる」（RoomView の ⤢）: 地図の高さを使える高さのほとんどに。
+    @AppStorage(RoomZoom.expandedKey) private var roomExpanded = false
 
     /// テキスト｜ルーム｜☗｜🎮｜🍻 and 📺 beside it.
     private func modeRow(compact: Bool) -> some View {
@@ -82,7 +84,7 @@ struct ChatScreen: View {
                     } else if store.room.enabled && store.room.mode == .room {
                         RoomView(room: store.room)
                             .padding(.horizontal, 8)
-                            .containerRelativeFrame(.vertical) { h, _ in h * 0.5 }
+                            .containerRelativeFrame(.vertical) { h, _ in h * RoomZoom.heightFraction(expanded: roomExpanded) }
                     }
                     if !store.room.enabled { VoiceBar(voice: store.voice) }
                 } else {

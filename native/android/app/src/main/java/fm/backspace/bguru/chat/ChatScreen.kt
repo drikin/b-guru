@@ -546,8 +546,16 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                             chatPane(Modifier.width(400.dp).fillMaxSize())
                         }
                     } else {
+                        // Half and half; 「広げる」 (⤢ on the map, kept on the device) gives the room most of the
+                        // column and leaves the chat a few lines (drikin 2026-11-08).
+                        val roomPrefs = rememberRoomViewPrefs()
+                        val roomColumnH = maxHeight
                         Column(Modifier.fillMaxSize()) {
-                            RoomPanel(room, store.voice, onScreen, Modifier.weight(1f).fillMaxWidth())
+                            if (roomPrefs.expanded) {
+                                RoomPanel(room, store.voice, onScreen, Modifier.fillMaxWidth().height(RoomViewPrefs.expandedHeight(roomColumnH.value).dp), canExpand = true)
+                            } else {
+                                RoomPanel(room, store.voice, onScreen, Modifier.weight(1f).fillMaxWidth(), canExpand = true)
+                            }
                             chatPane(Modifier.weight(1f).fillMaxWidth())
                         }
                     }

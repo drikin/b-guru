@@ -500,7 +500,11 @@ private fun ExpandedCard(store: ChatStore, a: OverlayActivity, activities: List<
     val ctx = LocalContext.current
     // About half the screen (spec: iPhone ~50 %), leaving at least a few lines of the chat under it.
     val screenH = LocalConfiguration.current.screenHeightDp.dp
-    val h = (screenH * 0.5f).coerceAtMost(areaH - 64.dp).coerceAtLeast(minOf(areaH, 220.dp))
+    val roomPrefs = rememberRoomViewPrefs()
+    val roomExpanded = a.id == ActivityId.ROOM && store.room.roomView && roomPrefs.expanded
+    // 🏠 「広げる」 (⤢ on the map, drikin 2026-11-08): most of the area, a few lines of the chat left.
+    val h = if (roomExpanded) RoomViewPrefs.expandedHeight(areaH.value, minChatDp = 64f).dp
+        else (screenH * 0.5f).coerceAtMost(areaH - 64.dp).coerceAtLeast(minOf(areaH, 220.dp))
     val sticky = activities.filter { it.sticky }.map { it.id }.toSet()
     val chips = o.chips(sticky).mapNotNull { id -> activities.firstOrNull { it.id == id } }
     Surface(Modifier.fillMaxWidth().height(h), color = MaterialTheme.colorScheme.surface, shadowElevation = 10.dp) {
@@ -522,7 +526,7 @@ private fun ExpandedCard(store: ChatStore, a: OverlayActivity, activities: List<
                     }
                     ActivityId.OFFKAI -> OffkaiPanel(store.offkai, Modifier.fillMaxSize())
                     ActivityId.WATCH -> WatchPlayerHost(store.watch, Modifier.fillMaxSize())
-                    ActivityId.ROOM -> if (store.room.roomView) RoomPanel(store.room, store.voice, onScreen, Modifier.fillMaxSize())
+                    ActivityId.ROOM -> if (store.room.roomView) RoomPanel(store.room, store.voice, onScreen, Modifier.fillMaxSize(), canExpand = true)
                         else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Surface(shape = RoundedCornerShape(14.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.width(240.dp)) {
                                 RoomMini(store.room, store.voice) {}

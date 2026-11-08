@@ -17,6 +17,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
@@ -178,13 +179,16 @@ fun RoomModeSwitch(room: RoomStore, voice: VoiceStore, shogi: ShogiStore? = null
     }
 }
 
-/** Camera / scale of the last frame, for turning a tap into a tile. */
-private class Camera { var zoom = 3f; var camX = 0f; var camY = 0f }
+/** Camera / scale of the last frame, for turning a tap into a tile (and −/＋/pinch into a new scale). */
+private class Camera { var zoom = 3f; var camX = 0f; var camY = 0f; var scale: RoomZoom.Scale? = null }
 
-/** The room view: controls, the map, the reactions. */
+/** The room view: controls, the map, the reactions. [canExpand]: the column around it makes the map
+ *  taller when 「広げる」 is on (RoomViewPrefs.expanded), so the ⤢ button is shown. */
 @Composable
-fun RoomPanel(room: RoomStore, voice: VoiceStore, visible: Boolean, modifier: Modifier = Modifier) {
+fun RoomPanel(room: RoomStore, voice: VoiceStore, visible: Boolean, modifier: Modifier = Modifier, canExpand: Boolean = false) {
     val actions = rememberRoomActions(room, voice)
+    val viewPrefs = rememberRoomViewPrefs()
+    val cam = remember { Camera() }
     val me = room.myMember
     val zone = me?.let { room.zoneAt(it.x, it.y) }
     val focus = remember { FocusRequester() }
@@ -224,12 +228,14 @@ fun RoomPanel(room: RoomStore, voice: VoiceStore, visible: Boolean, modifier: Mo
                 .focusable()
                 .onKeyEvent { e -> roomKey(room, e.key, e.type == KeyEventType.KeyDown, e.type == KeyEventType.KeyUp) },
         ) {
-            RoomCanvas(room, voice, visible, focus = focus)
+            RoomCanvas(room, voice, visible, focus = focus, cam = cam, viewPrefs = viewPrefs)
+            // −｜＋｜全体｜⤢ at the top right of the map (the hint moves under them).
+            ZoomButtons(viewPrefs, cam, canExpand, Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp))
             if (room.hint) {
                 Text(
                     "タップした場所へ歩きます。人をタップすると手を振れます",
                     color = RoomFg, fontSize = 12.sp,
-                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 8.dp)
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 44.dp, start = 8.dp, end = 8.dp)
                         .background(Color(0xCC120E14), RoundedCornerShape(6.dp)).padding(horizontal = 10.dp, vertical = 4.dp),
                 )
             }
@@ -283,6 +289,33 @@ private fun Chip(text: String, on: Boolean, enabled: Boolean = true, onClick: ()
     ) { Text(text, color = if (enabled) RoomFg else RoomMuted, fontSize = 13.sp, maxLines = 1) }
 }
 
+/** −／＋ (×1.25), 全体 (the whole map ↔ as before) and ⤢／⤡ (広げる). They work on the scale of the
+ *  last frame, so they start from what is on screen (the stored one may be clamped). */
+@Composable
+private fun ZoomButtons(prefs: RoomViewPrefs, cam: Camera, canExpand: Boolean, modifier: Modifier) {
+    @Composable
+    fun Btn(label: String, desc: String, onClick: () -> Unit) {
+        Box(
+            Modifier.height(32.dp).widthIn(min = 32.dp)
+                .background(Color(0x99120E14), RoundedCornerShape(8.dp))
+                .border(1.dp, Color(0x66F3E9D8), RoundedCornerShape(8.dp))
+                .pointerInput(onClick) { detectTapGestures { onClick() } }
+                .semantics { contentDescription = desc }
+                .padding(horizontal = 6.dp),
+            contentAlignment = Alignment.Center,
+        ) { Text(label, color = RoomFg, fontSize = if (label.length > 1) 12.sp else 16.sp, maxLines = 1) }
+    }
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Btn("−", "縮小") { cam.scale?.let { prefs.changeScale(RoomZoom.zoomOut(it)) } }
+        Btn("＋", "拡大") { cam.scale?.let { prefs.changeScale(RoomZoom.zoomIn(it)) } }
+        Btn("全体", "全体を見る") { cam.scale?.let { prefs.changeScale(RoomZoom.toggleFit(it)) } }
+        if (canExpand) {
+            if (prefs.expanded) Btn("⤡", "部室を元の高さに戻す") { prefs.toggleExpanded() }
+            else Btn("⤢", "部室を広げる") { prefs.toggleExpanded() }
+        }
+    }
+}
+
 /** On-screen pad: press and hold to keep walking. */
 @Composable
 private fun DPad(room: RoomStore, modifier: Modifier) {
@@ -312,9 +345,8 @@ private fun DPad(room: RoomStore, modifier: Modifier) {
 }
 
 @Composable
-private fun RoomCanvas(room: RoomStore, voice: VoiceStore, visible: Boolean, focus: FocusRequester) {
+private fun RoomCanvas(room: RoomStore, voice: VoiceStore, visible: Boolean, focus: FocusRequester, cam: Camera, viewPrefs: RoomViewPrefs) {
     var frame by remember { mutableLongStateOf(0L) }
-    val cam = remember { Camera() }
     val painter = remember { RoomPainter() }
     var menu by remember { mutableStateOf<Pair<String, Offset>?>(null) }
     val density = LocalDensity.current
@@ -345,15 +377,38 @@ private fun RoomCanvas(room: RoomStore, voice: VoiceStore, visible: Boolean, foc
     }
     Box(Modifier.fillMaxSize()) {
         Canvas(
-            Modifier.fillMaxSize().clipToBounds().pointerInput(room) {
-                detectTapGestures { off ->
-                    runCatching { focus.requestFocus() }
-                    menu = null
-                    val tx = floor((off.x / cam.zoom + cam.camX) / T).toInt()
-                    val ty = floor((off.y / cam.zoom + cam.camY) / T).toInt()
-                    room.tap(tx, ty)?.let { menu = it to off }
+            Modifier.fillMaxSize().clipToBounds()
+                // Pinch (two fingers only, so a one-finger tap still walks / waves).
+                .pointerInput(viewPrefs) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        var pinched = false
+                        do {
+                            val e = awaitPointerEvent()
+                            if (e.changes.count { it.pressed } >= 2) {
+                                val f = e.calculateZoom()
+                                if (f != 1f) cam.scale?.let { s ->
+                                    pinched = true
+                                    val next = RoomZoom.pinch(s, f)
+                                    viewPrefs.changeScale(next, save = false)
+                                    // The next frame may not have drawn yet: keep a running scale.
+                                    cam.scale = RoomZoom.Scale((s.auto * next).coerceIn(s.min, s.max), s.auto, s.min, s.max)
+                                }
+                                e.changes.forEach { it.consume() }
+                            }
+                        } while (e.changes.any { it.pressed })
+                        if (pinched) viewPrefs.saveScale()
+                    }
                 }
-            },
+                .pointerInput(room) {
+                    detectTapGestures { off ->
+                        runCatching { focus.requestFocus() }
+                        menu = null
+                        val tx = RoomZoom.tileAt(off.x, cam.camX, cam.zoom)
+                        val ty = RoomZoom.tileAt(off.y, cam.camY, cam.zoom)
+                        room.tap(tx, ty)?.let { menu = it to off }
+                    }
+                },
         ) {
             if (frame < 0) return@Canvas // read every frame: redraws as the room moves
             val speaking = buildSet {
@@ -361,7 +416,8 @@ private fun RoomCanvas(room: RoomStore, voice: VoiceStore, visible: Boolean, foc
                 if (voice.micActive) room.me?.let(::add)
             }
             val widthDp = size.width / density.density
-            drawIntoCanvas { c -> painter.draw(c.nativeCanvas, room, speaking, size.width, size.height, widthDp, cam) }
+            val userScale = viewPrefs.scale // read here: a new scale redraws even while the room sleeps
+            drawIntoCanvas { c -> painter.draw(c.nativeCanvas, room, speaking, size.width, size.height, widthDp, userScale, cam) }
         }
         menu?.let { (id, at) ->
             val m = room.members.firstOrNull { it.userId == id }
@@ -379,7 +435,7 @@ private fun RoomCanvas(room: RoomStore, voice: VoiceStore, visible: Boolean, foc
     }
 }
 
-private const val T = 16
+private const val T = RoomZoom.TILE
 
 /** All the pixel art, drawn on the platform canvas with anti-aliasing off. Colours as 0xAARRGGBB. */
 private class RoomPainter {
@@ -398,19 +454,20 @@ private class RoomPainter {
         c.drawRect(fx, fy, fx + w.toFloat(), fy + h.toFloat(), p)
     }
 
-    fun draw(canvas: android.graphics.Canvas, room: RoomStore, speaking: Set<String>, wPx: Float, hPx: Float, widthDp: Float, cam: Camera) {
+    fun draw(canvas: android.graphics.Canvas, room: RoomStore, speaking: Set<String>, wPx: Float, hPx: Float, widthDp: Float, userScale: Float, cam: Camera) {
         val map = room.map ?: return
         val b = baseBitmap(room, map)
         val mapW = map.w * T; val mapH = map.h * T
-        // About 13 tiles across on a phone, more on a wide screen; always an integer scale.
-        val zoom = max(2, floor(wPx / (T * min(map.w.toFloat(), max(13f, widthDp / 46f)))).toInt()).toFloat()
-        val vw = wPx / zoom; val vh = hPx / zoom
+        // The automatic scale (about 13 tiles across on a phone, more on a wide screen; an integer) × the
+        // member's own (−/＋/全体/pinch), between "the whole map" and twice the automatic one. It may be
+        // fractional: the art is still drawn unfiltered (nearest pixel).
+        val s = RoomZoom.scale(wPx, hPx, widthDp, map.w, map.h, userScale)
+        val zoom = s.zoom
+        val tz = RoomZoom.textZoom(s)
         val me = room.myActor
-        val cx = if (me != null) (me.fx + 0.5f) * T - vw / 2 else (mapW - vw) / 2
-        val cy = if (me != null) (me.fy + 0.5f) * T - vh / 2 else (mapH - vh) / 2
-        val camX = max(min(cx, mapW - vw), min(0f, (mapW - vw) / 2)).roundToInt().toFloat()
-        val camY = max(min(cy, mapH - vh), min(0f, (mapH - vh) / 2)).roundToInt().toFloat()
-        cam.zoom = zoom; cam.camX = camX; cam.camY = camY
+        val camX = RoomZoom.cam(me?.let { (it.fx + 0.5f) * T }, mapW, wPx, zoom)
+        val camY = RoomZoom.cam(me?.let { (it.fy + 0.5f) * T }, mapH, hPx, zoom)
+        cam.zoom = zoom; cam.camX = camX; cam.camY = camY; cam.scale = s
 
         c = canvas
         canvas.save()
@@ -457,8 +514,8 @@ private class RoomPainter {
         // Text in screen space (crisp at any scale).
         fun sx(bx: Float) = (bx - camX) * zoom
         fun sy(by: Float) = (by - camY) * zoom
-        map.zones.forEach { z -> label(z.name, sx(z.x * T + 3f), sy(z.y * T + 2f), zoom, 0xBF120E14, 0xFF3CCF74, center = false) }
-        map.labels.forEach { l -> label(l.name, sx(l.x * T + 2f), sy(l.y * T + 3f), zoom, 0xBF120E14, 0xFFF2B24C, center = false) }
+        map.zones.forEach { z -> label(z.name, sx(z.x * T + 3f), sy(z.y * T + 2f), tz, 0xBF120E14, 0xFF3CCF74, center = false) }
+        map.labels.forEach { l -> label(l.name, sx(l.x * T + 2f), sy(l.y * T + 3f), tz, 0xBF120E14, 0xFFF2B24C, center = false) }
         for (a in people) {
             val m = members[a.id] ?: continue
             val x = (a.fx * T).roundToInt(); val y = (a.fy * T).roundToInt() - 2
@@ -466,21 +523,23 @@ private class RoomPainter {
             val v = if (mine) 1.0 else room.volumeFor(a.id)
             val mark = RoomStore.statusMark(m, a.id in speaking)
             label(
-                "$mark ${m.name}", sx(x + 8f), sy(y - 9f), zoom,
+                // Its bottom on the head (as before at 1.0); the text may be larger than the art zoomed out.
+                "$mark ${m.name}", sx(x + 8f), sy(y.toFloat()) - 9f * tz, tz,
                 if (mine) 0xEBF2B24C else 0xC7120E14,
                 if (mine) 0xFF1D1820 else if (v > 0 || !m.inRoom) 0xFFF3E9D8 else 0xFF9A8FA0,
                 center = true,
             )
         }
         val now = RoomStore.now()
-        for (a in people) a.bubble?.let { if (it.until > now) bubble(it.text, sx((a.fx * T).roundToInt() + 8f), sy((a.fy * T).roundToInt() - 12f), zoom) }
-        room.beagle?.let { bg -> bg.bubble?.let { if (it.until > now) bubble(it.text, sx((bg.fx * T).roundToInt() + 8f), sy(bg.y * T - 12f), zoom) } }
+        // Above the name label (10 text units over the head, as before at 1.0).
+        for (a in people) a.bubble?.let { if (it.until > now) bubble(it.text, sx((a.fx * T).roundToInt() + 8f), sy((a.fy * T).roundToInt() - 2f) - 10f * tz, tz) }
+        room.beagle?.let { bg -> bg.bubble?.let { if (it.until > now) bubble(it.text, sx((bg.fx * T).roundToInt() + 8f), sy(bg.y * T - 2f) - 10f * tz, tz) } }
         // Reactions float up and fade.
         for (a in people) {
             a.reacts.forEachIndexed { i, r ->
                 val k = ((now - r.t0) / RoomStore.REACT_MS.toFloat())
                 if (k < 0f || k > 1f) return@forEachIndexed
-                text.textSize = (if (r.small) 9f else 13f) * zoom
+                text.textSize = (if (r.small) 9f else 13f) * tz
                 text.color = 0xFFFFFFFF.toInt()
                 text.alpha = ((1 - k * k) * 255).roundToInt()
                 c.drawText(r.emoji, sx((a.fx * T).roundToInt() + 1f + i * 7), sy((a.fy * T).roundToInt() - 4f - k * 18 - if (r.small) 8 else 0), text)

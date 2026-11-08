@@ -24,6 +24,8 @@ struct ChatView: View {
         _composer = State(initialValue: ChatComposerModel(draft: initialDraft))
     }
     @State private var viewing: ImageViewerItem?
+    /// 部室の地図を「広げる」（RoomView の ⤢）: 地図の高さを使える高さのほとんどに。
+    @AppStorage(RoomZoom.expandedKey) private var roomExpanded = false
 
     /// チャットの上に重ねる形 is on for this member and something can sit over the chat.
     private var overlayOn: Bool { store.overlay.enabled && store.overlay.anyAvailable }
@@ -63,7 +65,7 @@ struct ChatView: View {
                 if store.room.mode == .room {
                     RoomView(room: store.room)
                         .padding(.horizontal, 8)
-                        .containerRelativeFrame(.vertical) { h, _ in h * 0.5 }
+                        .containerRelativeFrame(.vertical) { h, _ in h * RoomZoom.heightFraction(expanded: roomExpanded) }
                 }
             } else {
                 VoiceBar(voice: store.voice)

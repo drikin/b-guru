@@ -205,6 +205,12 @@ struct RoomView: View {
     /// The chat (and the panel / app) can be seen: the map is drawn only then.
     @Environment(\.screenVisibility) private var visibility
     private var onScreen: Bool { visibility?.room ?? true }
+    /// 利用者の倍率（RoomZoom）と「広げる」。どちらも端末に覚える。
+    @AppStorage(RoomZoom.scaleKey) private var zoomScale = 1.0
+    @AppStorage(RoomZoom.expandedKey) private var expanded = false
+    /// ピンチの途中の倍率（終わったら zoomScale に入れる）。
+    @State private var pinch: CGFloat = 1
+    @State private var mapSize: CGSize = .zero
 
     var body: some View {
         VStack(spacing: 6) {
@@ -212,7 +218,10 @@ struct RoomView: View {
             GeometryReader { geo in
                 map(size: geo.size)
             }
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { mapSize = $0 }
             .clipShape(RoundedRectangle(cornerRadius: 10))
+            // 右上: −・＋・全体・広げる（左下のリアクション、右下の移動パッドとは重ならない）。
+            .overlay(alignment: .topTrailing) { zoomBar.padding(6) }
             .overlay(alignment: .bottomLeading) { reactionsBar.padding(6) }
             #if os(iOS)
             .overlay(alignment: .bottomTrailing) { DPad(room: room).padding(6) }
@@ -287,26 +296,90 @@ struct RoomView: View {
         }
     }
 
-    // MARK: Map
+    // MARK: Zoom
 
-    private func zoom(for size: CGSize) -> CGFloat {
-        let tilesAcross: CGFloat = size.width < 600 ? 13 : 20
-        return max(1.5, size.width / (CGFloat(RoomArt.tile) * tilesAcross))
+    /// 地図の大きさ（art-pixel）。地図がまだ無いときは 0（倍率は自動のまま）。
+    private var mapPixels: CGSize {
+        guard let geo = room.geometry else { return .zero }
+        return CGSize(width: geo.map.w * RoomArt.tile, height: geo.map.h * RoomArt.tile)
     }
+
+    /// 今の scale（ピンチの途中も含め、下限と上限の内側）。
+    private func effectiveScale(_ size: CGSize) -> CGFloat {
+        let map = mapPixels
+        return RoomZoom.clamp(RoomZoom.clamp(CGFloat(zoomScale), view: size, map: map) * pinch, view: size, map: map)
+    }
+
+    private func setScale(_ s: CGFloat) {
+        withAnimation(.easeOut(duration: 0.15)) { zoomScale = Double(s) }
+        focused = true
+    }
+
+    private var zoomBar: some View {
+        let size = mapSize, map = mapPixels
+        let s = effectiveScale(size)
+        let whole = RoomZoom.isWhole(s, view: size, map: map)
+        return HStack(spacing: 4) {
+            zoomButton("minus", label: "縮小", help: "縮小（全体が見えるまで）", disabled: whole) {
+                setScale(RoomZoom.zoomedOut(s, view: size, map: map))
+            }
+            zoomButton("plus", label: "拡大", help: "拡大", disabled: s >= RoomZoom.maxScale - 0.001) {
+                setScale(RoomZoom.zoomedIn(s, view: size, map: map))
+            }
+            zoomButton(nil, text: "全体", label: whole ? "元の大きさに戻す" : "全体を見る",
+                       help: whole ? "元の大きさに戻す" : "全体を見る",
+                       disabled: RoomZoom.minScale(view: size, map: map) >= 1) {
+                setScale(RoomZoom.toggledWhole(s, view: size, map: map))
+            }
+            zoomButton(expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                       label: expanded ? "地図を元の高さに戻す" : "地図を広げる",
+                       help: expanded ? "地図を元の高さに戻す" : "地図を広げる（チャット欄を小さく）") {
+                withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() }
+                focused = true
+            }
+        }
+    }
+
+    private func zoomButton(_ icon: String?, text: String? = nil, label: String, help: String, disabled: Bool = false,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Group {
+                if let icon { Image(systemName: icon).font(.app(size: 12, weight: .bold)) }
+                else { Text(text ?? "").font(.app(size: 11, weight: .bold)) }
+            }
+            .foregroundStyle(.white.opacity(disabled ? 0.4 : 1))
+            .frame(minWidth: 28, minHeight: 28)
+            .padding(.horizontal, text == nil ? 0 : 4)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Color.black.opacity(0.55)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .help(help)
+        .accessibilityLabel(label)
+    }
+
+    /// iPhone のピンチ・Mac のトラックパッドのピンチ。タップ（歩く・人をタップ）と同時に効く。
+    private func pinchGesture(size: CGSize) -> some Gesture {
+        MagnifyGesture()
+            .onChanged { v in pinch = v.magnification }
+            .onEnded { v in
+                pinch = v.magnification
+                zoomScale = Double(effectiveScale(size)) // 「全体」（0）から広げても、今見えている倍率から
+                pinch = 1
+            }
+    }
+
+    // MARK: Map
 
     private func camera(_ size: CGSize, _ z: CGFloat, _ now: Date) -> CGPoint {
         guard let geo = room.geometry else { return .zero }
-        let W = CGFloat(geo.map.w * RoomArt.tile), H = CGFloat(geo.map.h * RoomArt.tile)
-        let vw = size.width / z, vh = size.height / z
         let me = room.meId.flatMap { room.displayPosition($0, at: now) } ?? (Double(geo.map.door.x), Double(geo.map.door.y))
-        let cx = (CGFloat(me.x) + 0.5) * 16 - vw / 2, cy = (CGFloat(me.y) + 0.5) * 16 - vh / 2
-        let x = W <= vw ? (W - vw) / 2 : min(max(cx, 0), W - vw)
-        let y = H <= vh ? (H - vh) / 2 : min(max(cy, 0), H - vh)
-        return CGPoint(x: x.rounded(), y: y.rounded())
+        return RoomZoom.camera(view: size, z: z, map: mapPixels, focus: me)
     }
 
     private func map(size: CGSize) -> some View {
-        let z = zoom(for: size)
+        let z = RoomZoom.auto(view: size) * effectiveScale(size)
         // 30 frames a second only while someone walks or a bubble / reaction is up; the
         // rest of the time the beagle's steps (every 0.45 s) are all that moves. It drew 30
         // a second all the time (≈ 10 % CPU on the Mac, also with the panel closed), and
@@ -322,6 +395,7 @@ struct RoomView: View {
             }
             .contentShape(Rectangle())
             .gesture(SpatialTapGesture().onEnded { t in tap(t.location, size: size, z: z, cam: cam) })
+            .simultaneousGesture(pinchGesture(size: size))
             .accessibilityLabel("部室のマップ")
             .accessibilityHint("タップした場所へ歩きます")
         }
@@ -330,7 +404,7 @@ struct RoomView: View {
 
     private func tap(_ p: CGPoint, size: CGSize, z: CGFloat, cam: CGPoint) {
         focused = true
-        let tx = Int(((p.x / z) + cam.x) / 16), ty = Int(((p.y / z) + cam.y) / 16)
+        let (tx, ty) = RoomZoom.tile(at: p, z: z, cam: cam)
         if let who = room.members.values.first(where: { $0.userId != room.meId && $0.x == tx && $0.y == ty }) {
             menuFor = who
             return
