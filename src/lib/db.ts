@@ -781,6 +781,20 @@ export async function initSchema() {
     -- ✉️👥 DM の編集（チャットと同じ「タイポを修正」。編集した時刻、NULL なら編集なし）。
     ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
     ALTER TABLE gdm_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+    -- ✉️👥 DM のリアクション: 本番の reactions には手で作った CHECK (target_type IN ('post','chat')) があり、
+    -- dm / gdm を入れられなかった（2026-11-08 オーナー「DM でリアクションしようとするとエラー」）。
+    -- 4 種を許す形に作り直す（空の DB でも同じ制約にしてテストで気づけるようにする）。
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conrelid = 'reactions'::regclass AND conname = 'reactions_target_type_check'
+           AND pg_get_constraintdef(oid) LIKE '%gdm%'
+      ) THEN
+        ALTER TABLE reactions DROP CONSTRAINT IF EXISTS reactions_target_type_check;
+        ALTER TABLE reactions ADD CONSTRAINT reactions_target_type_check
+          CHECK (target_type IN ('post', 'chat', 'dm', 'gdm'));
+      END IF;
+    END $$;
     CREATE TABLE IF NOT EXISTS dm_uploads (
       name TEXT PRIMARY KEY,
       uploader_email TEXT NOT NULL,
