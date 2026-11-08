@@ -116,7 +116,7 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
                 }
                 }
             } else {
-                Pages(store, timeline, jb, onSignOut) { labels, selected, onSelect -> Segments(labels, selected, onSelect) }
+                Pages(store, timeline, jb, dm, onSignOut) { labels, selected, onSelect -> Segments(labels, selected, onSelect) }
             }
         }
         // No mini player under the timeline and the chat (drikin 2026-10-20): the jukebox
@@ -133,11 +133,20 @@ private fun Pages(
     store: ChatStore,
     timeline: TimelineStore,
     jb: JukeboxStore?,
+    dm: DMStore?,
     onSignOut: () -> Unit,
     segments: @Composable (List<String>, Int, (Int) -> Unit) -> Unit,
 ) {
-    val count = if (jb != null) 3 else 2
-    val pager = rememberPagerState(initialPage = 1) { count } // 0 = timeline, 1 = chat, 2 = jukebox
+    val base = if (jb != null) 3 else 2
+    // ✉️ DM: one more page past the last tab, so a swipe from the last page reaches DM like a tap on ✉️
+    // (2026-11-08: スワイプで DM に行けない). Landing on it opens the DM screen over the app and
+    // slides back to the last tab, which is what shows again when DM is closed.
+    val dmPage = if (dm != null) base else -1
+    val count = if (dm != null) base + 1 else base
+    val pager = rememberPagerState(initialPage = 1) { count } // 0 = timeline, 1 = chat, 2 = jukebox (, last = ✉️)
+    LaunchedEffect(pager.settledPage, dmPage) {
+        if (dm != null && pager.settledPage == dmPage) { dm.openList(); pager.scrollToPage(dmPage - 1) }
+    }
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
     // Switching pages hides the keyboard.
@@ -149,7 +158,7 @@ private fun Pages(
     // 「チャットに引用」 from a post's menu: show the chat (it takes the quote, then clears it).
     LaunchedEffect(ChatQuote.pending) { if (ChatQuote.pending != null) scope.launch { pager.animateScrollToPage(1) } }
     // Demo (`--es demo_tab`): start on that page.
-    LaunchedEffect(store.demoPage) { store.demoPage?.let { p -> pager.scrollToPage(p.coerceIn(0, count - 1)); store.demoPage = null } }
+    LaunchedEffect(store.demoPage) { store.demoPage?.let { p -> pager.scrollToPage(p.coerceIn(0, base - 1)); store.demoPage = null } }
     // ☗ 将棋 from a notification: show the chat (the shogi panel opens above it).
     LaunchedEffect(store.shogi.revealTick) { if (store.shogi.revealTick > 0) scope.launch { pager.animateScrollToPage(1) } }
     // 🍻 オフ会 from a notification: show the chat (the panel opens above it).
@@ -160,7 +169,7 @@ private fun Pages(
     // (the old form floats it over every page instead).
     LaunchedEffect(store.watch.revealTick) { if (store.watch.revealTick > 0 && store.chatOverlay) scope.launch { pager.animateScrollToPage(1) } }
     // The playback notification / the mini player: show the jukebox.
-    LaunchedEffect(jb?.showTab, count) { if (jb?.showTab == true && count == 3) { pager.animateScrollToPage(2); jb.showTab = false; jb.revealTick++ } }
+    LaunchedEffect(jb?.showTab, base) { if (jb?.showTab == true && base == 3) { pager.animateScrollToPage(2); jb.showTab = false; jb.revealTick++ } }
 
     // 📰 タイムライン ・ 💬 チャット ・ 📻 プレイヤー — the same order and marks in every app (drikin 2026-10-20).
     val chatLabel = if (store.unreadCount > 0) "💬•" else "💬"
@@ -177,6 +186,9 @@ private fun Pages(
         when (page) {
             0 -> TimelineScreen(timeline, store.capabilities, tabSwitch = switch, onReconnect = onSignOut, visible = pager.currentPage == 0)
             1 -> PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch, visible = pager.currentPage == 1, onScreen = chatOnScreen) }
+            dmPage -> Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                Text("✉️ DM", style = MaterialTheme.typography.titleMedium)
+            }
             else -> if (jb != null) JukeboxScreen(jb, store.capabilities, switch, visible = { pager.currentPage == 2 },
                 onOpenThread = { timeline.openThread = it })
         }
