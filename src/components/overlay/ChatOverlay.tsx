@@ -45,7 +45,6 @@ import { MinigamePanel } from "@/components/minigame/MinigamePanel";
 import { WatchPanel, useWatch } from "@/components/watch/WatchPanel";
 import { OffkaiPanel, OffkaiTtsToggle, useOffkai } from "@/components/offkai/OffkaiPanel";
 import { chatTtsEnabled, primeSpeech, setChatTtsEnabled, subscribeTts } from "@/lib/offkai-tts";
-import { DmToggle } from "@/components/dm/DMPanel";
 import { RoomOverlayContent } from "@/components/RoomView";
 
 const ORANGE = "#ea580c";
@@ -203,7 +202,7 @@ export function OverlaySwitches() {
           </button>
         </Tooltip>
       ))}
-      <DmToggle />
+      {/* ✉️ DM は上のタブへ移した（2026-11-08） */}
       <ChatTtsToggle />
     </div>
   );

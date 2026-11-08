@@ -20,7 +20,6 @@ import {
   type MinigameSnapshot,
 } from "@/lib/minigame-client";
 import { ShogiToggle } from "@/components/shogi/ShogiPanel";
-import { DmToggle, useDm } from "@/components/dm/DMPanel";
 import { WatchToggle, useWatch } from "@/components/watch/WatchPanel";
 import { OffkaiToggle, useOffkai } from "@/components/offkai/OffkaiPanel";
 import {
@@ -63,7 +62,6 @@ export function MinigameToggle() {
 export function GameToggles({ row = false }: { row?: boolean }) {
   const mg = useMinigame();
   const shogi = useSyncExternalStore(subscribeShogi, getShogiSnapshot, getShogiServerSnapshot);
-  const dm = useDm();
   const watch = useWatch();
   const offkai = useOffkai();
   useEffect(() => {
@@ -77,12 +75,11 @@ export function GameToggles({ row = false }: { row?: boolean }) {
       <WatchToggle />
       {/* 🍻 オフ会（OFFKAI_ENABLED の人だけ。開催中は点） */}
       <OffkaiToggle />
-      {/* ✉️ 簡易 DM（DM_ENABLED の人だけ。未読の数つき） */}
-      <DmToggle />
+      {/* ✉️ DM は上のタブ（タイムライン・☆・🔖・チャット・DM）へ移した（2026-11-08） */}
     </>
   );
   if (!row) return <div style={{ display: "flex", gap: 6, alignItems: "center" }}>{items}</div>;
-  if (mg.status !== "enabled" && shogi.status !== "enabled" && dm.status !== "enabled" && watch.status !== "enabled" && offkai.status !== "enabled") {
+  if (mg.status !== "enabled" && shogi.status !== "enabled" && watch.status !== "enabled" && offkai.status !== "enabled") {
     // 読み込み中・どちらも無い: 行を取らない（ただしボタンの読み込みは走らせる）
     return <div style={{ display: "none" }}>{items}</div>;
   }
