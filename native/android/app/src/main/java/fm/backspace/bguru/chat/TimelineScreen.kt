@@ -88,6 +88,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -492,9 +493,28 @@ fun ImageViewer(images: List<String>, start: Int, onClose: () -> Unit) {
         val closeAt = with(androidx.compose.ui.platform.LocalDensity.current) { 100.dp.toPx() }
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 1f - (shown / (closeAt * 4)).coerceAtMost(0.7f)))) {
             val pager = rememberPagerState(initialPage = start) { images.size }
-            HorizontalPager(pager, Modifier.fillMaxSize()) { page ->
+            // 拡大中は横のスワイプを画像の移動に使う（次の画像へは行かない。けんたさん 2026-11-08「ピンチしたとき移動できない」）
+            var zoomedPage by remember { mutableStateOf(-1) }
+            HorizontalPager(pager, Modifier.fillMaxSize(), userScrollEnabled = zoomedPage != pager.currentPage) { page ->
                 var scale by remember { mutableStateOf(1f) }
-                val state = rememberTransformableState { zoom, _, _ -> scale = (scale * zoom).coerceIn(1f, 5f) }
+                var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+                var box by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+                // 拡大した絵が画面の外へ行き過ぎないように（端まで）
+                fun clamp(o: androidx.compose.ui.geometry.Offset, sc: Float): androidx.compose.ui.geometry.Offset {
+                    val mx = box.width * (sc - 1f) / 2f
+                    val my = box.height * (sc - 1f) / 2f
+                    return androidx.compose.ui.geometry.Offset(o.x.coerceIn(-mx, mx), o.y.coerceIn(-my, my))
+                }
+                fun setScale(next: Float) {
+                    scale = next
+                    offset = if (next <= 1f) androidx.compose.ui.geometry.Offset.Zero else clamp(offset, next)
+                    if (next > 1f) zoomedPage = page else if (zoomedPage == page) zoomedPage = -1
+                }
+                val state = rememberTransformableState { zoom, pan, _ ->
+                    val next = (scale * zoom).coerceIn(1f, 5f)
+                    offset = clamp(offset + pan, next)
+                    setScale(next)
+                }
                 val pull = Modifier.pointerInput(scale > 1f) {
                     // At 1× a downward drag pulls the picture; far enough on release closes it.
                     if (scale > 1f) return@pointerInput
@@ -507,9 +527,10 @@ fun ImageViewer(images: List<String>, start: Int, onClose: () -> Unit) {
                 // The pull sits on the whole page, so it also works while the picture is loading.
                 Box(Modifier.fillMaxSize().then(pull).graphicsLayer(scaleX = s, scaleY = s, translationY = shown), contentAlignment = Alignment.Center) {
                     RemoteImage(images[page], maxPx = 2048, modifier = Modifier.fillMaxSize()
+                        .onSizeChanged { box = it }
                         .transformable(state, canPan = { scale > 1f })
-                        .graphicsLayer(scaleX = scale, scaleY = scale)
-                        .pointerInput(Unit) { detectTapGestures(onDoubleTap = { scale = if (scale > 1f) 1f else 2.5f }) },
+                        .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y)
+                        .pointerInput(Unit) { detectTapGestures(onDoubleTap = { setScale(if (scale > 1f) 1f else 2.5f) }) },
                         contentScale = ContentScale.Fit) { CircularProgressIndicator() }
                 }
             }
