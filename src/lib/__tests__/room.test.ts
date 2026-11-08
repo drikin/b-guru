@@ -137,9 +137,12 @@ describe("walking", () => {
 
 describe("speaker limits", () => {
   it("at most STAGE_MAX_SPEAKERS on the stage", async () => {
-    const spots = [[24, 3], [25, 3], [27, 3], [28, 3]];
+    // ステージの床（マイクスタンドの列は通れないので除く）
+    const spots: [number, number][] = [];
+    for (let y = 1; y <= 4; y++) for (let x = 23; x <= 29; x++) if (x !== 26) spots.push([x, y]);
+    expect(STAGE_MAX_SPEAKERS).toBe(10);
     for (let i = 0; i < STAGE_MAX_SPEAKERS; i++) await placeAt(`s${i}@example.com`, spots[i][0], spots[i][1], true);
-    await placeAt("late@example.com", spots[3][0], spots[3][1]);
+    await placeAt("late@example.com", spots[STAGE_MAX_SPEAKERS][0], spots[STAGE_MAX_SPEAKERS][1]);
     vi.advanceTimersByTime(200);
     const r = roomVoice("late@example.com", { mic: true });
     expect(r.ok).toBe(false);

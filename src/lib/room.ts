@@ -51,7 +51,7 @@ interface Entry extends RoomMember {
 /** Speakers one listener can have at once (people with the mic on that they hear). */
 export const RING_MAX_SPEAKERS = 8;
 /** People on the stage with the mic on at once. */
-export const STAGE_MAX_SPEAKERS = 3;
+export const STAGE_MAX_SPEAKERS = 10; // 3 → 10（ドリキン 2026-11-08）
 const LEAVE_GRACE_MS = 30_000;
 const AWAY_AFTER_MS = 10 * 60_000;
 const MIC_OFF_AFTER_MS = 30 * 60_000;

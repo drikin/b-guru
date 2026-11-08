@@ -9,7 +9,7 @@
  *
  * State lives in lib/room-client.ts (outside React); the map draws the animated
  * actors from there every frame. Voice proximity is applied by the store. */
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Button, CloseButton, Group, Popover, SegmentedControl, Text, Tooltip } from "@mantine/core";
 import {
   clearRoomNotice,
@@ -41,7 +41,22 @@ import {
   voiceLoaded,
   type VoiceSnapshot,
 } from "@/lib/voice-client";
-import { lookFor, statusMark, tileOf, volumeFor, voiceCounts, zoneOf, type Dir, type Look, type RoomMapDto, type RoomMember } from "@/lib/room-logic";
+import {
+  lookFor,
+  isRoomFit,
+  nextRoomScale,
+  roomFitZoom,
+  roomZoom,
+  statusMark,
+  tileOf,
+  volumeFor,
+  voiceCounts,
+  zoneOf,
+  type Dir,
+  type Look,
+  type RoomMapDto,
+  type RoomMember,
+} from "@/lib/room-logic";
 import { ROOM_BG, ROOM_COLORS, TILE, drawBeagle, drawBubble, drawEmoji, drawLabel, drawPerson, renderBase } from "./room-draw";
 import css from "./RoomView.module.css";
 
@@ -450,6 +465,38 @@ interface MenuState {
   top: number;
 }
 
+/* 拡大・縮小と「広げる」はブラウザに覚える（アプリと同じキー名）。 */
+const ZOOM_KEY = "roomZoomScale";
+const EXPAND_KEY = "roomExpanded";
+function readNum(key: string, def: number): number {
+  try {
+    const v = Number(localStorage.getItem(key));
+    const raw = localStorage.getItem(key);
+    return raw !== null && Number.isFinite(v) && v >= 0 ? v : def;
+  } catch {
+    return def;
+  }
+}
+function readFlag(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+function save(key: string, v: string) {
+  try {
+    localStorage.setItem(key, v);
+  } catch {
+    /* private mode: just this visit */
+  }
+}
+
+/** 今「全体」が見える倍率か。 */
+function isFit(v: { auto: number; fit: number; scale: number }): boolean {
+  return isRoomFit(v.auto, v.fit, v.scale);
+}
+
 function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -461,7 +508,25 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
   useEffect(() => {
     live.current = { speaking, reduced };
   }, [speaking, reduced]);
-  const view = useRef({ zoom: 3, camX: 0, camY: 0, dpr: 1 });
+  const view = useRef({ zoom: 3, camX: 0, camY: 0, dpr: 1, auto: 3, fit: 1, scale: 1 });
+  const [atFit, setAtFit] = useState(false);
+  // マップは部室を読み込んだあと（ブラウザの中）でしか描かないので、覚えている値は最初から読んでよい
+  const [expanded, setExpanded] = useState(() => typeof window !== "undefined" && readFlag(EXPAND_KEY));
+  useEffect(() => {
+    view.current.scale = readNum(ZOOM_KEY, 1);
+  }, []);
+  const applyScale = useCallback((next: number) => {
+    const v = view.current;
+    const z = roomZoom(v.auto, v.fit, next);
+    v.zoom = z.zoom;
+    v.scale = next === 0 ? 0 : z.scale;
+    setAtFit(isFit(v));
+    save(ZOOM_KEY, String(Math.round(v.scale * 1000) / 1000));
+  }, []);
+  const zoomBy = (action: "in" | "out" | "fit") => {
+    const v = view.current;
+    applyScale(nextRoomScale(action, v.auto, v.fit, v.scale));
+  };
   const map = s.map!;
   const base = useMemo(() => (typeof document === "undefined" ? null : renderBase(map)), [map]);
   const me = myMember(s);
@@ -483,14 +548,50 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
       canvas.width = Math.max(1, Math.round(r.width * dpr));
       canvas.height = Math.max(1, Math.round(r.height * dpr));
       const across = Math.min(map.w, Math.max(13, r.width / 46));
-      view.current.zoom = Math.max(2, Math.floor(canvas.width / (TILE * across)));
-      view.current.dpr = dpr;
+      const v = view.current;
+      v.auto = Math.max(2, Math.floor(canvas.width / (TILE * across)));
+      v.fit = roomFitZoom(canvas.width, canvas.height, map.w * TILE, map.h * TILE);
+      v.zoom = roomZoom(v.auto, v.fit, v.scale).zoom;
+      v.dpr = dpr;
+      setAtFit(isFit(v));
     };
     resize();
     const ro = new ResizeObserver(resize);
     ro.observe(box);
     return () => ro.disconnect();
-  }, [map.w]);
+  }, [map.w, map.h, expanded]);
+
+  // ⌘/Ctrl + ホイール・トラックパッドのピンチ（ブラウザは ctrl 付きのホイールで送ってくる）で拡大・縮小。
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const wheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      applyScale((view.current.zoom / view.current.auto) * Math.exp(-e.deltaY * 0.01));
+    };
+    canvas.addEventListener("wheel", wheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", wheel);
+  }, [applyScale]);
+
+  // 2 本指のピンチ（タッチ）。1 本目のタップの「歩く」はそのまま。
+  const touches = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ d: number; scale: number } | null>(null);
+  const dist = () => {
+    const [a, b] = [...touches.current.values()];
+    return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!touches.current.has(e.pointerId)) return;
+    touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const p = pinch.current;
+    const d = dist();
+    if (p && d > 0 && p.d > 0) applyScale(p.scale * (d / p.d));
+  };
+  const endTouch = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    touches.current.delete(e.pointerId);
+    if (touches.current.size < 2) pinch.current = null;
+  };
 
   // The animation loop: walk, then draw.
   useEffect(() => {
@@ -575,6 +676,14 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
     const canvas = canvasRef.current;
     const box = boxRef.current;
     if (!canvas || !box) return;
+    if (e.pointerType === "touch") {
+      touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.current.size >= 2) {
+        pinch.current = { d: dist(), scale: view.current.zoom / view.current.auto };
+        setMenu(null);
+        return;
+      }
+    }
     const r = canvas.getBoundingClientRect();
     const v = view.current;
     const sx = (e.clientX - r.left) * v.dpr;
@@ -623,8 +732,44 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
   );
 
   return (
-    <section ref={boxRef} className={css.mapBox} aria-label="部室のマップ">
-      <canvas ref={canvasRef} className={css.canvas} onPointerDown={onPointerDown} />
+    <section ref={boxRef} className={`${css.mapBox} ${expanded ? css.expanded : ""}`} aria-label="部室のマップ">
+      <canvas
+        ref={canvasRef}
+        className={css.canvas}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={endTouch}
+        onPointerCancel={endTouch}
+      />
+      <div className={css.zoom} role="group" aria-label="表示の大きさ">
+        <button type="button" aria-label="縮小" title="縮小（⌘/Ctrl + ホイール）" onClick={() => zoomBy("out")}>
+          −
+        </button>
+        <button type="button" aria-label="拡大" title="拡大（⌘/Ctrl + ホイール）" onClick={() => zoomBy("in")}>
+          ＋
+        </button>
+        <button
+          type="button"
+          aria-label="全体を見る"
+          aria-pressed={atFit}
+          onClick={() => zoomBy("fit")}
+        >
+          全体
+        </button>
+        <button
+          type="button"
+          aria-label={expanded ? "マップを元の高さに戻す" : "マップを広げる"}
+          title={expanded ? "元の高さに戻す" : "マップを広げる"}
+          aria-pressed={expanded}
+          onClick={() => {
+            const next = !expanded;
+            setExpanded(next);
+            save(EXPAND_KEY, next ? "1" : "0");
+          }}
+        >
+          {expanded ? "⤡" : "⤢"}
+        </button>
+      </div>
       {hint && (
         <div className={`${css.overlay} ${css.hint}`}>タップした所へ歩く・人をタップで手を振る・矢印キー / WASD・1〜6 でリアクション</div>
       )}

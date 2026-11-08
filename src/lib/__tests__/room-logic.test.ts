@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { ROOM_TILES, ROOM_DOOR, ROOM_SEATS, roomMapDto } from "../room-map";
 import {
+  nextRoomScale,
+  roomFitZoom,
+  roomZoom,
   DIRS,
   allowedListeners,
   bfsPath,
@@ -171,5 +174,39 @@ describe("marks, looks, bubbles", () => {
     const d = roomMapDto();
     expect(d.tiles.length).toBe(d.h);
     expect(d.tiles.every((r) => r.length === d.w)).toBe(true);
+  });
+});
+
+
+describe("部室の拡大・縮小", () => {
+  // 地図 32×20 タイル × 16px = 512×320。画面 780×400、自動の倍率 3
+  const fit = roomFitZoom(780, 400, 512, 320);
+  it("全体が収まる倍率は幅と高さの小さい方", () => {
+    expect(fit).toBeCloseTo(1.25);
+  });
+  it("scale 1 は今までと同じ、範囲の外は丸める", () => {
+    expect(roomZoom(3, fit, 1).zoom).toBe(3);
+    expect(roomZoom(3, fit, 10).zoom).toBe(6);
+    expect(roomZoom(3, fit, 0.01).zoom).toBeCloseTo(1.25);
+    expect(roomZoom(3, fit, Number.NaN).zoom).toBe(3);
+  });
+  it("−/＋ は 1.25 倍ずつ、1.0 をまたぐときは 1.0 で止まる", () => {
+    expect(nextRoomScale("in", 3, fit, 1)).toBeCloseTo(1.25);
+    expect(nextRoomScale("out", 3, fit, 1)).toBeCloseTo(0.8);
+    expect(nextRoomScale("in", 3, fit, 0.9)).toBe(1);
+    expect(nextRoomScale("in", 3, fit, 2)).toBe(2);
+  });
+  it("全体 は全体が見える倍率と 1.0 を行き来する", () => {
+    const s = nextRoomScale("fit", 3, fit, 1);
+    expect(s).toBe(0);
+    expect(roomZoom(3, fit, s).zoom).toBeCloseTo(1.25);
+    expect(nextRoomScale("fit", 3, fit, s)).toBe(1);
+    // 全体から ＋ は、今見えている倍率から 1.25 倍
+    expect(nextRoomScale("in", 3, fit, 0)).toBeCloseTo((1.25 / 3) * 1.25);
+    // 画面が広がっても 0 のままなので全体が見える
+    expect(roomZoom(3, roomFitZoom(780, 700, 512, 320), 0).zoom).toBeCloseTo(780 / 512);
+  });
+  it("自動の倍率が全体より小さい（大きな画面）なら下限は自動の倍率", () => {
+    expect(roomZoom(2, 4, 0.1).zoom).toBe(2);
   });
 });

@@ -203,3 +203,39 @@ export function voiceCounts(members: RoomMember[], speaking: ReadonlySet<string>
   const inVoice = members.filter((m) => m.mode === "room" && m.listening);
   return { inVoice, talking: inVoice.filter((m) => speaking.has(m.userId)).length };
 }
+
+/* ---- 拡大・縮小（ドリキン 2026-11-08「部室のビューが狭すぎて全体が見にくい」）----
+ * 倍率 = 自動の倍率 × 利用者の倍率（scale、端末に覚える）。下限は地図全体が収まる倍率、
+ * 上限は自動の 2 倍。Web・iPhone/Mac・Android で同じ決め方。 */
+export const ROOM_ZOOM_STEP = 1.25;
+export const ROOM_ZOOM_MAX_SCALE = 2;
+
+/** 地図全体がちょうど収まる倍率（画面のピクセル / 地図のピクセル）。 */
+export function roomFitZoom(viewW: number, viewH: number, mapW: number, mapH: number): number {
+  if (mapW <= 0 || mapH <= 0 || viewW <= 0 || viewH <= 0) return 1;
+  return Math.min(viewW / mapW, viewH / mapH);
+}
+
+/** 実際の倍率と、それに合わせ直した scale。scale 0 は「全体」（大きさが変わっても全体を見せる）。 */
+export function roomZoom(auto: number, fit: number, scale: number): { zoom: number; scale: number } {
+  const lo = Math.min(fit, auto);
+  const hi = auto * ROOM_ZOOM_MAX_SCALE;
+  const s = scale === 0 ? 0 : Number.isFinite(scale) && scale > 0 ? scale : 1;
+  const zoom = Math.min(hi, Math.max(lo, auto * s));
+  return { zoom, scale: zoom / auto };
+}
+
+/** 今「全体」が見えているか。 */
+export function isRoomFit(auto: number, fit: number, scale: number): boolean {
+  return scale === 0 || Math.abs(roomZoom(auto, fit, scale).scale - roomZoom(auto, fit, 0).scale) < 0.01;
+}
+
+/** − / ＋ / 全体 を押したあとの scale。「全体」は 0（全体）と 1.0 を行き来する。 */
+export function nextRoomScale(action: "in" | "out" | "fit", auto: number, fit: number, scale: number): number {
+  const cur = roomZoom(auto, fit, scale);
+  if (action === "fit") return isRoomFit(auto, fit, scale) ? 1 : 0;
+  const want = action === "in" ? cur.scale * ROOM_ZOOM_STEP : cur.scale / ROOM_ZOOM_STEP;
+  // 1.0 をまたぐときは 1.0 で止める（いつもの大きさに戻りやすく）
+  const crosses = (cur.scale < 1 && want > 1) || (cur.scale > 1 && want < 1);
+  return roomZoom(auto, fit, crosses ? 1 : want).scale;
+}
