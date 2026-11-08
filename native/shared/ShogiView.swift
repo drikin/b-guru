@@ -39,7 +39,7 @@ struct ShogiScreen: View {
                     ShogiLobby(shogi: shogi)
                     ScrollView { ShogiLobby(shogi: shogi) }
                 }
-                .frame(maxHeight: shogi.areaHeight > 0 ? shogi.areaHeight * 0.5 : 360, alignment: .top)
+                .frame(maxHeight: shogi.areaHeight > 0 ? shogi.areaHeight * (shogi.expanded ? RoomZoom.expandedHeight : 0.5) : 360, alignment: .top)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -233,6 +233,7 @@ struct ShogiGameView: View {
             .lineLimit(1)
             .minimumScaleFactor(0.85)
             .frame(maxWidth: .infinity, alignment: .leading)
+            ShogiExpandButton(expanded: Binding(get: { shogi.expanded }, set: { shogi.expanded = $0 }))
             Menu {
                 if g.isActive, my != nil, shogi.canPlay {
                     if g.ply < 2 {
@@ -274,7 +275,7 @@ struct ShogiGameView: View {
         guard shogi.areaHeight > 0 else { return nil }
         // A short column (an iPhone, the Mac panel's default size): 52 %, the squares a little squashed
         // instead, so the chat under it shows a few messages (drikin「特にスマホでチャットが見えるように」).
-        let share: CGFloat = shogi.areaHeight < 760 ? 0.52 : 0.6
+        let share: CGFloat = shogi.expanded ? RoomZoom.expandedHeight : shogi.areaHeight < 760 ? 0.52 : 0.6
         return max(220, shogi.areaHeight * share - 26 - (g.isEnded ? 50 : 0))
     }
 
@@ -494,5 +495,23 @@ struct ShogiFoldedBar: View {
         if g.isEnded { s += "・終局" }
         else if g.isActive, let my = shogi.myColor(in: g) { s += g.turnSide == my ? "・あなたの番" : "・相手の番" }
         return s
+    }
+}
+
+/// ⤢ 広げる / 戻す（将棋・散財ダッシュ）。部室の「広げる」と同じく、チャット欄の 85% まで。
+struct ShogiExpandButton: View {
+    @Binding var expanded: Bool
+
+    var body: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() }
+        } label: {
+            Image(systemName: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                .font(.app(size: 12, weight: .semibold))
+                .frame(width: 22, height: 22).contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .help(expanded ? "元の大きさに戻す" : "大きく表示")
+        .accessibilityLabel(expanded ? "元の大きさに戻す" : "大きく表示")
     }
 }

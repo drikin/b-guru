@@ -249,15 +249,19 @@ struct PagePicker: View, @MainActor Equatable {
             .frame(width: 130)
         } else {
             let width: CGFloat = jukeboxOn ? 180 : 130
-            Picker("表示", selection: Binding(get: { pager.tab }, set: { v in withAnimation(.easeOut(duration: 0.2)) { pager.tab = v } })) {
-                Text("📰").tag(MainTab.timeline)
-                Text("💬").tag(MainTab.chat)
-                if jukeboxOn { Text("📻").tag(MainTab.jukebox) }
+            HStack(spacing: 14) {
+                Picker("表示", selection: Binding(get: { pager.tab }, set: { v in withAnimation(.easeOut(duration: 0.2)) { pager.tab = v } })) {
+                    Text("📰").tag(MainTab.timeline)
+                    Text("💬").tag(MainTab.chat)
+                    if jukeboxOn { Text("📻").tag(MainTab.jukebox) }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: width)
+                .overlay(alignment: .topLeading) { UnreadDot(store: store, x: width / (jukeboxOn ? 3 : 2) * 2 - 12) }
+                .id(jukeboxOn) // a new control for a different number of segments, not an update
+                // ✉️ DM（未読の数つき）: どのページからでも 1 回で DM の一覧（グループも）。rbtnn さんの要望 2026-11-08
+                DMBadgeButton(dm: store.dm) { store.showChat?() }
             }
-            .pickerStyle(.segmented)
-            .frame(width: width)
-            .overlay(alignment: .topLeading) { UnreadDot(store: store, x: width / (jukeboxOn ? 3 : 2) * 2 - 12) }
-            .id(jukeboxOn) // a new control for a different number of segments, not an update
         }
     }
 }

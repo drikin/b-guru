@@ -252,12 +252,18 @@ struct PanelTabSwitch: View {
         if pin.split {
             // Side by side: one switch (over the chat) — 📰💬 both, or 📻.
             if pane != .timeline {
-                PanelTabs(selection: Binding(get: { pin.tab == .jukebox ? .jukebox : .chat }, set: { pin.tab = $0 }), items: [
-                    (.chat, store.unreadCount > 0 ? "📰💬●" : "📰💬", "タイムラインとチャット（⌘1 / ⌘2）"),
-                ] + (jukeboxOn ? [(.jukebox, "📻", "プレイヤー（⌘3）")] : []))
+                HStack(spacing: 4) {
+                    PanelTabs(selection: Binding(get: { pin.tab == .jukebox ? .jukebox : .chat }, set: { pin.tab = $0 }), items: [
+                        (.chat, store.unreadCount > 0 ? "📰💬●" : "📰💬", "タイムラインとチャット（⌘1 / ⌘2）"),
+                    ] + (jukeboxOn ? [(.jukebox, "📻", "プレイヤー（⌘3）")] : []))
+                    PanelDMTab(store: store, pin: pin)
+                }
             }
         } else {
-            tabs
+            HStack(spacing: 4) {
+                tabs
+                PanelDMTab(store: store, pin: pin)
+            }
         }
     }
 
@@ -269,6 +275,46 @@ struct PanelTabSwitch: View {
             (.timeline, "📰", "タイムライン（⌘1）"),
             (.chat, store.unreadCount > 0 ? "💬●" : "💬", "チャット（⌘2）"),
         ] + (jukeboxOn ? [(.jukebox, "📻", "プレイヤー（⌘3）")] : []))
+    }
+}
+
+/// ✉️ DM: 切り替えの隣。押すとチャットのタブで DM の一覧（グループも）がチャットの上に開く（もう一度押すと閉じる）。
+/// 未読の数は 1 対 1 とグループの合計。rbtnn さんの要望 2026-11-08（「チャット → DM → グループ」が長い）。
+private struct PanelDMTab: View {
+    let store: ChatStore
+    @Bindable var pin: PinState
+
+    var body: some View {
+        let dm = store.dm
+        if dm.enabled {
+            let on = pin.tab == .chat && dm.route != nil
+            let n = dm.totalUnread
+            Button {
+                if on { dm.close() } else { pin.tab = .chat; dm.openList() }
+            } label: {
+                HStack(spacing: 3) {
+                    Text("✉️").font(.app(size: 12))
+                    if n > 0 {
+                        Text(n > 99 ? "99+" : "\(n)")
+                            .font(.app(size: 10, weight: .bold)).monospacedDigit()
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Capsule().fill(Color.red))
+                    }
+                }
+                .padding(.horizontal, 8)
+                .frame(height: 20)
+                .background(RoundedRectangle(cornerRadius: 5).fill(on ? Color.accentColor : Color.clear))
+                .padding(2)
+                .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.07)))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+            .help("DM（30 日で消えます）")
+            .accessibilityLabel(n > 0 ? "DM、未読 \(n) 件" : "DM")
+            .accessibilityAddTraits(on ? .isSelected : [])
+        }
     }
 }
 

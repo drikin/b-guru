@@ -18,6 +18,11 @@ final class MinigameStore {
     /// The chat column's height (the game takes at most ~45 % of it, so the chat stays in view).
     private(set) var areaHeight: CGFloat = 0
     func setAreaHeight(_ h: CGFloat) { if abs(h - areaHeight) > 1 { areaHeight = h } }
+    /// ⤢ 広げる: チャット欄の 85% まで大きく（部室の「広げる」と同じ）。端末に覚える。同じ WebView の大きさを
+    /// 変えるだけなので、遊んでいる途中の回は消えない（作り直さない）。rbtnn さんの要望 2026-11-08
+    var expanded = UserDefaults.standard.bool(forKey: "minigameExpanded") {
+        didSet { UserDefaults.standard.set(expanded, forKey: "minigameExpanded") }
+    }
     /// The message box has the focus (the game pauses: typing must not jump).
     var inputFocused = false
 

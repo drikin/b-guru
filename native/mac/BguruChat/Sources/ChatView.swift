@@ -165,7 +165,8 @@ private struct ChatHeader: View {
                     .font(.app(.caption)).foregroundStyle(.secondary)
             }
             Spacer()
-            DMBadgeButton(dm: store.dm) // ✉️ 簡易 DM（未読の数つき）
+            // ✉️ DM は上の切り替え（PanelTabSwitch）へ移した
+            if tabPicker == nil { DMBadgeButton(dm: store.dm) }
             if store.onlineCount > 0 {
                 Label("\(store.onlineCount)", systemImage: "circle.fill")
                     .labelStyle(OnlineLabelStyle())

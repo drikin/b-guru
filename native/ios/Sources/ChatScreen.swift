@@ -140,7 +140,8 @@ struct ChatScreen: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 14) {
-                        DMBadgeButton(dm: store.dm) // ✉️ 簡易 DM（未読の数つき）
+                        // ✉️ DM は上の切り替え（📰 💬 📻 の隣）へ移した。iPad のチャット欄には切り替えが無いのでここに残す
+                        if tabPicker == nil { DMBadgeButton(dm: store.dm) }
                         menu
                     }
                 }

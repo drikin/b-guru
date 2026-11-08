@@ -21,6 +21,8 @@ struct MinigameScreen: View {
     /// fills the width up to this (drikin 2026-10-24: it was drawn at whole multiples only and came out small).
     private var maxHeight: Int {
         let area = minigame.areaHeight > 0 ? minigame.areaHeight : 600
+        // ⤢ 広げたとき: チャット欄の 85%（上限 520 も外す）
+        if minigame.expanded { return Int(max(150, area * RoomZoom.expandedHeight)) }
         return Int(min(520, max(150, area * 0.5)))
     }
 
@@ -36,6 +38,13 @@ struct MinigameScreen: View {
         // Exactly the height the game says it uses (size), never more than the limit.
         .frame(height: height > 0 ? min(height, CGFloat(maxHeight)) : CGFloat(maxHeight) * 0.6)
         .frame(maxWidth: .infinity)
+        // ⤢ 広げる / 戻す（同じ WebView のまま大きさだけ変わる。回は消えない）
+        .overlay(alignment: .topTrailing) {
+            ShogiExpandButton(expanded: Binding(get: { minigame.expanded }, set: { minigame.expanded = $0 }))
+                .foregroundStyle(.white)
+                .background(Circle().fill(Color.black.opacity(0.35)))
+                .padding(4)
+        }
         .padding(.vertical, 2)
         .accessibilityLabel("ゲーム（散財ダッシュ）")
     }

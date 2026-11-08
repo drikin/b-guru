@@ -257,6 +257,11 @@ final class ShogiStore {
     /// The chat column's height (the screen above the chat takes at most half of it).
     private(set) var areaHeight: CGFloat = 0
     func setAreaHeight(_ h: CGFloat) { if abs(h - areaHeight) > 1 { areaHeight = h } }
+    /// ⤢ 広げる: 盤をチャット欄の 85% まで大きく（部室の「広げる」と同じ）。端末に覚える。盤の WebView は
+    /// そのまま（大きさの上限を送り直すだけ）なので、対局の様子は消えない。rbtnn さんの要望 2026-11-08
+    var expanded = UserDefaults.standard.bool(forKey: "shogiExpanded") {
+        didSet { UserDefaults.standard.set(expanded, forKey: "shogiExpanded") }
+    }
     /// Server clock − this device's clock (s): the clocks are counted here, corrected by it.
     private(set) var skew: TimeInterval = 0
     /// Bumped whenever the server has answered a move: the board then gets the position

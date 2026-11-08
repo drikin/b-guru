@@ -12,10 +12,12 @@ import SwiftUI
 /// ✉️ with the unread count: opens the DM list (only when DM is on).
 struct DMBadgeButton: View {
     let dm: DMStore
+    /// 一覧を開く前に（iPhone: チャットのページへ。DM の一覧はチャットの上に出る）。
+    var beforeOpen: (() -> Void)? = nil
 
     var body: some View {
         if dm.enabled {
-            Button { dm.openList() } label: {
+            Button { beforeOpen?(); dm.openList() } label: {
                 Image(systemName: "envelope")
                     .font(.app(.body))
                     .overlay(alignment: .topTrailing) {
