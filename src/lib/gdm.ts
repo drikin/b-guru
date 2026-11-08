@@ -34,6 +34,8 @@ import {
   checkDmImages,
   checkDmRate,
   checkReactRate,
+  checkEditRate,
+  reactionsForViewers,
   toggleReactionOr400,
   dmEnabledFor,
   isActiveMember,
@@ -846,6 +848,8 @@ export async function editGroupMessage(actor: DmActor, rawId: unknown, rawBody: 
   if (row.kind !== "text" || normEmail(row.sender_email ?? "") !== me) throw new DmError(403, "forbidden", "自分の発言だけ直せます");
   const answered = await pool.query(`SELECT 1 FROM beagle_ai_log WHERE app LIKE 'gdm:%' AND question_id = $1 LIMIT 1`, [row.id]);
   if ((answered.rowCount ?? 0) > 0) throw new DmError(403, "forbidden", "ビーグルが答えた質問は直せません");
+  const rate = await checkEditRate(me);
+  if (!rate.allowed) throw new DmError(429, "rate_limited", "編集が多すぎます。しばらく待ってください", rate.retryAfter);
   const checked = normalizeDmBody(rawBody);
   const body = checked.ok ? checked.body : checked.error === "empty" && (row.images?.length ?? 0) > 0 ? "" : null;
   if (body == null) {
@@ -854,6 +858,7 @@ export async function editGroupMessage(actor: DmActor, rawId: unknown, rawBody: 
   const up = await pool.query(
     `UPDATE gdm_messages SET body = $2, edited_at = now()
       WHERE id = $1 AND sender_email = $3 AND kind = 'text' AND created_at >= now() - ($4::text)::interval
+        AND EXISTS (SELECT 1 FROM gdm_members gm WHERE gm.group_id = gdm_messages.group_id AND gm.email = $3)
       RETURNING id, group_id, sender_email, kind, body, images, created_at, edited_at`,
     [row.id, body, me, DM_TTL]
   );
@@ -863,8 +868,10 @@ export async function editGroupMessage(actor: DmActor, rawId: unknown, rawBody: 
   const members = loaded?.members ?? [];
   const lk = await lookup([...members.map((m) => m.email), me]);
   let mine: GMessageDto | null = null;
-  for (const viewer of viewersOf(next, members)) {
-    const list = (await getReactions("gdm", [next.id], viewer)).get(next.id) ?? [];
+  const viewers = viewersOf(next, members);
+  const per = await reactionsForViewers("gdm", next.id, viewers);
+  for (const viewer of viewers) {
+    const list = per.get(viewer) ?? [];
     const dto = toGMessageDto(next, viewer, lk, null, list);
     if (viewer === me) mine = dto;
     emitPersonal(viewer, { type: "gdm", data: { action: "edit", group_id: next.group_id, message: dto } });
@@ -889,8 +896,10 @@ export async function reactGroupMessage(
   if (!rate.allowed) throw new DmError(429, "rate_limited", "リアクションが多すぎます。しばらく待ってください", rate.retryAfter);
   const r = await toggleReactionOr400("gdm", row.id, me, emoji);
   const loaded = await loadGroup(row.group_id);
-  for (const viewer of viewersOf(row, loaded?.members ?? [])) {
-    const list = viewer === me ? r.reactions : ((await getReactions("gdm", [row.id], viewer)).get(row.id) ?? []);
+  const viewers = viewersOf(row, loaded?.members ?? []);
+  const per = await reactionsForViewers("gdm", row.id, viewers);
+  for (const viewer of viewers) {
+    const list = viewer === me ? r.reactions : (per.get(viewer) ?? []);
     emitPersonal(viewer, { type: "gdm", data: { action: "reaction", group_id: row.group_id, message_id: row.id, reactions: list } });
   }
   return r;

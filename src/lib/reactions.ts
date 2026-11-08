@@ -16,7 +16,7 @@ import { REACTOR_LIMIT, sortReactions } from "./timeline-display";
  * custom emoji updates every existing reaction, which is what users expect.
  */
 
-/** "dm" / "gdm": ✉️👥 DM の発言（lib/dm-react.ts が当事者・メンバーかを確かめてから呼ぶ。/api/reactions では受けない）。 */
+/** "dm" / "gdm": ✉️👥 DM の発言（lib/dm.ts・lib/gdm.ts が当事者・メンバーかを確かめてから呼ぶ。/api/reactions では受けない）。 */
 export type ReactionTarget = "post" | "chat" | "dm" | "gdm";
 
 /** One emoji's aggregate on a target. */

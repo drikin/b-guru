@@ -486,6 +486,8 @@ export async function editDm(actor: DmActor, rawId: unknown, rawBody: unknown): 
   if (!dmEnabledFor(me)) throw new DmError(403, "forbidden", "DM はまだ使えません");
   const row = await loadOwnPairMessage(actor, rawId);
   if (normEmail(row.sender_email) !== me) throw new DmError(403, "forbidden", "自分の DM だけ直せます");
+  const rate = await checkEditRate(me);
+  if (!rate.allowed) throw new DmError(429, "rate_limited", "編集が多すぎます。しばらく待ってください", rate.retryAfter);
   const checked = normalizeDmBody(rawBody);
   const body = checked.ok ? checked.body : checked.error === "empty" && (row.images?.length ?? 0) > 0 ? "" : null;
   if (body == null) {
@@ -557,9 +559,37 @@ export async function toggleReactionOr400(
   }
 }
 
-/** リアクションの回数制限（1 人あたり 1 時間 300 回。送信の 60 件とは別のカウンタ、鍵は dm-react:<email>）。✉️ と 👥 で共通。 */
-export const DM_REACT_RATE_LIMIT = 300;
-export async function checkReactRate(email: string): Promise<{ allowed: boolean; retryAfter: number }> {
+/** 見る人ごとのリアクション（名前の集計は 1 回、mine だけ見る人ごとに）。グループの全員への配信で人数分の問い合わせにしない。 */
+export async function reactionsForViewers(
+  target: "dm" | "gdm",
+  id: number,
+  viewers: string[]
+): Promise<Map<string, ReactionSummary[]>> {
+  const [base, mineRows] = await Promise.all([
+    getReactions(target, [id], null),
+    pool.query(`SELECT emoji, lower(user_email) AS e FROM reactions WHERE target_type = $1 AND target_id = $2`, [target, id]),
+  ]);
+  const list = base.get(id) ?? [];
+  const by = new Map<string, Set<string>>();
+  for (const r of mineRows.rows as { emoji: string; e: string }[]) {
+    if (!by.has(r.e)) by.set(r.e, new Set());
+    by.get(r.e)!.add(r.emoji);
+  }
+  const out = new Map<string, ReactionSummary[]>();
+  for (const v of viewers) {
+    const mine = by.get(normEmail(v));
+    out.set(v, list.map((x) => ({ ...x, mine: !!mine?.has(x.emoji) })));
+  }
+  return out;
+}
+
+/** 編集の回数制限（1 人あたり 1 時間 600 回。普段は届かない、グループで人数分の配信を連打されないための安全弁）。 */
+export const DM_EDIT_RATE_LIMIT = 600;
+export async function checkEditRate(email: string): Promise<{ allowed: boolean; retryAfter: number }> {
+  return checkHourly(`dm-edit:${normEmail(email)}`, DM_EDIT_RATE_LIMIT);
+}
+
+async function checkHourly(key: string, limit: number): Promise<{ allowed: boolean; retryAfter: number }> {
   const res = await pool.query(
     `INSERT INTO rate_limits (key, window_start, count)
      VALUES ($1, now(), 1)
@@ -567,12 +597,18 @@ export async function checkReactRate(email: string): Promise<{ allowed: boolean;
        window_start = CASE WHEN rate_limits.window_start < now() - interval '1 hour' THEN now() ELSE rate_limits.window_start END,
        count = CASE WHEN rate_limits.window_start < now() - interval '1 hour' THEN 1 ELSE rate_limits.count + 1 END
      RETURNING count, window_start`,
-    [`dm-react:${normEmail(email)}`]
+    [key]
   );
   const count = Number(res.rows[0].count);
-  if (count <= DM_REACT_RATE_LIMIT) return { allowed: true, retryAfter: 0 };
+  if (count <= limit) return { allowed: true, retryAfter: 0 };
   const started = new Date(res.rows[0].window_start).getTime();
   return { allowed: false, retryAfter: Math.max(1, Math.ceil((started + 3600_000 - Date.now()) / 1000)) };
+}
+
+/** リアクションの回数制限（1 人あたり 1 時間 300 回。送信の 60 件とは別のカウンタ、鍵は dm-react:<email>）。✉️ と 👥 で共通。 */
+export const DM_REACT_RATE_LIMIT = 300;
+export async function checkReactRate(email: string): Promise<{ allowed: boolean; retryAfter: number }> {
+  return checkHourly(`dm-react:${normEmail(email)}`, DM_REACT_RATE_LIMIT);
 }
 
 /** 30 日を過ぎた DM と、それより古い既読の記録を消す。消した DM の件数を返す。 */
