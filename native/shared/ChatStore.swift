@@ -861,20 +861,7 @@ final class ChatStore {
     #endif
 
     static func toggled(_ list: [Reaction], emoji: String) -> [Reaction] {
-        var next = list
-        if let i = next.firstIndex(where: { $0.emoji == emoji }) {
-            if next[i].mine {
-                next[i].count -= 1
-                next[i].mine = false
-                if next[i].count <= 0 { next.remove(at: i) }
-            } else {
-                next[i].count += 1
-                next[i].mine = true
-            }
-        } else {
-            next.append(Reaction(emoji: emoji, count: 1, mine: true, reactors: []))
-        }
-        return next
+        ReactionLogic.toggled(list, emoji: emoji)
     }
 
     var lastOwnMessage: ChatMessage? {

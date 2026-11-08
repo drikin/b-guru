@@ -25,7 +25,6 @@ struct MessageRow: View {
     @Environment(\.shogi) private var shogi
     @Environment(\.watch) private var watch
     @State private var hovering = false
-    @State private var pickerOpen = false
     @State private var selecting = false
     @State private var askingDM = false
 
@@ -161,19 +160,9 @@ struct MessageRow: View {
             .onTapGesture(count: 2) { if canReact && m.id > 0 { onReact("❤️") } }
             #endif
             // Actions hang off the bubble's outer top corner on hover: ❤️ in one
-            // click, 😊 for the picker, ✏️ for your own. An overlay takes no
-            // space, so bubbles keep their full width and nothing jumps.
-            .overlay(alignment: mine ? .topLeading : .topTrailing) {
-                actionBar
-                    .fixedSize()
-                    .alignmentGuide(mine ? .leading : .trailing) { d in
-                        mine ? d[.trailing] - 14 : d[.leading] + 14
-                    }
-                    .offset(y: -12)
-            }
+            // click, 😊 for the picker, ✏️ for your own (MessageActions.swift, shared with ✉️ DM).
+            .messageActionBar(mine: mine, actionBar)
     }
-
-    private var showActions: Bool { (hovering || pickerOpen || Self.debugForceActions) && m.id > 0 && row.state == .sent }
 
     #if DEBUG
     static let debugForceActions = CommandLine.arguments.contains("-forceActions")
@@ -181,55 +170,16 @@ struct MessageRow: View {
     static let debugForceActions = false
     #endif
 
-    @ViewBuilder private var actionBar: some View {
-        if canReact || (mine && canEdit) || (!mine && onReplyMention != nil) {
-            HStack(spacing: 0) {
-                if canReact {
-                    ActionButton(systemImage: nil, text: "❤️", help: "❤️ を付ける（ダブルクリックでも）") { onReact("❤️") }
-                    ActionButton(systemImage: "face.smiling", text: nil, help: "リアクションを選ぶ") { pickerOpen = true }
-                        .popover(isPresented: $pickerOpen, arrowEdge: .bottom) {
-                            ReactionPicker(onPick: { emoji in
-                                pickerOpen = false
-                                onReact(emoji)
-                            }, onClose: { pickerOpen = false })
-                            .presentationCompactAdaptation(.popover) // iPhone: stay a popover, not a full sheet
-                        }
-                }
-                if let onReplyMention, !mine {
-                    ActionButton(systemImage: "arrowshape.turn.up.left", text: nil,
-                                 help: "\(m.authorName ?? "") さんに返信（@メンション）", action: onReplyMention)
-                }
-                if mine && canEdit {
-                    ActionButton(systemImage: "pencil", text: nil, help: "編集（入力欄が空のとき ↑ でも）", action: onEdit)
-                }
-            }
-            .padding(2)
-            .background(Capsule().fill(.background).shadow(color: .black.opacity(0.12), radius: 2, y: 1))
-            .opacity(showActions ? 1 : 0)
-            .animation(.easeOut(duration: 0.12), value: showActions)
-            .allowsHitTesting(showActions)
-            .accessibilityHidden(true) // exposed as accessibility actions on the row instead
-        }
+    private var actionBar: some View {
+        MessageActionBar(mine: mine, canReact: canReact, canEdit: mine && canEdit, active: m.id > 0 && row.state == .sent,
+                         hovering: hovering, authorName: m.authorName, editHelp: "編集（入力欄が空のとき ↑ でも）",
+                         onReact: onReact, onEdit: onEdit, onReply: onReplyMention)
     }
 
-    @ViewBuilder private var menu: some View {
-        if let onReplyMention, !mine, m.id > 0 {
-            Button("返信（@メンション）", systemImage: "arrowshape.turn.up.left", action: onReplyMention)
-        }
-        if let onDM, !mine, m.id > 0 {
-            Button("DM を送る", systemImage: "envelope", action: onDM)
-        }
-        if canReact && m.id > 0 {
-            ForEach(Self.quick, id: \.self) { e in Button(e) { onReact(e) } }
-            Divider()
-        }
-        if mine && canEdit && m.id > 0 { Button("編集", action: onEdit) }
-        Button("テキストをコピー", systemImage: "doc.on.doc") {
-            Platform.copy(m.body)
-        }
-        #if os(iOS)
-        Button("テキストを選択", systemImage: "selection.pin.in.out") { selecting = true }
-        #endif
+    private var menu: some View {
+        MessageMenuItems(mine: mine, stored: m.id > 0, canReact: canReact, canEdit: mine && canEdit, text: m.body,
+                         onReact: onReact, onEdit: onEdit, onReply: onReplyMention, onDM: onDM,
+                         onSelect: { selecting = true })
     }
 
     // MARK: helpers

@@ -213,6 +213,7 @@ targets:
       - path: ../shared/ReadSync.swift
       - path: ../shared/GroupDMLogic.swift
       - path: ../shared/DMLogic.swift
+      - path: ../shared/ReactionLogic.swift
       - path: ../shared/DMPhotoText.swift
       - path: ../shared/ChatSpeech.swift
       - path: BguruChat/Sources/KeepAwakeLogic.swift

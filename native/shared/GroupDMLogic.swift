@@ -56,11 +56,18 @@ struct GDMMessage: Codable, Equatable, Sendable, Identifiable {
     /// 🐶 Beagle's answer (kind stays "text" so older apps show it as a message from ビーグル).
     var isBeagle: Bool? = nil
     var clientId: String?
+    /// ✏️ Changed after it was sent (docs/dm-chat-parity-spec.md). Missing (older servers) = false / nil.
+    var edited = false
+    var editedAt: String? = nil
+    /// 😀 The chips (never on system lines). Filled when a group is opened; [] in the list and on create.
+    var reactions: [Reaction] = []
     /// Local only: on its way (negative id) / could not be sent.
     var pending = false
     var failed = false
 
-    enum CodingKeys: String, CodingKey { case id, groupId, kind, fromId, fromName, fromAvatar, body, images, createdAt, isAuthor, isBeagle, clientId }
+    enum CodingKeys: String, CodingKey {
+        case id, groupId, kind, fromId, fromName, fromAvatar, body, images, createdAt, isAuthor, isBeagle, clientId, edited, editedAt, reactions
+    }
 
     /// The text for the list and notifications: the body, or 「📷 写真」 for photos alone.
     var shownBody: String { DMPhotoText.shown(body: body, imageCount: images.count) }
@@ -88,7 +95,17 @@ extension GDMMessage {
         isAuthor = try c.decodeIfPresent(Bool.self, forKey: .isAuthor) ?? false
         isBeagle = try c.decodeIfPresent(Bool.self, forKey: .isBeagle)
         clientId = try c.decodeIfPresent(String.self, forKey: .clientId)
+        edited = (try? c.decodeIfPresent(Bool.self, forKey: .edited)) ?? false
+        editedAt = try? c.decodeIfPresent(String.self, forKey: .editedAt)
+        reactions = (try? c.decodeIfPresent([Reaction].self, forKey: .reactions)) ?? []
     }
+
+    /// Sent and stored (not on its way, not failed).
+    var isStored: Bool { id > 0 && !pending && !failed }
+    /// 😀 May carry reactions: a stored message, not a system line (ビーグル's answers may).
+    var canBeReacted: Bool { isStored && !isSystem }
+    /// ✏️ May be edited by me: my own stored text (not ビーグル's answer; the server also refuses a question ビーグル answered).
+    var canBeEdited: Bool { isStored && isAuthor && !isSystem && isBeagle != true }
 }
 
 struct GDMSummary: Codable, Equatable, Sendable, Identifiable {
@@ -111,11 +128,15 @@ struct GDMThreadResponse: Decodable, Sendable {
     var canSend: Bool?
 }
 
-/// Stream `event: gdm`: create / read / group / removed (docs/group-dm-spec.md §配信).
+/// Stream `event: gdm`: create / read / group / removed (docs/group-dm-spec.md §配信), edit / reaction
+/// (docs/dm-chat-parity-spec.md).
 struct GDMEvent: Decodable, Sendable {
     var action: String
     var groupId: Int?
     var message: GDMMessage?
+    /// `reaction`: whose chips, and the chips (mine for the one looking).
+    var messageId: Int?
+    var reactions: [Reaction]?
     var group: GDMGroup?
     var lastReadId: Int?
     var unreadCount: Int?
@@ -168,6 +189,57 @@ enum GDMLogic {
         var next = list.filter { !matches($0) }
         next.append(m)
         return next.sorted { a, b in (a.id < 0 ? Int.max : a.id) < (b.id < 0 ? Int.max : b.id) }
+    }
+
+    /// ✏️ An edited message (PATCH's answer or the stream's `edit`): the same id's text, photos and 「編集済み」;
+    /// its chips and local flags stay (as the chat does).
+    static func applyingEdit(_ list: [GDMMessage], _ m: GDMMessage) -> [GDMMessage] {
+        list.map { x in
+            guard x.id == m.id else { return x }
+            var next = x
+            next.body = m.body
+            next.images = m.images
+            next.edited = m.edited
+            next.editedAt = m.editedAt
+            return next
+        }
+    }
+
+    /// 😀 The stream's `reaction` (or the toggle's answer): that message's chips as the server says.
+    static func settingReactions(_ list: [GDMMessage], id: Int, _ reactions: [Reaction]) -> [GDMMessage] {
+        list.map { x in
+            guard x.id == id else { return x }
+            var next = x
+            next.reactions = reactions
+            return next
+        }
+    }
+
+    /// The list's last line follows an edit of that group's last message.
+    static func summaries(_ list: [GDMSummary], edited m: GDMMessage) -> [GDMSummary] {
+        list.map { s in
+            guard s.lastMessage?.id == m.id, var last = s.lastMessage else { return s }
+            last.body = m.body
+            last.images = m.images
+            last.edited = m.edited
+            last.editedAt = m.editedAt
+            return GDMSummary(group: s.group, lastMessage: last, unreadCount: s.unreadCount)
+        }
+    }
+
+    /// @ メンション: the text names me (`@名前` up to a space, or `@[名前]`) — the chat's yellow
+    /// bubble. The server's isMentionedIn (src/lib/chat-mention.ts) rule; case and spaces ignored.
+    static func mentions(_ body: String, name: String?) -> Bool {
+        guard let name, !name.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        func norm(_ s: String) -> String { s.lowercased().filter { !$0.isWhitespace && $0 != "\u{3000}" } }
+        let want = norm(name)
+        let ns = body as NSString
+        guard let re = try? NSRegularExpression(pattern: "@\\[([^\\]]+)\\]|@([^\\s@\\[\\]]+)") else { return false }
+        for m in re.matches(in: body, range: NSRange(location: 0, length: ns.length)) {
+            let r = m.range(at: 1).location != NSNotFound ? m.range(at: 1) : m.range(at: 2)
+            if norm(ns.substring(with: r)) == want { return true }
+        }
+        return false
     }
 
     /// When the summary last moved (its last message, else when the group was made) — the list's order.

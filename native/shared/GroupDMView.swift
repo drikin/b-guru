@@ -56,6 +56,8 @@ struct GDMThreadView: View {
     @State private var photos: PostDraft
     /// A photo opened full screen.
     @State private var viewing: ImageViewerItem?
+    /// ✏️ My message open in the composer for editing (the chat's ChatComposerModel.editingId).
+    @State private var editingId: Int?
 
     init(dm: DMStore, groups: GroupDMStore, groupId: Int) {
         self.dm = dm
@@ -99,7 +101,12 @@ struct GDMThreadView: View {
                                 let showsSender = !m.isAuthor && (prev == nil || prev!.isSystem || prev!.fromId != m.fromId)
                                 GDMBubble(m: m, showsSender: showsSender,
                                           localImages: m.clientId.flatMap { groups.outgoingPhotos[$0]?.previews } ?? [],
+                                          mentionsMe: !m.isAuthor && GDMLogic.mentions(m.body, name: myName),
+                                          canReact: groups.canReact, canEdit: groups.canEdit && m.canBeEdited,
+                                          editing: editingId == m.id,
                                           onOpenImage: { i in viewing = ImageViewerItem(images: m.images, index: i) },
+                                          onReact: { groups.toggleReaction(m.id, emoji: $0) }, onEdit: { beginEdit(m) },
+                                          onReply: canReply(m) ? { replyTo(m.senderName) } : nil,
                                           onRetry: { groups.retry(m) }, onDiscard: { groups.discard(m) })
                             }
                         }
@@ -123,16 +130,45 @@ struct GDMThreadView: View {
         .dmPhotoInput(photos, enabled: canAttach)
     }
 
-    /// 📷 Photos can go with the next message.
-    private var canAttach: Bool { groups.canSendImages && groups.canSend && groups.groupCanSend }
+    /// 📷 Photos can go with the next message (not while editing: photos stay as they are).
+    private var canAttach: Bool { groups.canSendImages && groups.canSend && groups.groupCanSend && editingId == nil }
+
+    /// My name in this group (whose @mentions get the chat's yellow).
+    private var myName: String? { groups.group?.me?.name }
+
+    /// The message being edited (nil when it is gone).
+    private var editingMessage: GDMMessage? { editingId.flatMap { id in groups.thread.first { $0.id == id } } }
+
+    /// ↩️ Others' stored messages, ビーグル's too (@ビーグル asks it again), not system lines.
+    private func canReply(_ m: GDMMessage) -> Bool { groups.canSend && groups.groupCanSend && !m.isAuthor && m.isStored && !m.isSystem }
+
+    /// ↩️ The chat's reply: `@名前 ` at the start of the composer (keeps what was typed).
+    private func replyTo(_ name: String) {
+        let token = Mention.token(name)
+        if editingId != nil { editingId = nil; draft = "" }
+        if !draft.hasPrefix(token) { draft = token + draft.trimmingCharacters(in: .whitespaces) }
+        focused = true
+    }
+
+    private func beginEdit(_ m: GDMMessage) {
+        editingId = m.id
+        draft = m.body
+        focused = true
+    }
+
+    private func cancelEdit() {
+        editingId = nil
+        draft = ""
+    }
 
     @ViewBuilder private var composer: some View {
         if groups.canSend && groups.groupCanSend {
             VStack(alignment: .leading, spacing: 4) {
+                if editingId != nil { DMEditingBar(onCancel: cancelEdit) }
                 if canAttach { DMDraftTray(draft: photos) }
                 HStack(alignment: .bottom, spacing: 8) {
                     if canAttach { DMAttachButtons(draft: photos) }
-                    PostTextInput(text: $draft, isFocused: $focused, placeholder: (groups.summary(groups.openId ?? -1)?.group.beagle == true) ? "\(title) へ（@ビーグル で質問・要約）" : "\(title) へ",
+                    PostTextInput(text: $draft, isFocused: $focused, placeholder: editingId != nil ? "編集内容" : (groups.summary(groups.openId ?? -1)?.group.beagle == true) ? "\(title) へ（@ビーグル で質問・要約）" : "\(title) へ",
                                   onSubmit: send, onPasteImage: canAttach ? { photos.add(imageData: $0) } : nil)
                         .font(.app(.body))
                         .padding(.horizontal, 10).padding(.vertical, 7)
@@ -142,12 +178,12 @@ struct GDMThreadView: View {
                         }
                         .accessibilityLabel("グループ DM の本文")
                     Button(action: send) {
-                        Image(systemName: "arrow.up.circle.fill").font(.app(size: 26))
+                        Image(systemName: editingId == nil ? "arrow.up.circle.fill" : "checkmark.circle.fill").font(.app(size: 26))
                             .foregroundStyle(canSendDraft ? Color.accentGreen : Color.secondary)
                     }
                     .buttonStyle(.borderless)
                     .disabled(!canSendDraft)
-                    .accessibilityLabel("送信")
+                    .accessibilityLabel(editingId == nil ? "送信" : "保存")
                 }
                 HStack {
                     Text("DM は 30 日で消えます").font(.app(.caption2)).foregroundStyle(.tertiary)
@@ -166,6 +202,10 @@ struct GDMThreadView: View {
     }
 
     private var canSendDraft: Bool {
+        if editingId != nil {
+            guard let m = editingMessage else { return false }
+            return DMLogic.editedBody(draft, hasPhotos: !m.images.isEmpty, maxBody: groups.maxBody) != nil
+        }
         let t = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         return (!t.isEmpty || (canAttach && !photos.images.isEmpty)) && t.count <= groups.maxBody
     }
@@ -173,6 +213,13 @@ struct GDMThreadView: View {
     private func send() {
         guard canSendDraft else { return }
         let text = draft
+        if let id = editingId {
+            // ✏️ Save (the chat's: the composer clears at once, the bubble changes optimistically).
+            editingId = nil
+            draft = ""
+            Task { _ = await groups.edit(id, body: text) }
+            return
+        }
         groups.send(text, photos: canAttach ? photos.takePhotos() : nil)
         justSent = (text, Date())
         draft = ""
@@ -214,16 +261,23 @@ private struct GDMBubble: View {
     let showsSender: Bool
     /// Previews of photos still being sent (the stored message has their URLs instead).
     var localImages: [PlatformImage] = []
+    /// It names me (@): the chat's yellow bubble.
+    var mentionsMe = false
+    var canReact = false
+    /// ✏️ offered (my own text, and the server lets group DMs be edited).
+    var canEdit = false
+    var editing = false
     /// Tap on a photo: open it full screen (index into `m.images`).
     var onOpenImage: ((Int) -> Void)? = nil
+    var onReact: (String) -> Void = { _ in }
+    var onEdit: () -> Void = {}
+    /// ↩️ `@名前 ` into the composer (others' messages).
+    var onReply: (() -> Void)? = nil
     let onRetry: () -> Void
     let onDiscard: () -> Void
 
-    private var hasPhotos: Bool { !m.images.isEmpty || !localImages.isEmpty }
-
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
-            if m.isAuthor { Spacer(minLength: 40) }
             if !m.isAuthor {
                 Group {
                     if showsSender {
@@ -243,26 +297,11 @@ private struct GDMBubble: View {
                 if showsSender {
                     Text(m.senderName).font(.app(.caption, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
                 }
-                if hasPhotos {
-                    // 📷 the chat's photo grid (one big, or two columns), tap = full screen.
-                    ChatPhotos(paths: m.images, local: m.images.isEmpty ? localImages : [], onOpen: onOpenImage)
-                        .padding(.bottom, m.body.isEmpty ? 0 : 2)
-                }
-                if !m.body.isEmpty || !hasPhotos {
-                    Text(MessageRow.attributed(m.body))
-                        .font(.app(.body))
-                        #if os(macOS)
-                        .textSelection(.enabled)
-                        #endif
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(m.isAuthor ? Color.accentGreen.opacity(0.14) : Color.primary.opacity(0.06))
-                        )
-                        .contextMenu {
-                            Button("テキストをコピー", systemImage: "doc.on.doc") { Platform.copy(m.body) }
-                        }
-                }
+                DMMessageContent(mine: m.isAuthor, text: m.body, images: m.images, localImages: localImages,
+                                 stored: m.isStored, mentionsMe: mentionsMe, editing: editing,
+                                 reactions: m.reactions, canReact: canReact && m.canBeReacted, canEdit: canEdit,
+                                 authorName: m.isAuthor ? "自分" : m.senderName,
+                                 onOpenImage: onOpenImage, onReact: onReact, onEdit: onEdit, onReply: onReply)
                 if m.failed {
                     HStack(spacing: 6) {
                         Text("送信できませんでした").font(.app(.caption)).foregroundStyle(.red)
@@ -270,14 +309,16 @@ private struct GDMBubble: View {
                         Button("取り消す", action: onDiscard).linkButton().font(.app(.caption)).tint(.secondary)
                     }
                 } else {
-                    Text(MessageRow.time(m.createdAt)).font(.app(.caption2)).foregroundStyle(.tertiary).monospacedDigit()
+                    DMTimeLine(createdAt: m.createdAt, edited: m.edited)
                 }
             }
             .opacity(m.pending ? 0.6 : 1)
-            if !m.isAuthor { Spacer(minLength: 40) }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(m.isAuthor ? "自分" : m.senderName)、\(m.body)\(m.images.isEmpty ? "" : "、写真 \(m.images.count) 枚")\(m.failed ? "、送信失敗" : "")")
+        .accessibilityAction(named: "❤️ を付ける") { if canReact && m.canBeReacted { onReact("❤️") } }
+        .accessibilityAction(named: "編集") { if canEdit && m.canBeEdited { onEdit() } }
+        .accessibilityAction(named: "返信") { onReply?() }
+        .accessibilityLabel("\(m.isAuthor ? "自分" : m.senderName)、\(m.body)\(m.images.isEmpty ? "" : "、写真 \(m.images.count) 枚")\(mentionsMe ? "、あなたへのメンション" : "")\(m.edited ? "、編集済み" : "")\(m.failed ? "、送信失敗" : "")")
     }
 }
 

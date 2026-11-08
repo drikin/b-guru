@@ -30,6 +30,19 @@ extension APIClient {
         return r.message
     }
 
+    /// ✏️ PATCH {path}/messages/:id { body } → { message } (my own text only).
+    func gdmEdit(path: String, id: Int, body: String) async throws -> GDMMessage {
+        struct R: Decodable { var message: GDMMessage }
+        let r: R = try await send(request("PATCH", "\(path)/messages/\(id)", json: ["body": body]))
+        return r.message
+    }
+
+    /// 😀 POST {path}/messages/:id/reactions { emoji } → { added, reactions }.
+    func gdmReact(path: String, id: Int, emoji: String) async throws -> [Reaction] {
+        let r: DMReactionResponse = try await send(request("POST", "\(path)/messages/\(id)/reactions", json: ["emoji": emoji]))
+        return r.reactions
+    }
+
     /// The group's unread and all my groups' unread after reading up to `id`.
     func gdmRead(path: String, groupId: Int, upTo id: Int) async throws -> (unread: Int?, total: Int?) {
         struct R: Decodable { var unreadCount: Int?; var groupUnreadCount: Int? }
@@ -90,6 +103,9 @@ final class GroupDMStore {
     /// 📷 Photos in messages (the 1:1 DM's features.dm.max_images / upload_path; set by DMStore).
     private(set) var canSendImages = false
     private(set) var maxImages = 4
+    /// ✏️ My own text may be edited / 😀 messages reacted to (features.gdm.edit / .reactions; older servers → off).
+    private(set) var canEdit = false
+    private(set) var canReact = false
     private var uploadPath = "/api/agent/dm/upload"
     /// Photos of messages still being sent, by clientId (previews for the bubble; kept for a retry).
     private(set) var outgoingPhotos: [String: OutgoingPhotos] = [:]
@@ -163,6 +179,8 @@ final class GroupDMStore {
         maxMembers = f?.maxMembers ?? 100
         photoEditable = canSend && (f?.photo ?? false)
         beagleAvailable = canSend && (f?.beagle ?? false)
+        canEdit = canSend && (f?.edit ?? false)
+        canReact = canSend && (f?.reactions ?? false)
         if let b = f?.photoMaxBytes, b > 0 { maxPhotoBytes = b }
         if let h = f?.ttlHours, h > 0 { GDMLogic.ttl = TimeInterval(h) * 3600 }
         if let p = f?.path, p.hasPrefix("/api/") { path = p }
@@ -315,6 +333,51 @@ final class GroupDMStore {
                 self.error = Self.message(error, or: "送れませんでした")
             }
         }
+    }
+
+    // MARK: Editing and reactions (the chat's: ChatStore.edit / toggleReaction)
+
+    /// ✏️ Optimistic: the bubble changes at once; the server's answer replaces it, a refusal (e.g. a question
+    /// ビーグル answered) puts it back with the server's words.
+    func edit(_ id: Int, body: String) async -> Bool {
+        guard canEdit, let i = thread.firstIndex(where: { $0.id == id && $0.canBeEdited }),
+              let text = DMLogic.editedBody(body, hasPhotos: !thread[i].images.isEmpty, maxBody: maxBody) else { return false }
+        let old = thread[i]
+        guard text != old.body else { return true }
+        thread[i].body = text
+        thread[i].edited = true
+        error = nil
+        if demo { summaries = GDMLogic.summaries(summaries, edited: thread[i]); return true }
+        do {
+            let m = try await api.gdmEdit(path: path, id: id, body: text)
+            applyEdit(m)
+            return true
+        } catch {
+            if let j = thread.firstIndex(where: { $0.id == id }) { thread[j] = old }
+            self.error = Self.message(error, or: "編集できませんでした")
+            return false
+        }
+    }
+
+    /// 😀 Optimistic toggle; the server's chips replace the guess, a failure puts the old ones back.
+    func toggleReaction(_ id: Int, emoji: String) {
+        guard canReact, let i = thread.firstIndex(where: { $0.id == id && $0.canBeReacted }) else { return }
+        let old = thread[i].reactions
+        thread[i].reactions = ReactionLogic.toggled(old, emoji: emoji)
+        if demo { return }
+        Task {
+            do {
+                let r = try await api.gdmReact(path: path, id: id, emoji: emoji)
+                thread = GDMLogic.settingReactions(thread, id: id, r)
+            } catch {
+                thread = GDMLogic.settingReactions(thread, id: id, old)
+            }
+        }
+    }
+
+    private func applyEdit(_ m: GDMMessage) {
+        if openId == m.groupId { thread = GDMLogic.applyingEdit(thread, m) }
+        summaries = GDMLogic.summaries(summaries, edited: m)
     }
 
     // MARK: Making and changing groups
@@ -506,7 +569,7 @@ final class GroupDMStore {
         }
     }
 
-    /// Stream event "gdm": create / read / group / removed.
+    /// Stream event "gdm": create / read / group / removed / edit / reaction (the last two: no push, no unread change).
     func apply(_ data: Data) {
         guard enabled, let e = GDMEvent.decode(data) else { return }
         switch e.action {
@@ -521,6 +584,12 @@ final class GroupDMStore {
             if let g = e.group { applyGroup(g) }
         case "removed":
             if let id = e.groupId { drop(id) }
+        case "edit":
+            if let m = e.message { applyEdit(m) }
+        case "reaction":
+            if let id = e.messageId, let rs = e.reactions, let g = e.groupId, openId == g {
+                thread = GDMLogic.settingReactions(thread, id: id, rs)
+            }
         default:
             break
         }
@@ -570,6 +639,8 @@ final class GroupDMStore {
         photoEditable = true
         beagleAvailable = true
         canSendImages = true
+        canEdit = true
+        canReact = true
         func at(_ minutesAgo: Double) -> String { ISO8601DateFormatter().string(from: Date().addingTimeInterval(-minutesAgo * 60)) }
         func mem(_ id: String, creator: Bool = false, me: Bool = false) -> GDMMember {
             GDMMember(userId: id, name: me ? "ドリキン" : id, avatar: nil, isCreator: creator, isMe: me)
@@ -586,7 +657,12 @@ final class GroupDMStore {
             1: [m(1, 1, nil, "mazzo さんがグループを作りました", 200),
                 m(2, 1, "mazzo", "土曜の朝、晴れたら行きましょう", 30),
                 m(3, 1, "me", "いいですね！ レンズ何持っていきます？", 25),
-                m(4, 1, "takuto", "35mm だけで行きます", 4),
+                {
+                    // 😀 リアクションと @ メンション（自分宛ては黄色）
+                    var p = m(4, 1, "takuto", "@ドリキン 35mm だけで行きます", 4)
+                    p.reactions = [Reaction(emoji: "👍", count: 2, mine: true, reactors: ["ドリキン", "mazzo"])]
+                    return p
+                }(),
                 {
                     // 📷 写真だけの発言（本文なし）: 一覧は「takuto: 📷 写真」
                     var p = m(8, 1, "takuto", "", 3)

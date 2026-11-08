@@ -22,11 +22,16 @@ struct DMMessage: Codable, Equatable, Sendable, Identifiable {
     var createdAt: String
     var isAuthor: Bool
     var clientId: String?
+    /// ✏️ Changed after it was sent (docs/dm-chat-parity-spec.md). Missing (older servers) = false / nil.
+    var edited = false
+    var editedAt: String? = nil
+    /// 😀 The chips (the chat's shape and order). Filled when a conversation is opened; [] in the list and on create.
+    var reactions: [Reaction] = []
     /// Local only: on its way (negative id) / could not be sent.
     var pending = false
     var failed = false
 
-    enum CodingKeys: String, CodingKey { case id, fromId, toId, peerId, body, images, createdAt, isAuthor, clientId }
+    enum CodingKeys: String, CodingKey { case id, fromId, toId, peerId, body, images, createdAt, isAuthor, clientId, edited, editedAt, reactions }
 
     /// The text for the list and notifications: the body, or 「📷 写真」 for photos alone.
     var shownBody: String { DMPhotoText.shown(body: body, imageCount: images.count) }
@@ -45,7 +50,13 @@ extension DMMessage {
         createdAt = try c.decode(String.self, forKey: .createdAt)
         isAuthor = try c.decode(Bool.self, forKey: .isAuthor)
         clientId = try c.decodeIfPresent(String.self, forKey: .clientId)
+        edited = (try? c.decodeIfPresent(Bool.self, forKey: .edited)) ?? false
+        editedAt = try? c.decodeIfPresent(String.self, forKey: .editedAt)
+        reactions = (try? c.decodeIfPresent([Reaction].self, forKey: .reactions)) ?? []
     }
+
+    /// Sent and stored (not on its way, not failed): may be reacted to / edited.
+    var isStored: Bool { id > 0 && !pending && !failed }
 }
 
 struct DMConversation: Codable, Equatable, Sendable, Identifiable {
@@ -93,6 +104,51 @@ enum DMLogic {
         var next = list.filter { !matches($0) }
         next.append(m)
         return next.sorted { a, b in (a.id < 0 ? Int.max : a.id) < (b.id < 0 ? Int.max : b.id) }
+    }
+
+    /// ✏️ An edited message (PATCH's answer or the stream's `edit`): the same id's text, photos and 「編集済み」
+    /// change; its chips stay (they have their own event — as the chat does), and so do local flags.
+    static func applyingEdit(_ list: [DMMessage], _ m: DMMessage) -> [DMMessage] {
+        list.map { x in
+            guard x.id == m.id else { return x }
+            var next = x
+            next.body = m.body
+            next.images = m.images
+            next.edited = m.edited
+            next.editedAt = m.editedAt
+            return next
+        }
+    }
+
+    /// 😀 The stream's `reaction` (or the toggle's answer): that message's chips as the server says.
+    static func settingReactions(_ list: [DMMessage], id: Int, _ reactions: [Reaction]) -> [DMMessage] {
+        list.map { x in
+            guard x.id == id else { return x }
+            var next = x
+            next.reactions = reactions
+            return next
+        }
+    }
+
+    /// The list's last line follows an edit of that conversation's last message.
+    static func conversations(_ list: [DMConversation], edited m: DMMessage) -> [DMConversation] {
+        list.map { c in
+            guard c.lastMessage.id == m.id else { return c }
+            var next = c
+            next.lastMessage.body = m.body
+            next.lastMessage.images = m.images
+            next.lastMessage.edited = m.edited
+            next.lastMessage.editedAt = m.editedAt
+            return next
+        }
+    }
+
+    /// ✏️ What may be saved: the text trimmed, not too long, and not empty unless the message has photos
+    /// (the server's rule). Nil = nothing to save.
+    static func editedBody(_ text: String, hasPhotos: Bool, maxBody: Int) -> String? {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard t.count <= maxBody, !t.isEmpty || hasPhotos else { return nil }
+        return t
     }
 
     /// The list after a message: that conversation first, unread +1 when it is theirs and not on screen.

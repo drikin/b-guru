@@ -344,6 +344,8 @@ struct DMThreadView: View {
     @State private var photos: PostDraft
     /// A photo opened full screen.
     @State private var viewing: ImageViewerItem?
+    /// ✏️ My message open in the composer for editing (the chat's ChatComposerModel.editingId).
+    @State private var editingId: Int?
 
     init(dm: DMStore, peer: DMPeer) {
         _dm = Bindable(dm)
@@ -367,7 +369,10 @@ struct DMThreadView: View {
                         }
                         ForEach(dm.thread, id: \.stableId) { m in
                             DMBubble(m: m, localImages: m.clientId.flatMap { dm.outgoingPhotos[$0]?.previews } ?? [],
+                                     peerName: shown.displayName,
+                                     canReact: dm.canReact, canEdit: dm.canEdit && m.isAuthor, editing: editingId == m.id,
                                      onOpenImage: { i in viewing = ImageViewerItem(images: m.images, index: i) },
+                                     onReact: { dm.toggleReaction(m.id, emoji: $0) }, onEdit: { beginEdit(m) },
                                      onRetry: { dm.retry(m) }, onDiscard: { dm.discard(m) })
                         }
                         Color.clear.frame(height: 1).id("dm-bottom")
@@ -393,19 +398,34 @@ struct DMThreadView: View {
     /// The person as the store last said (the name and face come in after loading).
     private var shown: DMPeer { dm.openPeer?.userId == peer.userId ? dm.openPeer! : peer }
 
-    /// 📷 Photos can go with the next message.
-    private var canAttach: Bool { dm.canSendImages && dm.canSend && dm.peerCanReceive }
+    /// 📷 Photos can go with the next message (not while editing: photos stay as they are).
+    private var canAttach: Bool { dm.canSendImages && dm.canSend && dm.peerCanReceive && editingId == nil }
+
+    /// The message being edited (nil when it is gone).
+    private var editingMessage: DMMessage? { editingId.flatMap { id in dm.thread.first { $0.id == id } } }
+
+    private func beginEdit(_ m: DMMessage) {
+        editingId = m.id
+        draft = m.body
+        focused = true
+    }
+
+    private func cancelEdit() {
+        editingId = nil
+        draft = ""
+    }
 
     @ViewBuilder private var composer: some View {
-        if dm.canSend && dm.peerCanReceive {
+        if dm.canSend && (dm.peerCanReceive || editingId != nil) {
             VStack(alignment: .leading, spacing: 4) {
+                if editingId != nil { DMEditingBar(onCancel: cancelEdit) }
                 if canAttach { DMDraftTray(draft: photos) }
                 HStack(alignment: .bottom, spacing: 8) {
                     if canAttach { DMAttachButtons(draft: photos) }
                     // The chat's text box (iOS: ComposerTextView): clearing it after a send drops leftover
                     // IME / dictation text in place, without making a new field — a new field each send
                     // made the keyboard go down and come back up (drikin 2026-10-24).
-                    PostTextInput(text: $draft, isFocused: $focused, placeholder: "\(peer.displayName) さんへ",
+                    PostTextInput(text: $draft, isFocused: $focused, placeholder: editingId == nil ? "\(peer.displayName) さんへ" : "編集内容",
                                   onSubmit: send, onPasteImage: canAttach ? { photos.add(imageData: $0) } : nil)
                         .font(.app(.body))
                         .padding(.horizontal, 10).padding(.vertical, 7)
@@ -415,12 +435,12 @@ struct DMThreadView: View {
                         }
                         .accessibilityLabel("DM の本文")
                     Button(action: send) {
-                        Image(systemName: "arrow.up.circle.fill").font(.app(size: 26))
+                        Image(systemName: editingId == nil ? "arrow.up.circle.fill" : "checkmark.circle.fill").font(.app(size: 26))
                             .foregroundStyle(canSendDraft ? Color.accentGreen : Color.secondary)
                     }
                     .buttonStyle(.borderless)
                     .disabled(!canSendDraft)
-                    .accessibilityLabel("送信")
+                    .accessibilityLabel(editingId == nil ? "送信" : "保存")
                 }
                 HStack {
                     Text("DM は 30 日で消えます").font(.app(.caption2)).foregroundStyle(.tertiary)
@@ -439,6 +459,10 @@ struct DMThreadView: View {
     }
 
     private var canSendDraft: Bool {
+        if editingId != nil {
+            guard let m = editingMessage else { return false }
+            return DMLogic.editedBody(draft, hasPhotos: !m.images.isEmpty, maxBody: dm.maxBody) != nil
+        }
         let t = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         return (!t.isEmpty || (canAttach && !photos.images.isEmpty)) && t.count <= dm.maxBody
     }
@@ -446,6 +470,13 @@ struct DMThreadView: View {
     private func send() {
         guard canSendDraft else { return }
         let text = draft
+        if let id = editingId {
+            // ✏️ Save (the chat's: the composer clears at once, the bubble changes optimistically).
+            editingId = nil
+            draft = ""
+            Task { _ = await dm.edit(id, body: text) }
+            return
+        }
         dm.send(text, photos: canAttach ? photos.takePhotos() : nil)
         justSent = (text, Date())
         draft = "" // the text box drops leftover marked text itself (see above)
@@ -472,37 +503,26 @@ private struct DMBubble: View {
     let m: DMMessage
     /// Previews of photos still being sent (the stored message has their URLs instead).
     var localImages: [PlatformImage] = []
+    /// The other person's name (the select sheet's title).
+    var peerName: String? = nil
+    var canReact = false
+    /// ✏️ offered (mine, and the server lets DMs be edited).
+    var canEdit = false
+    var editing = false
     /// Tap on a photo: open it full screen (index into `m.images`).
     var onOpenImage: ((Int) -> Void)? = nil
+    var onReact: (String) -> Void = { _ in }
+    var onEdit: () -> Void = {}
     let onRetry: () -> Void
     let onDiscard: () -> Void
 
-    private var hasPhotos: Bool { !m.images.isEmpty || !localImages.isEmpty }
-
     var body: some View {
         HStack {
-            if m.isAuthor { Spacer(minLength: 40) }
             VStack(alignment: m.isAuthor ? .trailing : .leading, spacing: 2) {
-                if hasPhotos {
-                    // 📷 the chat's photo grid (one big, or two columns), tap = full screen.
-                    ChatPhotos(paths: m.images, local: m.images.isEmpty ? localImages : [], onOpen: onOpenImage)
-                        .padding(.bottom, m.body.isEmpty ? 0 : 2)
-                }
-                if !m.body.isEmpty || !hasPhotos {
-                    Text(MessageRow.attributed(m.body))
-                        .font(.app(.body))
-                        #if os(macOS)
-                        .textSelection(.enabled)
-                        #endif
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(m.isAuthor ? Color.accentGreen.opacity(0.14) : Color.primary.opacity(0.06))
-                        )
-                        .contextMenu {
-                            Button("テキストをコピー", systemImage: "doc.on.doc") { Platform.copy(m.body) }
-                        }
-                }
+                DMMessageContent(mine: m.isAuthor, text: m.body, images: m.images, localImages: localImages,
+                                 stored: m.isStored, editing: editing, reactions: m.reactions,
+                                 canReact: canReact, canEdit: canEdit && m.isAuthor, authorName: m.isAuthor ? "自分" : peerName,
+                                 onOpenImage: onOpenImage, onReact: onReact, onEdit: onEdit)
                 if m.failed {
                     HStack(spacing: 6) {
                         Text("送信できませんでした").font(.app(.caption)).foregroundStyle(.red)
@@ -510,14 +530,15 @@ private struct DMBubble: View {
                         Button("取り消す", action: onDiscard).linkButton().font(.app(.caption)).tint(.secondary)
                     }
                 } else {
-                    Text(MessageRow.time(m.createdAt)).font(.app(.caption2)).foregroundStyle(.tertiary).monospacedDigit()
+                    DMTimeLine(createdAt: m.createdAt, edited: m.edited)
                 }
             }
             .opacity(m.pending ? 0.6 : 1)
-            if !m.isAuthor { Spacer(minLength: 40) }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(m.isAuthor ? "自分" : "相手")、\(m.body)\(m.images.isEmpty ? "" : "、写真 \(m.images.count) 枚")\(m.failed ? "、送信失敗" : "")")
+        .accessibilityAction(named: "❤️ を付ける") { if canReact && m.isStored { onReact("❤️") } }
+        .accessibilityAction(named: "編集") { if canEdit && m.isAuthor && m.isStored { onEdit() } }
+        .accessibilityLabel("\(m.isAuthor ? "自分" : "相手")、\(m.body)\(m.images.isEmpty ? "" : "、写真 \(m.images.count) 枚")\(m.edited ? "、編集済み" : "")\(m.failed ? "、送信失敗" : "")")
     }
 }
 

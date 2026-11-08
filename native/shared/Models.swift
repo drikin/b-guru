@@ -38,12 +38,7 @@ struct ChatMessage: Codable, Equatable, Sendable {
     }
 }
 
-struct Reaction: Codable, Equatable, Sendable, Hashable {
-    var emoji: String
-    var count: Int
-    var mine: Bool
-    var reactors: [String]
-}
+// `Reaction` (a chip) lives in ReactionLogic.swift (the Mac's unit tests compile it with the DM logic).
 
 enum SendState: Equatable, Sendable {
     case sent, pending, failed
@@ -238,6 +233,10 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var maxImages: Int?
         /// POST multipart `images` → { urls } (the chat's upload's shape).
         var uploadPath: String?
+        /// ✏️ PATCH {path}/messages/:id { body } — my own messages (docs/dm-chat-parity-spec.md; older servers: absent → off).
+        var edit: Bool?
+        /// 😀 POST {path}/messages/:id/reactions { emoji } (older servers: absent → off).
+        var reactions: Bool?
     }
     /// 👥 グループ DM (features.gdm, GROUP_DM_ENABLED on the server; docs/group-dm-spec.md). Absent or
     /// enabled:false → nothing of it shows.
@@ -255,6 +254,10 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var photoMaxBytes: Int?
         /// 🐶 PATCH {path}/:gid { beagle } — a member may let @ビーグル answer in the group.
         var beagle: Bool?
+        /// ✏️ PATCH {path}/messages/:id { body } — my own text messages (docs/dm-chat-parity-spec.md).
+        var edit: Bool?
+        /// 😀 POST {path}/messages/:id/reactions { emoji }.
+        var reactions: Bool?
     }
     struct Features: Decodable, Sendable, Equatable {
         var dm: DMFeatures?

@@ -21,6 +21,19 @@ extension APIClient {
         return r.message
     }
 
+    /// ✏️ PATCH {path}/messages/:id { body } → { message } (my own only).
+    func dmEdit(path: String, id: Int, body: String) async throws -> DMMessage {
+        struct R: Decodable { var message: DMMessage }
+        let r: R = try await send(request("PATCH", "\(path)/messages/\(id)", json: ["body": body]))
+        return r.message
+    }
+
+    /// 😀 POST {path}/messages/:id/reactions { emoji } → { added, reactions }.
+    func dmReact(path: String, id: Int, emoji: String) async throws -> [Reaction] {
+        let r: DMReactionResponse = try await send(request("POST", "\(path)/messages/\(id)/reactions", json: ["emoji": emoji]))
+        return r.reactions
+    }
+
     func dmRead(path: String, peerId: String, upTo id: Int) async throws -> Int {
         struct R: Decodable { var unreadCount: Int }
         let r: R = try await send(request("POST", "\(path)/\(peerId)/read", json: ["last_read_id": id]))
@@ -44,6 +57,9 @@ final class DMStore {
     private(set) var uploadPath = "/api/agent/dm/upload"
     /// Photos of messages still being sent, by clientId (previews for the bubble; kept for a retry).
     private(set) var outgoingPhotos: [String: OutgoingPhotos] = [:]
+    /// ✏️ My own messages may be edited / 😀 reacted to (features.dm.edit / .reactions; older servers → off).
+    private(set) var canEdit = false
+    private(set) var canReact = false
     private(set) var conversations: [DMConversation] = []
     /// All my unread DMs (the badge).
     private(set) var unreadCount = 0
@@ -126,6 +142,8 @@ final class DMStore {
         maxBody = f?.maxBody ?? 1000
         maxImages = min(f?.maxImages ?? 0, 4)
         canSendImages = canSend && maxImages > 0
+        canEdit = canSend && (f?.edit ?? false)
+        canReact = canSend && (f?.reactions ?? false)
         if let p = f?.uploadPath, p.hasPrefix("/api/") { uploadPath = p }
         if let h = f?.ttlHours, h > 0 { DMLogic.ttl = TimeInterval(h) * 3600 }
         if let p = f?.path, p.hasPrefix("/api/") { path = p }
@@ -268,6 +286,51 @@ final class DMStore {
         }
     }
 
+    // MARK: Editing and reactions (the chat's: ChatStore.edit / toggleReaction)
+
+    /// ✏️ Optimistic: the bubble changes at once; the server's answer replaces it, a refusal puts it back.
+    func edit(_ id: Int, body: String) async -> Bool {
+        guard canEdit, let i = thread.firstIndex(where: { $0.id == id && $0.isAuthor && $0.isStored }),
+              let text = DMLogic.editedBody(body, hasPhotos: !thread[i].images.isEmpty, maxBody: maxBody) else { return false }
+        let old = thread[i]
+        guard text != old.body else { return true }
+        thread[i].body = text
+        thread[i].edited = true
+        error = nil
+        if demo { conversations = DMLogic.conversations(conversations, edited: thread[i]); return true }
+        do {
+            let m = try await api.dmEdit(path: path, id: id, body: text)
+            applyEdit(m)
+            return true
+        } catch {
+            if let j = thread.firstIndex(where: { $0.id == id }) { thread[j] = old }
+            if case let APIError.http(_, _, message) = error { self.error = message ?? "編集できませんでした" }
+            else { self.error = "編集できませんでした" }
+            return false
+        }
+    }
+
+    /// 😀 Optimistic toggle; the server's chips replace the guess, a failure puts the old ones back.
+    func toggleReaction(_ id: Int, emoji: String) {
+        guard canReact, let i = thread.firstIndex(where: { $0.id == id && $0.isStored }) else { return }
+        let old = thread[i].reactions
+        thread[i].reactions = ReactionLogic.toggled(old, emoji: emoji)
+        if demo { return }
+        Task {
+            do {
+                let r = try await api.dmReact(path: path, id: id, emoji: emoji)
+                thread = DMLogic.settingReactions(thread, id: id, r)
+            } catch {
+                thread = DMLogic.settingReactions(thread, id: id, old)
+            }
+        }
+    }
+
+    private func applyEdit(_ m: DMMessage) {
+        if openPeer?.userId == m.peerId { thread = DMLogic.applyingEdit(thread, m) }
+        conversations = DMLogic.conversations(conversations, edited: m)
+    }
+
     // MARK: Stream
 
     /// `ready`: the server's count after a (re)connect, and anything missed.
@@ -284,12 +347,16 @@ final class DMStore {
         }
     }
 
-    /// Stream event "dm": { action: "create", message, peer, unread_count? } / { action: "read", peer_id, last_read_id, unread_count }.
+    /// Stream event "dm": { action: "create", message, peer, unread_count? } / { action: "read", peer_id, last_read_id, unread_count }
+    /// / { action: "edit", message } / { action: "reaction", peer_id, message_id, reactions } (no push, no unread change).
     func apply(_ data: Data) {
         guard enabled else { return }
         let dec = JSONDecoder()
         dec.keyDecodingStrategy = .convertFromSnakeCase
-        struct Event: Decodable { var action: String; var message: DMMessage?; var peer: DMPeer?; var unreadCount: Int?; var peerId: String? }
+        struct Event: Decodable {
+            var action: String; var message: DMMessage?; var peer: DMPeer?; var unreadCount: Int?; var peerId: String?
+            var messageId: Int?; var reactions: [Reaction]?
+        }
         guard let e = try? dec.decode(Event.self, from: data) else { return }
         switch e.action {
         case "create":
@@ -299,6 +366,12 @@ final class DMStore {
                 conversations = conversations.map { $0.peer.userId == id ? DMConversation(peer: $0.peer, lastMessage: $0.lastMessage, unreadCount: 0) : $0 }
             }
             if let n = e.unreadCount { unreadCount = n }
+        case "edit":
+            if let m = e.message { applyEdit(m) }
+        case "reaction":
+            if let id = e.messageId, let rs = e.reactions, openPeer?.userId == e.peerId {
+                thread = DMLogic.settingReactions(thread, id: id, rs)
+            }
         default:
             break
         }
@@ -346,6 +419,8 @@ final class DMStore {
         enabled = true
         canSend = true
         canSendImages = true
+        canEdit = true
+        canReact = true
         maxImages = 4
         groups.configurePhotos(on: true, max: 4, uploadPath: uploadPath)
         func at(_ minutesAgo: Double) -> String { ISO8601DateFormatter().string(from: Date().addingTimeInterval(-minutesAgo * 60)) }
@@ -355,7 +430,13 @@ final class DMStore {
         }
         demoThreads = [
             "mazzo": [m(1, "mazzo", "さっきの将棋、いい勝負でしたね", mine: false, 95),
-                      m(2, "mazzo", "ありがとうございます！ 次は負けません", mine: true, 90),
+                      {
+                          // 😀 リアクションと ✏️ 編集済み（-demoDMThread のスクリーンショット）
+                          var p = m(2, "mazzo", "ありがとうございます！ 次は負けません https://bsm.backspace.fm/#/post/1", mine: true, 90)
+                          p.edited = true
+                          p.reactions = [Reaction(emoji: "😂", count: 1, mine: false, reactors: ["mazzo"])]
+                          return p
+                      }(),
                       m(5, "mazzo", "今夜の配信、見に行きます", mine: false, 6),
                       m(6, "mazzo", "1 か月で消えるのはいいですね", mine: false, 5)],
             "takuto": [m(3, "takuto", "レンズの件、あとで写真送りますね", mine: false, 300),
