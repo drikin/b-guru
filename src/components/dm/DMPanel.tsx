@@ -4,10 +4,11 @@
  *   DmTabLabel   上のタブ（タイムライン・☆・🔖・チャット）の「✉️ DM」と未読の数。押すと DM の一覧（2026-11-08 にチャットの上の ✉️ から移した）。
  *   DmToggle     （今は使っていない。チャットの上の ✉️ ボタン）
  *   DmNameMenu   チャットの発言の名前・アイコンを押すと「DM を送る」。
- *   DmDrawer     右から出る DM の一覧／1 つの会話（30 日以内のやりとり・入力欄）。
+ *   DmPane       DM の一覧／1 つの会話（30 日以内のやりとり・入力欄）。チャットと同じく画面の中央に出す
+ *                （2026-11-08 オーナー「DMもチャット欄と同様に、中央に表示してください」。以前は右から出る引き出し）。
  * DM_ENABLED の対象でない人には何も出さない（GET /api/dm が 404）。 */
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ActionIcon, Avatar, Badge, Box, Button, Drawer, Group, Indicator, Loader, Menu, ScrollArea, Stack, Text, Textarea, Tooltip, UnstyledButton } from "@mantine/core";
+import { ActionIcon, Avatar, Badge, Box, Button, Group, Indicator, Loader, Menu, ScrollArea, Stack, Text, Textarea, Tooltip, UnstyledButton } from "@mantine/core";
 import {
   closeDm,
   discardDm,
@@ -152,8 +153,8 @@ function PeerAvatar({ peer, size = "sm" }: { peer: DmPeer; size?: "xs" | "sm" | 
   );
 }
 
-/** 右から出る DM（一覧 / 会話）。 */
-export function DmDrawer() {
+/** 中央に出す DM（一覧 / 会話）。page.tsx がチャットと同じ枠（.bguru-chat-view）の中に置く。開いていなければ何も出さない。 */
+export function DmPane() {
   const s = useDm();
   const g = useGdm();
   useEffect(() => {
@@ -161,20 +162,23 @@ export function DmDrawer() {
     const t = setInterval(() => (pruneNow(), pruneGdmNow()), 60_000);
     return () => clearInterval(t);
   }, [s.open]);
-  if (s.status !== "enabled") return null;
+  if (s.status !== "enabled" || !s.open) return null;
   return (
-    <Drawer
-      opened={s.open}
-      onClose={() => (closeGroup(), closeDm())}
-      position="right"
-      size="min(440px, 100vw)"
-      padding={0}
-      withCloseButton={false}
-      data-cx="dm-drawer"
-      styles={{ body: { height: "100%", display: "flex", flexDirection: "column", padding: 0 } }}
+    <Box
+      data-cx="dm-pane"
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        background: "var(--bg-surface, var(--mantine-color-body))",
+        border: "1px solid var(--border-green, var(--mantine-color-default-border))",
+        borderRadius: 12,
+      }}
     >
       {g.current ? <GroupThread key={`g${g.current.id}`} s={g} /> : s.peer ? <DmThread key={s.peer.user_id} s={s} peer={s.peer} /> : <DmList s={s} />}
-    </Drawer>
+    </Box>
   );
 }
 

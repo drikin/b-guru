@@ -90,7 +90,7 @@ import { OverlayLayer, OverlaySwitches, OverlayVoiceFallback } from "@/component
 import { applyRoomEvent, reloadRoomIfOn, roomChatBubble } from "@/lib/room-client";
 import { ShogiChatCard, ShogiPanel } from "@/components/shogi/ShogiPanel";
 import { GameToggles, MinigamePanel } from "@/components/minigame/MinigamePanel";
-import { DmDrawer, DmNameMenu, DmTabLabel, useDmEnabled } from "@/components/dm/DMPanel";
+import { DmPane, DmNameMenu, DmTabLabel, useDm, useDmEnabled } from "@/components/dm/DMPanel";
 import { applyDmEvent, closeDm, openDmList } from "@/lib/dm-client";
 import { DmChatKitProvider, type DmChatKit } from "@/components/dm/DmChatKit";
 import { applyGdmEvent, closeGroup } from "@/lib/gdm-client";
@@ -5965,6 +5965,8 @@ export default function Home() {
   // lands on the feed — e.g. clicking a 部活/ロゴ/タイムライン menu — so the
   // user isn't left staring at チャット while a timeline action runs).
   const showTimeline = useCallback(() => {
+    closeGroup();
+    closeDm(); // ✉️ 中央の DM を開いていたら閉じる（タイムラインへ移る導線）
     chatViewRef.current = false;
     setChatView(false);
     setChatMention(null);
@@ -10196,6 +10198,9 @@ export default function Home() {
   // recover without a reload. `chatView` alone decides what the main column shows;
   // navigating away (thread/search/profile) renders its own view on top of it.
   const showChatView = chatView;
+  // ✉️ DM を中央に開いているか（lib/dm-client.ts の状態。チャットと同じ場所に出す）
+  const dmSnap = useDm();
+  const dmCenter = dmSnap.status === "enabled" && dmSnap.open;
   useEffect(() => {
     if (!macApp || !chatView) return;
     chatViewRef.current = false;
@@ -12047,14 +12052,22 @@ export default function Home() {
                   <SegmentedControl
                     size="sm"
                     fullWidth={false}
-                    value={chatView ? "chat" : bmView ? "bm" : favView ? "fav" : "timeline"}
+                    value={dmCenter ? "dm" : chatView ? "chat" : bmView ? "bm" : favView ? "fav" : "timeline"}
                     onChange={(v) => {
-                      // ✉️ DM は画面を切り替えず、右から DM の一覧を出す（1 タップ）
+                      // ✉️ DM はチャットと同じく中央に出す（ほかのタブを押したら閉じる）
                       if (v === "dm") { closeGroup(); openDmList(); return; }
+                      if (dmCenter) { closeGroup(); closeDm(); }
                       const toChat = v === "chat";
                       chatViewRef.current = toChat;
                       setChatView(toChat);
-                      if (toChat) { loadChat(true); favViewRef.current = false; setFavView(false); bmViewRef.current = false; setBmView(false); setChatMention(null); return; }
+                      if (toChat) {
+                        // ☆・🔖 のままのフィードを残さない: チャットから「タイムライン」に戻ったとき、☆・🔖 の中身が
+                        // 出ていた（2026-11-08 オーナー「タイムライン→ブックマーク→チャット→タイムラインでブックマークの内容」）。
+                        const wasFiltered = favViewRef.current || bmViewRef.current;
+                        favViewRef.current = false; setFavView(false); bmViewRef.current = false; setBmView(false);
+                        if (wasFiltered) loadFeed();
+                        loadChat(true); setChatMention(null); return;
+                      }
                       setChatMention(null);
                       const toFav = v === "fav";
                       const toBm = v === "bm";
@@ -12143,7 +12156,7 @@ export default function Home() {
                   Discord はチャンネルリストが常時見えていて 1 タップ。ここでは lg 未満
                   （左サイドバーが出ない幅）でのみ表示し、1 タップで切り替えられるようにする。
                   左サイドバーがある幅では同じものが既に見えているので出さない（情報の重複を避ける）。 */}
-              {showNavTabs && !chatView && (
+              {showNavTabs && !chatView && !dmCenter && (
                 <Box
                   data-cx="clubbars"
                   style={{
@@ -12215,11 +12228,15 @@ export default function Home() {
                 </Box>
               )}
 
-              {/* DM の引き出しはどの画面でも（上のタブの ✉️ DM から開ける） */}
-              <DmChatKitProvider value={dmChatKit}>
-                <DmDrawer />
-              </DmChatKitProvider>
-              {showChatView ? (
+              {/* ✉️ DM はチャットと同じく中央に（2026-11-08 オーナー「DMもチャット欄と同様に、中央に表示してください」）。
+                  ✕ で閉じると元の画面（タイムライン・チャット）に戻る。 */}
+              {dmCenter ? (
+                <div key="dm-main" className="bguru-chat-view bguru-main-fade" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                  <DmChatKitProvider value={dmChatKit}>
+                    <DmPane />
+                  </DmChatKitProvider>
+                </div>
+              ) : showChatView ? (
                 <div
                   key="chat-main"
                   ref={chatViewportRef}
