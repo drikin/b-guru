@@ -111,6 +111,33 @@ export function micActive(s: VoiceSnapshot) {
 }
 
 let room: LkRoom | null = null;
+
+/** 音声の様子をサーバのログへ（/api/voice/diag、2026-11-08 ブラウザで聞こえない件の調査）。失敗しても何もしない。 */
+export function voiceDiag(event: string, extra: Record<string, unknown> = {}): void {
+  try {
+    const r = room;
+    const remotes = r ? [...r.remoteParticipants.values()] : [];
+    const audio = remotes.filter((p) => [...p.audioTrackPublications.values()].some((t) => t.isSubscribed && t.track));
+    const published = remotes.filter((p) => p.audioTrackPublications.size > 0).length;
+    const body = {
+      event,
+      phase: snap.phase,
+      state: r?.state ?? null,
+      remotes: remotes.length,
+      published,
+      subscribed: audio.length,
+      audible: proximity ? audio.filter((p) => (proximity!.volumes.get(p.identity) ?? 0) > 0).length : null,
+      playback: r ? r.canPlaybackAudio : null,
+      mic: snap.micOn,
+      room: !!proximity,
+      ...extra,
+    };
+    void fetch("/api/voice/diag", { method: "POST", keepalive: true, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => {});
+  } catch {
+    /* never break the voice for this */
+  }
+}
+let diagTimer: ReturnType<typeof setInterval> | null = null;
 let attempt = 0; // bumped by every join / leave: an overtaken join gives up
 let audioBox: HTMLDivElement | null = null;
 let meterStop: (() => void) | null = null;
@@ -160,6 +187,7 @@ export async function joinVoice(): Promise<void> {
     const d = await r.json().catch(() => ({}));
     if (mine !== attempt) return;
     if (!r.ok) {
+      voiceDiag("token_failed", { status: r.status, code: d?.code ?? null });
       set({ phase: "idle", notice: d?.code === "membership_ended" ? "BSM 会員資格が確認できません" : d?.error ?? "ボイスルームに入れません" });
       return;
     }
@@ -167,6 +195,7 @@ export async function joinVoice(): Promise<void> {
     await connect(d.url, d.token, mine);
   } catch (e) {
     if (mine !== attempt) return;
+    voiceDiag("connect_failed", { error: String((e as Error)?.message ?? e).slice(0, 160) });
     await teardown();
     set({ notice: "ボイスルームにつながりませんでした" });
     console.warn("[voice]", e);
@@ -212,7 +241,11 @@ async function connect(url: string, token: string, mine: number) {
     .on(lk.RoomEvent.TrackUnmuted, changed)
     .on(lk.RoomEvent.TrackPublished, changed)
     .on(lk.RoomEvent.TrackUnpublished, changed)
-    .on(lk.RoomEvent.Reconnecting, () => room === r && set({ phase: "reconnecting" }))
+    .on(lk.RoomEvent.Reconnecting, () => {
+      if (room !== r) return;
+      set({ phase: "reconnecting" });
+      voiceDiag("reconnecting");
+    })
     .on(lk.RoomEvent.Reconnected, () => {
       if (room !== r) return;
       set({ phase: "connected" });
@@ -220,10 +253,15 @@ async function connect(url: string, token: string, mine: number) {
       sentAllowed = null;
       flushRoomPermissions();
     })
-    .on(lk.RoomEvent.AudioPlaybackStatusChanged, () => room === r && set({ needsAudioUnlock: !r.canPlaybackAudio }))
+    .on(lk.RoomEvent.AudioPlaybackStatusChanged, () => {
+      if (room !== r) return;
+      set({ needsAudioUnlock: !r.canPlaybackAudio });
+      voiceDiag("playback_changed");
+    })
     .on(lk.RoomEvent.MediaDevicesChanged, () => room === r && void refreshDevices())
     .on(lk.RoomEvent.Disconnected, (reason) => {
       if (room !== r) return; // a late event from an earlier room
+      voiceDiag("disconnected", { reason: reason ?? null });
       const removed = reason === lk.DisconnectReason.PARTICIPANT_REMOVED;
       // 同じ人が別の端末で入った（スマホで続けた）: 失敗ではない。
       const moved = reason === lk.DisconnectReason.DUPLICATE_IDENTITY;
@@ -261,6 +299,10 @@ async function connect(url: string, token: string, mine: number) {
   // The join click is our user gesture; most browsers then allow playback.
   await r.startAudio().catch(() => {});
   set({ phase: "connected", micOn: false, needsAudioUnlock: !r.canPlaybackAudio });
+  voiceDiag("connected");
+  // つながっている間は 20 秒ごとに様子を送る（聞こえる相手が 0 のまま、などを見る）
+  if (diagTimer) clearInterval(diagTimer);
+  diagTimer = setInterval(() => (room ? voiceDiag("tick") : diagTimer && clearInterval(diagTimer)), 20_000);
   await refreshDevices();
   if (snap.outputId) await r.switchActiveDevice("audiooutput", snap.outputId).catch(() => {});
   refreshMembers();
@@ -301,7 +343,8 @@ export async function handoffVoice(): Promise<void> {
   set({ notice: await requestHandoff(proximity ? "room" : "voice", snap.micOn) });
 }
 
-export async function leaveVoice(): Promise<void> {
+export async function leaveVoice(why = "leave"): Promise<void> {
+  if (room) voiceDiag("leave", { why });
   await teardown();
 }
 

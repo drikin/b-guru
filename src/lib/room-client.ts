@@ -23,6 +23,7 @@ import {
   allowedListeners,
   isWalkable,
   volumesFor,
+  zoneOf,
   DIRS,
   type Dir,
   type RoomMapDto,
@@ -192,7 +193,7 @@ export function reloadRoomIfOn(): void {
 }
 
 function disableRoom() {
-  if (snap.view === "room") void leaveVoice();
+  if (snap.view === "room") void leaveVoice("room_disabled");
   expectVoice = false;
   actors.clear();
   setVoiceHooks(null);
@@ -227,7 +228,7 @@ function applySnapshot(map: RoomMapDto, me: string, members: RoomMember[], react
   const view = forgot ? "text" : snap.view;
   if (view !== snap.view) {
     expectVoice = false;
-    void leaveVoice();
+    void leaveVoice("snapshot_text");
   }
   set({
     status: "enabled",
@@ -297,7 +298,7 @@ export function applyRoomEvent(ev: RoomEvent): void {
         // Another tab or the app took me back to the text view.
         view = "text";
         expectVoice = false;
-        void leaveVoice();
+        void leaveVoice("event_text");
       }
     } else if (prev?.mode === "room") {
       // While I walk, my own position is mine: the echoes of my steps lag behind.
@@ -376,7 +377,7 @@ async function toText() {
   set({ busy: true, notice: null });
   expectVoice = false;
   if (getVoiceSnapshot().micOn) await setMic(false);
-  await leaveVoice();
+  await leaveVoice("to_text");
   const r = await post({ action: "text" });
   entryTarget = null;
   held.length = 0;
@@ -401,7 +402,7 @@ export async function setListening(listening: boolean): Promise<void> {
   if (!listening) {
     expectVoice = false;
     if (getVoiceSnapshot().micOn) await setMic(false);
-    await leaveVoice();
+    await leaveVoice("see_only");
   }
   const r = await post({ action: "voice", listening });
   if (r.ok) upsertMe(r.data.member as RoomMember);
@@ -445,6 +446,21 @@ function voiceDropped() {
 }
 
 /** The mic: the server first (speaker limits), then LiveKit. */
+/** ステージの乗り降りでマイクを切り替える。見るだけ・音声に入っていないときは何もしない。 */
+async function stageMic(on: boolean): Promise<void> {
+  const mine = myMember();
+  if (!mine || mine.mode !== "room" || !mine.listening) return;
+  const v = getVoiceSnapshot();
+  if (v.phase !== "connected" || v.micBusy) return;
+  if (on && !v.micOn) {
+    await setRoomMic(true);
+    // オンにしている間に降りていたら切る
+    const now = myMember();
+    const map = snap.map;
+    if (now && map && zoneOf(map.zones, now.x, now.y)?.kind !== "stage" && getVoiceSnapshot().micOn) await setRoomMic(false);
+  } else if (!on && v.micOn) await setRoomMic(false);
+}
+
 export async function setRoomMic(on: boolean): Promise<void> {
   if (!roomActive()) return;
   if (on) {
@@ -574,9 +590,16 @@ function stepMe(a: Actor, map: RoomMapDto) {
     return; // the server already has me at the end of the entry walk
   }
   // My own position moves now (volumes, permissions); the server hears each step.
+  const wasStage = zoneOf(map.zones, nx - dx, ny - dy)?.kind === "stage";
+  const onStage = zoneOf(map.zones, nx, ny)?.kind === "stage";
   upsertMe({ ...mine, x: nx, y: ny });
   void post({ action: "move", x: nx, y: ny }).then((r) => {
-    if (!r.ok) void resync();
+    if (!r.ok) {
+      void resync();
+      return;
+    }
+    // ステージに上がったらマイクをオン、降りたら切る（ドリキン 2026-11-08）。サーバが位置を知ってから
+    if (onStage !== wasStage) void stageMic(onStage);
   });
 }
 
