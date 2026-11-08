@@ -38,6 +38,7 @@ import {
   setVoiceHooks,
   subscribe as subscribeVoice,
   voiceMovedAway,
+  voiceWasRemoved,
 } from "./voice-client";
 
 export type RoomStatus = "unknown" | "enabled" | "disabled";
@@ -117,6 +118,7 @@ let resyncing = false;
 /** We are in (or joining) the voice on purpose; a drop otherwise means 見るだけ. */
 let expectVoice = false;
 let lastVoicePhase = getVoiceSnapshot().phase;
+let autoRejoinAt = 0;
 
 function set(patch: Partial<RoomSnapshot>) {
   snap = { ...snap, ...patch };
@@ -418,6 +420,11 @@ export async function setListening(listening: boolean): Promise<void> {
  *  member, token refused, no connection) fall back to 👀 見るだけ. */
 async function joinVoiceForRoom() {
   await joinVoice();
+  // 一度でつながらなければ、少し待ってもう一度（混んでいる・再起動の直後など）。それでもだめなら見るだけに
+  if (expectVoice && roomActive() && getVoiceSnapshot().phase === "idle") {
+    await new Promise((r) => setTimeout(r, 2000));
+    if (expectVoice && roomActive() && getVoiceSnapshot().phase === "idle") await joinVoice();
+  }
   if (expectVoice && roomActive() && getVoiceSnapshot().phase === "idle") voiceDropped();
 }
 
@@ -710,6 +717,10 @@ if (typeof window !== "undefined") {
         // スマホなど別の端末で続けている: サーバの「自分」はそちらなので、ここでは何も書かない。
         expectVoice = false;
         set({ wantListening: false, notice: v.notice });
+      } else if (!voiceWasRemoved() && Date.now() - autoRejoinAt > 30_000) {
+        // 回線などで切れた: 見るだけに落とす前に、まず自動で入り直す（2026-11-08 オフ会「いきなり落ちた」）
+        autoRejoinAt = Date.now();
+        void joinVoiceForRoom();
       } else voiceDropped();
     }
   });

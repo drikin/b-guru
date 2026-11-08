@@ -178,9 +178,21 @@ export function voiceLoaded() {
 // ---- join / leave ----
 
 export async function joinVoice(): Promise<void> {
-  if (snap.phase !== "idle" || !snap.enabled) return;
+  if (snap.phase !== "idle") return;
+  // 「使えるか」をまだ読めていない（再起動中の 502 などで失敗したまま）なら、ここで読み直す。
+  // 読めないまま入ろうとすると一瞬で失敗して「見るだけにしました」に戻されていた（2026-11-08 オフ会の報告）
+  if (!loaded || !snap.enabled) {
+    await loadVoice();
+    if (!loaded) {
+      await new Promise((r) => setTimeout(r, 1500));
+      await loadVoice();
+    }
+    voiceDiag("join_after_load", { loaded, enabled: snap.enabled });
+    if (!snap.enabled || snap.phase !== "idle") return;
+  }
   const mine = ++attempt;
   movedAway = false;
+  removedLast = false;
   set({ phase: "connecting", notice: null });
   try {
     const r = await fetch("/api/voice/token", { method: "POST", cache: "no-store" });
@@ -265,6 +277,7 @@ async function connect(url: string, token: string, mine: number) {
       const removed = reason === lk.DisconnectReason.PARTICIPANT_REMOVED;
       // 同じ人が別の端末で入った（スマホで続けた）: 失敗ではない。
       const moved = reason === lk.DisconnectReason.DUPLICATE_IDENTITY;
+      removedLast = removed;
       movedAway = moved; // 部室（room-client）がサーバへ「聞いていない」と書かないように（書くと続けた端末のマイクまで切れる）
       void teardown().then(() =>
         set({
@@ -309,6 +322,11 @@ async function connect(url: string, token: string, mine: number) {
 }
 
 let movedAway = false;
+let removedLast = false;
+/** 最後の切断が管理者の「退出させる」だったか（部室はこのとき自動で入り直さない）。 */
+export function voiceWasRemoved(): boolean {
+  return removedLast;
+}
 /** 最後の切断が「別の端末で続けた」だったか（次に入るまで）。 */
 export function voiceMovedAway(): boolean {
   return movedAway;

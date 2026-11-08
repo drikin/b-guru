@@ -208,16 +208,19 @@ function RoomControls({ s, v, me, speaking }: { s: RoomSnapshot; v: VoiceSnapsho
   const active = micActive(v);
   return (
     <Group gap={6} wrap="nowrap">
-      <Tooltip label={listening ? "見るだけにする（音を出さない）" : "近くの人の声を聞く"} openDelay={400}>
+      {/* 今の状態ではなく「押すと何が起きるか」が分かるように（2026-11-08 オフ会「見るだけを押せばいいと分からない」）。
+          見るだけの間は緑の「ボイスに入る」、つないでいる間は「接続中…」（連打しなくてよいように） */}
+      <Tooltip label={listening ? "押すと見るだけにします（音を出さない）" : "押すとボイスに入って近くの人の声を聞きます"} openDelay={400}>
         <Button
           size="compact-sm"
-          variant={listening ? "light" : "default"}
+          variant={listening ? "light" : "filled"}
           color="green"
           disabled={s.busy}
+          loading={listening && (v.phase === "connecting" || v.phase === "reconnecting")}
           aria-pressed={listening}
           onClick={() => void setListening(!listening)}
         >
-          {listening ? "🎧 聞いている" : "👀 見るだけ"}
+          {listening ? (connected ? "🎧 聞いている" : "🎧 接続中…") : "🎧 ボイスに入る"}
         </Button>
       </Tooltip>
       <Tooltip label={!listening ? "見るだけの間はマイクを使えません" : micOn ? "マイクを切る" : "マイクをオンにして話す"} openDelay={400}>

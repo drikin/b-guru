@@ -167,7 +167,7 @@ export async function unbanVoice(email: string, input: { user_id?: unknown }): P
 // Web routes have no per-token rate bucket like /api/agent/*; a small per-member
 // window keeps a stuck client (or a script with a session) from hammering Ghost.
 const recent = new Map<string, number[]>();
-export function webVoiceRateOk(email: string, limit = 30, windowMs = 10 * 60_000): boolean {
+export function webVoiceRateOk(email: string, limit = 60, windowMs = 10 * 60_000): boolean { // 30 → 60（2026-11-08、つながらず何度も押した人が上限に当たっていた）
   const now = Date.now();
   const hits = (recent.get(email) ?? []).filter((t) => now - t < windowMs);
   if (hits.length >= limit) {
