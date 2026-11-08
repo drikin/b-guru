@@ -6690,6 +6690,7 @@ export default function Home() {
   }>({ clubs: [], categories: [] });
   const [, setCatalogTick] = useState(0); // ライブカタログ反映後の再レンダー用
   const [clubManagerOpen, setClubManagerOpen] = useState(false); // admin「部活管理」モーダル
+  const [settingsOpen, setSettingsOpen] = useState(false); // ⚙ 設定（左サイドバーから移した設定をまとめる）
   const [mutedWordsOpen, setMutedWordsOpen] = useState(false); // NG ワード（本人の設定、drikin 2026-10-29）
 
   const loadClubCounts = useCallback(() => {
@@ -10965,7 +10966,6 @@ export default function Home() {
               </Fragment>
             ))}
             <ClubNavRow label="未設定" activity={clubActivityUnset} trend={clubTrendUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} hidden={hiddenClubs.has(CLUB_UNSET)} onToggleHidden={() => toggleClubHidden(CLUB_UNSET)} />
-            <MutedWordsNavRow onClick={() => setMutedWordsOpen(true)} />
 
             {/* Admin-managed external-link bookmarks */}
             {menuLinks.map((lk) => (
@@ -11115,41 +11115,18 @@ export default function Home() {
             )}
           </Stack>
         </ScrollArea>
-        {/* Dark mode toggle — bottom of left sidebar to preserve header symmetry */}
-        <Divider my="xs" />
-        <UnstyledButton
-          onClick={() => toggleColorScheme()}
-          aria-label={isDark ? "ライトモードに切替" : "ダークモードに切替"}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            padding: "10px 12px",
-            borderRadius: 8,
-            color: "var(--text-primary)",
-            fontSize: "0.875rem",
-            width: "100%",
-          }}
-        >
-          {isDark ? (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-              <circle cx="12" cy="12" r="5" />
-              <line x1="12" y1="1" x2="12" y2="3" />
-              <line x1="12" y1="21" x2="12" y2="23" />
-              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-              <line x1="1" y1="12" x2="3" y2="12" />
-              <line x1="21" y1="12" x2="23" y2="12" />
-              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-            </svg>
-          ) : (
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-            </svg>
-          )}
-          <span>{isDark ? "ライトモード" : "ダークモード"}</span>
-        </UnstyledButton>
+        {/* ⚙ 設定（2026-11-08 オーナー「左サイドバーがかなり雑多になってきているので、設定系は全部設定画面にまとめませんか？」）。
+            以前は左サイドバーの下に並べていた表示・読み上げ・未読・通知・NG ワード・連携をここに集めた。 */}
+        <Modal opened={settingsOpen} onClose={() => setSettingsOpen(false)} title="設定" size="md" centered data-cx="settings-modal">
+          <Stack gap={0}>
+          <Text size="xs" fw={700} c="dimmed" px={12} pt="sm" pb={2}>表示</Text>
+          <Group wrap="nowrap" align="center" justify="space-between" style={{ padding: "10px 12px", borderRadius: 8 }}>
+            <Group gap="sm" wrap="nowrap" align="center">
+              <span style={{ lineHeight: 1 }}>🌙</span>
+              <span style={{ color: "var(--text-primary)", fontSize: "0.875rem" }}>ダークモード</span>
+            </Group>
+            <Switch checked={isDark} onChange={() => toggleColorScheme()} aria-label="ダークモード" size="sm" />
+          </Group>
         {/* 文字サイズ（小・中・大・特大）— ダークモードの直下、区切り線なし。
             iOS の PWA で文字が小さく感じる問題への対策。
             2行レイアウト: 1行目にラベル、2行目にボタンを横いっぱいに等幅で並べる。
@@ -11196,7 +11173,9 @@ export default function Home() {
             })}
           </Group>
         </Box>
+          <Text size="xs" fw={700} c="dimmed" px={12} pt="sm" pb={2}>読み上げ</Text>
         <TtsVoiceSetting />
+          <Text size="xs" fw={700} c="dimmed" px={12} pt="sm" pb={2}>タイムライン</Text>
         {/* Auto unread management on/off — directly below dark mode, no separator */}
         <Group
           wrap="nowrap"
@@ -11215,6 +11194,18 @@ export default function Home() {
             size="sm"
           />
         </Group>
+          <UnstyledButton
+            onClick={() => { setSettingsOpen(false); setMutedWordsOpen(true); }}
+            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 8, color: "var(--text-primary)", fontSize: "0.875rem" }}
+            title="この言葉を含む投稿をタイムラインに出さない"
+          >
+            <Group gap="sm" wrap="nowrap" align="center">
+              <span style={{ lineHeight: 1 }}>🚫</span>
+              <span>NG ワード…</span>
+            </Group>
+            <span style={{ color: "var(--text-muted)" }}>›</span>
+          </UnstyledButton>
+          <Text size="xs" fw={700} c="dimmed" px={12} pt="sm" pb={2}>通知</Text>
         {/* 自動新着通知 (Web Push) — below オート未読管理, no separator */}
         {pushSupported && (
           <Group
@@ -11243,6 +11234,31 @@ export default function Home() {
             />
           </Group>
         )}
+          <Text size="xs" fw={700} c="dimmed" px={12} pt="sm" pb={2}>連携</Text>
+          <UnstyledButton
+            component="a"
+            href="/connect"
+            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 8, color: "var(--text-primary)", fontSize: "0.875rem" }}
+          >
+            <Group gap="sm" wrap="nowrap" align="center">
+              <span style={{ lineHeight: 1 }}>🔗</span>
+              <span>Claude に接続</span>
+            </Group>
+            <span style={{ color: "var(--text-muted)" }}>›</span>
+          </UnstyledButton>
+          <UnstyledButton
+            component="a"
+            href="/settings/agent"
+            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 8, color: "var(--text-primary)", fontSize: "0.875rem" }}
+          >
+            <Group gap="sm" wrap="nowrap" align="center">
+              <span style={{ lineHeight: 1 }}>🔑</span>
+              <span>エージェント API 設定</span>
+            </Group>
+            <span style={{ color: "var(--text-muted)" }}>›</span>
+          </UnstyledButton>
+          </Stack>
+        </Modal>
         {/* Account: profile + logout — moved from header to bottom of left sidebar.
             Tapping the avatar/name opens the viewer's own profile timeline. */}
         <Divider my="xs" />
@@ -11271,48 +11287,15 @@ export default function Home() {
               </Text>
             </div>
           </UnstyledButton>
-          <Tooltip label="Claude に接続" withArrow>
+          <Tooltip label="設定" withArrow>
             <ActionIcon
               variant="subtle"
               color="gray"
-              component="a"
-              href="/connect"
-              aria-label="Claude に接続"
+              onClick={() => { setNavOpened(false); setSettingsOpen(true); }}
+              aria-label="設定"
+              data-cx="settings-button"
             >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M9 17H7A5 5 0 0 1 7 7h2" />
-                <path d="M15 7h2a5 5 0 1 1 0 10h-2" />
-                <line x1="8" y1="12" x2="16" y2="12" />
-              </svg>
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label="エージェント API 設定" withArrow>
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              component="a"
-              href="/settings/agent"
-              aria-label="エージェント API 設定"
-            >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="3" />
                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
               </svg>
@@ -14835,38 +14818,6 @@ function PinIcon({ size, filled }: { size: number; filled?: boolean }) {
 /** モバイル部活バーの1チップ。横スクロールで並べる前提なので、幅は内容に任せて
  *  折り返さない（`flexShrink: 0`）。選択中は緑の塗りで、左サイドバーの
  *  `ClubNavRow` と同じ「緑 = 選択中」の語彙を保つ。 */
-/** 左の部活の一覧の下: NG ワードの設定を開く（drikin 2026-10-29）。 */
-function MutedWordsNavRow({ onClick }: { onClick: () => void }) {
-  return (
-    <UnstyledButton
-      onClick={onClick}
-      className="club-nav-row"
-      title="この言葉を含む投稿をタイムラインに出さない"
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        width: "100%",
-        padding: "7px 12px",
-        borderRadius: 8,
-        fontSize: "0.8438rem",
-        color: "var(--text-secondary)",
-        fontWeight: 500,
-        marginTop: 6,
-        marginBottom: 2,
-      }}
-    >
-      <span style={{ display: "inline-flex", width: 17, justifyContent: "center", flexShrink: 0 }}>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <circle cx="12" cy="12" r="9" />
-          <line x1="5.6" y1="5.6" x2="18.4" y2="18.4" />
-        </svg>
-      </span>
-      <span style={{ flex: 1 }}>NG ワード…</span>
-    </UnstyledButton>
-  );
-}
-
 function ClubChip({
   label,
   activity,
