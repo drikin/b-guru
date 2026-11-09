@@ -12232,7 +12232,10 @@ export default function Home() {
                   Discord はチャンネルリストが常時見えていて 1 タップ。ここでは lg 未満
                   （左サイドバーが出ない幅）でのみ表示し、1 タップで切り替えられるようにする。
                   左サイドバーがある幅では同じものが既に見えているので出さない（情報の重複を避ける）。 */}
-              {showNavTabs && !chatView && !dmCenter && (
+              {/* ★ 2026-11-08 オーナー「一旦ウェブ上のタイムラインにある部活フィルターも非表示にしてみて、
+                  みんなの反応を見ます」→ CLUB_BAR_ENABLED で隠す（戻すときは true に）。
+                  部活で絞るのは左サイドバー（スマホはメニュー）の「部活」から、NG ワードは ⚙ 設定から。 */}
+              {CLUB_BAR_ENABLED && showNavTabs && !chatView && !dmCenter && (
                 <Box
                   data-cx="clubbars"
                   style={{
@@ -14759,6 +14762,9 @@ export default function Home() {
 
 /** 左サイドバー「部活」の1行（クラブ or すべて/未設定）。アクティブは緑。
  *  アクティビティ数 > 0 のときだけニュートラル（グレー）バッジを表示。数字は直近7日の投稿+コメント数。 */
+/** タイムライン上部の部活チップの列（2026-11-08 から試しに隠している）。 */
+const CLUB_BAR_ENABLED = false;
+
 function ClubNavRow({
   label,
   activity,

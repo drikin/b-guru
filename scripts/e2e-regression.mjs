@@ -518,15 +518,14 @@ if (deskSidebarTabs.barHidden) {
     const header = document.querySelector('[data-cx="header"]');
     const seg = document.querySelector('[data-cx="navtabs"] .mantine-SegmentedControl-root');
     const club = document.querySelector('[data-cx="clubbars"]');
-    if (!t || !header || !seg || !club) return null;
+    if (!t || !header || !seg) return null;
     const hr = header.getBoundingClientRect();
     const tr = t.getBoundingClientRect();
     const sr = seg.getBoundingClientRect();
-    const cr = club.getBoundingClientRect();
     return {
       gap: Math.round(tr.top - hr.bottom),
       above: Math.round(sr.top - hr.bottom),
-      below: Math.round(cr.top - sr.bottom),
+      below: club ? Math.round(club.getBoundingClientRect().top - sr.bottom) : null,
     };
   })()`);
   check(
@@ -566,7 +565,7 @@ if (deskSidebarTabs.barHidden) {
 
   check(
     "the tab switcher has even 16px gaps on a phone too",
-    !!mGap && Math.abs(mGap.above - 16) <= 1 && Math.abs(mGap.below - 16) <= 1,
+    !!mGap && Math.abs(mGap.above - 16) <= 1 && (mGap.below == null || Math.abs(mGap.below - 16) <= 1), // 部活バーを隠している間は下は測らない（2026-11-08）
     mGap ? `390px: above=${mGap.above} below=${mGap.below} (both must be ~16)` : "not found"
   );
   await mctx.close();
@@ -1245,7 +1244,17 @@ console.log("\n6i-3. Portrait tablet keeps a gutter on the right");
 //       implementation used `+40px` for the sticky offset and the bar sank 24px
 //       behind the tabs (measured gap = -24). Assert the measured gap, not the CSS.
 console.log("\n6j. Mobile club bar (one-tap club switching)");
-{
+// ★ 2026-11-08 オーナー「一旦ウェブ上のタイムラインにある部活フィルターも非表示にしてみて、
+//   みんなの反応を見ます」→ 部活バーは隠している。戻したら E2E_CLUB_BAR=1 で下の旧チェックを走らせる
+//   （page.tsx の CLUB_BAR_ENABLED と揃える）。隠している間は「出ていない」ことだけを見る。
+if (process.env.E2E_CLUB_BAR !== "1") {
+  const hp = await context.newPage();
+  await hp.goto(BASE_URL, { waitUntil: "domcontentloaded" });
+  await hp.waitForTimeout(5000);
+  const shown = await hp.evaluate(`!!document.querySelector('[data-cx="clubbars"]')`);
+  check("the club chip bar is hidden on the timeline (2026-11-08 trial)", !shown, `shown=${shown}`);
+  await hp.close();
+} else {
   const mobile = await browser.newContext({
     viewport: { width: 390, height: 844 },
     deviceScaleFactor: 3,
