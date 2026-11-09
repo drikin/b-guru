@@ -61,8 +61,13 @@ const CHAT_DIST = `(() => {
  *  「ビーグルチャットで参加（笑）」 was clicked instead, which voted as the guard's member
  *  and left the chat closed. */
 const clickTab = (label) => `(() => {
+  // 左サイドバーが出る幅では、上のタブは隠れてサイドバーの行（data-cx="feedtab"）に並ぶ（2026-11-08）。
+  //   スマホでは閉じたサイドバーも DOM にあるので、上のタブが見えていればそちらを押す。
+  const bar = document.querySelector('[data-cx="navtabs"]');
+  const barShown = !!bar && bar.offsetParent !== null;
+  const side = [...document.querySelectorAll('[data-cx="feedtab"]')];
   const tabs = document.querySelectorAll('[data-cx="navtabs"] .mantine-SegmentedControl-root label');
-  const btns = [...(tabs.length ? tabs : document.querySelectorAll('.mantine-SegmentedControl-root label'))];
+  const btns = !barShown && side.length ? side : [...(tabs.length ? tabs : document.querySelectorAll('.mantine-SegmentedControl-root label'))];
   const b = btns.find(x => x.textContent && x.textContent.includes(${JSON.stringify(label)}));
   if (!b) return false;
   b.click();
@@ -329,118 +334,155 @@ const tabPos = async () =>
     return t ? { top: Math.round(t.getBoundingClientRect().top), scrollY: Math.round(window.scrollY) } : null;
   })()`);
 
-await page.evaluate(clickTab("タイムライン"));
-await page.waitForTimeout(2000);
-await page.evaluate(() => window.scrollTo(0, 0));
-await page.waitForTimeout(800);
-const tabOnTimeline = await tabPos();
-await page.evaluate(clickTab("チャット"));
-await page.waitForTimeout(3000);
-const tabOnChat = await tabPos();
-
-check("tab bar found on both views", tabOnTimeline !== null && tabOnChat !== null);
-if (tabOnTimeline && tabOnChat) {
-  check(
-    "tab bar does not move between views",
-    tabOnTimeline.top === tabOnChat.top,
-    `timeline=${tabOnTimeline.top}px chat=${tabOnChat.top}px`
-  );
-  check(
-    "window is not scrolled in chat view",
-    tabOnChat.scrollY === 0,
-    `scrollY=${tabOnChat.scrollY}`
-  );
-}
-
-// 6c. The reported precondition: scrolled deep in the timeline, then switch.
-// The chat must still open with the tab bar at its resting position.
-console.log("\n6c. Switching from a scrolled timeline does not shift the bar");
-await page.evaluate(clickTab("タイムライン"));
-await page.waitForTimeout(2000);
-await page.evaluate(() => window.scrollTo(0, 6000));
-await page.waitForTimeout(1000);
-await page.evaluate(clickTab("チャット"));
-await page.waitForTimeout(3000);
-const tabFromScrolled = await tabPos();
-if (tabFromScrolled) {
-  check(
-    "tab bar is at its resting position after switching from a scrolled timeline",
-    tabFromScrolled.top === tabOnTimeline?.top,
-    `expected=${tabOnTimeline?.top}px got=${tabFromScrolled.top}px`
-  );
-}
-
-// 6d. The bar must not move WHILE the timeline scrolls (drikin 2026-09-23:
-// 「タイムラインがスクロールすると、タブの位置が若干ずれる」). With the sticky
-// offset set to the header height the bar rested at 80px but snapped to 56px on
-// the first scroll — a 24px jump that made every tab switch look jittery.
-console.log("\n6d. Tab bar is pinned while the timeline scrolls");
-await page.evaluate(clickTab("タイムライン"));
-await page.waitForTimeout(2000);
-await page.evaluate(() => window.scrollTo(0, 0));
-await page.waitForTimeout(800);
-const tabAtTop = await tabPos();
-const tabWhileScrolling = [];
-for (const y of [50, 200, 800, 2500, 6000]) {
-  await page.evaluate((v) => window.scrollTo(0, v), y);
-  await page.waitForTimeout(350);
-  tabWhileScrolling.push(await tabPos());
-}
-const tops = tabWhileScrolling.map((t) => t?.top);
-// ★ The bar is no longer sticky at all (drikin 2026-09-27: 「いっそこれらも
-//   スクロールアウトして良い」). It must scroll away with the content, i.e. its
-//   top must DECREASE monotonically as the page scrolls down — never stay
-//   pinned, and never jump back down.
-//
-//   The original bug this guard was written for was a 24px JUMP (80px → 56px)
-//   on the first scroll, which made every tab switch look jittery. A monotonic
-//   decrease rules that out too: a jump would show as a value going UP.
-const monotonic = tops.every((t, i) => i === 0 || t <= tops[i - 1] + 1);
-const scrolledAway = tops[tops.length - 1] < (tabAtTop?.top ?? 0) - 100;
-check(
-  "tab bar scrolls away with the content (no longer pinned)",
-  monotonic && scrolledAway,
-  `at top=${tabAtTop?.top}px, while scrolling=${tops.join("/")}px (must decrease monotonically)`
-);
-
-// 6e. The bar must sit FLUSH against the header. Pinning it lower (80px) left a
-// 24px strip above it where scrolled content showed through, which looks broken
-// (drikin: 「スクロールしたコンテンツがタブの裏側に見えて変」).
-console.log("\n6e. Tab bar sits flush under the header (no gap)");
-// ★ Measure at the TOP of the page. The bar is no longer sticky, so scrolling
-//   first would move it off-screen and the gap check would be meaningless.
-//
-//   ★ Wait for the header's 180ms transform transition to finish. Sampling
-//   mid-transition reads a header bottom of 54px instead of 56px and reports a
-//   phantom 2px gap.
-await page.evaluate(() => window.scrollTo(0, 0));
-for (let i = 0; i < 20; i++) {
-  await page.waitForTimeout(150);
-  const settled = await page.evaluate(`(() => {
-    const h = document.querySelector('[data-cx="header"]');
-    if (!h) return true;
-    return h.getAttribute('data-hidden') !== 'true' &&
-      Math.abs(h.getBoundingClientRect().bottom - 56) < 1;
-  })()`);
-  if (settled) break;
-}
-const gapInfo = await page.evaluate(`(() => {
+// ★ 2026-11-08 オーナー「タブの機能を左サイドバーのタイムラインの下に並べた方が使いやすそう」:
+//   左サイドバーが出る幅（768px 以上）では上のタブバーを隠し、同じ切り替えをサイドバーの行
+//   （data-cx="feedtab"）に並べた。タブバーの位置のチェック（6b〜6e）は、タブバーが出る
+//   スマホ幅の同じチェック（6e の 390px・6i・6j）が受け持つ。ここでは、デスクトップで
+//   タブバーが隠れ、サイドバーの行が全部あり、押すと切り替わり、ウィンドウが動かないことを見る。
+const deskSidebarTabs = await page.evaluate(`(() => {
   const t = document.querySelector('[data-cx="navtabs"]');
-  const header = document.querySelector('[data-cx="header"]') || document.querySelector('header');
-  if (!t) return null;
-  const tr = t.getBoundingClientRect();
-  const hr = header ? header.getBoundingClientRect() : null;
-  return {
-    tabTop: Math.round(tr.top),
-    headerBottom: hr ? Math.round(hr.bottom) : null,
-    gap: hr ? Math.round(tr.top - hr.bottom) : null,
-  };
+  const rows = [...document.querySelectorAll('[data-cx="feedtab"]')].filter(e => e.offsetParent !== null);
+  return { barHidden: !t || t.offsetParent === null, tabs: rows.map(r => r.getAttribute('data-tab')) };
 })()`);
-check(
-  "no gap between the header and the tab bar",
-  !!gapInfo && gapInfo.gap !== null && Math.abs(gapInfo.gap) <= 1,
-  gapInfo ? `header bottom=${gapInfo.headerBottom}px tab top=${gapInfo.tabTop}px gap=${gapInfo.gap}px` : "not found"
-);
+if (deskSidebarTabs.barHidden) {
+  check(
+    "desktop: the tabs live in the left sidebar (timeline/fav/bm/chat)",
+    ["timeline", "fav", "bm", "chat"].every((k) => deskSidebarTabs.tabs.includes(k)),
+    `rows=${deskSidebarTabs.tabs.join(",")}`
+  );
+  await page.evaluate(clickTab("タイムライン"));
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => window.scrollTo(0, 6000));
+  await page.waitForTimeout(800);
+  await page.evaluate(clickTab("チャット"));
+  await page.waitForTimeout(3000);
+  const side = await page.evaluate(`(() => ({
+    chat: !!document.querySelector('.bguru-chat-view'),
+    active: [...document.querySelectorAll('[data-cx="feedtab"][data-active]')].map(r => r.getAttribute('data-tab')),
+    scrollY: Math.round(window.scrollY),
+  }))()`);
+  check(
+    "desktop: the sidebar チャット row opens the chat and marks itself active",
+    side.chat && side.active.includes("chat") && !side.active.includes("timeline"),
+    `chat=${side.chat} active=${side.active.join(",")}`
+  );
+  check("window is not scrolled in chat view", side.scrollY === 0, `scrollY=${side.scrollY}`);
+  await page.evaluate(clickTab("タイムライン"));
+  await page.waitForTimeout(1500);
+} else {
+  await page.evaluate(clickTab("タイムライン"));
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(800);
+  const tabOnTimeline = await tabPos();
+  await page.evaluate(clickTab("チャット"));
+  await page.waitForTimeout(3000);
+  const tabOnChat = await tabPos();
+
+  check("tab bar found on both views", tabOnTimeline !== null && tabOnChat !== null);
+  if (tabOnTimeline && tabOnChat) {
+    check(
+      "tab bar does not move between views",
+      tabOnTimeline.top === tabOnChat.top,
+      `timeline=${tabOnTimeline.top}px chat=${tabOnChat.top}px`
+    );
+    check(
+      "window is not scrolled in chat view",
+      tabOnChat.scrollY === 0,
+      `scrollY=${tabOnChat.scrollY}`
+    );
+  }
+
+  // 6c. The reported precondition: scrolled deep in the timeline, then switch.
+  // The chat must still open with the tab bar at its resting position.
+  console.log("\n6c. Switching from a scrolled timeline does not shift the bar");
+  await page.evaluate(clickTab("タイムライン"));
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => window.scrollTo(0, 6000));
+  await page.waitForTimeout(1000);
+  await page.evaluate(clickTab("チャット"));
+  await page.waitForTimeout(3000);
+  const tabFromScrolled = await tabPos();
+  if (tabFromScrolled) {
+    check(
+      "tab bar is at its resting position after switching from a scrolled timeline",
+      tabFromScrolled.top === tabOnTimeline?.top,
+      `expected=${tabOnTimeline?.top}px got=${tabFromScrolled.top}px`
+    );
+  }
+
+  // 6d. The bar must not move WHILE the timeline scrolls (drikin 2026-09-23:
+  // 「タイムラインがスクロールすると、タブの位置が若干ずれる」). With the sticky
+  // offset set to the header height the bar rested at 80px but snapped to 56px on
+  // the first scroll — a 24px jump that made every tab switch look jittery.
+  console.log("\n6d. Tab bar is pinned while the timeline scrolls");
+  await page.evaluate(clickTab("タイムライン"));
+  await page.waitForTimeout(2000);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(800);
+  const tabAtTop = await tabPos();
+  const tabWhileScrolling = [];
+  for (const y of [50, 200, 800, 2500, 6000]) {
+    await page.evaluate((v) => window.scrollTo(0, v), y);
+    await page.waitForTimeout(350);
+    tabWhileScrolling.push(await tabPos());
+  }
+  const tops = tabWhileScrolling.map((t) => t?.top);
+  // ★ The bar is no longer sticky at all (drikin 2026-09-27: 「いっそこれらも
+  //   スクロールアウトして良い」). It must scroll away with the content, i.e. its
+  //   top must DECREASE monotonically as the page scrolls down — never stay
+  //   pinned, and never jump back down.
+  //
+  //   The original bug this guard was written for was a 24px JUMP (80px → 56px)
+  //   on the first scroll, which made every tab switch look jittery. A monotonic
+  //   decrease rules that out too: a jump would show as a value going UP.
+  const monotonic = tops.every((t, i) => i === 0 || t <= tops[i - 1] + 1);
+  const scrolledAway = tops[tops.length - 1] < (tabAtTop?.top ?? 0) - 100;
+  check(
+    "tab bar scrolls away with the content (no longer pinned)",
+    monotonic && scrolledAway,
+    `at top=${tabAtTop?.top}px, while scrolling=${tops.join("/")}px (must decrease monotonically)`
+  );
+
+  // 6e. The bar must sit FLUSH against the header. Pinning it lower (80px) left a
+  // 24px strip above it where scrolled content showed through, which looks broken
+  // (drikin: 「スクロールしたコンテンツがタブの裏側に見えて変」).
+  console.log("\n6e. Tab bar sits flush under the header (no gap)");
+  // ★ Measure at the TOP of the page. The bar is no longer sticky, so scrolling
+  //   first would move it off-screen and the gap check would be meaningless.
+  //
+  //   ★ Wait for the header's 180ms transform transition to finish. Sampling
+  //   mid-transition reads a header bottom of 54px instead of 56px and reports a
+  //   phantom 2px gap.
+  await page.evaluate(() => window.scrollTo(0, 0));
+  for (let i = 0; i < 20; i++) {
+    await page.waitForTimeout(150);
+    const settled = await page.evaluate(`(() => {
+      const h = document.querySelector('[data-cx="header"]');
+      if (!h) return true;
+      return h.getAttribute('data-hidden') !== 'true' &&
+        Math.abs(h.getBoundingClientRect().bottom - 56) < 1;
+    })()`);
+    if (settled) break;
+  }
+  const gapInfo = await page.evaluate(`(() => {
+    const t = document.querySelector('[data-cx="navtabs"]');
+    const header = document.querySelector('[data-cx="header"]') || document.querySelector('header');
+    if (!t) return null;
+    const tr = t.getBoundingClientRect();
+    const hr = header ? header.getBoundingClientRect() : null;
+    return {
+      tabTop: Math.round(tr.top),
+      headerBottom: hr ? Math.round(hr.bottom) : null,
+      gap: hr ? Math.round(tr.top - hr.bottom) : null,
+    };
+  })()`);
+  check(
+    "no gap between the header and the tab bar",
+    !!gapInfo && gapInfo.gap !== null && Math.abs(gapInfo.gap) <= 1,
+    gapInfo ? `header bottom=${gapInfo.headerBottom}px tab top=${gapInfo.tabTop}px gap=${gapInfo.gap}px` : "not found"
+  );
+}
 
 // ★ The same check at PHONE width. The column wrapper's top padding is
 //   responsive (`py-4` = 16px on mobile, `sm:py-6` = 24px from 640px), so a
@@ -547,12 +589,7 @@ await page.waitForTimeout(300);
 // index into the NodeList instead.
 // ★ お気に入りタブ追加後は3タブ構成（timeline/fav/chat）なので、ラベルテキストで
 //   「チャット」を探す（index 1 は「お気に入り」になり、固定 index は壊れる）。
-const tabLabels = await page.$$('[data-cx="navtabs"] label.mantine-SegmentedControl-label');
-let chatClicked = false;
-for (const lbl of tabLabels) {
-  const t = (await lbl.textContent()) ?? "";
-  if (t.includes("チャット")) { await lbl.click(); chatClicked = true; break; }
-}
+const chatClicked = await page.evaluate(clickTab("チャット"));
 if (chatClicked) {
   await page.waitForTimeout(2500);
 }
@@ -618,11 +655,8 @@ check(
   `navigation entries before=${navBefore} after=${navAfter}`
 );
 // Back to the timeline so the remaining checks run on the feed.
-const backLabels = await page.$$('[data-cx="navtabs"] label.mantine-SegmentedControl-label');
-if (backLabels.length >= 1) {
-  await backLabels[0].click();
-  await page.waitForTimeout(1500);
-}
+await page.evaluate(clickTab("タイムライン"));
+await page.waitForTimeout(1500);
 
 // 6f-2. Pull-to-refresh must actually WORK on iPad (のぶさん 2026-09-25:
 // 「iPadだとPull-to-Refreshしても更新されない」).
@@ -2505,11 +2539,7 @@ console.log("\n6k. Reactions on posts");
 // the row existing under the bubble would still "pass" a presence-only check.
 console.log("\n6l. Chat message actions");
 {
-  await page.evaluate(`(() => {
-    const tab = [...document.querySelectorAll('.mantine-SegmentedControl-label')]
-      .find(l => l.textContent.includes('チャット'));
-    tab?.click();
-  })()`);
+  await page.evaluate(clickTab("チャット"));
   await page.waitForTimeout(3000);
 
   const geo = await page.evaluate(`(() => {
@@ -2625,11 +2655,7 @@ console.log("\n6m. Duplicate-post warning");
   );
 
   // The warning must actually render in the composer when a duplicate is typed.
-  await page.evaluate(`(() => {
-    const tab = [...document.querySelectorAll('.mantine-SegmentedControl-label')]
-      .find(l => l.textContent.includes('タイムライン'));
-    tab?.click();
-  })()`);
+  await page.evaluate(clickTab("タイムライン"));
   await page.waitForTimeout(1500);
   await page.evaluate(`document.querySelector('[aria-label="新しい投稿を作成"]')?.click()`);
   await page.waitForTimeout(1200);
@@ -2961,10 +2987,7 @@ if (notFound.length) {
 // アプリと同じ決まり（docs/timeline-spec.md §10.2）。画面を開いて閉じるだけで、投稿はしない。
 console.log("\nTL2. 投稿画面: 部活の選択・投票の作成の文言");
 {
-  await page.evaluate(`(() => {
-    const tab = [...document.querySelectorAll('.mantine-SegmentedControl-label')].find(l => l.textContent.includes('タイムライン'));
-    tab?.click();
-  })()`);
+  await page.evaluate(clickTab("タイムライン"));
   await page.waitForTimeout(1200);
   await page.evaluate(`document.querySelector('[aria-label="新しい投稿を作成"]')?.click()`);
   await page.waitForTimeout(1000);

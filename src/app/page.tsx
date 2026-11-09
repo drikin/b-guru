@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { buildReadPayload, mergeReadState, normalizeReadIds, PG_INT_MAX } from "@/lib/read-state";
 import { sizedAvatarSrc } from "@/lib/avatar-size";
 import { earlyOrFetch } from "@/lib/early-fetch";
@@ -90,7 +90,7 @@ import { OverlayLayer, OverlaySwitches, OverlayVoiceFallback } from "@/component
 import { applyRoomEvent, reloadRoomIfOn, roomChatBubble } from "@/lib/room-client";
 import { ShogiChatCard, ShogiPanel } from "@/components/shogi/ShogiPanel";
 import { GameToggles, MinigamePanel } from "@/components/minigame/MinigamePanel";
-import { DmPane, DmNameMenu, DmTabLabel, useDm, useDmEnabled } from "@/components/dm/DMPanel";
+import { DmPane, DmNameMenu, DmTabLabel, useDm, useDmEnabled, useDmUnread } from "@/components/dm/DMPanel";
 import { applyDmEvent, closeDm, openDmList } from "@/lib/dm-client";
 import { DmChatKitProvider, type DmChatKit } from "@/components/dm/DmChatKit";
 import { applyGdmEvent, closeGroup } from "@/lib/gdm-client";
@@ -10202,6 +10202,75 @@ export default function Home() {
   // ✉️ DM を中央に開いているか（lib/dm-client.ts の状態。チャットと同じ場所に出す）
   const dmSnap = useDm();
   const dmCenter = dmSnap.status === "enabled" && dmSnap.open;
+  // 上のタブ（スマホ）と左サイドバーの行（2026-11-08 オーナー「タブの機能を左サイドバーのタイムラインの下に並べた方が使いやすそう」）で同じ切り替え。
+  const feedTab = dmCenter ? "dm" : chatView ? "chat" : bmView ? "bm" : favView ? "fav" : "timeline";
+  const switchFeedTab = (v: string) => {
+    // ✉️ DM はチャットと同じく中央に出す（ほかのタブを押したら閉じる）
+    if (v === "dm") { closeGroup(); openDmList(); return; }
+    if (dmCenter) { closeGroup(); closeDm(); }
+    const toChat = v === "chat";
+    chatViewRef.current = toChat;
+    setChatView(toChat);
+    if (toChat) {
+      // ☆・🔖 のままのフィードを残さない: チャットから「タイムライン」に戻ったとき、☆・🔖 の中身が
+      // 出ていた（2026-11-08 オーナー「タイムライン→ブックマーク→チャット→タイムラインでブックマークの内容」）。
+      const wasFiltered = favViewRef.current || bmViewRef.current;
+      favViewRef.current = false; setFavView(false); bmViewRef.current = false; setBmView(false);
+      if (wasFiltered) loadFeed();
+      loadChat(true); setChatMention(null); return;
+    }
+    setChatMention(null);
+    const toFav = v === "fav";
+    const toBm = v === "bm";
+    if (toFav !== favViewRef.current || toBm !== bmViewRef.current) {
+      favViewRef.current = toFav;
+      setFavView(toFav);
+      bmViewRef.current = toBm;
+      setBmView(toBm);
+      loadFeed();
+    }
+  };
+  // 左サイドバーの行から: スレッド・検索・プロフィール・ドリニュースを開いていても、ホームに戻ってから切り替える。
+  const selectFeedTab = (v: string) => {
+    setNavOpened(false);
+    if (v === "timeline") { goHome(); return; }
+    setProfileUserId(null);
+    setAsideOpened(false);
+    setThreadPost(null);
+    setThreadReplies([]);
+    setInlineReplyFor(null);
+    if (searchQuery) setSearchQuery("");
+    if (window.location.hash.startsWith("#/post/") || window.location.hash.startsWith("#/user/")) {
+      try {
+        window.history.replaceState(null, "", window.location.pathname + clubQueryString());
+      } catch {
+        // ignore
+      }
+    }
+    setActiveNav("feed");
+    switchFeedTab(v);
+    window.scrollTo({ top: 0 });
+  };
+  const feedTabRows: { value: string; label: string; icon: string; right?: ReactNode }[] = [
+    { value: "fav", label: "お気に入り", icon: "☆", right: favoriteIds.size > 0 ? <NavCount n={favoriteIds.size} /> : undefined },
+    { value: "bm", label: "ブックマーク", icon: "🔖", right: bookmarkIds.size > 0 ? <NavCount n={bookmarkIds.size} /> : undefined },
+    ...(macApp
+      ? []
+      : [
+          {
+            value: "chat",
+            label: "チャット",
+            icon: "💬",
+            right: (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                {onlineMembers.length > 0 && <NavCount n={onlineMembers.length} suffix="人在線" />}
+                {chatUnread > 0 && <NavUnread n={chatUnread} />}
+              </span>
+            ),
+          },
+        ]),
+    ...(dmEnabled ? [{ value: "dm", label: "DM", icon: "✉️", right: <DmNavUnread /> }] : []),
+  ];
   useEffect(() => {
     if (!macApp || !chatView) return;
     chatViewRef.current = false;
@@ -10900,38 +10969,64 @@ export default function Home() {
       <AppShell.Navbar data-cx="navbar" p="xs" style={{ background: "var(--bg-primary)", borderRight: "1px solid var(--border-default)" }}>
         <ScrollArea>
           <Stack gap={2}>
-            {NAV_ITEMS.map((item) => (
-              <NavLink
-                key={item.key}
-                active={activeNav === item.key}
-                label={item.label}
-                leftSection={<span>{item.icon}</span>}
-                onClick={() => {
-                  // Switching views from the sidebar must also close the
-                  // profile / right panel — ProfileView takes render priority
-                  // over the feed, so a stale profileUserId would keep covering
-                  // the newly selected view (reported bug, 2026-08-19).
-                  setProfileUserId(null);
-                  setAsideOpened(false);
-                  if (item.key === "feed") {
-                    // "タイムライン" should always return to the full timeline
-                    // (closing any open thread) and scroll to top — matching the
-                    // in-feed "タイムラインに戻る" button so the two feel consistent.
-                    goHome();
-                  } else {
-                    setActiveNav(item.key);
-                  }
-                  setNavOpened(false);
-                }}
-                style={{
-                  borderRadius: 8,
-                  marginBottom: 2,
-                  ...(activeNav === item.key
-                    ? { background: "var(--bg-tinted)", color: "var(--text-green)", fontWeight: 600 }
-                    : {}),
-                }}
-              />
-            ))}
+            {NAV_ITEMS.map((item) => {
+              const active = item.key === "feed" ? activeNav === "feed" && feedTab === "timeline" : activeNav === item.key;
+              return (
+                <Fragment key={item.key}>
+                  <NavLink
+                    active={active}
+                    label={item.label}
+                    leftSection={<span>{item.icon}</span>}
+                    data-cx={item.key === "feed" ? "feedtab" : undefined}
+                    data-tab={item.key === "feed" ? "timeline" : undefined}
+                    onClick={() => {
+                      // Switching views from the sidebar must also close the
+                      // profile / right panel — ProfileView takes render priority
+                      // over the feed, so a stale profileUserId would keep covering
+                      // the newly selected view (reported bug, 2026-08-19).
+                      setProfileUserId(null);
+                      setAsideOpened(false);
+                      if (item.key === "feed") {
+                        // "タイムライン" should always return to the full timeline
+                        // (closing any open thread) and scroll to top — matching the
+                        // in-feed "タイムラインに戻る" button so the two feel consistent.
+                        goHome();
+                      } else {
+                        setActiveNav(item.key);
+                      }
+                      setNavOpened(false);
+                    }}
+                    style={{
+                      borderRadius: 8,
+                      marginBottom: 2,
+                      ...(active ? { background: "var(--bg-tinted)", color: "var(--text-green)", fontWeight: 600 } : {}),
+                    }}
+                  />
+                  {/* 上のタブ（☆・🔖・チャット・✉️ DM）をタイムラインの下に（2026-11-08 オーナー）。スマホは上のタブのまま。 */}
+                  {item.key === "feed" &&
+                    feedTabRows.map((t) => {
+                      const on = activeNav === "feed" && feedTab === t.value;
+                      return (
+                        <NavLink
+                          key={t.value}
+                          active={on}
+                          label={t.label}
+                          leftSection={<span>{t.icon}</span>}
+                          rightSection={t.right}
+                          data-cx="feedtab"
+                          data-tab={t.value}
+                          onClick={() => selectFeedTab(t.value)}
+                          style={{
+                            borderRadius: 8,
+                            marginBottom: 2,
+                            ...(on ? { background: "var(--bg-tinted)", color: "var(--text-green)", fontWeight: 600 } : {}),
+                          }}
+                        />
+                      );
+                    })}
+                </Fragment>
+              );
+            })}
 
             {/* 部活（左サイドバー・カテゴリアコーディオン + 検索） */}
             <Divider my="xs" />
@@ -11948,6 +12043,8 @@ export default function Home() {
               {showNavTabs && (
                 <Box
                   data-cx="navtabs"
+                  // 左サイドバーが出る幅（sm 以上）では、同じ切り替えをサイドバーのタイムラインの下に並べるので出さない（2026-11-08 オーナー）。
+                  hiddenFrom="sm"
                   style={{
                     // ★ スクロールで流れ去る（drikin 2026-09-27「いっそこれらも
                     //   スクロールアウトして良い」）。
@@ -12059,33 +12156,8 @@ export default function Home() {
                   <SegmentedControl
                     size="sm"
                     fullWidth={false}
-                    value={dmCenter ? "dm" : chatView ? "chat" : bmView ? "bm" : favView ? "fav" : "timeline"}
-                    onChange={(v) => {
-                      // ✉️ DM はチャットと同じく中央に出す（ほかのタブを押したら閉じる）
-                      if (v === "dm") { closeGroup(); openDmList(); return; }
-                      if (dmCenter) { closeGroup(); closeDm(); }
-                      const toChat = v === "chat";
-                      chatViewRef.current = toChat;
-                      setChatView(toChat);
-                      if (toChat) {
-                        // ☆・🔖 のままのフィードを残さない: チャットから「タイムライン」に戻ったとき、☆・🔖 の中身が
-                        // 出ていた（2026-11-08 オーナー「タイムライン→ブックマーク→チャット→タイムラインでブックマークの内容」）。
-                        const wasFiltered = favViewRef.current || bmViewRef.current;
-                        favViewRef.current = false; setFavView(false); bmViewRef.current = false; setBmView(false);
-                        if (wasFiltered) loadFeed();
-                        loadChat(true); setChatMention(null); return;
-                      }
-                      setChatMention(null);
-                      const toFav = v === "fav";
-                      const toBm = v === "bm";
-                      if (toFav !== favViewRef.current || toBm !== bmViewRef.current) {
-                        favViewRef.current = toFav;
-                        setFavView(toFav);
-                        bmViewRef.current = toBm;
-                        setBmView(toBm);
-                        loadFeed();
-                      }
-                    }}
+                    value={feedTab}
+                    onChange={switchFeedTab}
                     data={[
                       { label: "タイムライン", value: "timeline" },
                       {
@@ -15226,4 +15298,42 @@ function ClubManagerModal({
       </Stack>
     </Modal>
   );
+}
+
+/** 左サイドバーの行の右の数（☆・🔖 の件数、チャットの在線）。 */
+function NavCount({ n, suffix }: { n: number; suffix?: string }) {
+  return (
+    <span style={{ opacity: 0.6, fontSize: "0.6875rem", fontWeight: 500 }}>
+      {n}
+      {suffix}
+    </span>
+  );
+}
+
+/** 未読の赤い丸（上のタブと同じ見た目）。 */
+function NavUnread({ n }: { n: number }) {
+  return (
+    <span
+      style={{
+        minWidth: 18,
+        height: 18,
+        borderRadius: 9,
+        padding: "0 5px",
+        background: "#e03131",
+        color: "#fff",
+        fontSize: "0.6875rem",
+        fontWeight: 700,
+        lineHeight: "18px",
+        textAlign: "center",
+        display: "inline-block",
+      }}
+    >
+      {n > 99 ? "99+" : n}
+    </span>
+  );
+}
+
+function DmNavUnread() {
+  const n = useDmUnread();
+  return n > 0 ? <NavUnread n={n} /> : null;
 }

@@ -78,7 +78,8 @@ export function DmToggle() {
 
 /** 上のタブ（タイムライン・☆・🔖・チャット）に並べる ✉️ DM（rbtnn さん 2026-11-08「チャット→DM→グループのタップ数が長い」）。
  *  1 タップで DM の一覧を開く。未読は 1 対 1 とグループの合計。 */
-export function DmTabLabel() {
+/** ✉️ の未読（1 対 1 とグループの合計）。まだ読み込んでいなければ読み込む。左サイドバーの DM の行でも使う。 */
+export function useDmUnread(): number {
   const s0 = useDm();
   const g = useGdm();
   useEffect(() => {
@@ -87,7 +88,11 @@ export function DmTabLabel() {
   useEffect(() => {
     if (s0.status === "enabled" && g.status === "unknown") void loadGdm();
   }, [s0.status, g.status]);
-  const unread = s0.unread + (g.status === "enabled" ? g.unread : 0);
+  return s0.unread + (g.status === "enabled" ? g.unread : 0);
+}
+
+export function DmTabLabel() {
+  const unread = useDmUnread();
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }} title="DM（30 日で消えます）" data-cx="dm-tab">
       ✉️ DM
