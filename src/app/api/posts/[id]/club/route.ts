@@ -5,7 +5,7 @@ import { getSessionEmail } from "@/lib/session";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-// PATCH /api/posts/[id]/club — 投稿の部活動ラベルを手動で付け替え（投稿者 or admin のみ）。
+// PATCH /api/posts/[id]/club — 投稿の部活動ラベルを手動で付け替え（会員なら誰でも）。
 // body: { "club": "car" | null }  （null = ラベル外し）
 export async function PATCH(
   req: NextRequest,

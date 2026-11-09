@@ -57,7 +57,8 @@ object PostActions {
 
     /** The club label can be changed here: my own root post (an admin changing others' is web only). */
     fun canChangeClub(post: Post, caps: Capabilities?): Boolean =
-        caps?.canChangeClub == true && post.isAuthor && post.parentId == null && post.id > 0
+        // 部活の付け替えは誰でも（他人の投稿も。2026-11-08 オーナー「誰でも切り替えられるように意図的に作っている」）
+        caps?.canChangeClub == true && post.parentId == null && post.id > 0
 
     /** 「うなる」 is offered next to 「吠える」 in a reply box (never for a root post). */
     fun canWhisper(caps: Capabilities?, parentId: Long?): Boolean = parentId != null && caps?.canWhisper == true

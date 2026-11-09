@@ -344,9 +344,9 @@ fun PostRow(
                     // Club label (root posts: callers pass the club's name). 「未設定」 in grey, like the web.
                     if (post.favoriteByMe == true && !post.isAuthor) Text("★", fontSize = 12.sp, color = Color(0xFFF59F00),
                         modifier = Modifier.semantics { contentDescription = "お気に入りの人" })
-                    // My own root post: tap the label to change the club (「部活動を選択」), 「＋部活」 when none.
+                    // Anyone taps the label to change the club (「部活動を選択」, 2026-11-08); 「＋部活」 only on my own post.
                     val changeClub = ops != null && PostActions.canChangeClub(post, caps)
-                    val label = plan.clubLabel ?: if (changeClub) "＋部活" else null
+                    val label = plan.clubLabel ?: if (changeClub && post.isAuthor) "＋部活" else null
                     if (label != null && post.parentId == null) {
                         val c = if (plan.clubUnset || plan.clubLabel == null) MaterialTheme.colorScheme.outline else AccentGreen
                         Text(label, fontSize = 11.sp, color = c, maxLines = 1,

@@ -500,7 +500,8 @@ final class PostActionsModel {
         guard features?.pollEdit == true, p.mine, let poll = p.poll, poll.editable == true else { return false }
         return Self.withinPollEditWindow(p.createdAt)
     }
-    func canChangeClub(_ p: Post) -> Bool { features?.clubChange == true && p.mine && p.parentId == nil && p.id > 0 }
+    // 部活の付け替えは誰でも（他人の投稿も。2026-11-08 オーナー「誰でも切り替えられるように意図的に作っている」）
+    func canChangeClub(_ p: Post) -> Bool { features?.clubChange == true && p.parentId == nil && p.id > 0 }
     var canPickClub: Bool { features?.clubSelect == true }
     var canWhisper: Bool { features?.whisper == true }
     var canPoll: Bool { features?.poll == true }

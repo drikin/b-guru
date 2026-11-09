@@ -82,7 +82,7 @@ class PostActionsTest {
 
     @Test fun clubAndWhisperRules() {
         assertTrue(PostActions.canChangeClub(mine, appKey))
-        assertFalse(PostActions.canChangeClub(theirs, appKey))
+        assertTrue(PostActions.canChangeClub(theirs, appKey)) // 誰でも付け替えられる（2026-11-08）
         assertFalse(PostActions.canChangeClub(myReply, appKey))
         assertFalse(PostActions.canChangeClub(mine, oldServer))
         assertTrue(PostActions.canWhisper(appKey, parentId = 1))

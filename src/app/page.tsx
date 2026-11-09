@@ -1792,13 +1792,10 @@ function PostCard({
   const clubName = clubLabel(post.club);
   // 未設定(CLUB_UNSET)=AI が分類できなかった疑似ラベル。実クラブと区別してグレー表示に。
   const isUnsetClub = post.club === CLUB_UNSET;
-  // 手動付け替えは投稿者 or admin のみ。返信(post.parentId有り)は対象外。
-  const canChangeClub =
-    !post.parentId &&
-    onSetClub != null &&
-    (post.isAuthor || !!auth.isAdmin);
-  // 通常メンバーには「部活あり or 未設定」の投稿だけが対象外でラベル非表示（表示＝ラベル/未設定がある時だけ）。
-  const showClubRow = canChangeClub || !!clubName;
+  // 手動付け替えは誰でも（2026-11-08 オーナー「誰でも切り替えられるように意図的に作っている」）。返信(post.parentId有り)は対象外。
+  const canChangeClub = !post.parentId && onSetClub != null;
+  // 札が無い投稿に「＋部活」を出すのは投稿者と admin だけ（他人の投稿に空の札を並べない）。札があれば誰でも押して変えられる。
+  const showClubRow = !!clubName || (canChangeClub && (post.isAuthor || !!auth.isAdmin));
 
   return (
     <Card
@@ -2003,7 +2000,7 @@ function PostCard({
         </Group>
       </Group>
 
-      {/* 部活動ラベル（ルート投稿のみ）。投稿者/admin はクリックで手動付け替え可。 */}
+      {/* 部活動ラベル（ルート投稿のみ）。誰でもクリックで手動付け替え可。 */}
       {showClubRow && (
         <div style={{ margin: "2px 0 10px" }}>
           {canChangeClub ? (

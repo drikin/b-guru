@@ -808,7 +808,7 @@ export async function updatePost(
   }
 }
 
-/** 投稿の部活動ラベルを手動で付け替える（投稿者 or admin のみ）。
+/** 投稿の部活動ラベルを手動で付け替える（会員なら誰でも。2026-11-08 オーナー「誰でも切り替えられるように意図的に作っている」）。
  *  club は active な部活キー or null（ラベル外し）。付替時 club_manual=TRUE にし、
  *  自動分類が後から上書きしないようにする。SSE で club イベントを配信。 */
 export async function setPostClub(
@@ -821,9 +821,7 @@ export async function setPostClub(
   }
   const authorEmail = await getPostAuthor(postId);
   if (authorEmail === null) return { ok: false, error: "not_found" };
-  if (authorEmail !== userEmail && !isAdmin(userEmail)) {
-    return { ok: false, error: "自分の投稿のみ編集できます" };
-  }
+  void userEmail; // 誰が付け替えても同じ（呼び出し側でログイン済みを確かめている）
   await pool.query(
     `UPDATE posts SET club = $1, club_manual = TRUE, classified_at = now() WHERE id = $2`,
     [club, postId]

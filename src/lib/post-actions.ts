@@ -105,12 +105,11 @@ export async function togglePinAction(email: string, postId: number): Promise<Ac
 }
 
 /** 部活ラベルの手動の付け替え（club=null で外す）。
- *  Web は投稿者か admin（setPostClub）。authorOnly: アプリ用 API は投稿者だけ（admin の操作は Web だけ）。 */
+ *  Web もアプリも会員なら誰でも（2026-11-08 オーナー「誰でも切り替えられるように意図的に作っている」）。 */
 export async function setClubAction(
   email: string,
   postId: number,
-  clubValue: unknown,
-  opts: { authorOnly?: boolean } = {}
+  clubValue: unknown
 ): Promise<ActionResult> {
   if (clubValue !== null && typeof clubValue !== "string") {
     return { status: 400, body: { error: "club は文字列または null のみ" } };
@@ -120,13 +119,6 @@ export async function setClubAction(
     // 部活はルート投稿にだけ付く（返信は親に従う。Web の画面も返信には部活の札を出さない）。
     if (await isReply(postId)) {
       return { status: 400, body: { error: "返信の部活は変えられません（スレッドの部活はルート投稿で変えます）" } };
-    }
-    if (opts.authorOnly) {
-      const r = await pool.query(`SELECT author_email FROM posts WHERE id = $1`, [postId]);
-      if (r.rows.length === 0) return { status: 404, body: { error: "not_found" } };
-      if (r.rows[0].author_email !== email) {
-        return { status: 403, body: { error: "自分の投稿のみ編集できます" } };
-      }
     }
     const result = await setPostClub(postId, email, club);
     if (!result.ok) {

@@ -94,7 +94,7 @@ struct ClubChoices: View {
     }
 }
 
-/// The club's tag on my own root post opens 「部活動を選択」; 「＋部活」 when it has none.
+/// The club's tag on a root post opens 「部活動を選択」 for anyone (2026-11-08); 「＋部活」 only on my own post when it has none.
 struct ClubTag: View {
     let post: Post
     let name: String?
@@ -102,7 +102,7 @@ struct ClubTag: View {
     @Environment(\.postClubs) private var clubs
 
     var body: some View {
-        if let actions, actions.canChangeClub(post), !clubs.isEmpty {
+        if let actions, actions.canChangeClub(post), !clubs.isEmpty, name != nil || post.mine {
             Menu { ClubChoices(post: post, actions: actions, clubs: clubs) } label: { tag(name ?? "＋部活", dashed: name == nil) }
                 .menuStyle(.button)
                 .buttonStyle(.plain)

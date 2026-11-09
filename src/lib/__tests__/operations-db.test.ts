@@ -237,7 +237,7 @@ d("段階 3 の操作（DB）", () => {
       expect((await POST(req("http://x", writeToken, { method: "POST" }), P(a))).status).toBe(403); // post スコープが要る
     });
 
-    it("部活: 付け替えは投稿者だけ・club_manual になる・不正なキーは 400", async () => {
+    it("部活: 付け替えは誰でも（他人の投稿も）・club_manual になる・不正なキーは 400", async () => {
       const { PATCH } = await import("@/app/api/agent/posts/[id]/club/route");
       await sql(`INSERT INTO clubs (key, name, category, definition, active, manual, sort) VALUES ('opsclub', '検査部', 'その他', '', TRUE, TRUE, 999) ON CONFLICT (key) DO NOTHING`);
       const id = await newPost(ME, "部活");
@@ -246,7 +246,9 @@ d("段階 3 の操作（DB）", () => {
       expect((await sql(`SELECT club, club_manual FROM posts WHERE id = $1`, [id])).rows[0]).toEqual({ club: "opsclub", club_manual: true });
       expect((await PATCH(req("http://x", appToken, { method: "PATCH", body: JSON.stringify({ club: "nope" }) }), P(id))).status).toBe(400);
       const o = await newPost(OTHER, "他人");
-      expect((await PATCH(req("http://x", appToken, { method: "PATCH", body: JSON.stringify({ club: "opsclub" }) }), P(o))).status).toBe(403);
+      // 2026-11-08 オーナー「誰でも切り替えられるように意図的に作っている」
+      expect((await PATCH(req("http://x", appToken, { method: "PATCH", body: JSON.stringify({ club: "opsclub" }) }), P(o))).status).toBe(200);
+      expect((await sql(`SELECT club, club_manual FROM posts WHERE id = $1`, [o])).rows[0]).toEqual({ club: "opsclub", club_manual: true });
     });
 
     it("投稿: 部活の手動選択・うなる（返信だけ）・投票の作成・動画と音声は同時に付けられない", async () => {

@@ -18,7 +18,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     if (!id) return { status: 404, body: { error: "投稿が見つかりません", code: "not_found" }, headers: {} };
     const body = await readJson(req);
     if (!body) return BAD_JSON;
-    return agentActionResult(await setClubAction(ctx.email, id, body.club ?? null, { authorOnly: true }));
+    return agentActionResult(await setClubAction(ctx.email, id, body.club ?? null));
   }, { lightPost: true });
   return agentJson(out);
 }
