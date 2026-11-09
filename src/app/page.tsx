@@ -3941,13 +3941,14 @@ const TimelineFeed = memo(function TimelineFeed({
               searchQuery={searchQuery}
               avatarSrc={avatarSrc}
               isThreadRoot={false}
-              // 💬 返信ボタン（2026-11-08 オーナー「リプライ：分かりやすく記事にリプライボタンをつける」）
+              // 💬 返信ボタン（2026-11-08 オーナー「リプライ：分かりやすく記事にリプライボタンをつける」）。
+              // 押すとこのカードのすぐ下に返信欄が開く（タイムラインを離れない。ささやくも選べる）。
               showReplyButton={!post.parentId}
               reactionBar={renderReactionBar?.(post.id)}
               reactionBarSource={renderReactionBar}
               onOpenThread={onOpenThread}
               onOpenThreadReply={onOpenThreadReply}
-              onReply={onReply}
+              onReply={onToggleInlineReply}
               onWhisper={onWhisper}
               onEdit={onEdit}
               onDelete={onDelete}
@@ -3985,10 +3986,9 @@ const TimelineFeed = memo(function TimelineFeed({
               onPreview={onPreview}
               onOpenProfile={onOpenProfile}
             />
-            {/* "+" insert control: a small circular button centered in a slim row
-             * between cards. Center placement is intuitive ("insert here"),
-             * while the single narrow row keeps vertical space tight. */}
-            {inlineReplyFor === post.id ? (
+            {/* 💬 返信で開く、カードのすぐ下の返信欄（ささやくも選べる）。以前はカードの間のビーグルのアイコンで開いていたが、
+             * 2026-11-08 オーナー「返信ボタンがついたから、カードの次にあるビーグルアイコンもいらない」で返信ボタンに一本化。 */}
+            {inlineReplyFor === post.id && (
               <InlineReplyBox
                 postId={post.id}
                 authorLabel={g.authorName}
@@ -3999,30 +3999,6 @@ const TimelineFeed = memo(function TimelineFeed({
                 onCancel={() => onToggleInlineReply(post.id)}
                 onPreview={onPreview}
               />
-            ) : (
-              <Box style={{ display: "flex", justifyContent: "center", lineHeight: 0 }}>
-                <UnstyledButton
-                  onClick={() => onToggleInlineReply(post.id)}
-                  aria-label="コメントを挟み込む"
-                  style={{ cursor: "pointer", padding: 2, background: "transparent", border: "none", lineHeight: 1 }}
-                >
-                  <Box
-                    
-                    className="bguru-bark-btn"
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: "50%",
-                      color: "var(--text-green-soft)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <BarkIcon size={20} color="#1F90FF" />
-                  </Box>
-                </UnstyledButton>
-              </Box>
             )}
           </Fragment>
         ))}
