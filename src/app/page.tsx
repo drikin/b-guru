@@ -3941,14 +3941,13 @@ const TimelineFeed = memo(function TimelineFeed({
               searchQuery={searchQuery}
               avatarSrc={avatarSrc}
               isThreadRoot={false}
-              // 💬 返信ボタン（2026-11-08 オーナー「リプライ：分かりやすく記事にリプライボタンをつける」）。
-              // 押すとこのカードのすぐ下に返信欄が開く（タイムラインを離れない。ささやくも選べる）。
-              showReplyButton={!post.parentId}
+              // 💬 返信ボタンはカードではなく、最後のコメントの次に置く（下の「💬 返信」）。
+              showReplyButton={false}
               reactionBar={renderReactionBar?.(post.id)}
               reactionBarSource={renderReactionBar}
               onOpenThread={onOpenThread}
               onOpenThreadReply={onOpenThreadReply}
-              onReply={onToggleInlineReply}
+              onReply={onReply}
               onWhisper={onWhisper}
               onEdit={onEdit}
               onDelete={onDelete}
@@ -3988,6 +3987,21 @@ const TimelineFeed = memo(function TimelineFeed({
             />
             {/* 💬 返信で開く、カードのすぐ下の返信欄（ささやくも選べる）。以前はカードの間のビーグルのアイコンで開いていたが、
              * 2026-11-08 オーナー「返信ボタンがついたから、カードの次にあるビーグルアイコンもいらない」で返信ボタンに一本化。 */}
+            {/* 💬 返信: 最後のコメントの次に置き、押すとその場所に返信欄が開く（2026-11-08 オーナー「一番最後のコメントの次にある
+             * 返信ボタンを押す感じ」）。返信欄を開いている間は隠す。 */}
+            {!post.parentId && inlineReplyFor !== post.id && (
+              <Group gap="xs" px={4} data-cx="feed-reply-button">
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  color="blue"
+                  leftSection={<span style={{ fontSize: "0.8125rem" }}>💬</span>}
+                  onClick={() => onToggleInlineReply(post.id)}
+                >
+                  返信{post.replyCount ? ` (${post.replyCount})` : ""}
+                </Button>
+              </Group>
+            )}
             {inlineReplyFor === post.id && (
               <InlineReplyBox
                 postId={post.id}
