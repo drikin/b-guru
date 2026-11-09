@@ -5657,6 +5657,7 @@ export default function Home() {
   // the right-sidebar panel. Refreshed on login, on SSE "post" events (a new
   // comment bumps the ranking), after a pin toggle does nothing here).
   const loadHot = useCallback(() => {
+    if (!SHOW_RIGHT_EXTRAS) return; // 右のホットトピックを隠している間は取りに行かない
     if (!auth) {
       setHotPosts([]);
       return;
@@ -5670,6 +5671,7 @@ export default function Home() {
   }, [auth]);
 
   const loadTrends = useCallback(() => {
+    if (!SHOW_RIGHT_EXTRAS) return; // 右のトレンドを隠している間は取りに行かない
     if (!auth) {
       setTrendKeywords([]);
       return;
