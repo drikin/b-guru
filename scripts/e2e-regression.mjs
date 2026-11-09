@@ -1836,7 +1836,8 @@ console.log("\n6j-4. Edge swipe opens the drawers, header auto-hides");
     !!stackShown && !!stackHidden && stackHidden.tab < -100,
     `shown=${stackShown?.tab} after scroll=${stackHidden?.tab} (must be off-screen)`
   );
-  check(
+  // 部活バーを隠している間（2026-11-08〜）は、このチェックは E2E_CLUB_BAR=1 のときだけ。
+  if (process.env.E2E_CLUB_BAR === "1") check(
     "the club bar scrolls out of view instead of staying pinned",
     !!stackShown && !!stackHidden && stackHidden.club < -100,
     `shown=${stackShown?.club} after scroll=${stackHidden?.club} (must be off-screen)`
