@@ -59,6 +59,10 @@ export const GDM_ADMIN_RATE_LIMIT = 30;
 export const GDM_GROUPS_LIMIT = 100;
 /** 自分で抜けた人を同じグループに入れ直せない時間。 */
 export const GDM_REJOIN_COOLDOWN = "24 hours";
+/** 🌐 パブリック DM の人数の安全弁（誰でも出入りできるので、プライベートより大きく。push を一度に配る負荷の上限）。 */
+export const GDM_PUBLIC_MAX_MEMBERS = 1000;
+/** 🌐 一覧の「新しい」印を付ける期間（作られてから）。 */
+export const GDM_PUBLIC_NEW_HOURS = 72;
 
 export type GMember = { user_id: string; name: string | null; avatar: string | null; is_creator: boolean; is_me: boolean };
 export type GroupDto = {
@@ -73,6 +77,13 @@ export type GroupDto = {
   muted: boolean;
   /** 🐶 このグループで @ビーグル に答えるか（メンバーなら誰でも入・切。既定は切）。 */
   beagle: boolean;
+  /** 🌐 パブリック DM（誰の一覧にも出て、誰でも読めて、誰でも参加・退出できる）。 */
+  is_public: boolean;
+  /** 見る人が参加しているか（パブリックでは参加していなくても見られる）。 */
+  is_member: boolean;
+  /** 🗄 アーカイブ済み（パブリックだけ。読むだけで、書き込み・参加はできない）。 */
+  archived: boolean;
+  archived_at: string | null;
   created_at: string;
 };
 export type GMessageDto = {
@@ -96,9 +107,25 @@ export type GMessageDto = {
   is_beagle?: boolean;
   client_id?: string;
 };
-export type GroupSummaryDto = { group: GroupDto; last_message: GMessageDto | null; unread_count: number };
+export type GroupSummaryDto = {
+  group: GroupDto;
+  last_message: GMessageDto | null;
+  unread_count: number;
+  /** 🌐 参加していないパブリック DM で、作られてまだ新しい（GDM_PUBLIC_NEW_HOURS 以内）。 */
+  is_new?: boolean;
+};
 
-type GroupRow = { id: number; name: string | null; creator_email: string; created_at: Date | string; photo?: string | null; beagle?: boolean };
+type GroupRow = {
+  id: number;
+  name: string | null;
+  creator_email: string;
+  created_at: Date | string;
+  photo?: string | null;
+  beagle?: boolean;
+  is_public?: boolean;
+  archived_at?: Date | string | null;
+};
+const GROUP_COLS = `id, name, creator_email, created_at, photo, beagle, is_public, archived_at`;
 type MemberRow = { email: string; joined_at: Date | string; joined_from_id: number; muted: boolean; last_read_id: number };
 type MsgRow = {
   id: number;
@@ -163,6 +190,7 @@ export function toGroupDto(g: GroupRow, members: MemberRow[], viewerEmail: strin
   const list: GMember[] = [];
   const others: (string | null)[] = [];
   let muted = false;
+  let isMember = false;
   // 作った人を先頭に、あとは入った順
   const ordered = [...members.filter((m) => normEmail(m.email) === creator), ...members.filter((m) => normEmail(m.email) !== creator)];
   for (const m of ordered) {
@@ -171,8 +199,10 @@ export function toGroupDto(g: GroupRow, members: MemberRow[], viewerEmail: strin
     if (!uid) continue;
     const name = lk.names.get(e) ?? null;
     list.push({ user_id: uid, name, avatar: gravatarUrl(e), is_creator: e === creator, is_me: e === me });
-    if (e === me) muted = !!m.muted;
-    else others.push(name);
+    if (e === me) {
+      muted = !!m.muted;
+      isMember = true;
+    } else others.push(name);
   }
   return {
     id: g.id,
@@ -184,6 +214,10 @@ export function toGroupDto(g: GroupRow, members: MemberRow[], viewerEmail: strin
     is_creator: creator === me,
     muted,
     beagle: !!g.beagle,
+    is_public: !!g.is_public,
+    is_member: isMember,
+    archived: !!g.archived_at,
+    archived_at: g.archived_at ? new Date(g.archived_at).toISOString() : null,
     created_at: new Date(g.created_at).toISOString(),
   };
 }
@@ -259,7 +293,7 @@ function parseGroupId(v: unknown): number {
 
 async function loadGroup(gid: number): Promise<{ group: GroupRow; members: MemberRow[] } | null> {
   const [g, m] = await Promise.all([
-    pool.query(`SELECT id, name, creator_email, created_at, photo, beagle FROM gdm_groups WHERE id = $1`, [gid]),
+    pool.query(`SELECT ${GROUP_COLS} FROM gdm_groups WHERE id = $1`, [gid]),
     pool.query(
       `SELECT email, joined_at, joined_from_id, muted, last_read_id FROM gdm_members WHERE group_id = $1 ORDER BY joined_at, email`,
       [gid]
@@ -277,6 +311,26 @@ async function requireMember(actor: DmActor, rawGid: unknown) {
   const self = loaded?.members.find((m) => normEmail(m.email) === me);
   if (!loaded || !self) throw new DmError(404, "not_found", "グループが見つかりません");
   return { gid, ...loaded, self };
+}
+
+/** 見られる人（メンバーか、パブリック DM なら会員の誰でも）。見られなければ 404。self は参加していなければ undefined。 */
+async function requireViewer(actor: DmActor, rawGid: unknown) {
+  const gid = parseGroupId(rawGid);
+  const loaded = await loadGroup(gid);
+  const me = normEmail(actor.email);
+  const self = loaded?.members.find((m) => normEmail(m.email) === me);
+  if (!loaded || (!self && !loaded.group.is_public)) throw new DmError(404, "not_found", "グループが見つかりません");
+  return { gid, ...loaded, self };
+}
+
+/** アーカイブ済みなら書き込めない（読むだけ）。 */
+function assertWritable(group: GroupRow): void {
+  if (group.archived_at) throw new DmError(403, "forbidden", "アーカイブされたグループです（読むだけできます）");
+}
+
+/** そのグループの人数の上限。 */
+function maxMembers(group: { is_public?: boolean }): number {
+  return group.is_public ? GDM_PUBLIC_MAX_MEMBERS : GDM_MAX_MEMBERS;
 }
 
 /** 追加する人の user_id → email（重複・不正・自分・ビーグル・知らない人・使えない人は断る）。 */
@@ -310,6 +364,7 @@ export async function gdmUnreadTotals(emails: string[]): Promise<Map<string, num
   const r = await pool.query(
     `SELECT gm.email, count(*)::int AS c
        FROM gdm_members gm
+       JOIN gdm_groups g ON g.id = gm.group_id AND g.archived_at IS NULL
        JOIN gdm_messages m ON m.group_id = gm.group_id
       WHERE gm.email = ANY($1::text[])
         AND m.kind IN ('text', 'beagle')
@@ -332,6 +387,7 @@ async function unreadIn(gid: number, email: string): Promise<number> {
   const r = await pool.query(
     `SELECT count(*)::int AS c
        FROM gdm_members gm JOIN gdm_messages m ON m.group_id = gm.group_id
+       JOIN gdm_groups g ON g.id = gm.group_id AND g.archived_at IS NULL
       WHERE gm.group_id = $1 AND gm.email = $2 AND m.kind IN ('text', 'beagle')
         AND m.sender_email IS DISTINCT FROM gm.email
         AND m.id > GREATEST(gm.last_read_id, gm.joined_from_id)
@@ -420,34 +476,66 @@ function namesLine(emails: string[], names: Map<string, string | null>): string 
 
 // ---- 公開する操作 ----
 
-/** グループの一覧（最後の動きが新しい順）と未読の合計。 */
-export async function listGroups(actor: DmActor): Promise<{ groups: GroupSummaryDto[]; group_unread_count: number }> {
+/** グループの一覧（最後の動きが新しい順）と未読の合計。
+ *  groups: 参加していて、アーカイブされていないもの（古いアプリはこれだけを読む）。
+ *  public_groups: 🌐 参加していないパブリック DM。archived_groups: 🗄 アーカイブされたパブリック DM（参加の有無によらず）。 */
+export async function listGroups(actor: DmActor): Promise<{
+  groups: GroupSummaryDto[];
+  public_groups: GroupSummaryDto[];
+  archived_groups: GroupSummaryDto[];
+  group_unread_count: number;
+}> {
   const me = normEmail(actor.email);
-  const gr = await pool.query(
-    `SELECT g.id, g.name, g.creator_email, g.created_at, g.photo, g.beagle
-       FROM gdm_groups g JOIN gdm_members gm ON gm.group_id = g.id AND gm.email = $1
-      ORDER BY g.updated_at DESC, g.id DESC
-      LIMIT $2`,
-    [me, GDM_GROUPS_LIMIT]
-  );
-  const groups = gr.rows as GroupRow[];
-  if (groups.length === 0) return { groups: [], group_unread_count: 0 };
-  const gids = groups.map((g) => g.id);
+  const [mine, pub, arch] = await Promise.all([
+    pool.query(
+      `SELECT ${GROUP_COLS.split(", ").map((c) => `g.${c}`).join(", ")}
+         FROM gdm_groups g JOIN gdm_members gm ON gm.group_id = g.id AND gm.email = $1
+        WHERE g.archived_at IS NULL
+        ORDER BY g.updated_at DESC, g.id DESC
+        LIMIT $2`,
+      [me, GDM_GROUPS_LIMIT]
+    ),
+    pool.query(
+      `SELECT ${GROUP_COLS} FROM gdm_groups g
+        WHERE g.is_public AND g.archived_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM gdm_members gm WHERE gm.group_id = g.id AND gm.email = $1)
+        ORDER BY g.updated_at DESC, g.id DESC
+        LIMIT $2`,
+      [me, GDM_GROUPS_LIMIT]
+    ),
+    pool.query(
+      `SELECT ${GROUP_COLS} FROM gdm_groups g
+        WHERE g.is_public AND g.archived_at IS NOT NULL
+        ORDER BY g.archived_at DESC, g.id DESC
+        LIMIT $1`,
+      [GDM_GROUPS_LIMIT]
+    ),
+  ]);
+  const groupsMine = mine.rows as GroupRow[];
+  const all = [...groupsMine, ...(pub.rows as GroupRow[]), ...(arch.rows as GroupRow[])];
+  if (all.length === 0) return { groups: [], public_groups: [], archived_groups: [], group_unread_count: 0 };
+  const gids = [...new Set(all.map((g) => g.id))];
   const [mr, last, unread] = await Promise.all([
     pool.query(
       `SELECT group_id, email, joined_at, joined_from_id, muted, last_read_id FROM gdm_members WHERE group_id = ANY($1::int[]) ORDER BY joined_at, email`,
       [gids]
     ),
+    // 最後の発言: 参加していれば入ってから、参加していないパブリックは全部から
     pool.query(
       `SELECT DISTINCT ON (m.group_id) m.id, m.group_id, m.sender_email, m.kind, m.body, m.images, m.created_at
-         FROM gdm_messages m JOIN gdm_members gm ON gm.group_id = m.group_id AND gm.email = $2
-        WHERE m.group_id = ANY($1::int[]) AND m.id > gm.joined_from_id AND m.created_at >= now() - ($3::text)::interval
+         FROM gdm_messages m
+         JOIN gdm_groups g ON g.id = m.group_id
+         LEFT JOIN gdm_members gm ON gm.group_id = m.group_id AND gm.email = $2
+        WHERE m.group_id = ANY($1::int[]) AND m.created_at >= now() - ($3::text)::interval
+          AND (gm.email IS NOT NULL OR g.is_public)
+          AND m.id > COALESCE(gm.joined_from_id, 0)
         ORDER BY m.group_id, m.id DESC`,
       [gids, me, DM_TTL]
     ),
     pool.query(
       `SELECT gm.group_id, count(*)::int AS c
          FROM gdm_members gm JOIN gdm_messages m ON m.group_id = gm.group_id
+         JOIN gdm_groups g ON g.id = gm.group_id AND g.archived_at IS NULL
         WHERE gm.email = $1 AND gm.group_id = ANY($2::int[]) AND m.kind IN ('text', 'beagle')
           AND m.sender_email IS DISTINCT FROM gm.email
           AND m.id > GREATEST(gm.last_read_id, gm.joined_from_id)
@@ -466,35 +554,51 @@ export async function listGroups(actor: DmActor): Promise<{ groups: GroupSummary
   const unreadBy = new Map<number, number>((unread.rows as { group_id: number; c: number }[]).map((r) => [r.group_id, r.c]));
   const allEmails = [...(mr.rows as MemberRow[]).map((r) => r.email), ...(last.rows as MsgRow[]).flatMap((r) => (r.sender_email ? [r.sender_email] : []))];
   const lk = await lookup(allEmails);
-  let total = 0;
-  const out: GroupSummaryDto[] = groups.map((g) => {
-    const u = unreadBy.get(g.id) ?? 0;
-    total += u;
+  const newSince = Date.now() - GDM_PUBLIC_NEW_HOURS * 3600_000;
+  const summarize = (g: GroupRow, withNew = false): GroupSummaryDto => {
     const l = lastBy.get(g.id);
-    return { group: toGroupDto(g, membersBy.get(g.id) ?? [], me, lk), last_message: l ? toGMessageDto(l, me, lk) : null, unread_count: u };
-  });
-  // 合計は一覧の上限（100 件）に関係なく全部（stream の group_unread_count と同じ数え方）
-  return { groups: out, group_unread_count: groups.length >= GDM_GROUPS_LIMIT ? await getGdmUnreadTotal(me) : total };
+    const dto: GroupSummaryDto = {
+      group: toGroupDto(g, membersBy.get(g.id) ?? [], me, lk),
+      last_message: l ? toGMessageDto(l, me, lk) : null,
+      unread_count: g.archived_at ? 0 : (unreadBy.get(g.id) ?? 0),
+    };
+    if (withNew) dto.is_new = new Date(g.created_at).getTime() >= newSince;
+    return dto;
+  };
+  const groups = groupsMine.map((g) => summarize(g));
+  const total = groups.reduce((n, x) => n + x.unread_count, 0);
+  return {
+    groups,
+    public_groups: (pub.rows as GroupRow[]).map((g) => summarize(g, true)),
+    archived_groups: (arch.rows as GroupRow[]).map((g) => summarize(g)),
+    // 合計は一覧の上限（100 件）に関係なく全部（stream の group_unread_count と同じ数え方）
+    group_unread_count: groupsMine.length >= GDM_GROUPS_LIMIT ? await getGdmUnreadTotal(me) : total,
+  };
 }
 
-/** 作る。自分のほかに 1 人以上。作った人は自分。 */
-export async function createGroup(actor: DmActor, rawName: unknown, rawMemberIds: unknown): Promise<GroupDto> {
+/** 作る。プライベートは自分のほかに 1 人以上、🌐 パブリックは自分だけでもよい。作った人は自分。 */
+export async function createGroup(actor: DmActor, rawName: unknown, rawMemberIds: unknown, rawPublic: unknown = false): Promise<GroupDto> {
+  if (rawPublic !== undefined && rawPublic !== null && typeof rawPublic !== "boolean") throw new DmError(400, "invalid_request", "public が不正です");
+  const isPublic = rawPublic === true;
   const me = normEmail(actor.email);
   if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
   const nm = normalizeGroupName(rawName);
   if (!nm.ok) throw new DmError(400, "invalid_request", `グループ名は ${GDM_MAX_NAME} 文字までです`);
   await checkAdminRate(me); // 先に数える（入れられない人の判定で、相手の状態を何度も探られないように）
-  const others = await resolveNewMembers(actor, rawMemberIds, new Set([me]));
-  if (others.length === 0) throw new DmError(400, "invalid_request", "自分のほかに 1 人以上選んでください");
+  const noneChosen = rawMemberIds == null || (Array.isArray(rawMemberIds) && rawMemberIds.length === 0);
+  if (isPublic && !nm.name) throw new DmError(400, "invalid_request", "パブリック DM には名前を付けてください");
+  const others = isPublic && noneChosen ? [] : await resolveNewMembers(actor, rawMemberIds, new Set([me]));
+  if (!isPublic && others.length === 0) throw new DmError(400, "invalid_request", "自分のほかに 1 人以上選んでください");
   if (others.length + 1 > GDM_MAX_MEMBERS) throw new DmError(400, "invalid_request", `1 グループ ${GDM_MAX_MEMBERS} 人までです`);
 
   const client = await pool.connect();
   let gid: number;
   try {
     await client.query("BEGIN");
-    const g = await client.query(`INSERT INTO gdm_groups (name, creator_email) VALUES ($1, $2) RETURNING id`, [nm.name, me]);
+    const g = await client.query(`INSERT INTO gdm_groups (name, creator_email, is_public) VALUES ($1, $2, $3) RETURNING id`, [nm.name, me, isPublic]);
     gid = g.rows[0].id as number;
-    const from = await client.query(`SELECT COALESCE(max(id), 0)::int AS m FROM gdm_messages`);
+    // パブリックは過去の発言も全部見える（新しいグループなので、どちらでも結果は同じ）
+    const from = isPublic ? { rows: [{ m: 0 }] } : await client.query(`SELECT COALESCE(max(id), 0)::int AS m FROM gdm_messages`);
     const fromId = from.rows[0].m as number;
     await client.query(
       `INSERT INTO gdm_members (group_id, email, joined_from_id, added_by)
@@ -511,7 +615,14 @@ export async function createGroup(actor: DmActor, rawName: unknown, rawMemberIds
   // 先にグループを配る（新しいメンバーの端末が、知らないグループの発言を受け取らないように）。
   await emitGroupToMembers(gid);
   const names = await resolveDisplayNames([me, ...others]);
-  await insertMessage(gid, null, "system", `${displayName(me, names)}がグループを作りました（${namesLine(others, names)}）`);
+  await insertMessage(
+    gid,
+    null,
+    "system",
+    isPublic
+      ? `${displayName(me, names)}がパブリック DM を作りました${others.length ? `（${namesLine(others, names)}）` : ""}。だれでも参加・退出できます`
+      : `${displayName(me, names)}がグループを作りました（${namesLine(others, names)}）`
+  );
   const loaded = await loadGroup(gid);
   const lk = await lookup(loaded!.members.map((m) => m.email));
   return toGroupDto(loaded!.group, loaded!.members, me, lk);
@@ -523,23 +634,34 @@ export async function getGroupThread(
   rawGid: unknown,
   opts: { before?: number; limit?: number } = {}
 ): Promise<{ group: GroupDto; messages: GMessageDto[]; unread_count: number; last_read_id: number; can_send: boolean }> {
-  const { gid, group, members, self } = await requireMember(actor, rawGid);
+  const { gid, group, members, self } = await requireViewer(actor, rawGid);
   const me = normEmail(actor.email);
+  const fromId = self ? Number(self.joined_from_id) : 0; // 参加していないパブリックは全部見える
   const limit = Math.min(Math.max(opts.limit ?? DM_PAGE_LIMIT, 1), DM_PAGE_LIMIT);
   const res = await pool.query(
     `SELECT id, group_id, sender_email, kind, body, images, created_at, edited_at FROM gdm_messages
       WHERE group_id = $1 AND id > $2 AND created_at >= now() - ($3::text)::interval
         AND ($4::int IS NULL OR id < $4)
       ORDER BY id DESC LIMIT $5`,
-    [gid, self.joined_from_id, DM_TTL, opts.before ?? null, limit]
+    [gid, fromId, DM_TTL, opts.before ?? null, limit]
   );
   const rows = (res.rows as MsgRow[]).reverse();
   const lk = await lookup([...members.map((m) => m.email), ...rows.flatMap((r) => (r.sender_email ? [r.sender_email] : []))]);
   const reacts = await getReactions("gdm", rows.map((r) => r.id), me);
   const messages = rows.map((r) => toGMessageDto(r, me, lk, null, reacts.get(r.id) ?? []));
+  if (!self) {
+    // 🌐 参加していない人: 読むだけ（未読は数えない）
+    return { group: toGroupDto(group, members, me, lk), messages, unread_count: 0, last_read_id: 0, can_send: false };
+  }
   const lastRead = Math.max(Number(self.last_read_id), Number(self.joined_from_id));
-  const unread = messages.filter((m) => m.kind === "text" && !m.is_author && m.id > lastRead).length;
-  return { group: toGroupDto(group, members, me, lk), messages, unread_count: unread, last_read_id: Number(self.last_read_id), can_send: gdmEnabledFor(me) };
+  const unread = group.archived_at ? 0 : messages.filter((m) => m.kind === "text" && !m.is_author && m.id > lastRead).length;
+  return {
+    group: toGroupDto(group, members, me, lk),
+    messages,
+    unread_count: unread,
+    last_read_id: Number(self.last_read_id),
+    can_send: gdmEnabledFor(me) && !group.archived_at,
+  };
 }
 
 const SEND_DEDUP_TTL_MS = 10 * 60_000;
@@ -586,6 +708,7 @@ async function insertText(actor: DmActor, rawGid: unknown, body: string, clientI
   const me = normEmail(actor.email);
   if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
   const { gid, group, self } = await requireMember(actor, rawGid);
+  assertWritable(group);
   const rate = await checkDmRate(me);
   if (!rate.allowed) throw new DmError(429, "rate_limited", "DM を送りすぎです。しばらく待ってください", rate.retryAfter);
   const { row, lk } = await insertMessage(gid, me, "text", body, clientId, images);
@@ -595,7 +718,9 @@ async function insertText(actor: DmActor, rawGid: unknown, body: string, clientI
 
 /** 既読を進める（単調）。自分のほかの端末にも知らせる。 */
 export async function markGroupRead(actor: DmActor, rawGid: unknown, lastReadId: unknown): Promise<{ unread_count: number; group_unread_count: number }> {
-  const { gid } = await requireMember(actor, rawGid);
+  const { gid, self } = await requireViewer(actor, rawGid);
+  // 🌐 参加していないパブリック DM を開いた: 記録するものは無い
+  if (!self) return { unread_count: 0, group_unread_count: await getGdmUnreadTotal(actor.email) };
   const n = Number(lastReadId);
   if (!Number.isInteger(n) || n < 0 || n > 2147483647) throw new DmError(400, "invalid_request", "last_read_id が不正です");
   const me = normEmail(actor.email);
@@ -618,6 +743,36 @@ export async function updateGroup(actor: DmActor, rawGid: unknown, input: Record
   const { gid, group } = await requireMember(actor, rawGid);
   const me = normEmail(actor.email);
   let nameChanged = false;
+  if ("archived" in input) {
+    if (typeof input.archived !== "boolean") throw new DmError(400, "invalid_request", "archived が不正です");
+    if (!group.is_public) throw new DmError(400, "invalid_request", "アーカイブできるのはパブリック DM だけです");
+    if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
+    if (input.archived !== !!group.archived_at) {
+      await checkAdminRate(me);
+      // 2 人が同時に押しても、お知らせは変わったときの 1 回だけ
+      const upd = await pool.query(
+        input.archived
+          ? `UPDATE gdm_groups SET archived_at = now(), updated_at = now() WHERE id = $1 AND archived_at IS NULL`
+          : `UPDATE gdm_groups SET archived_at = NULL, updated_at = now() WHERE id = $1 AND archived_at IS NOT NULL`,
+        [gid]
+      );
+      if (upd.rowCount) {
+        nameChanged = true;
+        group.archived_at = input.archived ? new Date() : null;
+        const names = await resolveDisplayNames([me]);
+        await insertMessage(
+          gid,
+          null,
+          "system",
+          input.archived
+            ? `${displayName(me, names)}がアーカイブしました（読むだけになります。参加者はアーカイブから戻せます）`
+            : `${displayName(me, names)}がアーカイブから戻しました`
+        );
+        await emitGroupToMembers(gid);
+      }
+    }
+  }
+  if (group.archived_at && ("name" in input || "beagle" in input)) assertWritable(group);
   if ("muted" in input) {
     if (typeof input.muted !== "boolean") throw new DmError(400, "invalid_request", "muted が不正です");
     await pool.query(`UPDATE gdm_members SET muted = $3 WHERE group_id = $1 AND email = $2`, [gid, me, input.muted]);
@@ -676,7 +831,8 @@ export async function updateGroup(actor: DmActor, rawGid: unknown, input: Record
 export async function addMembers(actor: DmActor, rawGid: unknown, rawIds: unknown): Promise<GroupDto> {
   const me = normEmail(actor.email);
   if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
-  const { gid, members } = await requireMember(actor, rawGid);
+  const { gid, group, members } = await requireMember(actor, rawGid);
+  assertWritable(group);
   await checkAdminRate(me);
   const existing = new Set(members.map((m) => normEmail(m.email)));
   const add = await resolveNewMembers(actor, rawIds, existing);
@@ -696,15 +852,16 @@ export async function addMembers(actor: DmActor, rawGid: unknown, rawIds: unknow
     const still = await client.query(`SELECT 1 FROM gdm_members WHERE group_id = $1 AND email = $2`, [gid, me]);
     if (!still.rowCount) throw new DmError(404, "not_found", "グループが見つかりません");
     const cnt = await client.query(`SELECT count(*)::int AS c FROM gdm_members WHERE group_id = $1`, [gid]);
-    if ((cnt.rows[0].c as number) + add.length > GDM_MAX_MEMBERS) {
-      throw new DmError(400, "invalid_request", `1 グループ ${GDM_MAX_MEMBERS} 人までです`);
+    if ((cnt.rows[0].c as number) + add.length > maxMembers(group)) {
+      throw new DmError(400, "invalid_request", `1 グループ ${maxMembers(group)} 人までです`);
     }
     const from = await client.query(`SELECT COALESCE(max(id), 0)::int AS m FROM gdm_messages`);
+    // 🌐 パブリックは過去の発言も見える（joined_from_id 0）。過去の分は未読にしない（last_read_id をいまに）。
     const ins = await client.query(
-      `INSERT INTO gdm_members (group_id, email, joined_from_id, added_by)
-       SELECT $1, e, $2, $3 FROM unnest($4::text[]) AS e
+      `INSERT INTO gdm_members (group_id, email, joined_from_id, added_by, last_read_id)
+       SELECT $1, e, $2, $3, $5 FROM unnest($4::text[]) AS e
        ON CONFLICT (group_id, email) DO NOTHING RETURNING email`,
-      [gid, from.rows[0].m, me, add]
+      [gid, group.is_public ? 0 : from.rows[0].m, me, add, group.is_public ? from.rows[0].m : 0]
     );
     added = (ins.rows as { email: string }[]).map((r) => r.email);
     await client.query("COMMIT");
@@ -724,6 +881,51 @@ export async function addMembers(actor: DmActor, rawGid: unknown, rawIds: unknow
   return toGroupDto(loaded!.group, loaded!.members, me, lk);
 }
 
+/** 🌐 パブリック DM に参加する（だれでも。アーカイブ済みは不可）。過去の発言も見える・過去の分は未読にしない。 */
+export async function joinGroup(actor: DmActor, rawGid: unknown): Promise<GroupDto> {
+  const me = normEmail(actor.email);
+  if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
+  const { gid, group, self } = await requireViewer(actor, rawGid);
+  if (!group.is_public) throw new DmError(404, "not_found", "グループが見つかりません");
+  if (!self) {
+    assertWritable(group);
+    await checkAdminRate(me); // 出入りのくり返しで system 行と配信を増やせないように
+    const client = await pool.connect();
+    let joined = false;
+    try {
+      await client.query("BEGIN");
+      const g = await client.query(`SELECT archived_at FROM gdm_groups WHERE id = $1 FOR UPDATE`, [gid]);
+      if (!g.rows[0]) throw new DmError(404, "not_found", "グループが見つかりません");
+      if (g.rows[0].archived_at) throw new DmError(403, "forbidden", "アーカイブされたグループです（読むだけできます）");
+      const cnt = await client.query(`SELECT count(*)::int AS c FROM gdm_members WHERE group_id = $1`, [gid]);
+      if ((cnt.rows[0].c as number) + 1 > GDM_PUBLIC_MAX_MEMBERS) {
+        throw new DmError(400, "invalid_request", `1 グループ ${GDM_PUBLIC_MAX_MEMBERS} 人までです`);
+      }
+      const ins = await client.query(
+        `INSERT INTO gdm_members (group_id, email, joined_from_id, added_by, last_read_id)
+         VALUES ($1, $2, 0, $2, COALESCE((SELECT max(id) FROM gdm_messages WHERE group_id = $1), 0))
+         ON CONFLICT (group_id, email) DO NOTHING RETURNING email`,
+        [gid, me]
+      );
+      joined = !!ins.rowCount;
+      await client.query("COMMIT");
+    } catch (e) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
+    if (joined) {
+      await emitGroupToMembers(gid);
+      const names = await resolveDisplayNames([me]);
+      await insertMessage(gid, null, "system", `${displayName(me, names)}が参加しました`);
+    }
+  }
+  const loaded = await loadGroup(gid);
+  const lk = await lookup(loaded!.members.map((m) => m.email));
+  return toGroupDto(loaded!.group, loaded!.members, me, lk);
+}
+
 /** 外す（作った人だけ）・抜ける（自分なら誰でも）。作った人が抜けたら、いちばん早く入った人へ。0 人ならグループを消す。 */
 export async function removeMember(actor: DmActor, rawGid: unknown, rawUserId: unknown): Promise<{ ok: true }> {
   const { gid, group, members } = await requireMember(actor, rawGid);
@@ -737,6 +939,8 @@ export async function removeMember(actor: DmActor, rawGid: unknown, rawUserId: u
   }
   if (!target || !members.some((m) => normEmail(m.email) === target)) throw new DmError(404, "not_found", "メンバーが見つかりません");
   const self = target === me;
+  // 🌐 パブリックはだれでも入り直せるので、外すことはできない（本人が抜ける）
+  if (!self && group.is_public) throw new DmError(403, "forbidden", "パブリック DM では外せません（本人が抜けます）");
   if (!self && normEmail(group.creator_email) !== me) throw new DmError(403, "forbidden", "外せるのはグループを作った人だけです");
 
   // 削除・引き継ぎ・0 人で消すを、グループの行に鍵をかけてまとめて行う（同時に抜けても作った人が消えないように）。
@@ -745,7 +949,7 @@ export async function removeMember(actor: DmActor, rawGid: unknown, rawUserId: u
   let g0photo: string | null = null;
   try {
     await client.query("BEGIN");
-    const g = await client.query(`SELECT creator_email, photo FROM gdm_groups WHERE id = $1 FOR UPDATE`, [gid]);
+    const g = await client.query(`SELECT creator_email, photo, is_public FROM gdm_groups WHERE id = $1 FOR UPDATE`, [gid]);
     if (!g.rows[0]) throw new DmError(404, "not_found", "グループが見つかりません");
     g0photo = g.rows[0].photo ?? null;
     if (!self) {
@@ -754,7 +958,7 @@ export async function removeMember(actor: DmActor, rawGid: unknown, rawUserId: u
     }
     const del = await client.query(`DELETE FROM gdm_members WHERE group_id = $1 AND email = $2`, [gid, target]);
     if (!del.rowCount) throw new DmError(404, "not_found", "メンバーが見つかりません");
-    if (self) {
+    if (self && !g.rows[0].is_public) {
       await client.query(
         `INSERT INTO gdm_leaves (group_id, email, left_at) VALUES ($1, $2, now())
          ON CONFLICT (group_id, email) DO UPDATE SET left_at = now()`,
@@ -762,7 +966,9 @@ export async function removeMember(actor: DmActor, rawGid: unknown, rawUserId: u
       );
     }
     const rest = await client.query(`SELECT email FROM gdm_members WHERE group_id = $1 ORDER BY joined_at, email LIMIT 1`, [gid]);
-    if (!rest.rows[0]) {
+    if (!rest.rows[0] && g.rows[0].is_public) {
+      // 🌐 パブリックは 0 人になっても残す（一覧に出続け、だれでも参加できる。片付けはアーカイブで）
+    } else if (!rest.rows[0]) {
       // 🐶 そのグループの質問と答えの記録も一緒に消す（入る前の要約が含まれうる）
       await client.query(
         `DELETE FROM beagle_ai_log WHERE app LIKE 'gdm:%' AND question_id IN (SELECT id FROM gdm_messages WHERE group_id = $1)`,
@@ -819,7 +1025,8 @@ export async function getGroupMessage(actor: DmActor, id: number): Promise<{ mes
   return { message: toGMessageDto(row, me, lk, null, reacts.get(row.id) ?? []), group: toGroupDto(loaded.group, loaded.members, me, lk) };
 }
 
-/** 編集・リアクションの対象の 1 件（メンバーで、入ってからの、30 日以内の発言）。無ければ 404（グループも明かさない）。 */
+/** 編集・リアクションの対象の 1 件（メンバーで、入ってからの、30 日以内の発言）。無ければ 404（グループも明かさない）。
+ *  🗄 アーカイブ済みのグループは読むだけ（403）。 */
 async function loadVisibleMessage(actor: DmActor, rawId: unknown): Promise<MsgRow> {
   const id = Number(rawId);
   if (!Number.isInteger(id) || id <= 0 || id > 2147483647) throw new DmError(400, "invalid_request", "不正な ID です");
@@ -831,6 +1038,8 @@ async function loadVisibleMessage(actor: DmActor, rawId: unknown): Promise<MsgRo
   );
   const row = r.rows[0] as MsgRow | undefined;
   if (!row) throw new DmError(404, "not_found", "発言が見つかりません");
+  const g = await pool.query(`SELECT archived_at FROM gdm_groups WHERE id = $1`, [row.group_id]);
+  if (g.rows[0]?.archived_at) throw new DmError(403, "forbidden", "アーカイブされたグループです（読むだけできます）");
   return row;
 }
 
@@ -927,6 +1136,11 @@ export function gdmCapability(enabled: boolean, scopes: string[]) {
     photo_max_bytes: GDM_PHOTO_MAX_BYTES,
     // 🐶 PATCH {path}/:gid { beagle: true|false }。答えは is_beagle の発言（kind "text"）。
     beagle: true,
+    // 🌐 パブリック DM: POST {path} { name, public: true, member_ids? }、POST {path}/:gid/join、PATCH {path}/:gid { archived }。
+    //   一覧は public_groups（参加していない）・archived_groups（アーカイブ済み）も返す。参加していなくても GET {path}/:gid で読める。
+    public: true,
+    archive: true,
+    public_max_members: GDM_PUBLIC_MAX_MEMBERS,
     // ✏️ PATCH {path}/messages/:id { body } → { message }（自分の発言だけ）。😀 POST {path}/messages/:id/reactions { emoji } → { added, reactions }。
     edit: true,
     reactions: true,
@@ -948,7 +1162,8 @@ const GDM_PHOTO_MAX_PIXELS = 40_000_000;
 /** 写真を受け取る前の確かめ（本文を読む前に、メンバーか・使えるかを見る）。 */
 export async function assertCanSetPhoto(actor: DmActor, rawGid: unknown): Promise<void> {
   if (!gdmEnabledFor(actor.email)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
-  await requireMember(actor, rawGid);
+  const { group } = await requireMember(actor, rawGid);
+  assertWritable(group);
 }
 const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 const PHOTO_FILE_RE = /^g\d+-[a-f0-9]{16}\.webp$/;
@@ -968,7 +1183,8 @@ async function removePhotoFile(file: string | null | undefined): Promise<void> {
 export async function setGroupPhoto(actor: DmActor, rawGid: unknown, data: Buffer, mime: string): Promise<GroupDto> {
   const me = normEmail(actor.email);
   if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
-  const { gid } = await requireMember(actor, rawGid);
+  const { gid, group: g0 } = await requireMember(actor, rawGid);
+  assertWritable(g0);
   if (!PHOTO_TYPES.has((mime || "").toLowerCase())) throw new DmError(400, "invalid_request", "JPEG・PNG・WebP の写真を選んでください");
   if (data.length === 0 || data.length > GDM_PHOTO_MAX_BYTES) throw new DmError(400, "invalid_request", "写真が大きすぎます");
   await checkAdminRate(me);
@@ -1010,6 +1226,7 @@ export async function removeGroupPhoto(actor: DmActor, rawGid: unknown): Promise
   const me = normEmail(actor.email);
   if (!gdmEnabledFor(me)) throw new DmError(403, "forbidden", "グループ DM はまだ使えません");
   const { gid, group } = await requireMember(actor, rawGid);
+  assertWritable(group);
   if (!group.photo) {
     const loaded = (await loadGroup(gid))!;
     return toGroupDto(loaded.group, loaded.members, me, await lookup(loaded.members.map((m) => m.email)));
@@ -1034,7 +1251,8 @@ async function afterPhotoChange(actor: DmActor, gid: number, what: string): Prom
 export async function readGroupPhoto(email: string, rawGid: unknown): Promise<Buffer | null> {
   const gid = parseGroupId(rawGid);
   const r = await pool.query(
-    `SELECT g.photo FROM gdm_groups g JOIN gdm_members gm ON gm.group_id = g.id AND gm.email = $2 WHERE g.id = $1`,
+    `SELECT g.photo FROM gdm_groups g
+      WHERE g.id = $1 AND (g.is_public OR EXISTS (SELECT 1 FROM gdm_members gm WHERE gm.group_id = g.id AND gm.email = $2))`,
     [gid, normEmail(email)]
   );
   const file = r.rows[0]?.photo as string | undefined;
@@ -1066,7 +1284,7 @@ export async function answerGroupBeagle(gid: number, questionId: number, askerEm
   const asker = normEmail(askerEmail);
   const loaded = await loadGroup(gid);
   const self = loaded?.members.find((m) => normEmail(m.email) === asker);
-  if (!loaded?.group.beagle || !self) return false;
+  if (!loaded?.group.beagle || !self || loaded.group.archived_at) return false;
   const done = await pool.query(`SELECT 1 FROM beagle_ai_log WHERE question_id = $1 AND app LIKE 'gdm:%'`, [questionId]);
   if (done.rowCount) return false;
   if (!(await beagleUnderLimits(asker, false))) return false;

@@ -783,6 +783,10 @@ export async function initSchema() {
     ALTER TABLE gdm_groups ADD COLUMN IF NOT EXISTS photo TEXT;
     -- 🐶 このグループで @ビーグル に答えるか（メンバーなら誰でも入・切、既定は切）
     ALTER TABLE gdm_groups ADD COLUMN IF NOT EXISTS beagle BOOLEAN NOT NULL DEFAULT false;
+    -- 🌐 パブリック DM（誰の一覧にも出て、誰でも読める・参加・退出できる。0 人になっても残す）と 🗄 アーカイブ（読むだけ、参加者が戻せる）
+    ALTER TABLE gdm_groups ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE gdm_groups ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+    CREATE INDEX IF NOT EXISTS idx_gdm_groups_public ON gdm_groups (updated_at DESC) WHERE is_public;
     -- ✉️👥 DM の写真（lib/dm-media.ts）: 発言に付けた /api/media/dm-… と、誰が上げたか（自分の写真だけ付けられる）。
     ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS images TEXT[] NOT NULL DEFAULT '{}';
     ALTER TABLE gdm_messages ADD COLUMN IF NOT EXISTS images TEXT[] NOT NULL DEFAULT '{}';

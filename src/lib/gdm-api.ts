@@ -17,6 +17,7 @@ import {
   GDM_PHOTO_MAX_BYTES,
   sendGroupMessage,
   updateGroup,
+  joinGroup,
   editGroupMessage,
   reactGroupMessage,
 } from "./gdm";
@@ -48,20 +49,23 @@ function parseLimit(v: string | null): number | undefined {
   return Number.isInteger(n) && n > 0 ? n : undefined;
 }
 
-/** GET 一覧: { groups, group_unread_count }。 */
+/** GET 一覧: { groups, public_groups, archived_groups, group_unread_count }。 */
 export const gdmListApi = (actor: DmActor) => run(actor, async () => ({ ...(await listGroups(actor)) }));
 
 /** POST 作る: { name?, member_ids } → 201 { group }。 */
 export function gdmCreateApi(actor: DmActor, input: Record<string, unknown> | null): Promise<DmApiResult> {
   if (!input) return Promise.resolve(NEED_JSON);
-  return run(actor, async () => ({ group: await createGroup(actor, input.name, input.member_ids ?? input.memberIds) }), 201);
+  return run(actor, async () => ({ group: await createGroup(actor, input.name, input.member_ids ?? input.memberIds, input.public ?? input.is_public) }), 201);
 }
+
+/** POST 🌐 パブリック DM に参加 → { group }。 */
+export const gdmJoinApi = (actor: DmActor, gid: string) => run(actor, async () => ({ group: await joinGroup(actor, gid) }));
 
 /** GET 1 つのグループ: { group, messages, unread_count, last_read_id, can_send }。 */
 export const gdmThreadApi = (actor: DmActor, gid: string, sp: URLSearchParams) =>
   run(actor, async () => ({ ...(await getGroupThread(actor, gid, { before: parseBefore(sp.get("before")), limit: parseLimit(sp.get("limit")) })) }));
 
-/** PATCH: { name?, muted? } → { group }。 */
+/** PATCH: { name?, muted?, beagle?, archived? } → { group }。 */
 export function gdmUpdateApi(actor: DmActor, gid: string, input: Record<string, unknown> | null): Promise<DmApiResult> {
   if (!input) return Promise.resolve(NEED_JSON);
   return run(actor, async () => ({ group: await updateGroup(actor, gid, input) }));
