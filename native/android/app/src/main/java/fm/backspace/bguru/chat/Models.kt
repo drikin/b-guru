@@ -149,6 +149,11 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val photoMaxBytes: Long? = null,
         /** 🐶 PATCH {path}/:gid { beagle }。 */
         val beagle: Boolean? = null,
+        /** 🌐 パブリック DM: POST {path} { name, public: true }・POST {path}/:gid/join、一覧の public_groups。Absent = hidden. */
+        val public: Boolean? = null,
+        /** 🗄 PATCH {path}/:gid { archived }、一覧の archived_groups。Absent = hidden. */
+        val archive: Boolean? = null,
+        val publicMaxMembers: Int? = null,
         /** ✏️ PATCH {path}/messages/:id / 😀 POST {path}/messages/:id/reactions (docs/dm-chat-parity-spec.md). Absent = hidden. */
         val edit: Boolean? = null,
         val reactions: Boolean? = null,
@@ -370,6 +375,10 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     /** 👥 グループの写真の設定・外す（表示は photo があれば常に）。設定には送れる鍵（chat）が要る。 */
     val canSetGDMPhoto get() = canSendGDM && (features?.gdm?.photo ?: false)
     val canSetGDMBeagle get() = canSendGDM && (features?.gdm?.beagle ?: false)
+    /** 🌐 / 🗄 (docs/group-dm-spec.md): the sections show with these; joining / making / archiving also need canSendGDM. */
+    val gdmPublic get() = gdmEnabled && (features?.gdm?.public ?: false)
+    val gdmArchive get() = gdmEnabled && (features?.gdm?.archive ?: false)
+    val gdmPublicMaxMembers get() = features?.gdm?.publicMaxMembers?.takeIf { it > 0 } ?: 1000
     val gdmPhotoMaxBytes get() = features?.gdm?.photoMaxBytes?.takeIf { it > 0 } ?: (15L * 1024 * 1024)
     /** Only paths on our own server (the request carries the token). */
     val gdmPath get() = features?.gdm?.path?.takeIf { it.startsWith("/api/") }?.trimEnd('/') ?: "/api/agent/gdm"

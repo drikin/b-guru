@@ -49,6 +49,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -104,9 +105,14 @@ internal fun GDMInboxRow(s: GroupSummary, onClick: () -> Unit) {
         GroupIcon(40.dp, s.group)
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("👥 ${s.group.displayTitle}", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                Text("${GDMLogic.mark(s.group)} ${s.group.displayTitle}", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 Text(" ${s.group.count}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 if (s.group.muted) Text(" 🔕", style = MaterialTheme.typography.labelSmall)
+                // 🌐 made in the last 72 hours (public DMs I am not in).
+                if (s.isNew) {
+                    Spacer(Modifier.size(6.dp))
+                    Badge(containerColor = AccentGreen, contentColor = Color.White) { Text("新しい") }
+                }
                 Spacer(Modifier.weight(1f).size(0.dp))
                 Text(remember(time) { dmTime(time, withDay = true) }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
             }
@@ -124,6 +130,20 @@ internal fun GDMInboxRow(s: GroupSummary, onClick: () -> Unit) {
             }
         }
     }
+}
+
+/** 「🌐 パブリック DM」「🗄 アーカイブ」 in the DM list ([onClick] = folds / unfolds). */
+@Composable
+internal fun GDMSectionHeader(text: String, onClick: (() -> Unit)? = null) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainerLow)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+    )
 }
 
 // MARK: the group
@@ -147,7 +167,11 @@ internal fun GDMGroupScreen(dm: DMStore, id: Long, visible: Boolean) {
     // On screen (resumed, and its page is the one shown) = read: tells the store, and clears this group's notification.
     val shown = rememberShown(visible)
     DisposableEffect(shown, id) {
-        if (shown) { g.setScreenVisible(id, true); Push.clearGDMNotification(context, id) }
+        if (shown) {
+            g.setScreenVisible(id, true); Push.clearGDMNotification(context, id)
+            // 🌐 Not joined: no stream events come, so coming back reads it again.
+            if (g.threadLoaded && g.group(id)?.isMember == false) g.refreshThread()
+        }
         onDispose { if (shown) g.setScreenVisible(id, false) }
     }
 
@@ -160,6 +184,9 @@ internal fun GDMGroupScreen(dm: DMStore, id: Long, visible: Boolean) {
 
     val group = g.group(id)
     val myName = GDMLogic.me(group)?.name
+    val mode = GDMLogic.composerMode(group)
+    val scope = rememberCoroutineScope()
+    var refreshing by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -170,7 +197,7 @@ internal fun GDMGroupScreen(dm: DMStore, id: Long, visible: Boolean) {
                         Column {
                             Text(group?.displayTitle ?: "グループ", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (group != null) {
-                                Text("${group.count} 人${if (group.muted) "・🔕 通知オフ" else ""}", style = MaterialTheme.typography.labelSmall,
+                                Text("${if (group.isPublic) "🌐 " else ""}${group.count} 人${if (group.archived) "・🗄 アーカイブ" else ""}${if (group.muted) "・🔕 通知オフ" else ""}", style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
@@ -183,10 +210,16 @@ internal fun GDMGroupScreen(dm: DMStore, id: Long, visible: Boolean) {
         contentWindowInsets = WindowInsets(0),
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
+          // Pull to read it again (a 🌐 public DM I am not in gets no stream events).
+          PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = { scope.launch { refreshing = true; g.refreshThread()?.join(); refreshing = false } },
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+          ) {
             LazyColumn(
                 state = listState,
                 reverseLayout = true,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
+                modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom),
@@ -226,7 +259,12 @@ internal fun GDMGroupScreen(dm: DMStore, id: Long, visible: Boolean) {
                         modifier = Modifier.widthIn(max = 760.dp).fillMaxWidth())
                 }
             }
+          }
             HorizontalDivider()
+            if (mode != GDMComposerMode.NORMAL) {
+                GDMReadOnlyBar(g, id, mode)
+                return@Column
+            }
             val editingRow = editingId?.let { eid -> g.rows.firstOrNull { it.message.id == eid } }
             GDMComposer(
                 g = g,
@@ -253,6 +291,32 @@ internal fun GDMGroupScreen(dm: DMStore, id: Long, visible: Boolean) {
     }
     viewing?.let { (urls, at) -> ImageViewer(urls, at) { viewing = null } }
     selecting?.let { m -> SelectTextDialog(if (m.isAuthor) "自分" else m.senderName, m.body) { selecting = null } }
+}
+
+/** In place of the composer: 「参加する」 (🌐 not joined) or 「アーカイブされています（読むだけ）」. */
+@Composable
+private fun GDMReadOnlyBar(g: GDMStore, id: Long, mode: GDMComposerMode) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+        Column(
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            (g.actionError ?: g.error)?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            when (mode) {
+                GDMComposerMode.ARCHIVED -> Text("🗄 アーカイブされています（読むだけ）", style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                GDMComposerMode.JOIN -> if (g.canSendCap && g.publicEnabled) {
+                    Button(onClick = { g.join(id) }, enabled = !g.busy) { Text(if (g.busy) "…" else "参加する") }
+                    Text("🌐 パブリック DM です。参加すると書き込めて、通知も届きます", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                } else {
+                    Text("このアプリからは参加できません（読むだけ）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                GDMComposerMode.NORMAL -> {}
+            }
+        }
+    }
 }
 
 /** 「A さんが B さんを追加しました」: centred, small. */
@@ -412,6 +476,7 @@ internal fun GDMMembersScreen(dm: DMStore, id: Long) {
     var name by rememberSaveable(id) { mutableStateOf(group?.name.orEmpty()) }
     var confirmRemove by remember { mutableStateOf<GMember?>(null) }
     var confirmLeave by remember { mutableStateOf(false) }
+    var confirmArchive by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var preparingPhoto by remember { mutableStateOf(false) }
@@ -452,6 +517,14 @@ internal fun GDMMembersScreen(dm: DMStore, id: Long) {
             g.actionError?.let { e ->
                 item { Text(e, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) }
             }
+            // 🗄 / 🌐 not joined: name, photo, 🐶 and ＋ メンバー cannot be changed.
+            val editable = GDMLogic.canChangeSettings(group)
+            if (group.archived) {
+                item {
+                    Text("🗄 アーカイブされています（読むだけ）", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+                }
+            }
             // 👥 グループの写真 (メンバーなら誰でも。capabilities gdm.photo のときだけ操作を出す)
             item {
                 Row(
@@ -462,7 +535,7 @@ internal fun GDMMembersScreen(dm: DMStore, id: Long) {
                     GroupIcon(56.dp, group)
                     Column(Modifier.weight(1f)) {
                         Text("グループの写真", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (g.canSetPhoto) {
+                        if (g.canSetPhoto && editable) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 TextButton(
                                     onClick = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
@@ -481,7 +554,7 @@ internal fun GDMMembersScreen(dm: DMStore, id: Long) {
                 }
             }
             // 名前を変える (メンバーなら誰でも。空にするとメンバーの名前で出る)
-            item {
+            if (editable) item {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("グループ名", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -499,8 +572,8 @@ internal fun GDMMembersScreen(dm: DMStore, id: Long) {
                     }
                 }
             }
-            // 🔕 通知を切る (自分の分だけ)
-            item {
+            // 🔕 通知を切る (自分の分だけ。アーカイブされていても切れる)
+            if (group.isMember) item {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -512,7 +585,7 @@ internal fun GDMMembersScreen(dm: DMStore, id: Long) {
                     Switch(checked = group.muted, onCheckedChange = { g.setMuted(id, it) }, enabled = !g.busy && g.canSendCap)
                 }
             }
-            if (g.canSetBeagle) {
+            if (g.canSetBeagle && editable) {
                 item {
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
@@ -529,8 +602,18 @@ internal fun GDMMembersScreen(dm: DMStore, id: Long) {
                     }
                 }
             }
+            // 🗄 アーカイブする（確認つき）／戻す: a member of a 🌐 public DM (capabilities gdm.archive).
+            if (g.archiveEnabled && g.canSendCap && GDMLogic.canArchive(group)) {
+                item {
+                    TextButton(
+                        onClick = { if (group.archived) g.setArchived(id, false) else confirmArchive = true },
+                        enabled = !g.busy,
+                        modifier = Modifier.padding(horizontal = 8.dp),
+                    ) { Text(if (group.archived) "アーカイブから戻す" else "🗄 アーカイブする") }
+                }
+            }
             item { HorizontalDivider(Modifier.padding(top = 8.dp)) }
-            if (g.canSendCap) {
+            if (g.canSendCap && editable) {
                 item {
                     Row(
                         Modifier.fillMaxWidth().clickable(enabled = !g.busy) { dm.openAddMembers(id) }.padding(horizontal = 16.dp, vertical = 14.dp),
@@ -558,12 +641,19 @@ internal fun GDMMembersScreen(dm: DMStore, id: Long) {
             item {
                 HorizontalDivider()
                 Text(
-                    "メンバーは誰でも追加できます。外せるのはグループを作った人だけです。途中から入った人は、入る前の発言を見られません。",
+                    if (group.isPublic) "🌐 パブリック DM は誰でも読めて、誰でも参加・退出できます。途中から入っても、前の発言を読めます。"
+                    else "メンバーは誰でも追加できます。外せるのはグループを作った人だけです。途中から入った人は、入る前の発言を見られません。",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
-                if (g.canSendCap) {
+                // 🌐 Not joined yet: join from here too.
+                if (g.canSendCap && g.publicEnabled && GDMLogic.composerMode(group) == GDMComposerMode.JOIN) {
+                    TextButton(onClick = { g.join(id) }, enabled = !g.busy, modifier = Modifier.padding(horizontal = 8.dp)) {
+                        Text("参加する", color = AccentGreen)
+                    }
+                }
+                if (g.canSendCap && group.isMember) {
                     TextButton(onClick = { confirmLeave = true }, enabled = !g.busy, modifier = Modifier.padding(horizontal = 8.dp)) {
                         Text("グループから抜ける", color = MaterialTheme.colorScheme.error)
                     }
@@ -585,9 +675,24 @@ internal fun GDMMembersScreen(dm: DMStore, id: Long) {
         AlertDialog(
             onDismissRequest = { confirmLeave = false },
             title = { Text("グループから抜けますか？") },
-            text = { Text("抜けると、このグループの DM は見られなくなります。もう一度入るには、メンバーに追加してもらう必要があります。") },
+            text = {
+                Text(
+                    if (group?.isPublic == true) "抜けると、このグループの通知は届かなくなります。パブリック DM なので、誰でもいつでも参加し直せます。"
+                    else "抜けると、このグループの DM は見られなくなります。もう一度入るには、メンバーに追加してもらう必要があります。"
+                )
+            },
             confirmButton = { TextButton(onClick = { confirmLeave = false; g.leave(id) }) { Text("抜ける", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text("やめる") } },
+        )
+    }
+
+    if (confirmArchive) {
+        AlertDialog(
+            onDismissRequest = { confirmArchive = false },
+            title = { Text("アーカイブしますか？") },
+            text = { Text("みんなの一覧から消えて「🗄 アーカイブ」に移り、読むだけになります（書き込み・参加はできません）。参加者なら誰でもアーカイブから戻せます。") },
+            confirmButton = { TextButton(onClick = { confirmArchive = false; g.setArchived(id, true) }) { Text("アーカイブする") } },
+            dismissButton = { TextButton(onClick = { confirmArchive = false }) { Text("やめる") } },
         )
     }
 }
@@ -603,13 +708,17 @@ internal fun GDMPickerScreen(dm: DMStore, members: List<MentionMember>, groupId:
     var query by rememberSaveable { mutableStateOf("") }
     var name by rememberSaveable { mutableStateOf("") }
     var picked by rememberSaveable { mutableStateOf(listOf<String>()) }
+    // 🌐 プライベート／パブリック (only when making one, and the server has public DMs).
+    var makePublic by rememberSaveable { mutableStateOf(false) }
+    val isPublic = groupId == null && makePublic && g.publicEnabled
 
     val exclude = remember(group, g.myUserId) { (group?.members?.map { it.userId }.orEmpty() + listOfNotNull(g.myUserId)).toSet() }
     val all = remember(members, dm.conversations) { GDMLogic.candidates(members, dm.conversations.map { it.peer }) }
     val peerIds = remember(dm.conversations) { dm.conversations.map { it.peer.userId }.toSet() }
     val shown = remember(all, exclude, query, picked, peerIds) { GDMLogic.pickerList(all, peerIds, picked, exclude, query) }
     val already = if (group != null) group.count else 1
-    val over = already + picked.size > g.maxMembers
+    val limit = if (isPublic || group?.isPublic == true) g.publicMaxMembers else g.maxMembers
+    val over = already + picked.size > limit
 
     Scaffold(
         topBar = {
@@ -622,13 +731,24 @@ internal fun GDMPickerScreen(dm: DMStore, members: List<MentionMember>, groupId:
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
             Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (groupId == null && g.publicEnabled) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.FilterChip(selected = !makePublic, onClick = { makePublic = false }, label = { Text("プライベート") })
+                        androidx.compose.material3.FilterChip(selected = makePublic, onClick = { makePublic = true }, label = { Text("🌐 パブリック") })
+                    }
+                    Text(
+                        if (makePublic) "誰の DM 一覧にも出て、誰でも読めて、自由に参加・退出できます。名前が必要です。メンバーは選ばなくても作れます。あとから変えられません。"
+                        else "選んだメンバーだけが見られます。あとから変えられません。",
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 if (groupId == null) {
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it.take(g.maxName) },
-                        label = { Text("グループ名（なくても OK）") },
+                        label = { Text(if (isPublic) "グループ名（必須）" else "グループ名（なくても OK）") },
                         singleLine = true,
-                        supportingText = { Text("${name.length} / ${g.maxName}・なければメンバーの名前で出ます") },
+                        supportingText = { Text(if (isPublic) "${name.length} / ${g.maxName}" else "${name.length} / ${g.maxName}・なければメンバーの名前で出ます") },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -640,7 +760,7 @@ internal fun GDMPickerScreen(dm: DMStore, members: List<MentionMember>, groupId:
                     modifier = Modifier.fillMaxWidth(),
                 )
                 g.actionError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                if (over) Text("1 グループ ${g.maxMembers} 人までです", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                if (over) Text("1 グループ $limit 人までです", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
             }
             HorizontalDivider()
             LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
@@ -669,14 +789,18 @@ internal fun GDMPickerScreen(dm: DMStore, members: List<MentionMember>, groupId:
                     Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(if (picked.isEmpty()) "1 人以上選んでください" else "${picked.size} 人を選択中",
+                    Text(when {
+                            picked.isNotEmpty() -> "${picked.size} 人を選択中"
+                            isPublic -> if (GDMLogic.cleanName(name, g.maxName).isEmpty()) "名前を入れてください" else "メンバーは選ばなくても作れます"
+                            else -> "1 人以上選んでください"
+                        },
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                     Button(
                         onClick = {
-                            if (groupId == null) g.create(picked, name) { id -> dm.groupCreated(id) }
+                            if (groupId == null) g.create(picked, name, public = isPublic) { id -> dm.groupCreated(id) }
                             else g.addMembers(groupId, picked) { dm.back() }
                         },
-                        enabled = picked.isNotEmpty() && !over && !g.busy && g.canSendCap,
+                        enabled = (if (groupId == null) GDMLogic.canCreate(isPublic, name, picked.size, g.maxName) else picked.isNotEmpty()) && !over && !g.busy && g.canSendCap,
                     ) { Text(if (g.busy) "…" else if (groupId == null) "作る" else "追加する") }
                 }
             }

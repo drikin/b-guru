@@ -343,11 +343,19 @@ class ApiClient(val token: String) : PostOpsApi {
     // MARK: 👥 グループ DM (src/lib/gdm-api.ts) — `base` is capabilities' gdm path
 
     suspend fun gdmGroups(base: String = "/api/agent/gdm"): GDMListResponse = get(base)
-    suspend fun gdmCreate(memberIds: List<String>, name: String?, base: String = "/api/agent/gdm"): GDMGroup =
+    /** [public] 🌐 = a public DM (the name is required, [memberIds] may be empty). */
+    suspend fun gdmCreate(memberIds: List<String>, name: String?, base: String = "/api/agent/gdm", public: Boolean = false): GDMGroup =
         decode<GDMGroupResponse>(send(request("POST", base, buildJsonObject {
             if (!name.isNullOrBlank()) put("name", name)
             put("member_ids", JsonArray(memberIds.map { JsonPrimitive(it) }))
+            if (public) put("public", true)
         }))).group
+    /** 🌐 Join a public DM (its past messages stay readable; nothing old becomes unread). */
+    suspend fun gdmJoin(groupId: Long, base: String = "/api/agent/gdm"): GDMGroup =
+        decode<GDMGroupResponse>(send(request("POST", "$base/$groupId/join", buildJsonObject { }))).group
+    /** 🗄 Archive / bring back a public DM (any member). */
+    suspend fun gdmSetArchived(groupId: Long, archived: Boolean, base: String = "/api/agent/gdm"): GDMGroup =
+        decode<GDMGroupResponse>(send(request("PATCH", "$base/$groupId", buildJsonObject { put("archived", archived) }))).group
     suspend fun gdmThread(groupId: Long, base: String = "/api/agent/gdm", limit: Int = 200): GDMThreadResponse =
         get("$base/$groupId", mapOf("limit" to "$limit"))
     /** `name`: "" clears it (the title goes back to the members' names). */

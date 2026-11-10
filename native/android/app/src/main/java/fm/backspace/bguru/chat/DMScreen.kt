@@ -140,6 +140,10 @@ private fun DMInbox(dm: DMStore, tabSwitch: (@Composable () -> Unit)?, members: 
         val items = remember(dm.conversations, dm.groups.groups, dm.groups.enabled) {
             GDMLogic.mergeInbox(dm.conversations, if (dm.groups.enabled) dm.groups.groups else emptyList())
         }
+        // 🌐 public DMs I am not in, and 🗄 archived ones (folded by default), below the list.
+        val publicGroups = if (dm.groups.enabled && dm.groups.publicEnabled) dm.groups.publicGroups else emptyList()
+        val archivedGroups = if (dm.groups.enabled && dm.groups.archiveEnabled) dm.groups.archivedGroups else emptyList()
+        var archiveOpen by rememberSaveable { mutableStateOf(false) }
         Column(Modifier.fillMaxSize().padding(padding)) {
             Text(
                 "DM は 30 日で消えます。チャットで相手の名前やアイコンをタップすると送れます。",
@@ -148,7 +152,7 @@ private fun DMInbox(dm: DMStore, tabSwitch: (@Composable () -> Unit)?, members: 
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
             )
             HorizontalDivider()
-            if (items.isEmpty()) {
+            if (items.isEmpty() && publicGroups.isEmpty() && archivedGroups.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     Text(if (dm.listLoaded) "まだ DM はありません" else "読み込み中…",
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 40.dp))
@@ -161,6 +165,24 @@ private fun DMInbox(dm: DMStore, tabSwitch: (@Composable () -> Unit)?, members: 
                             is DMInboxItem.Group -> GDMInboxRow(item.s) { dm.openGroup(item.s.group.id) }
                         }
                         HorizontalDivider(Modifier.padding(start = 68.dp))
+                    }
+                    if (publicGroups.isNotEmpty()) {
+                        item(key = "h-public", contentType = "header") { GDMSectionHeader("🌐 パブリック DM") }
+                        items(publicGroups, key = { "pub-${it.group.id}" }, contentType = { "group" }) { s ->
+                            GDMInboxRow(s) { dm.openGroup(s.group.id) }
+                            HorizontalDivider(Modifier.padding(start = 68.dp))
+                        }
+                    }
+                    if (archivedGroups.isNotEmpty()) {
+                        item(key = "h-archive", contentType = "header") {
+                            GDMSectionHeader("🗄 アーカイブ（${archivedGroups.size}）${if (archiveOpen) " ▾" else " ▸"}") { archiveOpen = !archiveOpen }
+                        }
+                        if (archiveOpen) {
+                            items(archivedGroups, key = { "arc-${it.group.id}" }, contentType = { "group" }) { s ->
+                                GDMInboxRow(s) { dm.openGroup(s.group.id) }
+                                HorizontalDivider(Modifier.padding(start = 68.dp))
+                            }
+                        }
                     }
                 }
             }

@@ -51,6 +51,13 @@ data class GDMGroup(
     val photo: String? = null,
     /** 🐶 members' @ビーグル gets an answer here (any member turns it on/off; off by default). */
     val beagle: Boolean = false,
+    /** 🌐 anyone can read and join (docs/group-dm-spec.md). Absent on older servers = private. */
+    val isPublic: Boolean = false,
+    /** Whether the viewer is in it. Absent on older servers, which only ever send groups I am in: true. */
+    val isMember: Boolean = true,
+    /** 🗄 read only (public DMs only). */
+    val archived: Boolean = false,
+    val archivedAt: String? = null,
 ) {
     val displayTitle: String get() = title.trim().ifEmpty { name?.trim()?.takeIf { it.isNotEmpty() } ?: "グループ" }
     val count: Int get() = if (memberCount > 0) memberCount else members.size
@@ -83,8 +90,32 @@ data class GMessage(
     val senderName: String get() = fromName?.trim()?.takeIf { it.isNotEmpty() } ?: "会員"
 }
 
-@Serializable data class GroupSummary(val group: GDMGroup, val lastMessage: GMessage? = null, val unreadCount: Int = 0)
-@Serializable data class GDMListResponse(val groups: List<GroupSummary> = emptyList(), val groupUnreadCount: Int = 0)
+@Serializable data class GroupSummary(
+    val group: GDMGroup,
+    val lastMessage: GMessage? = null,
+    val unreadCount: Int = 0,
+    /** 🌐 made in the last 72 hours (only on `public_groups`): the 「新しい」 mark. */
+    val isNew: Boolean = false,
+)
+/** `groups` = mine and not archived (all an older server sends); `public_groups` = public ones I am not in;
+ *  `archived_groups` = archived public ones (in or not). */
+@Serializable data class GDMListResponse(
+    val groups: List<GroupSummary> = emptyList(),
+    val groupUnreadCount: Int = 0,
+    val publicGroups: List<GroupSummary> = emptyList(),
+    val archivedGroups: List<GroupSummary> = emptyList(),
+)
+
+/** The three lists of the DM page's group side: mine, 🌐 public ones I am not in, and 🗄 archived ones. */
+@androidx.compose.runtime.Immutable
+data class GDMLists(
+    val groups: List<GroupSummary> = emptyList(),
+    val publicGroups: List<GroupSummary> = emptyList(),
+    val archivedGroups: List<GroupSummary> = emptyList(),
+)
+
+/** What takes the composer's place in a group. */
+enum class GDMComposerMode { NORMAL, JOIN, ARCHIVED }
 @Serializable data class GDMGroupResponse(val group: GDMGroup)
 @Serializable data class GDMThreadResponse(
     val group: GDMGroup? = null,
@@ -246,6 +277,63 @@ object GDMLogic {
 
     fun remove(list: List<GroupSummary>, groupId: Long): List<GroupSummary> = list.filterNot { it.group.id == groupId }
 
+    // MARK: 🌐 public DMs / 🗄 archive (docs/group-dm-spec.md)
+
+    /** Where a group belongs: 🗄 archived (in or not), else 🌐 public ones I am not in, else mine. */
+    enum class Section { MINE, PUBLIC, ARCHIVED, NONE }
+
+    fun section(g: GDMGroup): Section = when {
+        g.archived -> if (g.isPublic || g.isMember) Section.ARCHIVED else Section.NONE
+        !g.isMember -> if (g.isPublic) Section.PUBLIC else Section.NONE
+        else -> Section.MINE
+    }
+
+    /** The list as the server sent it, made consistent: each group once, in the section its own flags say
+     *  (a list a newer server fills differently, or an event that came in between, never shows a group twice). */
+    fun lists(r: GDMListResponse): GDMLists {
+        val seen = HashSet<Long>()
+        fun pick(list: List<GroupSummary>, want: Section) = list.filter { section(it.group) == want && seen.add(it.group.id) }
+        val all = r.groups + r.publicGroups + r.archivedGroups
+        return GDMLists(pick(all, Section.MINE), pick(all, Section.PUBLIC).map { it.copy(unreadCount = 0) }, pick(all, Section.ARCHIVED).map { it.copy(unreadCount = 0) })
+    }
+
+    /** A group's new state (a `group` event, or the answer to join / archive / …): it moves to the section it now
+     *  belongs in, keeping its last message. Unread only counts in mine (the server does not count archived ones). */
+    fun place(l: GDMLists, g: GDMGroup): GDMLists {
+        val old = (l.groups + l.publicGroups + l.archivedGroups).firstOrNull { it.group.id == g.id }
+        fun inPlace(list: List<GroupSummary>, unread: Boolean): List<GroupSummary> {
+            val s = (old ?: GroupSummary(g)).copy(group = g, unreadCount = if (unread) old?.unreadCount ?: 0 else 0)
+            return if (list.any { it.group.id == g.id }) list.map { if (it.group.id == g.id) s else it } else listOf(s) + list
+        }
+        return when (section(g)) {
+            Section.MINE -> GDMLists(inPlace(l.groups, true), remove(l.publicGroups, g.id), remove(l.archivedGroups, g.id))
+            Section.PUBLIC -> GDMLists(remove(l.groups, g.id), inPlace(l.publicGroups, false), remove(l.archivedGroups, g.id))
+            Section.ARCHIVED -> GDMLists(remove(l.groups, g.id), remove(l.publicGroups, g.id), inPlace(l.archivedGroups, false))
+            Section.NONE -> GDMLists(remove(l.groups, g.id), remove(l.publicGroups, g.id), remove(l.archivedGroups, g.id))
+        }
+    }
+
+    /** The composer, or 「参加する」 (a public DM I am not in), or 「アーカイブされています（読むだけ）」. */
+    fun composerMode(g: GDMGroup?): GDMComposerMode = when {
+        g == null -> GDMComposerMode.NORMAL
+        g.archived -> GDMComposerMode.ARCHIVED
+        g.isPublic && !g.isMember -> GDMComposerMode.JOIN
+        else -> GDMComposerMode.NORMAL
+    }
+
+    /** Name / photo / 🐶 / ＋ メンバー: a member, and not archived. */
+    fun canChangeSettings(g: GDMGroup): Boolean = g.isMember && !g.archived
+
+    /** 🗄 アーカイブする / 戻す: a member of a public DM. */
+    fun canArchive(g: GDMGroup): Boolean = g.isPublic && g.isMember
+
+    /** Making a group: private needs someone else; 🌐 public needs a name and nobody else. */
+    fun canCreate(public: Boolean, name: String, picked: Int, maxName: Int): Boolean =
+        if (public) cleanName(name, maxName).isNotEmpty() else picked > 0
+
+    /** The DM list's group mark. */
+    fun mark(g: GDMGroup): String = if (g.isPublic) "🌐" else "👥"
+
     fun latestStoredId(rows: List<GRow>): Long = rows.maxOfOrNull { it.message.id }?.coerceAtLeast(0) ?: 0
 
     fun totalUnread(list: List<GroupSummary>): Int = list.sumOf { it.unreadCount }
@@ -305,8 +393,9 @@ object GDMLogic {
             else -> null
         }
 
-    /** 外す is offered to the creator only, and never on myself (that is 抜ける). */
-    fun canRemove(g: GDMGroup, member: GMember): Boolean = g.isCreator && !member.isMe
+    /** 外す is offered to the creator only, and never on myself (that is 抜ける). Never in a 🌐 public DM
+     *  (anyone can join again, so it means nothing). */
+    fun canRemove(g: GDMGroup, member: GMember): Boolean = g.isCreator && !member.isMe && !g.isPublic
 
     fun me(g: GDMGroup?): GMember? = g?.members?.firstOrNull { it.isMe }
 
@@ -339,6 +428,10 @@ class GDMStore(private val api: ApiClient) {
     /** ✏️ / 😀 like the chat (capabilities `gdm.edit` / `gdm.reactions`). */
     var canEdit by mutableStateOf(false); private set
     var canReact by mutableStateOf(false); private set
+    /** 🌐 / 🗄 (capabilities `gdm.public` / `gdm.archive`): the list's sections and their controls. */
+    var publicEnabled by mutableStateOf(false); private set
+    var archiveEnabled by mutableStateOf(false); private set
+    var publicMaxMembers by mutableIntStateOf(1000); private set
     private var base = "/api/agent/gdm"
     /** 📷 Photos (docs/dm-photos-spec.md): the DM's upload path and limit (capabilities `dm`). */
     var canSendImages by mutableStateOf(false); private set
@@ -348,6 +441,9 @@ class GDMStore(private val api: ApiClient) {
     private val outbox = HashMap<String, DMOutgoing>()
 
     var groups by mutableStateOf<List<GroupSummary>>(emptyList()); private set
+    /** 🌐 public DMs I am not in, and 🗄 archived ones (empty when the server has neither). */
+    var publicGroups by mutableStateOf<List<GroupSummary>>(emptyList()); private set
+    var archivedGroups by mutableStateOf<List<GroupSummary>>(emptyList()); private set
     var unreadTotal by mutableIntStateOf(0); private set
     var listLoaded by mutableStateOf(false); private set
 
@@ -392,12 +488,15 @@ class GDMStore(private val api: ApiClient) {
         canEdit = caps.canEditGDM
         canReact = caps.canReactGDM
         photoMaxBytes = caps.gdmPhotoMaxBytes
+        publicEnabled = caps.gdmPublic
+        archiveEnabled = caps.gdmArchive
+        publicMaxMembers = caps.gdmPublicMaxMembers
         canSendImages = caps.canSendGDM && caps.canSendDMImages
         maxImages = caps.dmMaxImages
         imageMaxSide = caps.chatImageMaxSide
         imageUpload = caps.dmImageUpload ?: imageUpload
         base = caps.gdmPath
-        if (!enabled) { groups = emptyList(); unreadTotal = 0; openId = null; return }
+        if (!enabled) { groups = emptyList(); publicGroups = emptyList(); archivedGroups = emptyList(); unreadTotal = 0; openId = null; return }
         refreshList()
     }
 
@@ -407,14 +506,21 @@ class GDMStore(private val api: ApiClient) {
     val myUserId: String?
         get() = (openGroup?.let(GDMLogic::me) ?: groups.firstNotNullOfOrNull { GDMLogic.me(it.group) })?.userId ?: fallbackMe()
 
-    fun group(id: Long): GDMGroup? = openGroup?.takeIf { it.id == id } ?: groups.firstOrNull { it.group.id == id }?.group
+    fun group(id: Long): GDMGroup? = openGroup?.takeIf { it.id == id } ?: listed(id)
+
+    private fun listed(id: Long): GDMGroup? =
+        (groups.firstOrNull { it.group.id == id } ?: publicGroups.firstOrNull { it.group.id == id } ?: archivedGroups.firstOrNull { it.group.id == id })?.group
+
+    private var lists: GDMLists
+        get() = GDMLists(groups, if (publicEnabled) publicGroups else emptyList(), if (archiveEnabled) archivedGroups else emptyList())
+        set(v) { groups = v.groups; publicGroups = v.publicGroups; archivedGroups = v.archivedGroups }
 
     // MARK: open / close (DMStore drives these)
 
     fun open(id: Long) {
         if (openId == id) return
         openId = id
-        openGroup = groups.firstOrNull { it.group.id == id }?.group
+        openGroup = listed(id)
         rows = emptyList()
         threadLoaded = false
         canSendHere = true
@@ -444,25 +550,34 @@ class GDMStore(private val api: ApiClient) {
         listJob?.cancel()
         listJob = scope.launch {
             runCatching { api.gdmGroups(base) }.onSuccess { r ->
-                groups = GDMLogic.freshSummaries(r.groups, Instant.now(), ttlHours)
+                val now = Instant.now()
+                val l = GDMLogic.lists(r)
+                lists = GDMLists(
+                    GDMLogic.freshSummaries(l.groups, now, ttlHours),
+                    if (publicEnabled) GDMLogic.freshSummaries(l.publicGroups, now, ttlHours) else emptyList(),
+                    if (archiveEnabled) GDMLogic.freshSummaries(l.archivedGroups, now, ttlHours) else emptyList(),
+                )
                 unreadTotal = r.groupUnreadCount
                 listLoaded = true
-                openId?.let { id -> r.groups.firstOrNull { it.group.id == id }?.group?.let { openGroup = it } }
+                openId?.let { id -> listed(id)?.let { openGroup = it } }
             }.onFailure { e ->
                 // Not for me any more (404): nothing of it shows.
-                if (e is ApiError.Http && e.status == 404) { groups = emptyList(); unreadTotal = 0 }
+                if (e is ApiError.Http && e.status == 404) { lists = GDMLists(); unreadTotal = 0 }
             }
         }
     }
 
-    private fun loadThread(id: Long) {
+    /** Read the open group again (pull to refresh; a 🌐 public DM I am not in gets no stream events). */
+    fun refreshThread(): Job? = openId?.let(::loadThread)
+
+    private fun loadThread(id: Long): Job? {
         threadJob?.cancel()
         if (demo) {
             rows = GDMLogic.fresh(demoThreads[id].orEmpty().map { GRow(it) }, Instant.now(), ttlHours)
             threadLoaded = true
-            return
+            return null
         }
-        threadJob = scope.launch {
+        return scope.launch {
             try {
                 val r = api.gdmThread(id, base)
                 if (openId != id) return@launch
@@ -472,7 +587,11 @@ class GDMStore(private val api: ApiClient) {
                 local.forEach { l -> if (next.none { it.message.clientId != null && it.message.clientId == l.message.clientId }) next = next + l }
                 rows = GDMLogic.fresh(next, Instant.now(), ttlHours)
                 canSendHere = r.canSend
-                r.group?.let { g -> openGroup = g; groups = groups.map { if (it.group.id == g.id) it.copy(group = g) else it } }
+                r.group?.let { g ->
+                    openGroup = g
+                    fun upd(list: List<GroupSummary>) = list.map { if (it.group.id == g.id) it.copy(group = g) else it }
+                    lists = GDMLists(upd(groups), upd(publicGroups), upd(archivedGroups))
+                }
                 threadLoaded = true
                 if (visibleGroupId == id) markReadSoon(id)
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -486,7 +605,7 @@ class GDMStore(private val api: ApiClient) {
                 error = "読み込めませんでした"
                 threadLoaded = true
             }
-        }
+        }.also { threadJob = it }
     }
 
     fun prune() {
@@ -514,10 +633,7 @@ class GDMStore(private val api: ApiClient) {
                 groups = GDMLogic.markRead(groups, id, e.lastReadId ?: 0)
                 e.groupUnreadCount?.let { unreadTotal = it }
             }
-            "group" -> e.group?.let { g ->
-                groups = GDMLogic.applyGroup(groups, g)
-                if (openId == g.id) openGroup = g
-            }
+            "group" -> e.group?.let(::updated)
             "removed" -> e.groupId?.let(::dropped)
             // ✏️ / 😀 (docs/dm-chat-parity-spec.md): in place (no unread, no push).
             "edit" -> e.message?.let { m ->
@@ -547,13 +663,16 @@ class GDMStore(private val api: ApiClient) {
         if (viewing && !m.isAuthor) markReadSoon(id)
     }
 
-    /** I am no longer in that group: it goes from here. */
+    /** I am no longer in that group: it goes from here. A 🌐 public one comes back under パブリック DM
+     *  (or アーカイブ) when the list is read again. */
     private fun dropped(id: Long) {
         val before = groups.firstOrNull { it.group.id == id }?.unreadCount ?: 0
+        val wasPublic = group(id)?.isPublic == true
         groups = GDMLogic.remove(groups, id)
         unreadTotal = (unreadTotal - before).coerceAtLeast(0)
         if (openId == id) closeGroup()
         onRemoved(id)
+        if (wasPublic && !demo) refreshList()
     }
 
     // MARK: sending
@@ -674,6 +793,8 @@ class GDMStore(private val api: ApiClient) {
 
     private fun markReadSoon(id: Long) {
         if (openId != id) return
+        // Not mine (🌐 not joined): nothing is unread, and the server ignores it.
+        if (group(id)?.isMember == false) return
         val upTo = GDMLogic.latestStoredId(rows)
         val before = groups.firstOrNull { it.group.id == id }?.unreadCount ?: 0
         groups = GDMLogic.markRead(groups, id, Long.MAX_VALUE)
@@ -710,22 +831,24 @@ class GDMStore(private val api: ApiClient) {
         }
     }
 
-    /** A new group with [memberIds] (besides me) and an optional name; [done] opens it. */
-    fun create(memberIds: List<String>, name: String, done: (Long) -> Unit) {
+    /** A new group with [memberIds] (besides me) and an optional name; [done] opens it.
+     *  🌐 [public]: the name is required and nobody else need be picked. */
+    fun create(memberIds: List<String>, name: String, public: Boolean = false, done: (Long) -> Unit) {
         val ids = memberIds.distinct()
-        if (ids.isEmpty() || !canSendCap) return
+        val pub = public && publicEnabled
         val n = GDMLogic.cleanName(name, maxName)
+        if (!GDMLogic.canCreate(pub, n, ids.size, maxName) || !canSendCap) return
         if (demo) {
             val id = (groups.maxOfOrNull { it.group.id } ?: 0L) + 1
             val g = GDMGroup(id, n.ifEmpty { null }, n.ifEmpty { ids.take(3).joinToString("、") }, members = listOf(GMember("me", "ドリキン", isCreator = true, isMe = true)) + ids.map { GMember(it, it) },
-                memberCount = ids.size + 1, isCreator = true, createdAt = Instant.now().toString())
+                memberCount = ids.size + 1, isCreator = true, createdAt = Instant.now().toString(), isPublic = pub)
             groups = GDMLogic.applyGroup(groups, g)
             done(id)
             return
         }
         action {
-            val g = api.gdmCreate(ids, n.ifEmpty { null }, base)
-            groups = GDMLogic.applyGroup(groups, g)
+            val g = api.gdmCreate(ids, n.ifEmpty { null }, base, public = pub)
+            updated(g)
             done(g.id)
         }
     }
@@ -772,6 +895,22 @@ class GDMStore(private val api: ApiClient) {
         action { updated(api.gdmRemovePhoto(id, base)) }
     }
 
+    /** 🌐 Join a public DM: it moves to my list and the thread is read again (now I may write). */
+    fun join(id: Long) {
+        if (!publicEnabled || !canSendCap) return
+        if (demo) { group(id)?.let { updated(it.copy(isMember = true)) }; return }
+        action {
+            updated(api.gdmJoin(id, base))
+        }
+    }
+
+    /** 🗄 Archive / bring back a public DM (any member; the server tells everyone). */
+    fun setArchived(id: Long, archived: Boolean) {
+        if (!archiveEnabled || !canSendCap) return
+        if (demo) { group(id)?.let { updated(it.copy(archived = archived)) }; return }
+        action { updated(api.gdmSetArchived(id, archived, base)) }
+    }
+
     /** The creator removes someone else. */
     fun removeMember(id: Long, userId: String) {
         if (demo) { group(id)?.let { g -> updated(g.copy(members = g.members.filterNot { it.userId == userId }, memberCount = g.count - 1)) }; return }
@@ -796,9 +935,23 @@ class GDMStore(private val api: ApiClient) {
         }
     }
 
+    /** A group's new state: it moves to the section it now belongs in (🗄 archived / 🌐 not joined go out of
+     *  mine, and their unread leaves the badge); the open thread is read again when what I may do there changed. */
     private fun updated(g: GDMGroup) {
-        groups = GDMLogic.applyGroup(groups, g)
-        if (openId == g.id) openGroup = g
+        val old = group(g.id)
+        val section = GDMLogic.section(g)
+        if (section != GDMLogic.Section.MINE) {
+            val before = groups.firstOrNull { it.group.id == g.id }?.unreadCount ?: 0
+            unreadTotal = (unreadTotal - before).coerceAtLeast(0)
+        }
+        val moved = old != null && GDMLogic.section(old) != section
+        lists = GDMLogic.place(lists, g)
+        if (openId == g.id) {
+            openGroup = g
+            if (moved && !demo) loadThread(g.id)
+        }
+        // The server's order (and anything this device missed) once a group changed section or is not mine.
+        if ((moved || section != GDMLogic.Section.MINE) && !demo) refreshList()
     }
 
     // MARK: demo
