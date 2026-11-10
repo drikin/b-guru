@@ -294,10 +294,12 @@ final class APIClient: Sendable {
 
     // MARK: - Timeline
 
-    func posts(cursor: String? = nil, limit: Int = 30) async throws -> PostListResponse {
+    /// `club`: only that club's posts (the club list, 2026-11-09).
+    func posts(cursor: String? = nil, limit: Int = 30, club: String? = nil) async throws -> PostListResponse {
         var comps = URLComponents(url: APIClient.baseURL.appendingPathComponent("/api/agent/posts"), resolvingAgainstBaseURL: false)!
         comps.queryItems = [.init(name: "limit", value: String(limit)), .init(name: "include", value: "reactions,read,display")]
         if let cursor { comps.queryItems?.append(.init(name: "cursor", value: cursor)) }
+        if let club { comps.queryItems?.append(.init(name: "club", value: club)) }
         var req = request("GET", "/api/agent/posts")
         req.url = comps.url
         return try await send(req)

@@ -6,6 +6,8 @@ import SwiftUI
 enum MainTab: Hashable {
     /// In the switch's order: 📰 💬 ✉️ 📻 (✉️ DM a tab of its own right after the chat, 2026-11-08).
     case timeline, chat, dm, jukebox
+    /// iPhone: the club list, a page left of the timeline (not in the switch; 2026-11-09).
+    case clubs
 }
 
 /// The timeline (root posts, newest activity first) for the native apps.
@@ -22,6 +24,14 @@ final class TimelineStore {
     private(set) var clubs: [String: String] = [:]
     /// The clubs in the server's order (「部活動を選択」).
     private(set) var clubList: [ClubInfo] = []
+    /// The club the list shows (nil = all). リュー 2026-11-09「タイムラインからさらに左側にスワイプすると
+    /// 部活一覧が出るようにしても良いかも」→ オーナー「全アプリに作る」: the club list picks it.
+    private(set) var clubFilter: String?
+    /// The clubs this member hides (部活の表示), left out of the club list.
+    private(set) var hiddenClubKeys: Set<String> = []
+    /// The clubs the club list offers: the server's order, without the hidden ones.
+    var visibleClubs: [ClubInfo] { clubList.filter { !hiddenClubKeys.contains($0.key) } }
+    var clubFilterName: String? { clubFilter.map { clubs[$0] ?? $0 } }
     /// Edit, delete, pin, bookmark, ☆, polls… (段階 3, docs/timeline-spec.md §10).
     @ObservationIgnored private(set) lazy var actions: PostActionsModel = {
         let a = PostActionsModel(api: api)
@@ -105,8 +115,11 @@ final class TimelineStore {
         // Members' names decide which @ are drawn as mentions (the chat may have loaded them).
         if MemberDirectory.shared.isEmpty, let m = try? await api.members() { MemberDirectory.shared.set(m) }
         if clubs.isEmpty { await loadClubs() }
+        let club = clubFilter
         do {
-            let r = try await api.posts()
+            let r = try await api.posts(club: club)
+            // The club was changed while this page was on its way: that change fetches its own.
+            guard club == clubFilter else { return }
             // Keep "read on this device" marks the server has not echoed yet.
             let fresh = r.posts.map { p in
                 var p = p
@@ -145,6 +158,37 @@ final class TimelineStore {
         if !hasLoaded { hasLoaded = true }
     }
 
+    /// Show only `key`'s posts (nil: all). The list starts again from the first page.
+    func setClubFilter(_ key: String?) async {
+        guard key != clubFilter else { return }
+        HangWatch.note("timeline club filter → \(key ?? "all")")
+        clubFilter = key
+        nextCursor = nil
+        firstPageCount = 0
+        #if DEBUG
+        if api.token == "demo" {
+            if demoAllPosts == nil { demoAllPosts = posts }
+            posts = (demoAllPosts ?? []).filter { key == nil || $0.club == key }
+            return
+        }
+        #endif
+        posts = []
+        hasLoaded = false
+        await refresh(full: true)
+    }
+    #if DEBUG
+    @ObservationIgnored private var demoAllPosts: [Post]?
+    #endif
+
+    /// The hidden clubs (for the club list); kept as they were when it cannot be read.
+    func loadHiddenClubs() async {
+        if clubList.isEmpty { await loadClubs() }
+        guard let path = actions.clubVisibilityPath, let h = try? await api.hiddenClubs(path: path) else { return }
+        if h != hiddenClubKeys { hiddenClubKeys = h }
+        // A club hidden after it was picked: back to all.
+        if let c = clubFilter, h.contains(c) { await setClubFilter(nil) }
+    }
+
     func loadClubs() async {
         guard let c = try? await api.clubs() else { return }
         clubList = c
@@ -174,7 +218,8 @@ final class TimelineStore {
         loadingMore = true
         defer { loadingMore = false }
         HangWatch.note("timeline load more (\(posts.count) posts)")
-        if let r = try? await api.posts(cursor: cursor) {
+        let club = clubFilter
+        if let r = try? await api.posts(cursor: cursor, club: club), club == clubFilter {
             let known = Set(posts.map(\.id))
             posts += r.posts.filter { !known.contains($0.id) }
             nextCursor = r.nextCursor

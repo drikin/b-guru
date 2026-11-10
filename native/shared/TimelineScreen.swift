@@ -56,6 +56,7 @@ struct TimelineScreen: View {
             #endif
             .task {
                 if !timeline.hasLoaded { await timeline.refresh() }
+                await timeline.loadHiddenClubs() // the club list / 部活で絞り込む leave hidden clubs out
             }
             // Polling every minute is started and stopped by the window (MainView on iOS,
             // MainPanelView on the Mac): only while the timeline can be seen.
@@ -97,8 +98,13 @@ struct TimelineScreen: View {
     /// ピン留め・ブックマーク・お気に入りの人 (only those the server offers).
     @ViewBuilder private var listsMenu: some View {
         let kinds = actions.lists
-        if !kinds.isEmpty || actions.clubVisibilityPath != nil || actions.mutedWordsPath != nil {
+        if !kinds.isEmpty || actions.clubVisibilityPath != nil || actions.mutedWordsPath != nil || !timeline.clubList.isEmpty {
             Menu {
+                // 部活で絞り込む (2026-11-09, the club list; the iPhone also has its page left of the timeline).
+                if !timeline.clubList.isEmpty {
+                    ClubFilterMenu(timeline: timeline)
+                    Divider()
+                }
                 ForEach(kinds) { k in
                     Button(k.title, systemImage: k.systemImage) { actions.list = k }
                 }
@@ -180,7 +186,7 @@ struct TimelineScreen: View {
                 listsMenu
                     .menuStyle(.borderlessButton)
                     .fixedSize()
-                    .help("ピン留め・ブックマーク・お気に入りの人・部活の表示")
+                    .help("部活で絞り込む・ピン留め・ブックマーク・お気に入りの人・部活の表示")
                 Button { Task { await timeline.refresh(full: true) } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless)
                     .keyboardShortcut("r", modifiers: .command)
@@ -219,6 +225,7 @@ struct TimelineScreen: View {
             if needsReconnect {
                 ReconnectBanner(onReconnect: onReconnect, onClose: { needsReconnect = false })
             }
+            ClubFilterBanner(timeline: timeline)
             TimelinePostList(timeline: timeline, capabilities: capabilities, threadOpen: macThread != nil || !path.isEmpty,
                              open: open, viewing: $viewing)
         }

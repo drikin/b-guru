@@ -106,6 +106,11 @@ struct MainView: View {
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal) {
                         HStack(spacing: 0) {
+                            // 部活一覧: one more swipe left of the timeline (リュー 2026-11-09「タイムラインから
+                            // さらに左側にスワイプすると部活一覧が出るようにしても良いかも」). A pick goes back to it.
+                            ClubListPage(timeline: timeline, pager: pager)
+                                .frame(width: g.size.width, height: g.size.height)
+                                .id(MainTab.clubs)
                             TimelineScreen(timeline: timeline, capabilities: store.capabilities, tabPicker: picker, onReconnect: onSignOut)
                                 .modifier(AvoidsKeyboard(keyboard: keyboard))
                                 .frame(width: g.size.width, height: g.size.height)
@@ -305,6 +310,31 @@ struct PagePicker: View, @MainActor Equatable {
         case .chat: return "💬"
         case .dm: return "✉️"
         case .jukebox: return "📻"
+        case .clubs: return "🏷"
+        }
+    }
+}
+
+/// iPhone: the club list's page (left of the timeline).
+private struct ClubListPage: View {
+    let timeline: TimelineStore
+    let pager: PagerState
+
+    var body: some View {
+        NavigationStack {
+            ClubListView(timeline: timeline) {
+                withAnimation(.easeOut(duration: 0.25)) { pager.tab = .timeline }
+            }
+            .navigationTitle("部活")
+            .inlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { withAnimation(.easeOut(duration: 0.25)) { pager.tab = .timeline } } label: {
+                        Image(systemName: "chevron.right")
+                    }
+                    .accessibilityLabel("タイムラインへ")
+                }
+            }
         }
     }
 }
