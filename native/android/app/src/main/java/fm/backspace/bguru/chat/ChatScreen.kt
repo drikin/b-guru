@@ -123,6 +123,8 @@ import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -575,9 +577,12 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
 
     selecting?.let { m -> SelectTextDialog(m.authorName ?: "メッセージ", m.visibleBody) { selecting = null } }
     // Demo (`--es demo_open viewer`): the viewer on the first photo in the chat.
-    LaunchedEffect(store.demoViewer, store.rows.size) {
-        if (!store.demoViewer) return@LaunchedEffect
-        store.rows.firstOrNull { it.message.images.isNotEmpty() }?.let { viewing = it.message.images to 0; store.demoViewer = false }
+    // `store.rows` is read inside the effect (snapshotFlow), not here: reading its size in the
+    // screen's own body re-ran the whole screen on every new message.
+    if (store.demoViewer) LaunchedEffect(Unit) {
+        val row = androidx.compose.runtime.snapshotFlow { store.rows.firstOrNull { it.message.images.isNotEmpty() } }
+            .filterNotNull().first()
+        viewing = row.message.images to 0; store.demoViewer = false
     }
     viewing?.let { (urls, at) -> ImageViewer(urls, at) { viewing = null } }
 }

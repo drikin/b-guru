@@ -1,6 +1,8 @@
 package fm.backspace.bguru.chat
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -133,20 +135,26 @@ class ApiClient(val token: String) : PostOpsApi {
         return Request.Builder().url(url).header("Authorization", "Bearer $token").method(method, body).build()
     }
 
-    private suspend fun send(req: Request): String {
+    /** The body is read off the caller's thread: the stores call from the main thread, and
+     *  `await()` comes back as soon as the headers are in — waiting for the rest of a slow
+     *  answer there froze the screen (2026-11-09 のレビュー). */
+    private suspend fun send(req: Request): String = withContext(Dispatchers.IO) {
         Net.http.newCall(req).await().use { resp ->
-            val text = resp.body.string()
+            val text = try { resp.body.string() } catch (e: IOException) { throw ApiError.Transport(e.message ?: "network") }
             if (!resp.isSuccessful) {
                 val err = runCatching { ApiJson.decodeFromString<ApiErrorBody>(text) }.getOrNull()
                 if (resp.code == 401) throw ApiError.Unauthorized(err?.code)
                 throw ApiError.Http(resp.code, err?.code, err?.error)
             }
-            return text
+            text
         }
     }
 
-    private suspend inline fun <reified T> get(path: String, query: Map<String, String> = emptyMap()): T =
-        decode(send(request("GET", path, query = query)))
+    /** The lists (chat 100 件, posts, DM threads, members) come through here: parsed off the main thread too. */
+    private suspend inline fun <reified T> get(path: String, query: Map<String, String> = emptyMap()): T {
+        val text = send(request("GET", path, query = query))
+        return withContext(Dispatchers.Default) { decode(text) }
+    }
 
     private inline fun <reified T> decode(text: String): T =
         try { ApiJson.decodeFromString<T>(text) } catch (e: Exception) { throw ApiError.Transport("decode: ${e.message}") }

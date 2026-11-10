@@ -756,4 +756,5 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
 }
 
 /** The message calls 🐶 Beagle (@ビーグル, not inside a longer word). */
-fun asksBeagle(body: String): Boolean = Regex("@ビーグル(?![\\p{L}\\p{N}])").containsMatchIn(body)
+private val ASKS_BEAGLE = Regex("@ビーグル(?![\\p{L}\\p{N}])")
+fun asksBeagle(body: String): Boolean = ASKS_BEAGLE.containsMatchIn(body)
