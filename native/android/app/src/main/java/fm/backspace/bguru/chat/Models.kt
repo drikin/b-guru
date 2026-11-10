@@ -228,6 +228,8 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val clubOrder: String? = null,
         /** 部活ごとの未読数（GET。ほかの人のまだ読んでいない投稿。返信は数えない）。無い（古いサーバ）なら数と「未読順」を出さない（2026-11-09）。 */
         val clubUnread: String? = null,
+        /** 部活単位・全部の既読（POST { club } / {}）。無い（古いサーバ）なら「既読にする」を出さない（2026-11-09）。 */
+        val clubRead: String? = null,
     )
     @Serializable data class ChatFeatures(
         val read: Boolean? = null,
@@ -293,6 +295,7 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val mutedWordsPath get() = p?.mutedWords?.takeIf { it.startsWith("/api/") }
     val clubOrderPath get() = p?.clubOrder?.takeIf { it.startsWith("/api/") }
     val clubUnreadPath get() = p?.clubUnread?.takeIf { it.startsWith("/api/") }
+    val clubReadPath get() = p?.clubRead?.takeIf { it.startsWith("/api/") }
     val mentionsPath get() = p?.mentions?.takeIf { it.startsWith("/api/") }
     /** Voice room is on for this member (server configured + in the rollout). */
     val voiceEnabled get() = features?.voice?.enabled ?: false

@@ -1,7 +1,8 @@
 package fm.backspace.bguru.chat
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -51,6 +55,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
@@ -106,12 +111,37 @@ object ClubFilterRules {
         return a + saved.distinct().filter { it !in a }
     }
 
+    /** The club list's key a post counts under when unread: others' root posts only (null: not counted). */
+    fun unreadKey(p: Post): String? = if (p.parentId == null && !p.isAuthor && p.unread == true) p.club ?: "__unset__" else null
+
+    /** One fewer unread in [key] (gone at 0). */
+    fun decremented(unread: Map<String, Int>, key: String): Map<String, Int> {
+        val n = (unread[key] ?: 0) - 1
+        return if (n > 0) unread + (key to n) else unread - key
+    }
+
     /** Demo only: the sample posts of one club (null = all). */
     fun demoPosts(all: List<Post>, club: String?): List<Post> = if (club == null) all else all.filter { it.club == club }
 }
 
 /** The arranging list while 「並べ替え」 is on (null: off). */
-private class ClubArrange { var keys by mutableStateOf<List<String>?>(null) }
+private class ClubArrange {
+    var keys by mutableStateOf<List<String>?>(null)
+    /** 「すべて既読」's confirmation on screen. */
+    var confirmAll by mutableStateOf(false)
+}
+
+/** 「すべて既読」 asks first (it cannot be undone). Also from the timeline's 📌 menu. */
+@Composable
+fun MarkAllReadDialog(timeline: TimelineStore, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("すべての部活を既読にしますか？") },
+        text = { Text("直近 30 日のまだ読んでいない投稿と返信を既読にします。元には戻せません。") },
+        confirmButton = { TextButton(onClick = { onDismiss(); timeline.markClubRead(null) }) { Text("すべて既読にする") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } },
+    )
+}
 
 /** 「並べ替え」 / 「キャンセル」「完了」: only in 自分の順番 on a server that keeps the order. */
 @Composable
@@ -140,6 +170,7 @@ fun ClubListPage(timeline: TimelineStore, visible: Boolean, onPicked: () -> Unit
             clubRows(timeline, arrange) { key -> onPicked(); timeline.setClubFilter(key) }
         }
     }
+    if (arrange.confirmAll) MarkAllReadDialog(timeline) { arrange.confirmAll = false }
 }
 
 /** Wide screen: the same list in a sheet, from the timeline's list menu. */
@@ -160,6 +191,7 @@ fun ClubFilterSheet(timeline: TimelineStore) {
             Spacer(Modifier.height(12.dp))
         }
     }
+    if (arrange.confirmAll) MarkAllReadDialog(timeline) { arrange.confirmAll = false }
 }
 
 /** The sort switch, 「すべての部活」, the caption, then 「部活」 with each visible club and its unread; the picked one has a check.
@@ -168,11 +200,17 @@ private fun LazyListScope.clubRows(timeline: TimelineStore, arrange: ClubArrange
     val arranging = arrange.keys
     val counts = timeline.canClubUnread
     if (counts && arranging == null) item(key = "sort") {
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-            listOf(ClubSort.CUSTOM to "自分の順番", ClubSort.UNREAD to "未読順").forEachIndexed { i, (mode, label) ->
-                SegmentedButton(selected = timeline.clubSort == mode, onClick = { timeline.setClubSortMode(mode) },
-                    shape = SegmentedButtonDefaults.itemShape(i, 2)) { Text(label) }
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
+                listOf(ClubSort.CUSTOM to "自分の順番", ClubSort.UNREAD to "未読順").forEachIndexed { i, (mode, label) ->
+                    SegmentedButton(selected = timeline.clubSort == mode, onClick = { timeline.setClubSortMode(mode) },
+                        shape = SegmentedButtonDefaults.itemShape(i, 2)) { Text(label, maxLines = 1) }
+                }
             }
+            // オーナー 2026-11-09「すべてを既読にする操作が必要」: asks first.
+            if (timeline.canClubRead && timeline.clubUnreadTotal > 0) {
+                TextButton(onClick = { arrange.confirmAll = true }) { Text("すべて既読", maxLines = 1) }
+            } else Spacer(Modifier.width(8.dp))
         }
     }
     timeline.clubOrderError?.let { err ->
@@ -191,7 +229,7 @@ private fun LazyListScope.clubRows(timeline: TimelineStore, arrange: ClubArrange
         }
         return
     }
-    item(key = "all") { ClubRow("🗂", "すべての部活", timeline.clubFilter == null, if (counts) timeline.clubUnreadTotal else 0) { onPick(null) } }
+    item(key = "all") { ClubRow("🗂", "すべての部活", timeline.clubFilter == null, if (counts) timeline.clubUnreadTotal else 0, null) { onPick(null) } }
     item(key = "caption") {
         Text("選んだ部活の投稿だけをタイムラインに出します。" + if (counts) "数字はまだ読んでいない投稿（返信は数えません）。" else "",
             style = MaterialTheme.typography.bodySmall,
@@ -206,22 +244,34 @@ private fun LazyListScope.clubRows(timeline: TimelineStore, arrange: ClubArrange
         Text("読み込み中…", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
     }
     itemsIndexed(clubs, key = { _, c -> "club-${c.first}" }) { _, (key, name) ->
-        ClubRow("🏷️", name, timeline.clubFilter == key, if (counts) timeline.clubUnread[key] ?: 0 else 0) { onPick(key) }
+        val n = if (counts) timeline.clubUnread[key] ?: 0 else 0
+        // 部活単位で既読（オーナー 2026-11-09）: long-press 「既読にする」.
+        ClubRow("🏷️", name, timeline.clubFilter == key, n, if (timeline.canClubRead && n > 0) ({ timeline.markClubRead(key) }) else null) { onPick(key) }
     }
 }
 
+/** [onMarkRead]: the long-press menu's 「既読にする」 (null: no menu). */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ClubRow(mark: String, name: String, on: Boolean, unread: Int, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().semantics { selected = on }.clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(mark)
-        Spacer(Modifier.width(12.dp))
-        Text(name, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        ClubFilterRules.badge(unread)?.let { UnreadBadge(it, unread) }
-        if (on) { Spacer(Modifier.width(8.dp)); Icon(Icons.Default.Check, "選択中", tint = AccentGreen) }
+private fun ClubRow(mark: String, name: String, on: Boolean, unread: Int, onMarkRead: (() -> Unit)?, onClick: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier.fillMaxWidth().semantics { selected = on }
+                .combinedClickable(role = Role.Button, onClick = onClick, onLongClickLabel = if (onMarkRead != null) "既読にする" else null,
+                    onLongClick = if (onMarkRead != null) ({ menu = true }) else null)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(mark)
+            Spacer(Modifier.width(12.dp))
+            Text(name, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            ClubFilterRules.badge(unread)?.let { UnreadBadge(it, unread) }
+            if (on) { Spacer(Modifier.width(8.dp)); Icon(Icons.Default.Check, "選択中", tint = AccentGreen) }
+        }
+        if (onMarkRead != null) DropdownMenu(menu, onDismissRequest = { menu = false }, modifier = Modifier.align(Alignment.CenterEnd)) {
+            DropdownMenuItem(text = { Text("✓ 既読にする") }, onClick = { menu = false; onMarkRead() })
+        }
     }
     HorizontalDivider()
 }
@@ -259,10 +309,16 @@ fun ClubFilterBanner(timeline: TimelineStore) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text("🏷️ $name", color = AccentGreen, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-        Text("の投稿だけ", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.weight(1f))
+        // One text: the name keeps the room the buttons leave (and is cut only when it must be).
+        val muted = MaterialTheme.colorScheme.onSurfaceVariant
+        Text(androidx.compose.ui.text.buildAnnotatedString {
+            withStyle(androidx.compose.ui.text.SpanStyle(color = AccentGreen, fontWeight = FontWeight.SemiBold)) { append("🏷️ $name") }
+            withStyle(androidx.compose.ui.text.SpanStyle(color = muted, fontSize = MaterialTheme.typography.bodySmall.fontSize)) { append(" の投稿だけ") }
+        }, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        val key = timeline.clubFilter
+        if (key != null && timeline.canClubRead && (timeline.clubUnread[key] ?: 0) > 0) {
+            TextButton(onClick = { timeline.markClubRead(key) }) { Text("既読にする", style = MaterialTheme.typography.labelMedium) }
+        }
         TextButton(onClick = { timeline.setClubFilter(null) }) { Text("すべてに戻す", style = MaterialTheme.typography.labelMedium) }
     }
 }

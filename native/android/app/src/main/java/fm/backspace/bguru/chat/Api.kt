@@ -116,6 +116,10 @@ interface PostOpsApi {
     suspend fun setClubOrder(path: String, order: List<String>): List<String> = order
     /** 部活ごとの未読数（capabilities `club_unread`）。0 の部活は入っていない。 */
     suspend fun clubUnread(path: String): Map<String, Int> = emptyMap()
+    /** 既読にする（capabilities `club_read`）: club = その部活（"__unset__" = 未設定）、null = 全部（直近 30 日、返信も）。 */
+    suspend fun markClubRead(path: String, club: String?) {}
+    /** 見た投稿をまとめて既読に。true = サーバが受け取った。 */
+    suspend fun markPostsRead(ids: List<Long>): Boolean = true
     suspend fun vote(id: Long, optionId: Long): PostPoll?
     suspend fun togglePostReaction(id: Long, emoji: String): PostReactionToggle
 }
@@ -541,8 +545,11 @@ class ApiClient(val token: String) : PostOpsApi {
     override suspend fun togglePostReaction(id: Long, emoji: String): PostReactionToggle =
         decode(send(request("POST", "/api/agent/reactions", buildJsonObject { put("post_id", id); put("emoji", emoji) })))
 
-    suspend fun markPostsRead(ids: List<Long>) {
-        runCatching { send(request("POST", "/api/agent/read", buildJsonObject { put("post_ids", JsonArray(ids.map { JsonPrimitive(it) })) })) }
+    override suspend fun markPostsRead(ids: List<Long>): Boolean =
+        runCatching { send(request("POST", "/api/agent/read", buildJsonObject { put("post_ids", JsonArray(ids.map { JsonPrimitive(it) })) })) }.isSuccess
+
+    override suspend fun markClubRead(path: String, club: String?) {
+        send(request("POST", path, clubReadBody(club)))
     }
 
     /** The newest APK on the server (members only) — for the in-app update notice. */
@@ -553,6 +560,8 @@ class ApiClient(val token: String) : PostOpsApi {
     }
 
     companion object {
+        /** 既読にする: `{ club }` for one club, `{}` for all. */
+        fun clubReadBody(club: String?): JsonObject = buildJsonObject { if (club != null) put("club", club) }
         /** GET /api/agent/posts' query: the first page or the next (cursor), all or one club. Pure, for the tests. */
         fun postsQuery(cursor: String?, limit: Int, club: String?): Map<String, String> = buildMap {
             put("limit", "$limit"); put("include", "reactions,read,display")

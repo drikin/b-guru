@@ -67,6 +67,15 @@ class TimelineStore(
     var clubOrderSaving by mutableStateOf(false); private set
     /** The server counts unread per club (older servers: no counts, no 「未読順」). */
     val canClubUnread: Boolean get() = demo || capabilities?.clubUnreadPath != null
+    /** 「既読にする」 (one club / all): only on servers that take it. */
+    val canClubRead: Boolean get() = demo || capabilities?.clubReadPath != null
+    /** Bumped by every change made here (read on screen, 既読にする): counts fetched before it are dropped. */
+    private var unreadGen = 0
+    /** Counts were read while posts seen here were not sent yet: read them again once they are. */
+    private var reloadUnreadAfterRead = false
+    private var readInFlight = false
+    /** Demo only: some counts so the badges show (雑談 above 99); 既読にする changes them. */
+    private var demoClubUnread = mapOf("pet" to 3, "apple" to 12, "chat" to 120)
     /** The server keeps this member's order (older servers: no 「並べ替え」). */
     val canClubOrder: Boolean get() = demo || capabilities?.clubOrderPath != null
     /** The clubs as the list shows them: 自分の順番 or 未読順, without the hidden ones. */
@@ -166,10 +175,14 @@ class TimelineStore(
 
     /** The unread per club (the club page / sheet shown, a pull, a club picked); kept as they were when they cannot be read. */
     suspend fun loadClubUnread() {
-        if (demo) { clubUnread = DEMO_CLUB_UNREAD; return }
+        if (demo) { clubUnread = demoClubUnread; return }
         val path = capabilities?.clubUnreadPath ?: return
+        // Posts seen here are still on their way: the server's counts do not have them yet.
+        if (pendingRead.isNotEmpty() || readInFlight) reloadUnreadAfterRead = true
+        val gen = unreadGen
         try {
             val r = ops.clubUnread(path).filter { (k, n) -> k != "__unset__" && n > 0 }
+            if (gen != unreadGen) return // read here meanwhile: the next load has it
             if (r != clubUnread) clubUnread = r
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -177,6 +190,27 @@ class TimelineStore(
     }
 
     fun refreshClubUnreadAsync() { scope.launch { loadClubUnread() } }
+
+    /** 「既読にする」（オーナー 2026-11-09「すべてを既読にする操作が必要。部活単位で既読にもしたい」）: key = one club
+     *  ("__unset__" = 未設定), null = all. Shown at once (the counts and the loaded posts), then sent; the counts
+     *  are read again after it, whether it worked or not. */
+    fun markClubRead(key: String?) {
+        unreadGen++
+        clubUnread = if (key == null) emptyMap() else clubUnread - key
+        fun clear(list: List<Post>) = list.map { p ->
+            if ((key == null || (p.club ?: "__unset__") == key) && (p.unread == true || (p.unreadReplies ?: 0) > 0)) p.copy(unread = false, unreadReplies = 0) else p
+        }
+        posts = clear(posts)
+        demoAllPosts = demoAllPosts?.let(::clear)
+        if (demo) { demoClubUnread = clubUnread; return }
+        val path = capabilities?.clubReadPath ?: return
+        scope.launch {
+            try { ops.markClubRead(path, key) } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+            }
+            loadClubUnread()
+        }
+    }
 
     /** This member's order (at start with the hidden clubs, and on a pull). */
     suspend fun loadClubOrder() {
@@ -305,6 +339,13 @@ class TimelineStore(
         val p = posts.firstOrNull { it.id == id } ?: return
         if (p.unread != true) return
         posts = posts.map { if (it.id == id) it.copy(unread = false) else it }
+        // The club list's count follows at once (it counts others' unread root posts).
+        val key = ClubFilterRules.unreadKey(p)
+        if (key != null && (clubUnread[key] ?: 0) > 0) {
+            unreadGen++
+            clubUnread = ClubFilterRules.decremented(clubUnread, key)
+            if (demo) demoClubUnread = clubUnread
+        }
         markRead(listOf(id))
     }
 
@@ -321,8 +362,11 @@ class TimelineStore(
         readJob = scope.launch {
             delay(800)
             val batch = pendingRead.toList()
-            api.markPostsRead(batch)
+            readInFlight = true
+            val ok = try { ops.markPostsRead(batch) } finally { readInFlight = false }
             pendingRead -= batch.toSet()
+            // Counts read while these were on their way are behind: read them again (now the server has them).
+            if (ok && reloadUnreadAfterRead && pendingRead.isEmpty()) { reloadUnreadAfterRead = false; loadClubUnread() }
         }
     }
 
@@ -711,9 +755,6 @@ class TimelineStore(
     internal fun testFetch(fetch: suspend (cursor: String?, club: String?) -> PostListResponse) {
         fetchPosts = fetch; clock = { 0L }; warm = {}; applyMembers(listOf(MentionMember("t", "t")))
     }
-
-    /** Demo only: some counts so the badges show (雑談 above 99). */
-    private val DEMO_CLUB_UNREAD = mapOf("pet" to 3, "apple" to 12, "chat" to 120)
 
     /** Debug only: sample timeline for offline UI checks. */
     /** Demo only (`--ez demo_overlay true`): a post with a YouTube card on top, for 「📺 みんなで見る」 from the timeline. */

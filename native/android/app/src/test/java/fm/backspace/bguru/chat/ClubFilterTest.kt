@@ -37,7 +37,19 @@ class ClubFilterTest {
             if (failSave) throw ApiError.Http(500, null, null)
             saved += order; this.order = order; return order
         }
-        override suspend fun clubUnread(path: String) = mapOf("pet" to 2, "car" to 7, "__unset__" to 4, "apple" to 0)
+        override suspend fun clubUnread(path: String) = unread.toMap()
+        /** The server's counts (既読にする / read posts change them). */
+        val unread = mutableMapOf("pet" to 2, "car" to 7, "__unset__" to 4, "apple" to 0)
+        val marked = java.util.Collections.synchronizedList(mutableListOf<String?>())
+        var gate: CompletableDeferred<Unit>? = null
+        override suspend fun markClubRead(path: String, club: String?) {
+            gate?.await()
+            marked += club
+            if (club == null) unread.clear() else unread.remove(club)
+        }
+        val readBatches = java.util.Collections.synchronizedList(mutableListOf<List<Long>>())
+        var onRead: (List<Long>) -> Unit = {}
+        override suspend fun markPostsRead(ids: List<Long>): Boolean { readBatches += ids; onRead(ids); return true }
     }
 
     private fun store(hidden: Set<String> = emptySet()): TimelineStore {
@@ -224,5 +236,86 @@ class ClubFilterTest {
         waitFor { !s.clubOrderSaving }
         assertEquals(listOf("pet", "car", "apple"), s.clubOrder)
         assertTrue(s.clubOrderError != null)
+    }
+
+    // 既読にする（オーナー 2026-11-09「未読の管理が正しくできていない気がする。すべてを既読にする操作が必要。部活単位で既読にもしたい」）
+
+    private fun storeWithRead(ops: Ops): TimelineStore {
+        val s = TimelineStore(ApiClient("test"), ops, Dispatchers.Unconfined)
+        s.testClubs(clubs)
+        s.capabilities = ApiJson.decodeFromString("""{"features":{"posts":{"club_unread":"/api/agent/clubs/unread","club_read":"/api/agent/clubs/read"}}}""")
+        return s
+    }
+
+    @Test fun theReadBodyNamesTheClubOrNothing() {
+        assertEquals("""{"club":"pet"}""", ApiClient.clubReadBody("pet").toString())
+        assertEquals("{}", ApiClient.clubReadBody(null).toString())
+    }
+
+    @Test fun anOlderServerHasNoMarkRead() {
+        assertFalse(store().canClubRead)
+        assertTrue(storeWithRead(Ops(emptySet())).canClubRead)
+    }
+
+    @Test fun markingAClubReadClearsItAtOnceThenSendsItAndReadsTheCountsAgain() {
+        val ops = Ops(emptySet()).apply { gate = CompletableDeferred() }
+        val s = storeWithRead(ops)
+        val unsetPost = Post(4, authorName = "x", text = "?", club = null, unread = true)
+        s.testPosts(listOf(pet.copy(unread = true, unreadReplies = 2), car.copy(unread = true), unsetPost))
+        kotlinx.coroutines.runBlocking { s.loadClubUnread() }
+        assertEquals(mapOf("pet" to 2, "car" to 7), s.clubUnread)
+        s.markClubRead("pet")
+        // Before the server answers: shown already.
+        assertEquals(mapOf("car" to 7), s.clubUnread)
+        assertEquals(listOf(false, true, true), s.posts.map { it.unread })
+        assertEquals(0, s.posts[0].unreadReplies)
+        ops.gate!!.complete(Unit)
+        waitFor { ops.marked.size == 1 }
+        assertEquals(listOf<String?>("pet"), ops.marked.toList())
+        waitFor { s.clubUnread == mapOf("car" to 7) }
+        // 未設定: posts without a club.
+        s.markClubRead("__unset__")
+        waitFor { ops.marked.size == 2 }
+        assertEquals(false, s.posts[2].unread)
+        assertEquals(true, s.posts[1].unread)
+    }
+
+    @Test fun markingAllReadClearsEveryClubAndSendsNoClub() {
+        val ops = Ops(emptySet())
+        val s = storeWithRead(ops)
+        s.testPosts(listOf(pet.copy(unread = true), car.copy(unreadReplies = 3)))
+        kotlinx.coroutines.runBlocking { s.loadClubUnread() }
+        s.markClubRead(null)
+        assertTrue(s.clubUnread.isEmpty())
+        assertTrue(s.posts.all { it.unread != true && (it.unreadReplies ?: 0) == 0 })
+        waitFor { ops.marked.size == 1 }
+        assertEquals(listOf<String?>(null), ops.marked.toList())
+        assertEquals(0, s.clubUnreadTotal)
+    }
+
+    @Test fun aPostSeenHereCountsOneFewerAtOnceOnlyForOthersUnreadRootPosts() {
+        assertEquals("pet", ClubFilterRules.unreadKey(pet.copy(unread = true)))
+        assertEquals("__unset__", ClubFilterRules.unreadKey(Post(9, text = "", unread = true)))
+        assertNull(ClubFilterRules.unreadKey(pet.copy(unread = true, isAuthor = true)))
+        assertNull(ClubFilterRules.unreadKey(pet.copy(unread = true, parentId = 1)))
+        assertNull(ClubFilterRules.unreadKey(pet))
+        assertEquals(mapOf("pet" to 1), ClubFilterRules.decremented(mapOf("pet" to 2), "pet"))
+        assertEquals(emptyMap<String, Int>(), ClubFilterRules.decremented(mapOf("pet" to 1), "pet"))
+
+        val ops = Ops(emptySet())
+        val s = storeWithRead(ops)
+        s.testFetch { _, _ -> PostListResponse(emptyList()) }
+        s.testPosts(listOf(pet.copy(unread = true), Post(5, authorName = "me", text = "mine", club = "car", isAuthor = true, unread = true)))
+        kotlinx.coroutines.runBlocking { s.loadClubUnread() }
+        s.sawPost(5) // mine: not counted
+        assertEquals(mapOf("pet" to 2, "car" to 7), s.clubUnread)
+        // The server takes the read with the batch; counts read meanwhile are behind and read again after it.
+        ops.onRead = { ids -> if (1L in ids) ops.unread["pet"] = 1 }
+        s.sawPost(1)
+        assertEquals(mapOf("pet" to 1, "car" to 7), s.clubUnread)
+        kotlinx.coroutines.runBlocking { s.loadClubUnread() } // the server still says 2 (the read not sent yet)
+        waitFor { ops.readBatches.isNotEmpty() }
+        assertTrue(1L in ops.readBatches.flatten())
+        waitFor { s.clubUnread == mapOf("pet" to 1, "car" to 7) }
     }
 }

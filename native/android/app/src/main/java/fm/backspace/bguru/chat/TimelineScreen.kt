@@ -157,6 +157,8 @@ fun TimelineScreen(
 
     fun compose() { if (capabilities?.canPublish == true) timeline.dialog = PostDialog.Compose() else needsReconnect = true }
     var listsMenu by remember { mutableStateOf(false) }
+    var confirmAllRead by remember { mutableStateOf(false) }
+    if (confirmAllRead) MarkAllReadDialog(timeline) { confirmAllRead = false }
 
     Scaffold(
         topBar = {
@@ -184,6 +186,12 @@ fun TimelineScreen(
                                 // 部活で絞り込む（リュー 2026-11-09 → オーナー「全アプリに作る」）: the phone also has the page left of the timeline.
                                 if (lists.isNotEmpty()) HorizontalDivider()
                                 DropdownMenuItem(text = { Text("🏷️ 部活で絞り込む…") }, onClick = { listsMenu = false; timeline.dialog = PostDialog.ClubFilter })
+                                // 既読にする（オーナー 2026-11-09「すべてを既読にする操作が必要。部活単位で既読にもしたい」）.
+                                if (timeline.canClubRead) {
+                                    DropdownMenuItem(text = { Text("✓ すべて既読にする…") }, onClick = { listsMenu = false; confirmAllRead = true })
+                                    val f = timeline.clubFilter
+                                    if (f != null) DropdownMenuItem(text = { Text("✓ ${timeline.clubFilterName ?: f} を既読にする") }, onClick = { listsMenu = false; timeline.markClubRead(f) })
+                                }
                                 if (canClubs || canMuted) HorizontalDivider()
                                 if (canClubs) {
                                     DropdownMenuItem(text = { Text("👁 部活の表示…") }, onClick = { listsMenu = false; timeline.dialog = PostDialog.ClubVisibility })
