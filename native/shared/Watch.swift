@@ -233,9 +233,12 @@ extension EnvironmentValues {
 }
 
 extension WatchStore {
+    /// Made once (it was made on every draw of a row with a YouTube link); safe from any thread.
+    nonisolated private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+
     /// The first YouTube video link in a chat message (its 「みんなで見る」).
     nonisolated static func firstVideoURL(in text: String) -> String? {
-        guard text.contains("youtu"), let d = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) else { return nil }
+        guard text.contains("youtu"), let d = linkDetector else { return nil }
         for m in d.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
             if let u = m.url?.absoluteString, MainActor.assumeIsolated({ WatchStore.isVideoURL(u) }) { return u }
         }

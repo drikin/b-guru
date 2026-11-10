@@ -397,7 +397,9 @@ final class DMStore {
             while !Task.isCancelled {
                 // Loose: a message leaving a minute or so late is fine, and lets the
                 // system fold this wakeup in with others.
-                try? await Task.sleep(for: .seconds(60), tolerance: .seconds(30))
+                // Every 10 minutes (it was every minute, all day, parsing every date): the ttl is
+                // 30 days and the server drops them too, so nothing is ever due to the minute.
+                try? await Task.sleep(for: .seconds(600), tolerance: .seconds(120))
                 guard let self else { return }
                 let t = DMLogic.pruned(self.thread)
                 if t.count != self.thread.count { self.thread = t }

@@ -15,7 +15,18 @@ final class MediaCache {
     private var inFlight: [String: Task<PlatformImage?, Never>] = [:]
     var token: String?
 
-    init() { cache.totalCostLimit = 64 * 1024 * 1024 }
+    /// How many views are waiting for each download (see `image(for:)`).
+    private var waiters: [String: Int] = [:]
+
+    /// 64 MB held only 8〜15 photos at the timeline's 1200 px (4〜8 MB each once decoded), so
+    /// scrolling back decoded them again. By the device's memory (8 GB → 170 MB, at most 192);
+    /// NSCache gives it back by itself when memory runs short.
+    init() { cache.totalCostLimit = Self.costLimit(physicalMemory: ProcessInfo.processInfo.physicalMemory) }
+
+    nonisolated static func costLimit(physicalMemory: UInt64) -> Int {
+        let mb = Int(physicalMemory / (1024 * 1024))
+        return min(192, max(64, mb / 48)) * 1024 * 1024
+    }
 
     /// Photos, avatars and emoji are served `immutable` for a year, but the shared session's
     /// small default cache keeps few of them (nothing over ~5 % of its size): each launch,
@@ -91,8 +102,9 @@ final class MediaCache {
     /// The image at most `maxPixel` pixels on its long side.
     func image(for raw: String, maxPixel: Int = MediaImage.defaultPixels) async -> PlatformImage? {
         let key = Self.key(raw, maxPixel)
+        let k = key as String
         if let hit = cache.object(forKey: key) { return hit }
-        if let t = inFlight[key as String] { return await t.value }
+        if let t = inFlight[k] { return await wait(for: t, key: k) }
         let token = self.token
         let t = Task<PlatformImage?, Never> {
             guard let url = Self.url(raw) else { return nil }
@@ -103,17 +115,41 @@ final class MediaCache {
                 req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             }
             guard let (data, resp) = try? await Self.session.data(for: req),
-                  (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+                  (resp as? HTTPURLResponse)?.statusCode == 200, !Task.isCancelled else { return nil }
             guard let cg = await Task.detached(priority: .userInitiated, operation: { Self.decode(data, maxPixel: maxPixel) }).value
             else { return nil }
             return PlatformImage.decoded(cg)
         }
-        inFlight[key as String] = t
-        let img = await t.value
-        inFlight[key as String] = nil
+        inFlight[k] = t
+        let img = await wait(for: t, key: k)
         if let img, let cg = img.cgImageForCost { cache.setObject(img, forKey: key, cost: cg.bytesPerRow * cg.height) }
         return img
     }
+
+    /// Waits for a download. A photo flicked past (its row's task cancelled) used to download and
+    /// decode to the end, and the photos now on screen queued behind it: when nobody waits any
+    /// more, the download itself stops.
+    private func wait(for t: Task<PlatformImage?, Never>, key k: String) async -> PlatformImage? {
+        waiters[k, default: 0] += 1
+        let img = await withTaskCancellationHandler { await t.value } onCancel: {
+            Task { @MainActor in self.abandon(t, key: k) }
+        }
+        if inFlight[k] == t { inFlight[k] = nil; waiters[k] = nil }
+        return img
+    }
+
+    private func abandon(_ t: Task<PlatformImage?, Never>, key k: String) {
+        guard inFlight[k] == t else { return } // finished, or already stopped
+        let left = (waiters[k] ?? 1) - 1
+        if left > 0 { waiters[k] = left; return }
+        t.cancel()
+        inFlight[k] = nil
+        waiters[k] = nil
+    }
+
+    #if DEBUG
+    var debugInFlightCount: Int { inFlight.count }
+    #endif
 
     /// Scaled while decoding (no full-size bitmap ever exists), EXIF rotation applied,
     /// and fully decoded here — so drawing it later costs nothing on the main thread.
@@ -162,9 +198,12 @@ struct MediaImage: View {
     @State private var failed = false
 
     var body: some View {
+        // Looked up here too, not only in the task: a row coming back on screen drew one frame of
+        // grey + spinner before its (cached) picture.
+        let shown = image ?? MediaCache.shared.cached(path, maxPixel: maxPixel)
         ZStack {
-            if let image {
-                Image(platformImage: image).resizable().aspectRatio(contentMode: contentMode)
+            if let shown {
+                Image(platformImage: shown).resizable().aspectRatio(contentMode: contentMode)
             } else {
                 Rectangle().fill(Color.primary.opacity(0.06))
                 if failed { Image(systemName: "photo").foregroundStyle(.tertiary) } else { ProgressView() }
@@ -172,9 +211,11 @@ struct MediaImage: View {
         }
         .task(id: path) {
             if let hit = MediaCache.shared.cached(path, maxPixel: maxPixel) { image = hit; onSize?(hit.size); return }
-            image = await MediaCache.shared.image(for: path, maxPixel: maxPixel)
-            failed = image == nil
-            if let image { onSize?(image.size) }
+            let loaded = await MediaCache.shared.image(for: path, maxPixel: maxPixel)
+            if Task.isCancelled, loaded == nil { return } // scrolled away: not a failure
+            image = loaded
+            failed = loaded == nil
+            if let loaded { onSize?(loaded.size) }
         }
     }
 }

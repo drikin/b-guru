@@ -638,9 +638,11 @@ struct AvatarView: View {
     @State private var image: PlatformImage?
 
     var body: some View {
+        // The cache first (see MediaImage): no initial-letter flash when a row comes back.
+        let shown = image ?? url.flatMap { $0.isEmpty ? nil : MediaCache.shared.cached($0, maxPixel: AvatarCache.pixels) }
         Group {
-            if let image {
-                Image(platformImage: image).resizable().scaledToFill()
+            if let shown {
+                Image(platformImage: shown).resizable().scaledToFill()
             } else {
                 Text(String(name.prefix(1))).font(.app(.caption2, weight: .bold)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -649,7 +651,11 @@ struct AvatarView: View {
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
-        .task(id: url) { image = await AvatarCache.shared.image(for: url) }
+        .task(id: url) {
+            let loaded = await AvatarCache.shared.image(for: url)
+            if Task.isCancelled, loaded == nil { return }
+            image = loaded
+        }
     }
 }
 

@@ -616,7 +616,9 @@ final class GroupDMStore {
         pruneTask = Task { [weak self] in
             while !Task.isCancelled {
                 // Loose, like the 1:1 DM: a minute or so late is fine.
-                try? await Task.sleep(for: .seconds(60), tolerance: .seconds(30))
+                // Every 10 minutes (it was every minute, all day, parsing every date): the ttl is
+                // 30 days and the server drops them too, so nothing is ever due to the minute.
+                try? await Task.sleep(for: .seconds(600), tolerance: .seconds(120))
                 guard let self else { return }
                 let t = GDMLogic.pruned(self.thread)
                 if t.count != self.thread.count { self.thread = t }
