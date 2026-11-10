@@ -40,6 +40,7 @@ d("部活一覧の並び順と未読数（DB）", () => {
     await sql(`DELETE FROM posts WHERE author_email LIKE 'cuo-%'`);
     await sql(`DELETE FROM club_user_order WHERE email LIKE 'cuo-%'`);
     await sql(`DELETE FROM muted_words WHERE email LIKE 'cuo-%'`);
+    await sql(`DELETE FROM post_read_state WHERE email LIKE 'cuo-%'`);
   });
 
   afterAll(async () => {
@@ -79,5 +80,37 @@ d("部活一覧の並び順と未読数（DB）", () => {
     expect(n.apple).toBe(2);
     expect(n.pet).toBe(1);
     expect(n.__unset__).toBe(1);
+  });
+
+  it("部活を既読: その部活の投稿と返信だけ、ほかの部活は残る", async () => {
+    const a1 = await post(OTHER, "新しい MacBook", "apple");
+    const rep = await post(OTHER, "返信", "apple", a1);
+    await post(OTHER, "うちの犬", "pet");
+    const marked = await m.order.markClubRead(ME, "apple");
+    expect(marked).toBe(2);
+    const read = await sql(`SELECT post_id FROM post_read_state WHERE email = $1`, [ME]);
+    expect(read.rows.map((r) => r.post_id).sort()).toEqual([a1, rep].sort());
+    const n = await m.order.getClubUnreadCounts(ME);
+    expect(n.apple).toBeUndefined();
+    expect(n.pet).toBe(1);
+    expect(await m.order.markClubRead(ME, "apple")).toBe(0); // 冪等
+  });
+
+  it("すべて既読: 未設定も含めて全部、自分の投稿と古い投稿は触らない", async () => {
+    await post(OTHER, "新しい MacBook", "apple");
+    await post(OTHER, "未分類", null);
+    await post(ME, "自分の投稿", "pet");
+    const old = await post(OTHER, "古い投稿", "pet");
+    await sql(`UPDATE posts SET created_at = now() - interval '40 days' WHERE id = $1`, [old]);
+    expect(await m.order.markClubRead(ME, null)).toBe(2);
+    expect(await m.order.getClubUnreadCounts(ME)).toEqual({});
+    const oldRead = await sql(`SELECT 1 FROM post_read_state WHERE email = $1 AND post_id = $2`, [ME, old]);
+    expect(oldRead.rowCount).toBe(0);
+  });
+
+  it("未設定の部活を既読", async () => {
+    await post(OTHER, "未分類", null);
+    await post(OTHER, "未分類2", "__unset__");
+    expect(await m.order.markClubRead(ME, "__unset__")).toBe(2);
   });
 });

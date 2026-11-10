@@ -405,6 +405,13 @@ const spec = {
         responses: { "200": { description: "{apiVersion, order}" }, "400": { description: "order が配列でない" } },
       },
     },
+    "/api/agent/clubs/read": {
+      post: {
+        summary: "部活ひとつ（club。未設定は \"__unset__\"）か、club なしで全部を既読にする（直近 30 日のほかの人の投稿・返信も）",
+        requestBody: { content: { "application/json": { schema: { type: "object", properties: { club: { type: "string" } } } } } },
+        responses: { "200": { description: "{apiVersion, club, marked}" }, "400": { description: "不正な部活キー" } },
+      },
+    },
     "/api/agent/clubs/unread": {
       get: {
         summary: "部活ごとのまだ読んでいない投稿の数（ほかの人のルート投稿・直近 days 日・NG ワードで隠れるものは除く。0 は入らない）",

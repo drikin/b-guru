@@ -78,3 +78,25 @@ export async function getClubUnreadCounts(email: string): Promise<Record<string,
   for (const row of r.rows as { club: string; n: number }[]) out[row.club] = row.n;
   return out;
 }
+
+/** 「すべて既読」（club なし）・「この部活を既読」（club あり。未設定は "__unset__"）。2026-11-09 ドリキン
+ *  「すべてを既読にする操作が必要です。部活単位で既読にもしたい」。数える範囲（直近 UNREAD_DAYS 日）の
+ *  ほかの人の投稿を、返信も含めて既読にする（返信はルートの部活で決める）。タイムラインの「新着」も消える。
+ *  返すのは新しく既読にした数。 */
+export async function markClubRead(email: string, club: string | null): Promise<number> {
+  const params: unknown[] = [email, UNREAD_DAYS];
+  if (club) params.push(club);
+  const r = await pool.query(
+    `INSERT INTO post_read_state (email, post_id)
+     SELECT $1, p.id
+       FROM posts p
+       LEFT JOIN posts root ON root.id = COALESCE(p.parent_id, p.id)
+      WHERE p.created_at > now() - make_interval(days => $2::int)
+        AND lower(p.author_email) <> lower($1)${club ? `
+        AND COALESCE(NULLIF(root.club, ''), '__unset__') = $3` : ""}
+        AND NOT EXISTS (SELECT 1 FROM post_read_state s WHERE s.email = $1 AND s.post_id = p.id)
+     ON CONFLICT DO NOTHING`,
+    params
+  );
+  return r.rowCount ?? 0;
+}
