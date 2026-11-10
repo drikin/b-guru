@@ -84,7 +84,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     /** 🍻 オフ会 — only when the server turns it on for this member (capabilities.offkai). */
     val offkai: OffkaiStore = OffkaiStore(api, app.applicationContext, reader, readerWanted = { chatReading }).also { it.fallbackMe = { myUserId } }
     private val voiceApp = app.applicationContext
-    /** Bumped by a voice_handoff tap: the phone pager / the wide layout shows the chat. */
+    /** Bumped by a voice_handoff tap and a chat notification ([reveal]): the phone pager / the wide layout shows the chat. */
     var chatRevealTick by mutableIntStateOf(0); private set
     /** The windows over the chat (docs/chat-overlay-spec.md; only used while [chatOverlay]). */
     val overlay = OverlayState(OverlayPositions.Prefs(app))
@@ -689,10 +689,25 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         return ok()
     }
 
-    /** Jump to a message (from a notification tap) and highlight it briefly. */
+    /**
+     * Jump to a message (from a notification tap): the pager / the wide layout shows the chat ([chatRevealTick]),
+     * the list goes there once it holds it (a tap that launched the app comes before the messages) and
+     * highlights it ([revealed]) — drikin 2026-11-09「チャットメッセージが来たらチャットを正しく開いて」.
+     */
     fun reveal(id: Long) {
-        highlightId = id
         scrollTarget = id
+        chatRevealTick++
+        // Not in the list after all (older than it holds, or deleted): give up, so the list follows new messages again.
+        scope.launch {
+            delay(10_000)
+            if (scrollTarget == id) scrollTarget = null
+        }
+    }
+
+    /** The list has scrolled to the message [reveal] asked for: highlight it briefly. */
+    fun revealed(id: Long) {
+        if (scrollTarget == id) scrollTarget = null
+        highlightId = id
         scope.launch {
             delay(1600)
             if (highlightId == id) highlightId = null

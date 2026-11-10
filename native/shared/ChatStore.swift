@@ -19,10 +19,15 @@ final class ChatStore {
     private(set) var unreadCount = 0
     /// Unread messages that @mention me (subset of unreadCount).
     private(set) var mentionCount = 0
-    /// Set by a notification click: the list scrolls to this message and
-    /// briefly highlights it.
+    /// Set by a notification click: the list scrolls to this message once it is on screen
+    /// and in the list (a tap that launched the app comes before the messages), then
+    /// briefly highlights it (`revealed`).
     var scrollTarget: Int?
     private(set) var highlightId: Int?
+    /// Bumped by `reveal`: the page / tab that holds the chat comes forward (also a request made
+    /// before that view was up — a notification that launched the app). iPhone: the 💬 page,
+    /// Mac: the chat tab (drikin 2026-11-09「チャットメッセージが来たらチャットを正しく開いて」).
+    private(set) var revealRequest = 0
     private(set) var onlineCount = 0
     private(set) var connection: Connection = .connecting
     private(set) var capabilities: Capabilities? {
@@ -870,10 +875,23 @@ final class ChatStore {
 
     // MARK: - Read state
 
-    /// Jump to a message (from a notification click) and highlight it briefly.
+    /// Jump to a message (from a notification click): the chat comes forward, the list goes there
+    /// once it holds it (ChatScrolling) and highlights it.
     func reveal(_ id: Int) {
-        highlightId = id
         scrollTarget = id
+        revealRequest += 1
+        // Not in the list after all (older than it holds, or deleted): give up, so the list goes back
+        // to following new messages (it does not while a target waits).
+        Task {
+            try? await Task.sleep(for: .seconds(10))
+            if scrollTarget == id { scrollTarget = nil }
+        }
+    }
+
+    /// The list has scrolled to the message `reveal` asked for: highlight it briefly.
+    func revealed(_ id: Int) {
+        if scrollTarget == id { scrollTarget = nil }
+        highlightId = id
         Task {
             try? await Task.sleep(for: .seconds(1.6))
             if highlightId == id { highlightId = nil }

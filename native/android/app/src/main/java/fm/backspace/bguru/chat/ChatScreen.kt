@@ -242,7 +242,7 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
         val i = store.rows.asReversed().indexOfFirst { it.message.id == target }
         if (i >= 0) {
             listState.animateScrollToItem(i)
-            store.scrollTarget = null
+            store.revealed(target)
         }
     } }
 

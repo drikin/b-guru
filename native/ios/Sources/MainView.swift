@@ -233,10 +233,15 @@ private struct PagerWatcher: View {
                 guard n > 0 else { return }
                 if paged { pager.tab = .dm } else { pager.leftTab = .dm }
             }
-            .onChange(of: timeline.openThread) { _, id in
-                guard id != nil else { return }
+            .onChange(of: timeline.openThreadRequest, initial: true) { _, n in
+                guard n > 0 else { return }
                 // iPad: a notification opening a thread brings the timeline back to the left column.
                 if paged { pager.tab = .timeline } else { pager.leftTab = .timeline }
+            }
+            // A chat notification (ChatStore.reveal): the 💬 page (the iPad shows the chat beside the list).
+            .onChange(of: store.revealRequest, initial: true) { _, n in
+                guard n > 0, paged else { return }
+                pager.tab = .chat
             }
             .onChange(of: pager.tab) { _, t in
                 // Switching pages hides the keyboard (it used to stay up over the timeline);

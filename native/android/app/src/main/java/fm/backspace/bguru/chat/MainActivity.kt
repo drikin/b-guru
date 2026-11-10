@@ -143,13 +143,15 @@ class MainActivity : ComponentActivity() {
 
     /** A notification tap: open the chat at that message, or the thread of a reply to your post. */
     private fun handle(intent: Intent?) {
+        // Each tap is taken once: the activity made again (rotation, dark mode) gets
+        // the same intent, and must not jump back to that message / thread.
         val id = intent?.getLongExtra(Push.EXTRA_MESSAGE_ID, 0L) ?: 0L
-        if (id > 0) App.session(this).store?.reveal(id)
+        if (id > 0) { App.session(this).store?.reveal(id); intent?.removeExtra(Push.EXTRA_MESSAGE_ID) }
         val post = intent?.getLongExtra(Push.EXTRA_POST_ID, 0L) ?: 0L
-        if (post > 0) App.session(this).timeline?.openThread = post
+        if (post > 0) { App.session(this).timeline?.openThread = post; intent?.removeExtra(Push.EXTRA_POST_ID) }
         // ☗ 将棋 (shogi_offer / shogi_turn): the shogi screen at that game.
         val game = intent?.getLongExtra(Push.EXTRA_SHOGI_GAME_ID, 0L) ?: 0L
-        if (game > 0) App.session(this).store?.openShogi(game)
+        if (game > 0) { App.session(this).store?.openShogi(game); intent?.removeExtra(Push.EXTRA_SHOGI_GAME_ID) }
         // 🍻 オフ会 (offkai_start): the chat on the 🍻 tab.
         if (intent?.getBooleanExtra(Push.EXTRA_OFFKAI, false) == true) {
             App.session(this).store?.openOffkai()

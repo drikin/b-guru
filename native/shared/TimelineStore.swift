@@ -38,9 +38,13 @@ final class TimelineStore {
         a.timeline = self
         return a
     }()
-    /// Set by a "reply to your post" notification tap: the app shows the timeline
-    /// and opens this thread.
-    var openThread: Int?
+    /// Set by a "reply to your post" / new post notification tap, a post's link, …: the app shows
+    /// the timeline and opens this thread (the timeline clears it at once, as it takes it).
+    var openThread: Int? { didSet { if openThread != nil { openThreadRequest += 1 } } }
+    /// Bumped with each `openThread`: the iPhone's pager comes to the timeline page — also for a
+    /// request made before the pager was up (a notification that launched the app), which the
+    /// timeline may already have taken (drikin 2026-11-09「タイムラインだったらタイムラインを正しく開いて」).
+    private(set) var openThreadRequest = 0
     /// A thread was opened (its root post), and a reply was sent in a thread (the root's id).
     /// Mac: the on-device AI's picks remember what the member looked at (kept on this Mac only).
     @ObservationIgnored var onThreadOpened: ((Post) -> Void)?

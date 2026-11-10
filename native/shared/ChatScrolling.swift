@@ -28,6 +28,29 @@ struct ChatScrolling: ViewModifier {
     /// When the list last went to the unread line: coming on screen in the same moment must
     /// not then send it to the bottom (that also zeroed 「↓ 新着 N」).
     @State private var wentToUnreadAt = Date.distantPast
+    /// When the list last went to a notification's message: the unread line / the bottom that
+    /// coming on screen (and the app coming back) would also ask for must not take it away.
+    @State private var jumpedAt = Date.distantPast
+
+    /// A notification's message (`store.reveal`): there once the chat is on screen and the list
+    /// holds it — a tap that launched the app comes before the first messages, a tap from another
+    /// page before the chat page shows. Returns whether a target is waiting or was just gone to.
+    @discardableResult private func jumpToTarget() -> Bool {
+        guard let target = store.scrollTarget else { return false }
+        guard onScreen, let row = store.rows.first(where: { $0.message.id == target }) else { return true }
+        jumpedAt = Date()
+        atBottom = false
+        // Wait one runloop so a freshly shown page has laid out its rows, then once more:
+        // a LazyVStack only estimates the rows it has not drawn yet.
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(row.id, anchor: .center) }
+            store.revealed(target)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { if onScreen { proxy.scrollTo(row.id, anchor: .center) } }
+        return true
+    }
+
+    private var justJumped: Bool { Date().timeIntervalSince(jumpedAt) < 1.5 }
 
     /// Sending also shrinks the composer (and a LazyVStack only estimates rows it
     /// hasn't drawn), so one scroll can land short of the bottom. Scroll now, then
@@ -93,7 +116,9 @@ struct ChatScrolling: ViewModifier {
         content
             .keepsBottomOnResize(Self.anchorsSizeChanges && atBottom && onScreen)
             .modifier(BottomTracker(atBottom: $atBottom, grewAtBottom: followGrowth))
+            .onChange(of: store.scrollTarget) { _, _ in jumpToTarget() }
             .onChange(of: store.rows.last?.id) { _, _ in
+                if jumpToTarget() { return }
                 guard store.scrollTarget == nil, let last = store.rows.last?.message else { return }
                 if !onScreen {
                     if !atBottom, !last.isAuthor, !last.isNotice { newBelow += 1 }
@@ -113,6 +138,7 @@ struct ChatScrolling: ViewModifier {
                 }
             }
             .onChange(of: store.openSeq) { _, _ in
+                if store.scrollTarget != nil || justJumped { openPending = false; return }
                 if onScreen {
                     openPending = false
                     scrollToUnread()
@@ -125,7 +151,9 @@ struct ChatScrolling: ViewModifier {
                 // After the rows caught up (the list unfreezes in the same update) and after a
                 // jump the same update asked for (a notification's message, the unread line).
                 DispatchQueue.main.async {
-                    if openPending {
+                    if jumpToTarget() || justJumped {
+                        openPending = false
+                    } else if openPending {
                         openPending = false
                         scrollToUnread()
                     } else if atBottom || leftAtBottom, store.scrollTarget == nil, store.highlightId == nil,

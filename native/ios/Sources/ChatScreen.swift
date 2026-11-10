@@ -257,18 +257,11 @@ private struct ChatMessageList: View {
             // blank area with the newest messages below the fold). Jump once more
             // after the first list has been laid out.
             .onChange(of: store.hasLoaded) { _, loaded in
-                guard loaded, store.unreadMarkerId == nil else { return } // else it opens at the unread line
+                guard loaded, store.unreadMarkerId == nil, store.scrollTarget == nil else { return } // else the unread line / a notification's message
                 proxy.scrollTo("bottom", anchor: .bottom)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
-            .onChange(of: store.scrollTarget) { _, target in
-                // A notification tap: jump to that message (highlighted by the store).
-                guard let target, let row = store.rows.first(where: { $0.message.id == target }) else { return }
-                DispatchQueue.main.async {
-                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(row.id, anchor: .center) }
-                    store.scrollTarget = nil
-                }
-            }
+            // A notification's message: ChatScrolling goes there once it is on screen and loaded.
             .onChange(of: composer.focused) { _, focused in
                 store.minigame.inputFocused = focused // typing pauses the game
                 // Keyboard up → keep the latest message visible above it.

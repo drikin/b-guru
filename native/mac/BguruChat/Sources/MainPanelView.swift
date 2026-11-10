@@ -213,6 +213,8 @@ private struct PanelTabWatcher: View {
             .onChange(of: jukeboxOn) { _, on in if !on && pin.tab == .jukebox { pin.tab = .chat } }
             // A name in the chat, a notification, …: DMStore.open → the ✉️ tab shows it.
             .onChange(of: store.dm.openRequest, initial: true) { _, n in if n > 0 { pin.tab = .dm } }
+            // A chat notification (ChatStore.reveal): the chat tab, then the list goes to the message.
+            .onChange(of: store.revealRequest, initial: true) { _, n in if n > 0 { pin.tab = .chat } }
             .onChange(of: pin.tab) { _, t in
                 updateVisibility()
                 if t == .jukebox { pin.wantsHeight?(780) }

@@ -353,14 +353,7 @@ private struct ChatMessageList: View {
                 guard store.scrollTarget == nil, atBottom, onScreen else { return }
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
-            .onChange(of: store.scrollTarget) { _, target in
-                guard let target, let row = store.rows.first(where: { $0.message.id == target }) else { return }
-                // Wait one runloop so a freshly opened panel has laid out its rows.
-                DispatchQueue.main.async {
-                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(row.id, anchor: .center) }
-                    store.scrollTarget = nil
-                }
-            }
+            // A notification's message: ChatScrolling goes there once it is on screen and loaded.
         }
     }
 
