@@ -33,8 +33,19 @@ struct GDMGroup: Codable, Equatable, Sendable, Identifiable {
     /// 🐶 Members' @ビーグル gets an answer here (any member turns it on or off; off by default; nil = older server).
     var beagle: Bool? = nil
     var createdAt: String?
+    /// 🌐 Anyone may read and join it, and it is in everyone's list (2026-11-09; nil = older server = private).
+    var isPublic: Bool? = nil
+    /// I am in it (false: a public one I only read). nil = older server = I am.
+    var isMember: Bool? = nil
+    /// 🗄 Archived: read only, in the list's 「アーカイブ」 (public groups only; nil = older server = no).
+    var archived: Bool? = nil
+    var archivedAt: String? = nil
 
     var displayTitle: String { title.isEmpty ? "グループ" : title }
+    var isPublicDM: Bool { isPublic == true }
+    var isArchived: Bool { archived == true }
+    /// I am in it (older servers say nothing: I am).
+    var joined: Bool { isMember != false }
     /// The photo to show (nil = 👥): only a path or URL that looks like one.
     var photoPath: String? { GDMLogic.photoPath(photo) }
     var me: GDMMember? { members.first { $0.isMe == true } }
@@ -112,12 +123,39 @@ struct GDMSummary: Codable, Equatable, Sendable, Identifiable {
     var group: GDMGroup
     var lastMessage: GDMMessage?
     var unreadCount: Int
+    /// 🌐 Made in the last 72 hours (only on `public_groups`): the 「新しい」 badge.
+    var isNew: Bool? = nil
     var id: Int { group.id }
 }
 
 struct GDMListResponse: Decodable, Sendable {
+    /// Mine: joined and not archived (private and public). Older servers send only this.
     var groups: [GDMSummary]
+    /// 🌐 Public groups I have not joined (not archived), newest first.
+    var publicGroups: [GDMSummary]? = nil
+    /// 🗄 Archived public groups (joined or not), newest archive first.
+    var archivedGroups: [GDMSummary]? = nil
     var groupUnreadCount: Int?
+}
+
+/// The DM list's three parts of groups: mine (with the 1:1 conversations), 🌐 public ones I have not joined,
+/// and 🗄 archived ones (folded).
+struct GDMListSections: Equatable, Sendable {
+    var mine: [GDMSummary] = []
+    var publicGroups: [GDMSummary] = []
+    var archived: [GDMSummary] = []
+}
+
+/// What takes the composer's place in a group's conversation.
+enum GDMComposerMode: Equatable, Sendable {
+    /// The composer.
+    case write
+    /// 🌐 A public group I have not joined: 「参加する」.
+    case join
+    /// 🗄 「アーカイブされています（読むだけ）」.
+    case archived
+    /// 「このグループにはまだ送れません」.
+    case cannotSend
 }
 
 struct GDMThreadResponse: Decodable, Sendable {
@@ -179,7 +217,9 @@ enum GDMLogic {
     static func prunedSummaries(_ list: [GDMSummary], now: Date = Date()) -> [GDMSummary] {
         list.map { s in
             guard let m = s.lastMessage, expired(m, now: now) else { return s }
-            return GDMSummary(group: s.group, lastMessage: nil, unreadCount: s.unreadCount)
+            var next = s
+            next.lastMessage = nil
+            return next
         }
     }
 
@@ -276,6 +316,90 @@ enum GDMLogic {
             case (nil, nil): return a.i < b.i
             }
         }.map(\.item)
+    }
+
+    // MARK: 🌐 Public groups and 🗄 archive (docs/group-dm-spec.md「パブリック DM と アーカイブ」)
+
+    /// It belongs in my own list: joined and not archived (older servers say neither: it does). The web's belongsInMyList.
+    static func belongsInMyList(_ g: GDMGroup) -> Bool { g.joined && !g.isArchived }
+
+    /// The mark before a title: 🗄 archived, 🌐 public, else nothing.
+    static func kindMark(_ g: GDMGroup) -> String { g.isArchived ? "🗄 " : g.isPublicDM ? "🌐 " : "" }
+
+    /// The list's three parts from GET /gdm (each pruned; no group twice, mine first, then archived).
+    static func sections(_ r: GDMListResponse, now: Date = Date()) -> GDMListSections {
+        let mine = newestFirst(prunedSummaries(r.groups, now: now).filter { belongsInMyList($0.group) }, at: activity)
+        let archived = prunedSummaries(r.archivedGroups ?? [], now: now)
+            .filter { s in s.group.isArchived && !mine.contains { $0.id == s.id } }
+        let taken = Set(mine.map(\.id) + archived.map(\.id))
+        let open = prunedSummaries(r.publicGroups ?? [], now: now)
+            .filter { s in !taken.contains(s.id) && !s.group.isArchived && !s.group.joined }
+            .map { s in var x = s; x.unreadCount = 0; return x }
+        return GDMListSections(mine: mine, publicGroups: open, archived: archived)
+    }
+
+    /// A group as the server now says (my change, the stream's `group`, a thread read): in the part it belongs to now.
+    /// `leftMine`: it was in my list and no longer belongs there (archived, or I am out) — read the list again.
+    static func placing(_ g: GDMGroup, in s: GDMListSections) -> (sections: GDMListSections, leftMine: Bool) {
+        var next = s
+        let old = (s.mine + s.publicGroups + s.archived).first { $0.id == g.id }
+        if belongsInMyList(g) {
+            next.publicGroups.removeAll { $0.id == g.id }
+            next.archived.removeAll { $0.id == g.id }
+            if next.mine.contains(where: { $0.id == g.id }) {
+                next.mine = summaries(next.mine, updating: g)
+            } else {
+                // Joined or un-archived: first, with the last line it had (nothing unread: joining reads to the end).
+                next.mine = [GDMSummary(group: g, lastMessage: old?.lastMessage, unreadCount: 0)] + next.mine
+            }
+            return (next, false)
+        }
+        let wasMine = s.mine.contains { $0.id == g.id }
+        next.mine.removeAll { $0.id == g.id }
+        func update(_ list: inout [GDMSummary]) -> Bool {
+            guard let i = list.firstIndex(where: { $0.id == g.id }) else { return false }
+            list[i].group = g
+            return true
+        }
+        if g.isArchived {
+            next.publicGroups.removeAll { $0.id == g.id }
+            if !update(&next.archived) {
+                next.archived.insert(GDMSummary(group: g, lastMessage: old?.lastMessage, unreadCount: 0), at: 0)
+            }
+        } else if g.isPublicDM {
+            next.archived.removeAll { $0.id == g.id }
+            if !update(&next.publicGroups) {
+                next.publicGroups.insert(GDMSummary(group: g, lastMessage: old?.lastMessage, unreadCount: 0), at: 0)
+            }
+        }
+        return (next, wasMine)
+    }
+
+    /// What the conversation shows instead of (or as) its composer.
+    static func composerMode(_ g: GDMGroup?, canSend: Bool, groupCanSend: Bool) -> GDMComposerMode {
+        if let g, g.isArchived { return .archived }
+        if let g, g.isPublicDM, !g.joined { return canSend ? .join : .cannotSend }
+        return canSend && groupCanSend ? .write : .cannotSend
+    }
+
+    /// Name, photo, 🐶, adding people: only for a group I am in that is not archived.
+    static func canChangeSettings(_ g: GDMGroup?) -> Bool { g.map { $0.joined && !$0.isArchived } ?? true }
+
+    /// 「外す」 someone else: its maker, in a private group only (anyone may join a public one again).
+    static func canRemoveOthers(_ g: GDMGroup?) -> Bool { g?.isCreator == true && g?.isPublicDM != true && canChangeSettings(g) }
+
+    /// 「🗄 アーカイブする／アーカイブから戻す」: anyone in a public group.
+    static func canArchive(_ g: GDMGroup?) -> Bool { g.map { $0.isPublicDM && $0.joined } ?? false }
+
+    /// The leave confirmation's text.
+    static func leaveMessage(isPublic: Bool) -> String {
+        isPublic ? "抜けると通知が届かなくなります。パブリック DM なので、いつでもまた参加できます。"
+                 : "抜けると、このグループの発言は見られなくなります。"
+    }
+
+    /// 「作る」 may be pressed: private needs someone picked; public needs a name (members are optional).
+    static func canCreate(isPublic: Bool, name: String, memberCount: Int) -> Bool {
+        isPublic ? !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty : memberCount > 0
     }
 
     /// The list line under a group's title: 「あなた: …」, 「名前: …」 or a system line as it is.

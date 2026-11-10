@@ -198,6 +198,8 @@ struct DMListView: View {
     var tabPicker: AnyView? = nil
     /// 「＋ 新規 DM」 is open.
     @State private var newDM = false
+    /// 🗄 The archived groups are shown (folded by default).
+    @State private var showArchived = false
 
     @ViewBuilder private var headerButtons: some View {
         if dm.canSend {
@@ -274,7 +276,9 @@ struct DMListView: View {
     private var content: some View {
         VStack(spacing: 0) {
             let entries = DMListEntry.merged(dm)
-            if entries.isEmpty {
+            let publicGroups = dm.groups.enabled ? dm.groups.publicSummaries : []
+            let archived = dm.groups.enabled ? dm.groups.archivedSummaries : []
+            if entries.isEmpty && publicGroups.isEmpty && archived.isEmpty {
                 VStack(spacing: 8) {
                     Spacer()
                     Image(systemName: "envelope").font(.app(size: 30)).foregroundStyle(.secondary)
@@ -299,11 +303,51 @@ struct DMListView: View {
                             }
                             Divider().padding(.leading, 56)
                         }
+                        // 🌐 Public groups I have not joined (anyone may read and join them).
+                        if !publicGroups.isEmpty {
+                            sectionTitle("🌐 パブリック DM（誰でも参加できます）")
+                            ForEach(publicGroups) { s in
+                                Button { dm.route = .group(s.group.id) } label: { GDMListRow(s: s) }
+                                    .buttonStyle(.plain)
+                                Divider().padding(.leading, 56)
+                            }
+                        }
+                        // 🗄 Archived (read only), folded. The toggle is a row of its own (never in a section
+                        // header: a control there took taps twice).
+                        if !archived.isEmpty {
+                            Button { showArchived.toggle() } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: showArchived ? "chevron.down" : "chevron.right").font(.app(.caption2))
+                                    Text("🗄 アーカイブ（\(archived.count)）").font(.app(.caption, weight: .medium))
+                                    Spacer()
+                                }
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 12).padding(.top, 14).padding(.bottom, 6)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("アーカイブ \(archived.count) 件を\(showArchived ? "畳む" : "開く")")
+                            .accessibilityIdentifier("gdm-archived-toggle")
+                            if showArchived {
+                                ForEach(archived) { s in
+                                    Button { dm.route = .group(s.group.id) } label: { GDMListRow(s: s) }
+                                        .buttonStyle(.plain)
+                                    Divider().padding(.leading, 56)
+                                }
+                            }
+                        }
                     }
                 }
             }
             Text("DM は 30 日で消えます").font(.app(.caption2)).foregroundStyle(.tertiary).padding(.vertical, 6)
         }
+    }
+
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text).font(.app(.caption, weight: .medium)).foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12).padding(.top, 14).padding(.bottom, 6)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private func row(_ c: DMConversation) -> some View {

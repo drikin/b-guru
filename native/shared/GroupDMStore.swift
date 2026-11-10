@@ -10,10 +10,12 @@ extension APIClient {
         try await send(request("GET", path))
     }
 
-    func gdmCreate(path: String, name: String?, memberIds: [String]) async throws -> GDMGroup {
+    /// `isPublic`: 🌐 a public group (needs a name; `memberIds` may be empty). Sent only when true (older servers).
+    func gdmCreate(path: String, name: String?, memberIds: [String], isPublic: Bool = false) async throws -> GDMGroup {
         struct R: Decodable { var group: GDMGroup }
         var body: [String: Any] = ["member_ids": memberIds]
         if let name { body["name"] = name }
+        if isPublic { body["public"] = true }
         let r: R = try await send(request("POST", path, json: body))
         return r.group
     }
@@ -54,6 +56,13 @@ extension APIClient {
     func gdmPatch(path: String, groupId: Int, _ body: [String: Any]) async throws -> GDMGroup {
         struct R: Decodable { var group: GDMGroup }
         let r: R = try await send(request("PATCH", "\(path)/\(groupId)", json: body))
+        return r.group
+    }
+
+    /// 🌐 POST {path}/:gid/join {} → { group } (a public group: anyone may).
+    func gdmJoin(path: String, groupId: Int) async throws -> GDMGroup {
+        struct R: Decodable { var group: GDMGroup }
+        let r: R = try await send(request("POST", "\(path)/\(groupId)/join", json: [String: Any]()))
         return r.group
     }
 
@@ -99,6 +108,12 @@ final class GroupDMStore {
     /// The group's photo may be set / removed here (features.gdm.photo; old servers say nothing → only shown).
     private(set) var photoEditable = false
     private(set) var beagleAvailable = false
+    /// 🌐 Public groups (features.gdm.public): the list's part, joining, making one. Older servers → off.
+    private(set) var publicAvailable = false
+    /// 🗄 Archive (features.gdm.archive): the list's folded part, 「アーカイブする／戻す」. Older servers → off.
+    private(set) var archiveAvailable = false
+    /// The member limit of a public group (features.gdm.public_max_members).
+    private(set) var maxPublicMembers = 1000
     private(set) var maxPhotoBytes = 15 * 1024 * 1024
     /// 📷 Photos in messages (the 1:1 DM's features.dm.max_images / upload_path; set by DMStore).
     private(set) var canSendImages = false
@@ -111,6 +126,10 @@ final class GroupDMStore {
     private(set) var outgoingPhotos: [String: OutgoingPhotos] = [:]
     /// My groups, newest first.
     private(set) var summaries: [GDMSummary] = []
+    /// 🌐 Public groups I have not joined (the list's 「パブリック DM」).
+    private(set) var publicSummaries: [GDMSummary] = []
+    /// 🗄 Archived public groups (the list's folded 「アーカイブ」).
+    private(set) var archivedSummaries: [GDMSummary] = []
     /// All my groups' unread (`group_unread_count`; added to the 1:1 count for the ✉️ badge).
     private(set) var unreadCount = 0
     /// The group open now (its conversation or its members screen); set by DMStore's route.
@@ -169,6 +188,28 @@ final class GroupDMStore {
 
     func summary(_ id: Int) -> GDMSummary? { summaries.first { $0.group.id == id } }
 
+    /// Any group the list knows (mine, 🌐 public, 🗄 archived).
+    func knownGroup(_ id: Int) -> GDMGroup? {
+        (summaries.first { $0.id == id } ?? publicSummaries.first { $0.id == id } ?? archivedSummaries.first { $0.id == id })?.group
+    }
+
+    /// What the open conversation shows in its composer's place.
+    var composerMode: GDMComposerMode {
+        GDMLogic.composerMode(group ?? openId.flatMap(knownGroup), canSend: canSend, groupCanSend: groupCanSend)
+    }
+
+    /// The member limit for this group (public ones have their own).
+    func memberLimit(_ g: GDMGroup?) -> Int { g?.isPublicDM == true ? maxPublicMembers : maxMembers }
+
+    private var sections: GDMListSections {
+        get { GDMListSections(mine: summaries, publicGroups: publicSummaries, archived: archivedSummaries) }
+        set {
+            if newValue.mine != summaries { summaries = newValue.mine }
+            if newValue.publicGroups != publicSummaries { publicSummaries = newValue.publicGroups }
+            if newValue.archived != archivedSummaries { archivedSummaries = newValue.archived }
+        }
+    }
+
     func configure(_ f: Capabilities.GDMFeatures?, dmOn: Bool) {
         let on = dmOn && (f?.enabled ?? false)
         let wasOn = enabled
@@ -181,10 +222,13 @@ final class GroupDMStore {
         beagleAvailable = canSend && (f?.beagle ?? false)
         canEdit = canSend && (f?.edit ?? false)
         canReact = canSend && (f?.reactions ?? false)
+        publicAvailable = on && (f?.public ?? false)
+        archiveAvailable = on && (f?.archive ?? false)
+        if let n = f?.publicMaxMembers, n > 0 { maxPublicMembers = n }
         if let b = f?.photoMaxBytes, b > 0 { maxPhotoBytes = b }
         if let h = f?.ttlHours, h > 0 { GDMLogic.ttl = TimeInterval(h) * 3600 }
         if let p = f?.path, p.hasPrefix("/api/") { path = p }
-        if !on { summaries = []; unreadCount = 0; thread = []; group = nil }
+        if !on { summaries = []; publicSummaries = []; archivedSummaries = []; unreadCount = 0; thread = []; group = nil }
         if on, !wasOn {
             Task { await reload() }
             startPruning()
@@ -202,8 +246,12 @@ final class GroupDMStore {
     func reload() async {
         guard enabled, !demo else { return }
         if let r = try? await api.gdmList(path: path) {
-            summaries = GDMLogic.newestFirst(GDMLogic.prunedSummaries(r.groups), at: GDMLogic.activity)
-            unreadCount = r.groupUnreadCount ?? r.groups.reduce(0) { $0 + $1.unreadCount }
+            var next = GDMLogic.sections(r)
+            if !publicAvailable { next.publicGroups = [] }
+            if !archiveAvailable { next.archived = [] }
+            sections = next
+            // Archived groups are never counted (the server leaves them out of group_unread_count too).
+            unreadCount = r.groupUnreadCount ?? next.mine.reduce(0) { $0 + $1.unreadCount }
         }
     }
 
@@ -215,7 +263,9 @@ final class GroupDMStore {
         openId = id
         threadOnScreen = onScreen
         if changed {
-            group = summary(id)?.group
+            group = knownGroup(id)
+            // Until it is read: no composer for a public group I am not in, or an archived one.
+            groupCanSend = group.map(GDMLogic.belongsInMyList) ?? true
             thread = []
             error = nil
             Task { await load(id) }
@@ -236,7 +286,7 @@ final class GroupDMStore {
     private func load(_ id: Int) async {
         if demo {
             thread = GDMLogic.pruned(demoThreads[id] ?? [])
-            group = summary(id)?.group
+            group = knownGroup(id)
             markSeen()
             return
         }
@@ -246,9 +296,8 @@ final class GroupDMStore {
             let r = try await api.gdmThread(path: path, groupId: id)
             guard openId == id else { return }
             thread = GDMLogic.pruned(r.messages)
-            group = r.group
             groupCanSend = r.canSend ?? true
-            summaries = GDMLogic.summaries(summaries, updating: r.group)
+            applyGroup(r.group, reload: false)
             markSeen()
         } catch let APIError.http(status, _, message) {
             if status == 404 { drop(id) ; return }
@@ -258,6 +307,12 @@ final class GroupDMStore {
         }
     }
 
+    /// Pull to refresh / 「読み直す」: the open group again (a public group I am not in gets no stream events).
+    func refreshOpen() async {
+        guard let id = openId else { return }
+        await load(id)
+    }
+
     /// The open conversation is read to its end (the badge at once, the server a moment later).
     private func markSeen() {
         guard appVisible, threadOnScreen, let id = openId else { return }
@@ -265,7 +320,8 @@ final class GroupDMStore {
             unreadCount = max(0, unreadCount - summaries[i].unreadCount)
             summaries[i].unreadCount = 0
         }
-        guard !demo, let last = thread.last(where: { $0.id > 0 }) else { return }
+        // Not in it (a public group I only read): nothing to mark.
+        guard !demo, group?.joined != false, let last = thread.last(where: { $0.id > 0 }) else { return }
         readTask?.cancel()
         readTask = Task { [api, path] in
             try? await Task.sleep(for: .milliseconds(400))
@@ -278,7 +334,7 @@ final class GroupDMStore {
 
     /// Optimistic: the bubble shows at once (with the photos' previews); photos are made small and uploaded first.
     func send(_ text: String, photos: OutgoingPhotos? = nil) {
-        guard canSend, groupCanSend, let id = openId else { return }
+        guard canSend, groupCanSend, composerMode == .write, let id = openId else { return }
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let photos = canSendImages ? photos : nil
         guard !body.isEmpty || photos != nil, body.count <= maxBody else { return }
@@ -399,8 +455,10 @@ final class GroupDMStore {
     }
 
     /// POST /gdm. The new group (nil and `error` set when the server said no — its words as they are).
-    func create(name: String, memberIds: [String]) async -> GDMGroup? {
-        guard canSend, !memberIds.isEmpty, !busy else { return nil }
+    /// `isPublic`: 🌐 a public group — a name is needed, members are not.
+    func create(name: String, memberIds: [String], isPublic: Bool = false) async -> GDMGroup? {
+        let isPublic = isPublic && publicAvailable
+        guard canSend, GDMLogic.canCreate(isPublic: isPublic, name: name, memberCount: memberIds.count), !busy else { return nil }
         busy = true
         error = nil
         defer { busy = false }
@@ -412,12 +470,13 @@ final class GroupDMStore {
             let id = (summaries.map(\.group.id).max() ?? 0) + 1
             let g = GDMGroup(id: id, name: clean, title: clean ?? picked.map(\.name).prefix(3).joined(separator: "、"),
                              members: members, memberCount: members.count, isCreator: true, muted: false,
-                             createdAt: ISO8601DateFormatter().string(from: Date()))
+                             createdAt: ISO8601DateFormatter().string(from: Date()),
+                             isPublic: isPublic ? true : nil, isMember: isPublic ? true : nil, archived: isPublic ? false : nil)
             summaries = GDMLogic.summaries(summaries, updating: g)
             return g
         }
         do {
-            let g = try await api.gdmCreate(path: path, name: clean, memberIds: memberIds)
+            let g = try await api.gdmCreate(path: path, name: clean, memberIds: memberIds, isPublic: isPublic)
             summaries = GDMLogic.summaries(summaries, updating: g)
             return g
         } catch {
@@ -485,6 +544,42 @@ final class GroupDMStore {
         }
     }
 
+    /// 🌐 Join the open public group: into my list, then its conversation again (now writable, with notifications).
+    func join() async {
+        guard let id = openId, canSend, publicAvailable, !busy else { return }
+        busy = true
+        error = nil
+        if demo {
+            if var g = group { g.isMember = true; g.members.append(GDMMember(userId: "me", name: "ドリキン", avatar: nil, isCreator: false, isMe: true)); g.memberCount = g.members.count; applyGroup(g) }
+            groupCanSend = true
+            busy = false
+            return
+        }
+        do {
+            let g = try await api.gdmJoin(path: path, groupId: id)
+            applyGroup(g, reload: false)
+            busy = false
+            if openId == id { await load(id) }
+        } catch {
+            busy = false
+            self.error = Self.message(error, or: "参加できませんでした")
+        }
+    }
+
+    /// 🗄 Archive / un-archive the open public group (anyone in it), then the list and the conversation again.
+    func setArchived(_ archived: Bool) async {
+        guard let id = openId, archiveAvailable else { return }
+        let ok = await change(id, demoChange: { g in
+            g.archived = archived
+            g.archivedAt = archived ? ISO8601DateFormatter().string(from: Date()) : nil
+        }, fallback: archived ? "アーカイブできませんでした" : "アーカイブから戻せませんでした") { [api, path] in
+            try await api.gdmPatch(path: path, groupId: id, ["archived": archived])
+        }
+        guard ok, !demo else { return }
+        await reload()
+        if openId == id { await load(id) }
+    }
+
     /// Someone else out (only its maker sees the button; the server checks too).
     func remove(_ userId: String) async {
         guard let id = openId, !busy else { return }
@@ -509,6 +604,7 @@ final class GroupDMStore {
         busy = true
         error = nil
         defer { busy = false }
+        let wasPublic = group?.isPublicDM == true
         if !demo {
             guard let me = group?.me else { error = "抜けられませんでした（もう一度開いてください）"; return }
             do {
@@ -519,6 +615,8 @@ final class GroupDMStore {
             }
         }
         drop(id)
+        // 🌐 It is still there for anyone: back under 「パブリック DM」.
+        if wasPublic, !demo { Task { await reload() } }
     }
 
     @discardableResult
@@ -541,9 +639,18 @@ final class GroupDMStore {
         }
     }
 
-    private func applyGroup(_ g: GDMGroup) {
-        summaries = GDMLogic.summaries(summaries, updating: g)
-        if openId == g.id { group = g }
+    /// A group as the server now says: in the list part it belongs to (mine, 🌐 public, 🗄 archived).
+    /// Out of my list (archived, or I am not in it): its unread off the badge, no composer, and (`reload`) the list again.
+    private func applyGroup(_ g: GDMGroup, reload again: Bool = true) {
+        let old = summary(g.id)
+        let r = GDMLogic.placing(g, in: sections)
+        sections = r.sections
+        if r.leftMine, let old { unreadCount = max(0, unreadCount - old.unreadCount) }
+        if openId == g.id {
+            group = g
+            if !GDMLogic.belongsInMyList(g) { groupCanSend = false }
+        }
+        if r.leftMine, again, !demo { Task { await reload() } }
     }
 
     /// Gone for me: off the list (and its unread off the badge), and closed if open.
@@ -643,6 +750,8 @@ final class GroupDMStore {
         canSendImages = true
         canEdit = true
         canReact = true
+        publicAvailable = true
+        archiveAvailable = true
         func at(_ minutesAgo: Double) -> String { ISO8601DateFormatter().string(from: Date().addingTimeInterval(-minutesAgo * 60)) }
         func mem(_ id: String, creator: Bool = false, me: Bool = false) -> GDMMember {
             GDMMember(userId: id, name: me ? "ドリキン" : id, avatar: nil, isCreator: creator, isMe: me)
@@ -674,8 +783,20 @@ final class GroupDMStore {
             2: [m(5, 2, nil, "ドリキン さんが coban さんを追加しました", 900),
                 m(6, 2, "coban", "昨日はありがとうございました", 600)],
         ]
+        // 🌐 A public group I have not joined (new) and 🗄 an archived one.
+        let g3 = GDMGroup(id: 3, name: "雑談ひろば", title: "雑談ひろば", members: [mem("mazzo", creator: true), mem("coban")],
+                          memberCount: 2, isCreator: false, muted: false, createdAt: at(120),
+                          isPublic: true, isMember: false, archived: false)
+        let g4 = GDMGroup(id: 4, name: "オフ会の相談", title: "オフ会の相談", members: [mem("me", me: true), mem("takuto", creator: true)],
+                          memberCount: 2, isCreator: false, muted: false, createdAt: at(3000),
+                          isPublic: true, isMember: true, archived: true, archivedAt: at(60))
+        demoThreads[3] = [m(30, 3, nil, "mazzo さんがパブリック DM を作りました", 120), m(31, 3, "coban", "誰でもどうぞ〜", 50)]
+        demoThreads[4] = [m(40, 4, "takuto", "日程決まりました、ありがとうございました", 70),
+                          m(41, 4, nil, "takuto さんがアーカイブしました", 60)]
         summaries = [GDMSummary(group: g1, lastMessage: demoThreads[1]?.last, unreadCount: 1),
                      GDMSummary(group: g2, lastMessage: demoThreads[2]?.last, unreadCount: 0)]
+        publicSummaries = [GDMSummary(group: g3, lastMessage: demoThreads[3]?.last, unreadCount: 0, isNew: true)]
+        archivedSummaries = [GDMSummary(group: g4, lastMessage: demoThreads[4]?.last, unreadCount: 0)]
         unreadCount = 1
     }
 

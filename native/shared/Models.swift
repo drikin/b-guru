@@ -263,6 +263,12 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var edit: Bool?
         /// 😀 POST {path}/messages/:id/reactions { emoji }.
         var reactions: Bool?
+        /// 🌐 Public groups: POST {path} { name, public: true }, POST {path}/:gid/join, the list's public_groups
+        /// (docs/group-dm-spec.md「パブリック DM と アーカイブ」; older servers: absent → no public controls).
+        var `public`: Bool?
+        /// 🗄 PATCH {path}/:gid { archived } and the list's archived_groups.
+        var archive: Bool?
+        var publicMaxMembers: Int?
     }
     struct Features: Decodable, Sendable, Equatable {
         var dm: DMFeatures?

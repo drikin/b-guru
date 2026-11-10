@@ -11,10 +11,10 @@ struct GDMListRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            GDMGroupPhoto(path: s.group.photoPath, size: 36)
+            GDMGroupPhoto(path: s.group.photoPath, size: 36, isPublic: s.group.isPublicDM)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
-                    Text(s.group.displayTitle).font(.app(.callout, weight: s.unreadCount > 0 ? .bold : .medium)).lineLimit(1)
+                    Text(GDMLogic.kindMark(s.group) + s.group.displayTitle).font(.app(.callout, weight: s.unreadCount > 0 ? .bold : .medium)).lineLimit(1)
                     if s.group.muted == true {
                         Image(systemName: "bell.slash").font(.app(.caption2)).foregroundStyle(.tertiary)
                             .accessibilityLabel("通知を切っています")
@@ -32,6 +32,10 @@ struct GDMListRow: View {
                         Text("\(s.unreadCount)").font(.app(.caption2, weight: .bold)).foregroundStyle(.white)
                             .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(Capsule().fill(Color.red))
+                    } else if s.isNew == true {
+                        Text("新しい").font(.app(.caption2, weight: .bold)).foregroundStyle(Color.accentGreen)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Capsule().fill(Color.accentGreen.opacity(0.15)))
                     }
                 }
             }
@@ -39,7 +43,11 @@ struct GDMListRow: View {
         .padding(.horizontal, 12).padding(.vertical, 8)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("グループ \(s.group.displayTitle)\(s.unreadCount > 0 ? "、未読 \(s.unreadCount) 件" : "")")
+        .accessibilityLabel("\(accessibilityKind) \(s.group.displayTitle)\(s.unreadCount > 0 ? "、未読 \(s.unreadCount) 件" : s.isNew == true ? "、新しい" : "")")
+    }
+
+    private var accessibilityKind: String {
+        s.group.isArchived ? "アーカイブされたグループ" : s.group.isPublicDM ? "パブリック DM" : "グループ"
     }
 }
 
@@ -66,12 +74,13 @@ struct GDMThreadView: View {
         _photos = State(initialValue: PostDraft(maxImages: max(1, groups.maxImages)))
     }
 
-    private var title: String { (groups.group ?? groups.summary(groupId)?.group)?.displayTitle ?? "グループ" }
+    private var shownGroup: GDMGroup? { groups.group ?? groups.knownGroup(groupId) }
+    private var title: String { shownGroup?.displayTitle ?? "グループ" }
 
     var body: some View {
         VStack(spacing: 0) {
             DMHeader(title: title, onBack: dm.showList, onClose: dm.close) {
-                GDMGroupPhoto(path: (groups.group ?? groups.summary(groupId)?.group)?.photoPath, size: 26, plain: true)
+                GDMGroupPhoto(path: shownGroup?.photoPath, size: 26, plain: true, isPublic: shownGroup?.isPublicDM == true)
             } trailing: {
                 Button { dm.route = .groupMembers(groupId) } label: {
                     HStack(spacing: 3) {
@@ -102,7 +111,7 @@ struct GDMThreadView: View {
                                 GDMBubble(m: m, showsSender: showsSender,
                                           localImages: m.clientId.flatMap { groups.outgoingPhotos[$0]?.previews } ?? [],
                                           mentionsMe: !m.isAuthor && GDMLogic.mentions(m.body, name: myName),
-                                          canReact: groups.canReact, canEdit: groups.canEdit && m.canBeEdited,
+                                          canReact: groups.canReact && writable, canEdit: groups.canEdit && writable && m.canBeEdited,
                                           editing: editingId == m.id,
                                           onOpenImage: { i in viewing = ImageViewerItem(images: m.images, index: i) },
                                           onReact: { groups.toggleReaction(m.id, emoji: $0) }, onEdit: { beginEdit(m) },
@@ -115,6 +124,8 @@ struct GDMThreadView: View {
                     .padding(.horizontal, 12).padding(.vertical, 8)
                 }
                 .defaultScrollAnchor(.bottom)
+                // 🌐 A public group I only read gets no stream events: pull to read it again.
+                .pullToRefresh { await groups.refreshOpen() }
                 .onChange(of: groups.thread.count) { _, _ in
                     withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("gdm-bottom", anchor: .bottom) }
                 }
@@ -131,7 +142,10 @@ struct GDMThreadView: View {
     }
 
     /// 📷 Photos can go with the next message (not while editing: photos stay as they are).
-    private var canAttach: Bool { groups.canSendImages && groups.canSend && groups.groupCanSend && editingId == nil }
+    private var canAttach: Bool { groups.canSendImages && groups.composerMode == .write && editingId == nil }
+
+    /// Reactions and edits: only in a group I am in that is not archived (the server refuses the rest).
+    private var writable: Bool { groups.composerMode == .write }
 
     /// My name in this group (whose @mentions get the chat's yellow).
     private var myName: String? { groups.group?.me?.name }
@@ -140,7 +154,7 @@ struct GDMThreadView: View {
     private var editingMessage: GDMMessage? { editingId.flatMap { id in groups.thread.first { $0.id == id } } }
 
     /// ↩️ Others' stored messages, ビーグル's too (@ビーグル asks it again), not system lines.
-    private func canReply(_ m: GDMMessage) -> Bool { groups.canSend && groups.groupCanSend && !m.isAuthor && m.isStored && !m.isSystem }
+    private func canReply(_ m: GDMMessage) -> Bool { groups.composerMode == .write && !m.isAuthor && m.isStored && !m.isSystem }
 
     /// ↩️ The chat's reply: `@名前 ` at the start of the composer (keeps what was typed).
     private func replyTo(_ name: String) {
@@ -162,7 +176,21 @@ struct GDMThreadView: View {
     }
 
     @ViewBuilder private var composer: some View {
-        if groups.canSend && groups.groupCanSend {
+        switch groups.composerMode {
+        case .write: writeComposer
+        case .join: GDMJoinFooter(groups: groups)
+        case .archived:
+            Text("🗄 アーカイブされています（読むだけ）").font(.app(.caption)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity).padding(12)
+                .accessibilityIdentifier("gdm-archived-note")
+        case .cannotSend:
+            Text("このグループにはまだ送れません").font(.app(.caption)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity).padding(12)
+        }
+    }
+
+    private var writeComposer: some View {
+        Group {
             VStack(alignment: .leading, spacing: 4) {
                 if editingId != nil { DMEditingBar(onCancel: cancelEdit) }
                 if canAttach { DMDraftTray(draft: photos) }
@@ -195,9 +223,6 @@ struct GDMThreadView: View {
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 8)
-        } else {
-            Text("このグループにはまだ送れません").font(.app(.caption)).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity).padding(12)
         }
     }
 
@@ -232,6 +257,35 @@ struct GDMThreadView: View {
         guard let s = justSent, Date().timeIntervalSince(s.at) < 2, old.isEmpty else { return false }
         let v = new.trimmingCharacters(in: .whitespacesAndNewlines)
         return v.count >= 2 && s.text.contains(v)
+    }
+}
+
+/// 🌐 In the composer's place for a public group I have not joined: 「参加する」 (then it is read again, now writable)
+/// and 「読み直す」 (no stream events reach those not in it).
+private struct GDMJoinFooter: View {
+    let groups: GroupDMStore
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 12) {
+                Button { Task { await groups.join() } } label: {
+                    Text("参加する").font(.app(.callout, weight: .semibold))
+                        .padding(.horizontal, 16).padding(.vertical, 6)
+                        .foregroundStyle(.white)
+                        .background(Capsule().fill(Color.accentGreen))
+                }
+                .buttonStyle(.plain)
+                .disabled(groups.busy)
+                .accessibilityIdentifier("gdm-join")
+                Button("読み直す") { Task { await groups.refreshOpen() } }
+                    .font(.app(.caption))
+                    .buttonStyle(.borderless)
+                    .disabled(groups.loading)
+                if groups.busy || groups.loading { ProgressView().controlSize(.small) }
+            }
+            Text("参加すると書き込めて、新しい発言の通知が届きます").font(.app(.caption2)).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity).padding(10)
     }
 }
 
@@ -379,31 +433,52 @@ struct GDMNewGroupView: View {
     @Bindable var groups: GroupDMStore
     @State private var name = ""
     @State private var selected: Set<String> = []
+    /// 🌐 A public group (only when the server has them).
+    @State private var makePublic = false
+
+    private var isPublic: Bool { makePublic && groups.publicAvailable }
 
     var body: some View {
         VStack(spacing: 0) {
-            DMHeader(title: "新しいグループ", onBack: dm.showList, onClose: dm.close) {
-                Text("👥").font(.app(.body))
+            DMHeader(title: isPublic ? "新しいパブリック DM" : "新しいグループ", onBack: dm.showList, onClose: dm.close) {
+                Text(isPublic ? "🌐" : "👥").font(.app(.body))
             } trailing: {
                 Button("作る") { create() }
                     .font(.app(.callout, weight: .semibold))
                     .buttonStyle(.borderless)
-                    .disabled(selected.isEmpty || groups.busy)
-                    .accessibilityLabel("グループを作る")
+                    .disabled(!GDMLogic.canCreate(isPublic: isPublic, name: name, memberCount: selected.count) || groups.busy)
+                    .accessibilityLabel(isPublic ? "パブリック DM を作る" : "グループを作る")
             }
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
-                    GDMNameField(name: $name, max: groups.maxName, placeholder: "グループの名前（なくても OK）")
+                    if groups.publicAvailable {
+                        Picker("種類", selection: $makePublic) {
+                            Text("プライベート").tag(false)
+                            Text("🌐 パブリック").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
                         .padding(.horizontal, 12).padding(.top, 8)
-                    Text(selected.isEmpty ? "メンバーを選んでください（1 人以上）" : "\(selected.count) 人を選んでいます")
+                        .accessibilityLabel("グループの種類")
+                        if isPublic {
+                            Text("みんなの DM 一覧に出て、誰でも読めて、誰でも参加・退出できます。いらなくなったら参加者の誰でもアーカイブできます。あとからプライベートには変えられません。")
+                                .font(.app(.caption)).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, 12)
+                        }
+                    }
+                    GDMNameField(name: $name, max: groups.maxName, placeholder: isPublic ? "名前（必須）例: 雑談ひろば" : "グループの名前（なくても OK）")
+                        .padding(.horizontal, 12).padding(.top, 8)
+                    Text(isPublic ? (selected.isEmpty ? "メンバーは選ばなくても作れます（選んだ人は最初から参加します）" : "\(selected.count) 人が最初から参加します")
+                         : selected.isEmpty ? "メンバーを選んでください（1 人以上）" : "\(selected.count) 人を選んでいます")
                         .font(.app(.caption)).foregroundStyle(.secondary)
                         .padding(.horizontal, 12)
                     if let e = groups.error {
                         Text(e).font(.app(.caption)).foregroundStyle(.red).padding(.horizontal, 12)
                     }
                     GDMMemberPicker(groups: groups, excluding: Set([groups.myUserId()].compactMap { $0 }),
-                                    selected: $selected, room: max(0, groups.maxMembers - 1))
+                                    selected: $selected, room: max(0, (isPublic ? groups.maxPublicMembers : groups.maxMembers) - 1))
                 }
             }
             Text("グループ DM は 30 日で消えます").font(.app(.caption2)).foregroundStyle(.tertiary).padding(.vertical, 6)
@@ -413,8 +488,9 @@ struct GDMNewGroupView: View {
 
     private func create() {
         let ids = Array(selected)
+        let isPublic = isPublic
         Task {
-            if let g = await groups.create(name: name, memberIds: ids) { dm.route = .group(g.id) }
+            if let g = await groups.create(name: name, memberIds: ids, isPublic: isPublic) { dm.route = .group(g.id) }
         }
     }
 }
@@ -449,15 +525,20 @@ struct GDMMembersView: View {
     @State private var adding = false
     @State private var selected: Set<String> = []
     @State private var confirmLeave = false
+    @State private var confirmArchive = false
     @State private var removing: GDMMember?
 
-    private var group: GDMGroup? { groups.group ?? groups.summary(groupId)?.group }
+    private var group: GDMGroup? { groups.group ?? groups.knownGroup(groupId) }
+    /// Name, photo, 🐶, adding: in a group I am in that is not archived.
+    private var settable: Bool { groups.canSend && GDMLogic.canChangeSettings(group) }
+    /// 🔕 and leaving: any group I am in (archived ones too).
+    private var joined: Bool { groups.canSend && group?.joined != false }
 
     var body: some View {
         VStack(spacing: 0) {
             DMHeader(title: "メンバー（\(group?.memberCount ?? group?.members.count ?? 0) 人）",
                      onBack: { dm.route = .group(groupId) }, onClose: dm.close) {
-                GDMGroupPhoto(path: group?.photoPath, size: 26, plain: true)
+                GDMGroupPhoto(path: group?.photoPath, size: 26, plain: true, isPublic: group?.isPublicDM == true)
             }
             Divider()
             ScrollView {
@@ -465,15 +546,40 @@ struct GDMMembersView: View {
                     if let e = groups.error {
                         Text(e).font(.app(.caption)).foregroundStyle(.red)
                     }
+                    if group?.isPublicDM == true { publicNote }
                     photoSection
-                    if groups.canSend { nameSection }
-                    if groups.canSend { muteSection }
-                    if groups.canSend && groups.beagleAvailable { beagleSection }
+                    if settable { nameSection }
+                    if joined { muteSection }
+                    if settable && groups.beagleAvailable { beagleSection }
                     Divider()
                     membersSection
-                    if groups.canSend { addSection }
+                    if settable { addSection }
                     Divider()
-                    if groups.canSend {
+                    if groups.canSend, groups.publicAvailable, group?.joined == false, group?.isArchived != true {
+                        Button { Task { await groups.join() } } label: {
+                            Label("参加する", systemImage: "person.badge.plus").font(.app(.callout, weight: .semibold))
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(groups.busy)
+                        .accessibilityIdentifier("gdm-members-join")
+                    }
+                    if groups.canSend, groups.archiveAvailable, GDMLogic.canArchive(group) {
+                        Button {
+                            if group?.isArchived == true { Task { await groups.setArchived(false) } } else { confirmArchive = true }
+                        } label: {
+                            Text(group?.isArchived == true ? "🗄 アーカイブから戻す" : "🗄 アーカイブする").font(.app(.callout))
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(groups.busy)
+                        .accessibilityIdentifier("gdm-archive")
+                        .confirmationDialog("アーカイブしますか？", isPresented: $confirmArchive, titleVisibility: .visible) {
+                            Button("アーカイブする") { Task { await groups.setArchived(true) } }
+                            Button("やめる", role: .cancel) {}
+                        } message: {
+                            Text("みんなの DM 一覧から消えて「アーカイブ」の欄に移り、読むだけになります。参加者なら誰でもアーカイブから戻せます。")
+                        }
+                    }
+                    if joined {
                         Button(role: .destructive) { confirmLeave = true } label: {
                             Label("グループを抜ける", systemImage: "rectangle.portrait.and.arrow.right").font(.app(.callout))
                         }
@@ -484,7 +590,7 @@ struct GDMMembersView: View {
                             Button("抜ける", role: .destructive) { Task { await groups.leave() } }
                             Button("やめる", role: .cancel) {}
                         } message: {
-                            Text("抜けると、このグループの発言は見られなくなります。")
+                            Text(GDMLogic.leaveMessage(isPublic: group?.isPublicDM == true))
                         }
                     }
                 }
@@ -506,11 +612,18 @@ struct GDMMembersView: View {
         }
     }
 
+    /// 🌐 What a public group is (and that an archived one is read only).
+    private var publicNote: some View {
+        Text("🌐 パブリック DM: みんなの DM 一覧に出て、誰でも読めて、誰でも参加・退出できます。" + (group?.isArchived == true ? " いまはアーカイブされていて、読むだけです。" : ""))
+            .font(.app(.caption)).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
     /// The group's photo: large, and (features.gdm.photo) 「写真を設定／写真を変える」 and 「外す」 — anyone in it may.
     private var photoSection: some View {
         HStack(spacing: 12) {
-            GDMGroupPhoto(path: group?.photoPath, size: 64)
-            if groups.photoEditable {
+            GDMGroupPhoto(path: group?.photoPath, size: 64, isPublic: group?.isPublicDM == true)
+            if groups.photoEditable && settable {
                 VStack(alignment: .leading, spacing: 6) {
                     GDMPhotoPickButton(title: GDMLogic.photoButtonTitle(hasPhoto: group?.photoPath != nil),
                                        disabled: groups.busy) { data in
@@ -579,7 +692,7 @@ struct GDMMembersView: View {
                             .background(Capsule().fill(Color.primary.opacity(0.06)))
                     }
                     Spacer()
-                    if group?.isCreator == true, m.isMe != true, groups.canSend {
+                    if GDMLogic.canRemoveOthers(group), m.isMe != true, groups.canSend {
                         Button("外す") { removing = m }
                             .font(.app(.caption))
                             .buttonStyle(.borderless)
@@ -612,9 +725,9 @@ struct GDMMembersView: View {
                     .disabled(selected.isEmpty || groups.busy)
                 }
                 GDMMemberPicker(groups: groups, excluding: Set((group?.members ?? []).map(\.userId) + [groups.myUserId()].compactMap { $0 }),
-                                selected: $selected, room: max(0, groups.maxMembers - count))
+                                selected: $selected, room: max(0, groups.memberLimit(group) - count))
             }
-        } else if count < groups.maxMembers {
+        } else if count < groups.memberLimit(group) {
             Button { adding = true } label: {
                 Label("メンバーを追加", systemImage: "plus").font(.app(.callout))
             }
@@ -631,6 +744,8 @@ struct GDMGroupPhoto: View {
     let size: CGFloat
     /// No circle behind 👥 (the headers, as before).
     var plain = false
+    /// 🌐 instead of 👥 (a public group).
+    var isPublic = false
     @State private var image: PlatformImage?
     @State private var loadedPath: String?
 
@@ -645,10 +760,10 @@ struct GDMGroupPhoto: View {
                     .frame(width: size, height: size)
                     .clipShape(Circle())
             } else if plain {
-                Text("👥").font(.app(.body))
+                Text(isPublic ? "🌐" : "👥").font(.app(.body))
             } else {
                 Circle().fill(Color.primary.opacity(0.06))
-                Text("👥").font(.app(size: size * 0.55))
+                Text(isPublic ? "🌐" : "👥").font(.app(size: size * 0.55))
             }
         }
         .frame(width: showing || !plain ? size : nil, height: showing || !plain ? size : nil)
