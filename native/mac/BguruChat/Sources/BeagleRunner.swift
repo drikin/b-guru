@@ -215,7 +215,7 @@ final class BeagleRunner {
         let t = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.sample() }
         }
-        t.tolerance = 0.2
+        t.tolerance = 1 // 2 秒ごとの測定は 1 秒ずれてよい（ほかの起床とまとめられる）
         RunLoop.main.add(t, forMode: .common)
         sampleTimer = t
         render()
@@ -381,11 +381,14 @@ final class BeagleRunner {
     }
 
     /// host_processor_info のコアごとの ticks（user, system, idle, nice の並び）。
+    /// mach_host_self() は呼ぶたびにポートの参照が 1 つ増える（返さないと溜まる）ので、1 回だけ取る。
+    nonisolated private static let host = mach_host_self()
+
     nonisolated static func cpuTicks() -> [UInt32]? {
         var count: natural_t = 0
         var info: processor_info_array_t?
         var infoCount: mach_msg_type_number_t = 0
-        guard host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO, &count, &info, &infoCount) == KERN_SUCCESS,
+        guard host_processor_info(host, PROCESSOR_CPU_LOAD_INFO, &count, &info, &infoCount) == KERN_SUCCESS,
               let info else { return nil }
         defer {
             vm_deallocate(mach_task_self_, vm_address_t(bitPattern: info), vm_size_t(Int(infoCount) * MemoryLayout<integer_t>.stride))

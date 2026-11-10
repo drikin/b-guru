@@ -62,8 +62,9 @@ final class RightShiftDoubleTap {
     private var detector = DoubleTapDetector()
     private var localMonitor: Any?
     private var globalMonitor: Any?
-    /// 許可がまだのあいだ、許可されたらグローバル監視を付け直すための見回り。
-    private var permissionTimer: Timer?
+    /// 許可がまだのあいだ、許可されたらグローバル監視を付け直すための見張り。
+    /// 許可はシステム設定で出すので、前のアプリが替わったときにだけ確かめる（定期的には起きない）。
+    private var permissionWatch: NSObjectProtocol?
     /// アプリの中で成立したとき（許可がまだなら、ほかのアプリでも使うための案内を 1 回だけ出す）。
     var onLocalTrigger: (() -> Void)?
 
@@ -92,10 +93,12 @@ final class RightShiftDoubleTap {
         }
         installGlobal()
         if !Self.canMonitorGlobally {
-            permissionTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            permissionWatch = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+            ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self, Self.canMonitorGlobally else { return }
-                    self.permissionTimer?.invalidate(); self.permissionTimer = nil
+                    self.endPermissionWatch()
                     self.installGlobal() // 許可前に付けた監視には届かないことがあるので付け直す
                 }
             }
@@ -113,8 +116,13 @@ final class RightShiftDoubleTap {
         if let localMonitor { NSEvent.removeMonitor(localMonitor) }
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor) }
         localMonitor = nil; globalMonitor = nil
-        permissionTimer?.invalidate(); permissionTimer = nil
+        endPermissionWatch()
         detector = DoubleTapDetector()
+    }
+
+    private func endPermissionWatch() {
+        if let permissionWatch { NSWorkspace.shared.notificationCenter.removeObserver(permissionWatch) }
+        permissionWatch = nil
     }
 
     private func handle(_ e: NSEvent, local: Bool) {

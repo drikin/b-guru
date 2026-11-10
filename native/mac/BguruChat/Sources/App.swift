@@ -1035,20 +1035,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             AssistantTestWindows.shared.show(count: n)
         }
         #endif
-        // 静かな時間が明けたら、保留した知らせの最新 3 件を出す
-        assistantHoldTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.flushHeldAssistant()
-                // 端末内 AI が後から使えるようになったら（準備中 → 使える）、再起動を待たずにオンにする
-                if self.settings.assistant, !Assistant.shared.enabled { self.applyAssistant() }
-            }
-        }
-        assistantHoldTimer?.tolerance = 10 // 静かな時間の明けが数秒ずれてよい（起きる回数を寄せられる）
         applyAssistant()
     }
 
+    /// 30 秒ごとの見回りは、要るあいだだけ動かす（アシスタントを使っていない Mac では起きない）。
+    /// 要るとき = 保留した知らせがある／設定はオンなのにまだ動いていない（端末内 AI の準備待ちなど）。
+    private func syncAssistantHoldTimer() {
+        let needed = !assistantHeld.isEmpty || (settings.assistant && !Assistant.shared.enabled)
+        if !needed {
+            assistantHoldTimer?.invalidate(); assistantHoldTimer = nil
+            return
+        }
+        guard assistantHoldTimer == nil else { return }
+        assistantHoldTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // 静かな時間が明けたら、保留した知らせの最新 3 件を出す
+                self.flushHeldAssistant()
+                // 端末内 AI が後から使えるようになったら（準備中 → 使える）、再起動を待たずにオンにする
+                if self.settings.assistant, !Assistant.shared.enabled { self.applyAssistant() }
+                self.syncAssistantHoldTimer()
+            }
+        }
+        assistantHoldTimer?.tolerance = 10 // 静かな時間の明けが数秒ずれてよい（起きる回数を寄せられる）
+    }
+
     private func applyAssistant() {
+        defer { syncAssistantHoldTimer() }
         let a = Assistant.shared
         a.paused = settings.assistantPaused
         a.autoFront = settings.assistantAutoFront
@@ -1080,6 +1093,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             assistantHeld.append(n)
             if assistantHeld.count > 3 { assistantHeld.removeFirst(assistantHeld.count - 3) }
             StatusBarDiag.note("アシスタント: 静かな時間なので保留（\(assistantHeld.count) 件）")
+            syncAssistantHoldTimer()
             return
         }
         let text = Assistant.shared.tickerText(n, namesOnly: settings.menuBarTickerNamesOnly)

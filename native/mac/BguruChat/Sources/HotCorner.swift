@@ -56,7 +56,20 @@ final class HotCorner {
         dwellTimer = nil
     }
 
-    private var screens: [CGRect] { NSScreen.screens.map(\.frame) }
+    /// 画面の枠。マウスが動くたびに作り直さず、画面の構成が変わったときだけ取り直す。
+    private var cachedScreens: [CGRect]?
+    private var screensWatch: NSObjectProtocol?
+    private var screens: [CGRect] {
+        if let cachedScreens { return cachedScreens }
+        let frames = NSScreen.screens.map(\.frame)
+        cachedScreens = frames
+        if screensWatch == nil {
+            screensWatch = NotificationCenter.default.addObserver(
+                forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+            ) { [weak self] _ in MainActor.assumeIsolated { self?.cachedScreens = nil } }
+        }
+        return frames
+    }
 
     /// 隅の近く（HotCornerLogic.leave 以内）に来たら、移動の知らせだけに頼らず実際の位置を 0.03 秒ごとに確かめる
     /// （隅へ押し付けた最後の移動の知らせが届かないことがある。実機で確認）。近くを離れたら止める。
@@ -102,7 +115,8 @@ final class HotCorner {
         guard Date().timeIntervalSince(since) >= HotCornerLogic.dwell else { return }
         stopWatching()
         armed = false
-        if Self.frontmostIsFullScreen(on: NSScreen.screens[i]) {
+        let all = NSScreen.screens
+        if all.indices.contains(i), Self.frontmostIsFullScreen(on: all[i]) {
             StatusBarDiag.note("画面の隅: フルスクリーンなので開かない")
             return
         }
