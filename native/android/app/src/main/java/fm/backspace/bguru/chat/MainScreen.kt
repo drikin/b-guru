@@ -220,7 +220,7 @@ private fun Pages(
     // frame but added one 150–220 ms frame right after launch (measured 2026-10-20).
     HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
         when (page) {
-            clubsPage -> ClubListPage(timeline, onPicked = { scope.launch { pager.animateScrollToPage(timelinePage) } })
+            clubsPage -> ClubListPage(timeline, visible = pager.currentPage == clubsPage, onPicked = { scope.launch { pager.animateScrollToPage(timelinePage) } })
             timelinePage -> TimelineScreen(timeline, store.capabilities, tabSwitch = switch, onReconnect = onSignOut, visible = pager.currentPage == timelinePage)
             chatPage -> PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch, visible = pager.currentPage == chatPage, onScreen = chatOnScreen) }
             // B-guru post links in DMs open the thread in the app too (like the chat).

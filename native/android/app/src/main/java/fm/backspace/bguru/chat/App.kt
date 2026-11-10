@@ -75,7 +75,7 @@ class Session(private val app: Context) {
         val base = jukeboxBase ?: "http://10.0.2.2:8098"
         jukebox?.stop()
         store = ChatStore(ApiClient("demo"), app).also { it.loadDemo(scale = images != null, images = images, withRoom = withRoom, withShogi = withShogi, shogiScenario = shogiScenario, withMinigame = withMinigame) }
-        timeline = TimelineStore(ApiClient("demo")).also { it.loadDemo(images, jukeboxAudio = JukeboxStore.demoAudioUrl(base), media = base) }
+        timeline = TimelineStore(ApiClient("demo")).also { it.loadDemo(images, jukeboxAudio = JukeboxStore.demoAudioUrl(base), media = base); keepClubSort(it, "club_list_demo") }
         jukebox = JukeboxStore(app, ApiClient("demo"), demoBase = base)
         // Debug: print this emulator's FCM token so a test push can be sent to it.
         if (Push.configured) com.google.firebase.messaging.FirebaseMessaging.getInstance().token
@@ -107,10 +107,18 @@ class Session(private val app: Context) {
         }
     }
 
+    /** 部活一覧の「自分の順番」・「未読順」: per device (the order itself is on the server). */
+    private fun keepClubSort(t: TimelineStore, prefsName: String) {
+        val prefs = app.getSharedPreferences(prefsName, android.content.Context.MODE_PRIVATE)
+        t.restoreClubSort(if (prefs.getString("sort", null) == "unread") ClubSort.UNREAD else ClubSort.CUSTOM)
+        t.onClubSortChanged = { prefs.edit().putString("sort", if (it == ClubSort.UNREAD) "unread" else "custom").apply() }
+    }
+
     private fun start(token: String) {
         val api = ApiClient(token)
         val s = ChatStore(api, app)
         val t = TimelineStore(api)
+        keepClubSort(t, "club_list")
         timeline = t
         s.onPostCreated = { t.postCreated() }
         jukebox = JukeboxStore(app, api)

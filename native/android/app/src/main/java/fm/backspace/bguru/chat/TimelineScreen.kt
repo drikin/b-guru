@@ -255,7 +255,7 @@ private fun TimelineList(
 
     PullToRefreshBox(
         isRefreshing = refreshing,
-        onRefresh = { scope.launch { refreshing = true; timeline.refresh(); refreshing = false } },
+        onRefresh = { scope.launch { refreshing = true; timeline.refresh(); timeline.refreshClubs(); refreshing = false } },
         modifier = Modifier.fillMaxSize(),
     ) {
         LazyColumn(

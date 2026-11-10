@@ -22,7 +22,7 @@ class TimelineStore(
     dispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Main.immediate,
 ) {
     /** What the server allows (set by the screen): e.g. the idempotent bookmark. */
-    var capabilities: Capabilities? = null
+    var capabilities by mutableStateOf<Capabilities?>(null)
     var posts by mutableStateOf<List<Post>>(emptyList()); private set
     var hasLoaded by mutableStateOf(false); private set
     var loadingMore by mutableStateOf(false); private set
@@ -55,6 +55,26 @@ class TimelineStore(
     /** The clubs the club list offers: the server's order, without the hidden ones. */
     val visibleClubs: List<Pair<String, String>> get() = ClubFilterRules.visible(clubs, hiddenClubKeys)
     val clubFilterName: String? get() = clubFilter?.let { clubs[it] ?: it }
+    /** 部活一覧の自分の順番（サーバに保存、全端末で同じ）。[] = まだ並べていない（オーナー 2026-11-09）。 */
+    var clubOrder by mutableStateOf<List<String>>(emptyList()); private set
+    /** 部活ごとの未読数（他人の未読の親投稿。返信は数えない）。0 の部活は入っていない。 */
+    var clubUnread by mutableStateOf<Map<String, Int>>(emptyMap()); private set
+    /** 「自分の順番」・「未読順」。端末ごと（App が SharedPreferences に保存）、既定は自分の順番。 */
+    var clubSort by mutableStateOf(ClubSort.CUSTOM); private set
+    /** Saves [clubSort] (App: SharedPreferences). */
+    var onClubSortChanged: (ClubSort) -> Unit = {}
+    var clubOrderError by mutableStateOf<String?>(null); private set
+    var clubOrderSaving by mutableStateOf(false); private set
+    /** The server counts unread per club (older servers: no counts, no 「未読順」). */
+    val canClubUnread: Boolean get() = demo || capabilities?.clubUnreadPath != null
+    /** The server keeps this member's order (older servers: no 「並べ替え」). */
+    val canClubOrder: Boolean get() = demo || capabilities?.clubOrderPath != null
+    /** The clubs as the list shows them: 自分の順番 or 未読順, without the hidden ones. */
+    val sortedClubs: List<Pair<String, String>> get() =
+        ClubFilterRules.sorted(visibleClubs, clubOrder, clubUnread, if (canClubUnread) clubSort else ClubSort.CUSTOM)
+    /** 「すべての部活」: the unread of the clubs the list shows. */
+    val clubUnreadTotal: Int get() = ClubFilterRules.total(visibleClubs, clubUnread)
+    private var demoClubOrder = listOf("apple")
     /** The timeline's GET (tests: a fake that answers when told). */
     private var fetchPosts: suspend (cursor: String?, club: String?) -> PostListResponse = { c, k -> api.posts(c, club = k) }
     private var clock: () -> Long = { android.os.SystemClock.elapsedRealtime() }
@@ -110,6 +130,7 @@ class TimelineStore(
         nextCursor = null
         loadingMore = false
         failed = false
+        refreshClubUnreadAsync()
         if (demo) {
             if (demoAllPosts == null) demoAllPosts = posts
             posts = ClubFilterRules.demoPosts(demoAllPosts ?: emptyList(), key)
@@ -121,14 +142,83 @@ class TimelineStore(
         refreshAsync()
     }
 
-    /** The hidden clubs (for the club list); kept as they were when they cannot be read. */
+    private var clubOrderLoaded = false
+
+    /** The hidden clubs (for the club list) and, the first time, the order; kept as they were when they cannot be read. */
     suspend fun loadHiddenClubKeys() {
         if (clubs.isEmpty()) loadClubs()
+        if (!clubOrderLoaded) loadClubOrder()
         if (demo) { applyHiddenClubKeys(demoHidden); return }
         val path = capabilities?.clubVisibilityPath ?: return
         try { applyHiddenClubKeys(ops.hiddenClubs(path)) } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
         }
+    }
+
+    fun setClubSortMode(mode: ClubSort) {
+        if (mode == clubSort) return
+        clubSort = mode
+        onClubSortChanged(mode)
+    }
+
+    /** The saved mode, read at start (no save back). */
+    fun restoreClubSort(mode: ClubSort) { clubSort = mode }
+
+    /** The unread per club (the club page / sheet shown, a pull, a club picked); kept as they were when they cannot be read. */
+    suspend fun loadClubUnread() {
+        if (demo) { clubUnread = DEMO_CLUB_UNREAD; return }
+        val path = capabilities?.clubUnreadPath ?: return
+        try {
+            val r = ops.clubUnread(path).filter { (k, n) -> k != "__unset__" && n > 0 }
+            if (r != clubUnread) clubUnread = r
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+        }
+    }
+
+    fun refreshClubUnreadAsync() { scope.launch { loadClubUnread() } }
+
+    /** This member's order (at start with the hidden clubs, and on a pull). */
+    suspend fun loadClubOrder() {
+        if (demo) { clubOrder = demoClubOrder; clubOrderLoaded = true; return }
+        val path = capabilities?.clubOrderPath ?: return
+        if (clubOrderSaving) return // the saved one comes back from the PUT
+        try {
+            val r = ops.clubOrder(path)
+            clubOrderLoaded = true
+            if (!clubOrderSaving && r != clubOrder) clubOrder = r
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+        }
+    }
+
+    /** 「完了」: the clubs as arranged (the list's keys). Shown at once; put back with the error when the server says no.
+     *  Clubs saved before but not in the list now (hidden) keep a place after them. */
+    fun saveClubOrder(arranged: List<String>) {
+        val before = clubOrder
+        val next = ClubFilterRules.orderToSave(arranged, before)
+        clubOrderError = null
+        if (next == before) return
+        clubOrder = next
+        if (demo) { demoClubOrder = next; return }
+        val path = capabilities?.clubOrderPath ?: return
+        clubOrderSaving = true
+        scope.launch {
+            try {
+                clubOrder = ops.setClubOrder(path, next)
+            } catch (e: Exception) {
+                clubOrder = before
+                clubOrderError = PostActions.errorText(e, "順番を保存できませんでした")
+            } finally {
+                clubOrderSaving = false
+            }
+        }
+    }
+
+    /** A pull on the timeline: the counts and the order too. */
+    suspend fun refreshClubs() {
+        loadClubUnread()
+        loadClubOrder()
     }
 
     /** A club hidden after it was picked: back to all. */
@@ -621,6 +711,9 @@ class TimelineStore(
     internal fun testFetch(fetch: suspend (cursor: String?, club: String?) -> PostListResponse) {
         fetchPosts = fetch; clock = { 0L }; warm = {}; applyMembers(listOf(MentionMember("t", "t")))
     }
+
+    /** Demo only: some counts so the badges show (雑談 above 99). */
+    private val DEMO_CLUB_UNREAD = mapOf("pet" to 3, "apple" to 12, "chat" to 120)
 
     /** Debug only: sample timeline for offline UI checks. */
     /** Demo only (`--ez demo_overlay true`): a post with a YouTube card on top, for 「📺 みんなで見る」 from the timeline. */

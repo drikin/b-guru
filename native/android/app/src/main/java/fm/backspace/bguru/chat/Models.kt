@@ -224,6 +224,10 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         /** NG ワード（GET で一覧、PUT { words } で置き換え）。無い（古いサーバ）なら出さない。 */
         val mutedWords: String? = null,
         val mentions: String? = null,
+        /** 部活一覧の自分の順番（GET で順番、PUT { order } で置き換え。サーバに保存して全端末で同じ）。無い（古いサーバ）なら並べ替えを出さない（2026-11-09）。 */
+        val clubOrder: String? = null,
+        /** 部活ごとの未読数（GET。ほかの人のまだ読んでいない投稿。返信は数えない）。無い（古いサーバ）なら数と「未読順」を出さない（2026-11-09）。 */
+        val clubUnread: String? = null,
     )
     @Serializable data class ChatFeatures(
         val read: Boolean? = null,
@@ -287,6 +291,8 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val canChangeClub get() = p?.clubChange ?: false
     val clubVisibilityPath get() = p?.clubVisibility?.takeIf { it.startsWith("/api/") }
     val mutedWordsPath get() = p?.mutedWords?.takeIf { it.startsWith("/api/") }
+    val clubOrderPath get() = p?.clubOrder?.takeIf { it.startsWith("/api/") }
+    val clubUnreadPath get() = p?.clubUnread?.takeIf { it.startsWith("/api/") }
     val mentionsPath get() = p?.mentions?.takeIf { it.startsWith("/api/") }
     /** Voice room is on for this member (server configured + in the rollout). */
     val voiceEnabled get() = features?.voice?.enabled ?: false
@@ -564,6 +570,8 @@ data class PostPoll(
 @Serializable data class ClubInfo(val key: String, val name: String)
 @Serializable data class HiddenClubsResponse(val hidden: List<String> = emptyList())
 @Serializable data class ClubHiddenResponse(val club: String = "", val hidden: Boolean = false)
+@Serializable data class ClubOrderResponse(val order: List<String> = emptyList())
+@Serializable data class ClubUnreadResponse(val unread: Map<String, Int> = emptyMap())
 @Serializable data class MutedWordsResponse(val words: List<String> = emptyList(), val max: Int = 50, val maxLength: Int = 40)
 @Serializable data class ClubsResponse(val clubs: List<ClubInfo> = emptyList())
 /** POST /api/agent/reactions answers without `mine`; the app fills it in. */

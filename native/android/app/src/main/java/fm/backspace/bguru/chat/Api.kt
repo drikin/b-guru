@@ -111,6 +111,11 @@ interface PostOpsApi {
     /** NG ワード（capabilities `muted_words`）。置き換えるとサーバがそろえた形が返る。 */
     suspend fun mutedWords(path: String): MutedWordsResponse
     suspend fun setMutedWords(path: String, words: List<String>): List<String>
+    /** 部活一覧の自分の順番（capabilities `club_order`）。[] = まだ並べていない。置き換えるとサーバの順番が返る。 */
+    suspend fun clubOrder(path: String): List<String> = emptyList()
+    suspend fun setClubOrder(path: String, order: List<String>): List<String> = order
+    /** 部活ごとの未読数（capabilities `club_unread`）。0 の部活は入っていない。 */
+    suspend fun clubUnread(path: String): Map<String, Int> = emptyMap()
     suspend fun vote(id: Long, optionId: Long): PostPoll?
     suspend fun togglePostReaction(id: Long, emoji: String): PostReactionToggle
 }
@@ -470,6 +475,13 @@ class ApiClient(val token: String) : PostOpsApi {
 
     override suspend fun setMutedWords(path: String, words: List<String>): List<String> =
         decode<MutedWordsResponse>(send(request("PUT", path, buildJsonObject { put("words", JsonArray(words.map { JsonPrimitive(it) })) }))).words
+
+    override suspend fun clubOrder(path: String): List<String> = get<ClubOrderResponse>(path).order
+
+    override suspend fun setClubOrder(path: String, order: List<String>): List<String> =
+        decode<ClubOrderResponse>(send(request("PUT", path, buildJsonObject { put("order", JsonArray(order.map { JsonPrimitive(it) })) }))).order
+
+    override suspend fun clubUnread(path: String): Map<String, Int> = get<ClubUnreadResponse>(path).unread
 
     suspend fun customEmojis(path: String = "/api/agent/emojis"): List<CustomEmoji> = get<EmojisResponse>(path).emojis
 

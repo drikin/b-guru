@@ -29,6 +29,15 @@ class ClubFilterTest {
         override suspend fun setMutedWords(path: String, words: List<String>) = words
         override suspend fun vote(id: Long, optionId: Long): PostPoll? = null
         override suspend fun togglePostReaction(id: Long, emoji: String) = PostReactionToggle(true, emptyList())
+        var order = listOf<String>()
+        var failSave = false
+        val saved = mutableListOf<List<String>>()
+        override suspend fun clubOrder(path: String) = order
+        override suspend fun setClubOrder(path: String, order: List<String>): List<String> {
+            if (failSave) throw ApiError.Http(500, null, null)
+            saved += order; this.order = order; return order
+        }
+        override suspend fun clubUnread(path: String) = mapOf("pet" to 2, "car" to 7, "__unset__" to 4, "apple" to 0)
     }
 
     private fun store(hidden: Set<String> = emptySet()): TimelineStore {
@@ -120,5 +129,100 @@ class ClubFilterTest {
         waitFor { s.hasLoaded }
         assertEquals(all, s.posts)
         assertFalse(s.visibleClubs.any { it.first == "car" })
+    }
+
+    // 未読数と並べ替え（オーナー 2026-11-09「未読数も出してほしい。未読の数でソーティング、自分でカスタマイズした順番か未読順かで選べるように」）
+
+    private val listed = listOf("pet" to "ペット部", "apple" to "リンゴ部", "car" to "クルマ部")
+    private fun keys(l: List<Pair<String, String>>) = l.map { it.first }
+
+    @Test fun customOrderPutsTheSavedKeysFirstThenTheCatalog() {
+        assertEquals(listOf("pet", "apple", "car"), keys(ClubFilterRules.customOrder(listed, emptyList())))
+        assertEquals(listOf("car", "pet", "apple"), keys(ClubFilterRules.customOrder(listed, listOf("car", "pet", "apple"))))
+        // Only some saved, unknown / hidden ones skipped, duplicates once.
+        assertEquals(listOf("car", "pet", "apple"), keys(ClubFilterRules.customOrder(listed, listOf("gone", "car", "car"))))
+        assertEquals(listOf("apple", "pet", "car"), keys(ClubFilterRules.customOrder(listed, listOf("apple"))))
+        // The names come along.
+        assertEquals("クルマ部", ClubFilterRules.customOrder(listed, listOf("car")).first().second)
+    }
+
+    @Test fun unreadOrderIsMostUnreadFirstWithTiesInTheCustomOrder() {
+        val unread = mapOf("apple" to 3, "car" to 3, "pet" to 1)
+        assertEquals(listOf("apple", "car", "pet"), keys(ClubFilterRules.sorted(listed, emptyList(), unread, ClubSort.UNREAD)))
+        assertEquals(listOf("car", "apple", "pet"), keys(ClubFilterRules.sorted(listed, listOf("car"), unread, ClubSort.UNREAD)))
+        // None unread: the custom order.
+        assertEquals(listOf("car", "pet", "apple"), keys(ClubFilterRules.sorted(listed, listOf("car"), emptyMap(), ClubSort.UNREAD)))
+        // 自分の順番 ignores the counts.
+        assertEquals(listOf("pet", "apple", "car"), keys(ClubFilterRules.sorted(listed, emptyList(), unread, ClubSort.CUSTOM)))
+    }
+
+    @Test fun theTotalCountsOnlyTheListedClubsAndTheBadgeStopsAt99() {
+        assertEquals(10, ClubFilterRules.total(listed.filter { it.first != "apple" }, mapOf("pet" to 3, "apple" to 50, "car" to 7, "__unset__" to 9)))
+        assertEquals(0, ClubFilterRules.total(listed, emptyMap()))
+        assertNull(ClubFilterRules.badge(0))
+        assertEquals("1", ClubFilterRules.badge(1))
+        assertEquals("99", ClubFilterRules.badge(99))
+        assertEquals("99+", ClubFilterRules.badge(100))
+    }
+
+    @Test fun movingUpAndDownStopsAtTheEnds() {
+        val k = listOf("a", "b", "c")
+        assertEquals(listOf("b", "a", "c"), ClubFilterRules.move(k, 1, -1))
+        assertEquals(listOf("a", "c", "b"), ClubFilterRules.move(k, 1, 1))
+        assertEquals(k, ClubFilterRules.move(k, 0, -1))
+        assertEquals(k, ClubFilterRules.move(k, 2, 1))
+        assertEquals(k, ClubFilterRules.move(k, 5, -1))
+    }
+
+    @Test fun theSavedOrderKeepsTheHiddenClubsAfterTheArrangedOnes() {
+        assertEquals(listOf("car", "pet", "apple"), ClubFilterRules.orderToSave(listOf("car", "pet"), listOf("apple", "pet")))
+        assertEquals(listOf("car", "pet"), ClubFilterRules.orderToSave(listOf("car", "pet", "car"), emptyList()))
+    }
+
+    private fun storeWithOrder(ops: Ops): TimelineStore {
+        val s = TimelineStore(ApiClient("test"), ops, Dispatchers.Unconfined)
+        s.testClubs(clubs)
+        s.capabilities = ApiJson.decodeFromString("""{"features":{"posts":{"club_visibility":"/api/agent/clubs/visibility","club_order":"/api/agent/clubs/order","club_unread":"/api/agent/clubs/unread"}}}""")
+        return s
+    }
+
+    @Test fun anOlderServerHasNoCountsAndNoArranging() {
+        val s = store()
+        assertFalse(s.canClubUnread)
+        assertFalse(s.canClubOrder)
+        kotlinx.coroutines.runBlocking { s.loadClubUnread() }
+        assertTrue(s.clubUnread.isEmpty())
+        s.setClubSortMode(ClubSort.UNREAD)
+        assertEquals(listOf("pet", "apple", "car"), keys(s.sortedClubs)) // no counts: never by unread
+    }
+
+    @Test fun theStoreReadsTheCountsAndTheOrderAndSortsByUnread() {
+        val ops = Ops(hidden = setOf("apple")).apply { order = listOf("car") }
+        val s = storeWithOrder(ops)
+        var savedMode: ClubSort? = null
+        s.onClubSortChanged = { savedMode = it }
+        kotlinx.coroutines.runBlocking { s.loadHiddenClubKeys(); s.loadClubUnread() }
+        assertEquals(mapOf("pet" to 2, "car" to 7), s.clubUnread) // 未設定 and 0 dropped
+        assertEquals(listOf("car"), s.clubOrder)
+        assertEquals(listOf("car", "pet"), keys(s.sortedClubs)) // apple hidden
+        assertEquals(9, s.clubUnreadTotal)
+        s.setClubSortMode(ClubSort.UNREAD)
+        assertEquals(ClubSort.UNREAD, savedMode)
+        assertEquals(listOf("car", "pet"), keys(s.sortedClubs))
+    }
+
+    @Test fun savingTheOrderShowsItAtOnceAndPutsItBackWhenTheServerSaysNo() {
+        val ops = Ops(hidden = setOf("apple")).apply { order = listOf("apple", "car") }
+        val s = storeWithOrder(ops)
+        kotlinx.coroutines.runBlocking { s.loadHiddenClubKeys() }
+        s.saveClubOrder(listOf("pet", "car"))
+        waitFor { !s.clubOrderSaving }
+        assertEquals(listOf("pet", "car", "apple"), ops.saved.last()) // the hidden one keeps a place
+        assertEquals(listOf("pet", "car"), keys(s.sortedClubs))
+        ops.failSave = true
+        s.saveClubOrder(listOf("car", "pet"))
+        waitFor { !s.clubOrderSaving }
+        assertEquals(listOf("pet", "car", "apple"), s.clubOrder)
+        assertTrue(s.clubOrderError != null)
     }
 }
