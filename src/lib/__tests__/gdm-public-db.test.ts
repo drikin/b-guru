@@ -104,13 +104,19 @@ d("🌐 パブリック DM（DB）", () => {
   });
 
   type S = import("../gdm").GroupSummaryDto;
+  // このテストで作ったパブリックだけを見る（同じ DB にほかのパブリック DM があっても数がずれないように）
+  const made = new Set<number>();
   async function list(actor: Actor) {
     const r = await m.api.gdmListApi(actor);
     expect(r.status).toBe(200);
-    return r.body as unknown as { groups: S[]; public_groups: S[]; archived_groups: S[]; group_unread_count: number };
+    const b = r.body as unknown as { groups: S[]; public_groups: S[]; archived_groups: S[]; group_unread_count: number };
+    const only = (xs: S[]) => xs.filter((x) => made.has(x.group.id));
+    return { ...b, public_groups: only(b.public_groups), archived_groups: only(b.archived_groups) };
   }
   async function createPublic(actor: Actor, name: string | undefined, ids: string[] = []) {
-    return m.api.gdmCreateApi(actor, { name, public: true, member_ids: ids });
+    const r = await m.api.gdmCreateApi(actor, { name, public: true, member_ids: ids });
+    if (r.status === 201) made.add((r.body.group as G).id);
+    return r;
   }
   async function send(actor: Actor, gid: number, body: string) {
     return m.api.gdmSendApi(actor, String(gid), { body });

@@ -4,9 +4,10 @@
  *   GroupRow          DM の一覧の 1 行（👥・表示名・最後の発言・未読）
  *   GroupThread       1 つのグループ（吹き出しに送り主、system 行は中央に小さく）
  *   GroupMembers      メンバー・追加・外す（作った人だけ）・抜ける・名前・🔕 通知を切る
- *   CreateGroupModal  ＋ グループ（メンバーを選ぶ・名前は任意） */
+ *   CreateGroupModal  ＋ グループ（プライベート／🌐 パブリック。プライベートはメンバーを選ぶ・名前は任意、パブリックは名前が必須）
+ *   🌐 パブリック DM は参加していなくても読める（入力欄の代わりに「参加する」）。🗄 アーカイブは読むだけ。 */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ActionIcon, Avatar, Badge, Box, Button, Group as MGroup, Loader, Modal, MultiSelect, ScrollArea, Select, Stack, Switch, Text, Textarea, TextInput, UnstyledButton } from "@mantine/core";
+import { ActionIcon, Avatar, Badge, Box, Button, Group as MGroup, Loader, Modal, MultiSelect, ScrollArea, SegmentedControl, Select, Stack, Switch, Text, Textarea, TextInput, UnstyledButton } from "@mantine/core";
 import {
   addGroupMembers,
   closeGroup,
@@ -14,6 +15,8 @@ import {
   discardGroupText,
   getGdmServerSnapshot,
   getGdmSnapshot,
+  joinGroup,
+  setGroupArchived,
   removeGroupMember,
   removeGroupPhoto,
   setGroupPhoto,
@@ -111,13 +114,18 @@ function MemberPicker({ open, exclude, value, onChange }: { open: boolean; exclu
   );
 }
 
-function GroupIcon({ size = 38, photo }: { size?: number; photo?: string | null }) {
+function GroupIcon({ size = 38, photo, isPublic }: { size?: number; photo?: string | null; isPublic?: boolean }) {
   const [failed, setFailed] = useState(false);
   return (
     <Avatar size={size} radius="xl" color="green" aria-hidden src={photo && !failed ? photo : undefined} onError={() => setFailed(true)}>
-      <span style={{ fontSize: size * 0.5 }}>👥</span>
+      <span style={{ fontSize: size * 0.5 }}>{isPublic ? "🌐" : "👥"}</span>
     </Avatar>
   );
+}
+
+/** 表示名の前の印（🌐 パブリック・🗄 アーカイブ）。 */
+function kindMark(g: Group): string {
+  return g.archived ? "🗄 " : g.is_public ? "🌐 " : "";
 }
 
 function SmallAvatar({ src, name }: { src: string | null; name: string | null }) {
@@ -141,10 +149,11 @@ export function GroupRow({ g }: { g: GroupSummary }) {
       data-cx="gdm-row"
     >
       <MGroup gap={10} wrap="nowrap">
-        <GroupIcon photo={g.group.photo} />
+        <GroupIcon photo={g.group.photo} isPublic={g.group.is_public} />
         <Box style={{ flex: 1, minWidth: 0 }}>
           <MGroup gap={6} wrap="nowrap" justify="space-between">
             <Text size="sm" fw={g.unread_count > 0 ? 700 : 500} truncate>
+              {kindMark(g.group)}
               {g.group.title}
               <Text span size="xs" c="dimmed" fw={400}>
                 {" "}
@@ -162,6 +171,11 @@ export function GroupRow({ g }: { g: GroupSummary }) {
             {g.unread_count > 0 && (
               <Badge size="sm" color="red" circle={g.unread_count < 10}>
                 {g.unread_count}
+              </Badge>
+            )}
+            {g.is_new && g.unread_count === 0 && (
+              <Badge size="sm" color="green" variant="light" style={{ flexShrink: 0 }}>
+                新しい
               </Badge>
             )}
           </MGroup>
@@ -216,20 +230,24 @@ export function NewDmModal({ opened, onClose }: { opened: boolean; onClose: () =
 }
 
 /** ＋ グループ。 */
-export function CreateGroupModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
+export function CreateGroupModal({ opened, onClose, allowPublic = false }: { opened: boolean; onClose: () => void; allowPublic?: boolean }) {
   const [ids, setIds] = useState<string[]>([]);
   const [name, setName] = useState("");
+  const [kind, setKind] = useState<"private" | "public">("private");
+  const isPublic = allowPublic && kind === "public";
+  const ready = isPublic ? !!name.trim() : ids.length > 0;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const reset = () => {
     setIds([]);
     setName("");
+    setKind("private");
     setErr(null);
   };
   const submit = async () => {
-    if (ids.length === 0 || busy) return;
+    if (!ready || busy) return;
     setBusy(true);
-    const e = await createGroup(ids, name);
+    const e = await createGroup(ids, name, isPublic);
     setBusy(false);
     if (e) setErr(e);
     else {
@@ -238,12 +256,29 @@ export function CreateGroupModal({ opened, onClose }: { opened: boolean; onClose
     }
   };
   return (
-    <Modal opened={opened} onClose={() => (reset(), onClose())} title="👥 グループ DM を作る" centered zIndex={1000}>
+    <Modal opened={opened} onClose={() => (reset(), onClose())} title={isPublic ? "🌐 パブリック DM を作る" : "👥 グループ DM を作る"} centered zIndex={1000}>
       <Stack gap="sm">
+        {allowPublic && (
+          <SegmentedControl
+            fullWidth
+            value={kind}
+            onChange={(v) => setKind(v as "private" | "public")}
+            data={[
+              { value: "private", label: "👥 プライベート" },
+              { value: "public", label: "🌐 パブリック" },
+            ]}
+            data-cx="gdm-kind"
+          />
+        )}
         <MemberPicker open={opened} exclude={new Set()} value={ids} onChange={setIds} />
+        {isPublic && (
+          <Text size="xs" c="dimmed" mt={-6}>
+            メンバーは選ばなくても作れます（選んだ人は最初から参加します）
+          </Text>
+        )}
         <TextInput
-          label="グループ名（任意）"
-          placeholder="付けなければメンバーの名前で出ます"
+          label={isPublic ? "名前（必須）" : "グループ名（任意）"}
+          placeholder={isPublic ? "例: 雑談ひろば" : "付けなければメンバーの名前で出ます"}
           value={name}
           maxLength={MAX_NAME * 2}
           onChange={(e) => setName(e.currentTarget.value)}
@@ -254,13 +289,15 @@ export function CreateGroupModal({ opened, onClose }: { opened: boolean; onClose
           </Text>
         )}
         <Text size="xs" c="dimmed">
-          メンバーなら誰でも人を追加できます。外せるのは作った人だけです。発言は 30 日で消えます。
+          {isPublic
+            ? "みんなの DM 一覧に出て、誰でも読めて、誰でも参加・退出できます。いらなくなったら参加者の誰でもアーカイブできます。発言は 30 日で消えます。"
+            : "メンバーなら誰でも人を追加できます。外せるのは作った人だけです。発言は 30 日で消えます。"}
         </Text>
         <MGroup justify="flex-end">
           <Button variant="default" onClick={() => (reset(), onClose())}>
             やめる
           </Button>
-          <Button color="green" onClick={() => void submit()} loading={busy} disabled={ids.length === 0}>
+          <Button color="green" onClick={() => void submit()} loading={busy} disabled={!ready} data-cx="gdm-create-submit">
             作る
           </Button>
         </MGroup>
@@ -277,9 +314,10 @@ function Header({ g, onMembers }: { g: Group; onMembers: () => void }) {
           <path d="M15 18l-6-6 6-6" />
         </svg>
       </ActionIcon>
-      <GroupIcon size={26} photo={g.photo} />
+      <GroupIcon size={26} photo={g.photo} isPublic={g.is_public} />
       <UnstyledButton onClick={onMembers} style={{ flex: 1, minWidth: 0 }} aria-label="メンバーと設定">
         <Text fw={600} size="sm" truncate>
+          {kindMark(g)}
           {g.title}
           <Text span size="xs" c="dimmed" fw={400}>
             {" "}
@@ -361,9 +399,9 @@ export function GroupThread({ s }: { s: GdmSnapshot }) {
                 m={m}
                 prev={s.messages[i - 1]}
                 editing={editingId === m.id}
-                onToggleReaction={kit && m.id > 0 && m.kind === "text" ? (emoji) => void toggleGroupReaction(m.id, emoji, kit.myName) : undefined}
+                onToggleReaction={kit && s.canSend && m.id > 0 && m.kind === "text" ? (emoji) => void toggleGroupReaction(m.id, emoji, kit.myName) : undefined}
                 onReply={!m.is_author && !m.is_beagle && m.from_name && s.canSend ? () => replyTo(m.from_name!) : undefined}
-                onEdit={m.is_author && m.id > 0 && !m.pending && !m.failed ? () => setEditingId(m.id) : undefined}
+                onEdit={s.canSend && m.is_author && m.id > 0 && !m.pending && !m.failed ? () => setEditingId(m.id) : undefined}
                 onSaveEdit={async (text) => {
                   const err = await editGroupText(m.id, text);
                   if (!err) setEditingId(null);
@@ -407,9 +445,7 @@ export function GroupThread({ s }: { s: GdmSnapshot }) {
           </MGroup>
           </>
         ) : (
-          <Text size="xs" c="dimmed" ta="center">
-            このグループにはまだ送れません
-          </Text>
+          <ReadOnlyFooter g={g} />
         )}
       </Box>
     </div>
@@ -529,7 +565,56 @@ function GBubble({
   );
 }
 
+/** 入力欄の代わり: 🌐 参加していないパブリックは「参加する」、🗄 アーカイブは読むだけの案内。 */
+function ReadOnlyFooter({ g }: { g: Group }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  if (g.archived) {
+    return (
+      <Text size="xs" c="dimmed" ta="center" data-cx="gdm-archived-note">
+        🗄 アーカイブされています（読むだけ）
+      </Text>
+    );
+  }
+  if (g.is_public && g.is_member === false) {
+    return (
+      <Stack gap={4} align="center">
+        <MGroup gap={8} justify="center">
+          <Button
+            color="green"
+            loading={busy}
+            data-cx="gdm-join"
+            onClick={async () => {
+              setBusy(true);
+              setErr(null);
+              const e = await joinGroup(g.id);
+              setBusy(false);
+              if (e) setErr(e);
+            }}
+          >
+            参加する
+          </Button>
+          <Button variant="subtle" color="gray" size="compact-sm" onClick={() => void openGroup(g.id)}>
+            読み直す
+          </Button>
+        </MGroup>
+        <Text size="xs" c={err ? "red" : "dimmed"}>
+          {err ?? "参加すると書き込めて、新しい発言の通知が届きます"}
+        </Text>
+      </Stack>
+    );
+  }
+  return (
+    <Text size="xs" c="dimmed" ta="center">
+      このグループにはまだ送れません
+    </Text>
+  );
+}
+
 function GroupMembers({ g, onBack }: { g: Group; onBack: () => void }) {
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const member = g.is_member !== false;
+  const writable = member && !g.archived;
   const [name, setName] = useState(g.name ?? "");
   const [adding, setAdding] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -559,6 +644,14 @@ function GroupMembers({ g, onBack }: { g: Group; onBack: () => void }) {
       </MGroup>
       <ScrollArea style={{ flex: 1 }}>
         <Stack gap="md" p="sm">
+          {g.is_public && (
+            <Text size="xs" c="dimmed">
+              🌐 パブリック DM: みんなの DM 一覧に出て、誰でも読めて、誰でも参加・退出できます。
+              {g.archived ? " いまはアーカイブされていて、読むだけです。" : ""}
+            </Text>
+          )}
+          {writable && (
+          <>
           <MGroup gap={6} align="flex-end" wrap="nowrap">
             <TextInput
               style={{ flex: 1 }}
@@ -573,7 +666,7 @@ function GroupMembers({ g, onBack }: { g: Group; onBack: () => void }) {
             </Button>
           </MGroup>
           <MGroup gap="sm" wrap="nowrap">
-            <GroupIcon size={56} photo={g.photo} />
+            <GroupIcon size={56} photo={g.photo} isPublic={g.is_public} />
             <Stack gap={4}>
               <Text size="sm" fw={600}>
                 グループの写真
@@ -601,6 +694,9 @@ function GroupMembers({ g, onBack }: { g: Group; onBack: () => void }) {
               />
             </Stack>
           </MGroup>
+          </>
+          )}
+          {member && (
           <Switch
             label="🔕 このグループの通知を切る"
             checked={g.muted}
@@ -608,6 +704,8 @@ function GroupMembers({ g, onBack }: { g: Group; onBack: () => void }) {
             onChange={(e) => void run(() => setGroupMuted(g.id, e.currentTarget.checked))}
             data-cx="gdm-mute"
           />
+          )}
+          {writable && (
           <Switch
             label="🐶 ビーグルを呼べるようにする"
             description="@ビーグル で質問・要約できます。答えはメンバー全員に見えます。入る前の流れも、新しく入った人に要約で伝えます。切り替えるとグループに知らせます。"
@@ -616,6 +714,7 @@ function GroupMembers({ g, onBack }: { g: Group; onBack: () => void }) {
             onChange={(e) => void run(() => setGroupBeagle(g.id, e.currentTarget.checked))}
             data-cx="gdm-beagle"
           />
+          )}
           <Box>
             <Text size="sm" fw={600} mb={4}>
               メンバー（{g.member_count}）
@@ -639,7 +738,7 @@ function GroupMembers({ g, onBack }: { g: Group; onBack: () => void }) {
                       </Text>
                     )}
                   </Text>
-                  {g.is_creator && !m.is_creator && (
+                  {g.is_creator && !m.is_creator && !g.is_public && (
                     <Button size="compact-xs" variant="subtle" color="red" disabled={busy} onClick={() => setConfirmRemove({ id: m.user_id, name: m.name ?? "会員" })}>
                       外す
                     </Button>
@@ -648,6 +747,7 @@ function GroupMembers({ g, onBack }: { g: Group; onBack: () => void }) {
               ))}
             </Stack>
           </Box>
+          {writable && (
           <Stack gap={6}>
             <MemberPicker open exclude={new Set(g.members.map((m) => m.user_id))} value={adding} onChange={setAdding} />
             <MGroup justify="flex-end">
@@ -661,19 +761,40 @@ function GroupMembers({ g, onBack }: { g: Group; onBack: () => void }) {
               </Button>
             </MGroup>
           </Stack>
+          )}
           {err && (
             <Text size="xs" c="red">
               {err}
             </Text>
           )}
+          {!member && !g.archived && (
+            <Button color="green" disabled={busy} onClick={() => void run(() => joinGroup(g.id)).then((ok) => ok && onBack())} data-cx="gdm-join-members">
+              参加する
+            </Button>
+          )}
+          {member && g.is_public && (
+            <Button
+              variant="light"
+              color="gray"
+              disabled={busy}
+              onClick={() => (g.archived ? void run(() => setGroupArchived(g.id, false)) : setConfirmArchive(true))}
+              data-cx="gdm-archive"
+            >
+              {g.archived ? "アーカイブから戻す" : "🗄 アーカイブする"}
+            </Button>
+          )}
+          {member && (
           <Button variant="subtle" color="red" onClick={() => setConfirmLeave(true)} data-cx="gdm-leave">
             このグループから抜ける
           </Button>
+          )}
         </Stack>
       </ScrollArea>
       <Modal opened={confirmLeave} onClose={() => setConfirmLeave(false)} title="グループから抜けますか？" centered zIndex={1000}>
         <Text size="sm" mb="md">
-          抜けると、このグループの発言は見られなくなります。もう一度入るには、メンバーに追加してもらう必要があります。
+          {g.is_public
+            ? "抜けると通知が届かなくなります。パブリック DM なので、いつでもまた参加できます。"
+            : "抜けると、このグループの発言は見られなくなります。もう一度入るには、メンバーに追加してもらう必要があります。"}
         </Text>
         <MGroup justify="flex-end">
           <Button variant="default" onClick={() => setConfirmLeave(false)}>
@@ -690,6 +811,24 @@ function GroupMembers({ g, onBack }: { g: Group; onBack: () => void }) {
             }
           >
             抜ける
+          </Button>
+        </MGroup>
+      </Modal>
+      <Modal opened={confirmArchive} onClose={() => setConfirmArchive(false)} title="アーカイブしますか？" centered zIndex={1000}>
+        <Text size="sm" mb="md">
+          みんなの DM 一覧から消えて「アーカイブ」の欄に移り、読むだけになります。参加者なら誰でもアーカイブから戻せます。
+        </Text>
+        <MGroup justify="flex-end">
+          <Button variant="default" onClick={() => setConfirmArchive(false)}>
+            やめる
+          </Button>
+          <Button
+            color="gray"
+            loading={busy}
+            data-cx="gdm-archive-confirm"
+            onClick={() => void run(() => setGroupArchived(g.id, true)).then(() => setConfirmArchive(false))}
+          >
+            アーカイブする
           </Button>
         </MGroup>
       </Modal>

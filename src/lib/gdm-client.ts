@@ -32,6 +32,11 @@ export type Group = {
   muted: boolean;
   /** 🐶 @ビーグル に答えるか（古いサーバには無い）。 */
   beagle?: boolean;
+  /** 🌐 パブリック DM・見る人が参加しているか・🗄 アーカイブ済み（古いサーバには無い）。 */
+  is_public?: boolean;
+  is_member?: boolean;
+  archived?: boolean;
+  archived_at?: string | null;
   created_at: string;
 };
 export type GMessage = {
@@ -57,12 +62,15 @@ export type GMessage = {
   pending?: boolean;
   failed?: boolean;
 };
-export type GroupSummary = { group: Group; last_message: GMessage | null; unread_count: number };
+export type GroupSummary = { group: Group; last_message: GMessage | null; unread_count: number; is_new?: boolean };
 
 export interface GdmSnapshot {
   status: "unknown" | "enabled" | "disabled";
   unread: number;
   groups: GroupSummary[];
+  /** 🌐 参加していないパブリック DM・🗄 アーカイブされたパブリック DM。 */
+  publicGroups: GroupSummary[];
+  archivedGroups: GroupSummary[];
   /** 開いているグループ（null なら開いていない）。 */
   current: Group | null;
   messages: GMessage[];
@@ -71,7 +79,7 @@ export interface GdmSnapshot {
   error: string | null;
 }
 
-const INITIAL: GdmSnapshot = { status: "unknown", unread: 0, groups: [], current: null, messages: [], canSend: true, loading: false, error: null };
+const INITIAL: GdmSnapshot = { status: "unknown", unread: 0, groups: [], publicGroups: [], archivedGroups: [], current: null, messages: [], canSend: true, loading: false, error: null };
 let snap: GdmSnapshot = INITIAL;
 const listeners = new Set<() => void>();
 function set(patch: Partial<GdmSnapshot>): void {
@@ -176,7 +184,13 @@ export function loadGdm(): Promise<void> {
         return;
       }
       if (r.status !== 200 || !r.body) return;
-      set({ status: "enabled", groups: (r.body.groups as GroupSummary[]) ?? [], unread: Number(r.body.group_unread_count ?? 0) });
+      set({
+        status: "enabled",
+        groups: (r.body.groups as GroupSummary[]) ?? [],
+        publicGroups: (r.body.public_groups as GroupSummary[]) ?? [],
+        archivedGroups: (r.body.archived_groups as GroupSummary[]) ?? [],
+        unread: Number(r.body.group_unread_count ?? 0),
+      });
     } finally {
       loading = null;
     }
@@ -190,9 +204,16 @@ export function closeGroup(): void {
 }
 
 export async function openGroup(id: number): Promise<void> {
-  const known = snap.groups.find((g) => g.group.id === id)?.group ?? null;
+  const known = [...snap.groups, ...snap.publicGroups, ...snap.archivedGroups].find((g) => g.group.id === id)?.group ?? null;
   dropUnsentPhotoJobs(snap.messages);
-  set({ current: known ?? { id, name: null, title: "グループ", members: [], member_count: 0, is_creator: false, muted: false, created_at: "" }, messages: [], loading: true, error: null, canSend: true });
+  set({
+    current: known ?? { id, name: null, title: "グループ", members: [], member_count: 0, is_creator: false, muted: false, created_at: "" },
+    messages: [],
+    loading: true,
+    error: null,
+    // 読み込むまで、参加していない・アーカイブのグループに入力欄を出さない
+    canSend: known ? belongsInMyList(known) : true,
+  });
   const r = await api(`/api/gdm/${id}`);
   if (snap.current?.id !== id) return;
   if (r.status !== 200 || !r.body) {
@@ -316,8 +337,11 @@ export function discardGroupText(m: GMessage): void {
 }
 
 /** 作る。成功したらそのグループを開く。失敗はエラー文を返す。 */
-export async function createGroup(memberIds: string[], name: string): Promise<string | null> {
-  const r = await api("/api/gdm", { method: "POST", body: JSON.stringify({ member_ids: memberIds, name: name.trim() || null }) });
+export async function createGroup(memberIds: string[], name: string, isPublic = false): Promise<string | null> {
+  const r = await api("/api/gdm", {
+    method: "POST",
+    body: JSON.stringify({ member_ids: memberIds, name: name.trim() || null, ...(isPublic ? { public: true } : {}) }),
+  });
   if (r.status !== 201 || !r.body?.group) return r.body?.error ?? "作れませんでした";
   const g = r.body.group as Group;
   if (!snap.groups.some((x) => x.group.id === g.id)) set({ groups: [{ group: g, last_message: null, unread_count: 0 }, ...snap.groups] });
@@ -325,7 +349,23 @@ export async function createGroup(memberIds: string[], name: string): Promise<st
   return null;
 }
 
+/** 一覧にいてよいか（参加していて、アーカイブされていない）。古いサーバ（キーが無い）は今までどおり。 */
+export function belongsInMyList(g: Group): boolean {
+  return g.is_member !== false && !g.archived;
+}
+
 function replaceGroup(g: Group): void {
+  if (!belongsInMyList(g)) {
+    // アーカイブされた・参加していない: 自分の一覧から外し、パブリック・アーカイブの欄は読み直す
+    const sum = snap.groups.find((x) => x.group.id === g.id);
+    set({
+      groups: snap.groups.filter((x) => x.group.id !== g.id),
+      unread: Math.max(0, snap.unread - (sum?.unread_count ?? 0)),
+      ...(snap.current?.id === g.id ? { current: g, canSend: false } : {}),
+    });
+    void loadGdm();
+    return;
+  }
   set({
     groups: snap.groups.some((x) => x.group.id === g.id)
       ? snap.groups.map((x) => (x.group.id === g.id ? { ...x, group: g } : x))
@@ -372,8 +412,30 @@ export const setGroupBeagle = (id: number, beagle: boolean) => mutate(`/api/gdm/
 export const addGroupMembers = (id: number, userIds: string[]) => mutate(`/api/gdm/${id}/members`, "POST", { user_ids: userIds });
 export async function removeGroupMember(id: number, userId: string, self: boolean): Promise<string | null> {
   const err = await mutate(`/api/gdm/${id}/members/${encodeURIComponent(userId)}`, "DELETE");
-  if (!err && self) dropGroup(id);
+  if (!err && self) {
+    dropGroup(id);
+    void loadGdm(); // 🌐 パブリックなら「パブリック DM」の欄に戻る
+  }
   return err;
+}
+
+/** 🌐 パブリック DM に参加する（開いていれば読み直して書けるようにする）。 */
+export async function joinGroup(id: number): Promise<string | null> {
+  const r = await api(`/api/gdm/${id}/join`, { method: "POST", body: "{}" });
+  if (r.status !== 200 || !r.body?.group) return r.body?.error ?? "参加できませんでした";
+  set({ publicGroups: snap.publicGroups.filter((x) => x.group.id !== id) });
+  replaceGroup(r.body.group as Group);
+  if (snap.current?.id === id) void openGroup(id);
+  return null;
+}
+
+/** 🗄 アーカイブする・戻す（パブリックの参加者なら誰でも）。 */
+export async function setGroupArchived(id: number, archived: boolean): Promise<string | null> {
+  const err = await mutate(`/api/gdm/${id}`, "PATCH", { archived });
+  if (err) return err;
+  await loadGdm();
+  if (snap.current?.id === id) void openGroup(id);
+  return null;
 }
 
 /** ✏️ 自分の発言を直す。失敗はエラー文を返す（成功は null）。 */

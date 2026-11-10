@@ -207,10 +207,19 @@ function Header({ title, onBack, left, right }: { title: ReactNode; onBack: () =
   );
 }
 
+function SectionTitle({ children }: { children: ReactNode }) {
+  return (
+    <Text size="xs" fw={600} c="dimmed" px="sm" pt={12} pb={4} style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}>
+      {children}
+    </Text>
+  );
+}
+
 function DmList({ s }: { s: DmSnapshot }) {
   const g = useGdm();
   const [creating, setCreating] = useState(false);
   const [newDm, setNewDm] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const groupsOn = g.status === "enabled";
   // 1 対 1 とグループを新しい順に混ぜる
   const items = [
@@ -236,12 +245,12 @@ function DmList({ s }: { s: DmSnapshot }) {
         }
       />
       <NewDmModal opened={newDm} onClose={() => setNewDm(false)} />
-      {groupsOn && <CreateGroupModal opened={creating} onClose={() => setCreating(false)} />}
+      {groupsOn && <CreateGroupModal opened={creating} onClose={() => setCreating(false)} allowPublic />}
       <ScrollArea style={{ flex: 1 }}>
-        {items.length === 0 ? (
+        {items.length === 0 && !(groupsOn && (g.publicGroups.length > 0 || g.archivedGroups.length > 0)) ? (
           <Text size="sm" c="dimmed" ta="center" py="xl" px="md">
             DM はまだありません。「＋ 新規 DM」で名前を入れて始めるか、チャットで名前を押すと「DM を送る」が出ます。
-            {groupsOn ? "「＋ グループ」で何人かと話せます。" : ""}
+            {groupsOn ? "「＋ グループ」で何人かと話せます。誰でも参加できる 🌐 パブリック DM も作れます。" : ""}
           </Text>
         ) : (
           <Stack gap={0}>
@@ -283,6 +292,27 @@ function DmList({ s }: { s: DmSnapshot }) {
                 </Group>
               </UnstyledButton>
               ) : null
+            )}
+            {groupsOn && g.publicGroups.length > 0 && (
+              <>
+                <SectionTitle>🌐 パブリック DM（誰でも参加できます）</SectionTitle>
+                {g.publicGroups.map((gs) => (
+                  <GroupRow key={`pub${gs.group.id}`} g={gs} />
+                ))}
+              </>
+            )}
+            {groupsOn && g.archivedGroups.length > 0 && (
+              <>
+                <UnstyledButton onClick={() => setShowArchived((v) => !v)} data-cx="gdm-archived-toggle">
+                  <SectionTitle>
+                    {showArchived ? "▾" : "▸"} 🗄 アーカイブ（{g.archivedGroups.length}）
+                  </SectionTitle>
+                </UnstyledButton>
+                {showArchived &&
+                  g.archivedGroups.map((gs) => (
+                    <GroupRow key={`arc${gs.group.id}`} g={gs} />
+                  ))}
+              </>
             )}
           </Stack>
         )}
