@@ -145,6 +145,11 @@ fun TimelineScreen(
     }
     // Kept here, outside the list: coming back from a thread returns to where you were.
     val listState = rememberLazyListState()
+    // Another club picked: its list starts at the top.
+    var shownFilter by remember { mutableStateOf(timeline.clubFilter) }
+    LaunchedEffect(timeline.clubFilter) {
+        if (timeline.clubFilter != shownFilter) { shownFilter = timeline.clubFilter; listState.scrollToItem(0) }
+    }
     LaunchedEffect(timeline.openThread) {
         timeline.openThread?.let { threadId = it; timeline.openThread = null }
     }
@@ -170,12 +175,15 @@ fun TimelineScreen(
                         }
                         val canClubs = capabilities?.clubVisibilityPath != null
                         val canMuted = capabilities?.mutedWordsPath != null
-                        if (lists.isNotEmpty() || canClubs || canMuted) Box {
+                        Box {
                             IconButton(onClick = { listsMenu = true }) { Text("📌", fontSize = 18.sp, modifier = Modifier.semantics { contentDescription = "ピン留め・ブックマーク・表示の設定" }) }
                             DropdownMenu(listsMenu, onDismissRequest = { listsMenu = false }) {
                                 lists.forEach { (f, label) ->
                                     DropdownMenuItem(text = { Text(label) }, onClick = { listsMenu = false; timeline.dialog = PostDialog.List(f) })
                                 }
+                                // 部活で絞り込む（リュー 2026-11-09 → オーナー「全アプリに作る」）: the phone also has the page left of the timeline.
+                                if (lists.isNotEmpty()) HorizontalDivider()
+                                DropdownMenuItem(text = { Text("🏷️ 部活で絞り込む…") }, onClick = { listsMenu = false; timeline.dialog = PostDialog.ClubFilter })
                                 if (canClubs || canMuted) HorizontalDivider()
                                 if (canClubs) {
                                     DropdownMenuItem(text = { Text("👁 部活の表示…") }, onClick = { listsMenu = false; timeline.dialog = PostDialog.ClubVisibility })
@@ -199,6 +207,7 @@ fun TimelineScreen(
             } else {
                 Column(Modifier.fillMaxSize()) {
                     if (needsReconnect) ReconnectBanner(onReconnect, onClose = { needsReconnect = false })
+                    ClubFilterBanner(timeline)
                     TimelineList(timeline, capabilities, visible, listState, onOpen = { threadId = it }, onOpenImage = { imgs, i -> viewing = imgs to i })
                 }
             }
@@ -260,6 +269,7 @@ private fun TimelineList(
                         when {
                             !timeline.hasLoaded -> "読み込み中…"
                             timeline.failed -> "読み込めませんでした。引っ張って再読み込み"
+                            timeline.clubFilter != null -> "この部活の投稿はまだありません"
                             else -> "まだ投稿がありません"
                         },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

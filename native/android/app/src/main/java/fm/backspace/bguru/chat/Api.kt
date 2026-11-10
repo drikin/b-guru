@@ -400,11 +400,9 @@ class ApiClient(val token: String) : PostOpsApi {
 
     // MARK: timeline
 
-    suspend fun posts(cursor: String? = null, limit: Int = 30): PostListResponse =
-        get("/api/agent/posts", buildMap {
-            put("limit", "$limit"); put("include", "reactions,read,display")
-            if (cursor != null) put("cursor", cursor)
-        })
+    /** `club`: only that club's root posts (部活で絞り込む, 2026-11-09); null = all. */
+    suspend fun posts(cursor: String? = null, limit: Int = 30, club: String? = null): PostListResponse =
+        get("/api/agent/posts", postsQuery(cursor, limit, club))
 
     suspend fun thread(id: Long): ThreadResponse = get("/api/agent/posts/$id", mapOf("include" to "reactions,read,display"))
 
@@ -543,6 +541,13 @@ class ApiClient(val token: String) : PostOpsApi {
     }
 
     companion object {
+        /** GET /api/agent/posts' query: the first page or the next (cursor), all or one club. Pure, for the tests. */
+        fun postsQuery(cursor: String?, limit: Int, club: String?): Map<String, String> = buildMap {
+            put("limit", "$limit"); put("include", "reactions,read,display")
+            if (cursor != null) put("cursor", cursor)
+            if (club != null) put("club", club)
+        }
+
         /** The publish body (docs/timeline-spec.md §11). Pure, for the tests. */
         fun publishBody(text: String, images: List<String>, parentId: Long?, extra: PublishExtra = PublishExtra()): JsonObject = buildJsonObject {
             put("text", text)

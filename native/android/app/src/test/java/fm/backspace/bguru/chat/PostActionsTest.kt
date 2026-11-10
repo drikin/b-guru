@@ -42,7 +42,8 @@ class PostActionsTest {
     @Test fun menuFollowsTheWebOrder() {
         assertEquals(listOf(I.BOOKMARK, I.QUOTE, I.REACT, I.PIN, I.CLUB, I.EDIT, I.DELETE, I.COPY, I.WEB),
             PostActions.menu(mine, appKey, chatCanSend = true, hasNetaUrls = false))
-        assertEquals(listOf(I.BOOKMARK, I.QUOTE, I.NETA, I.FAVORITE, I.REACT, I.COPY, I.WEB),
+        // Someone else's root post: 部活 too (誰でも付け替えられる — オーナー 2026-11-08).
+        assertEquals(listOf(I.BOOKMARK, I.QUOTE, I.NETA, I.FAVORITE, I.REACT, I.CLUB, I.COPY, I.WEB),
             PostActions.menu(theirs, appKey, chatCanSend = true, hasNetaUrls = true))
         // A reply: no pin (root posts only), edit and delete stay.
         assertEquals(listOf(I.BOOKMARK, I.QUOTE, I.REACT, I.EDIT, I.DELETE, I.COPY, I.WEB),

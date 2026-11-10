@@ -22,6 +22,19 @@ class MainTabsTest {
         assertEquals(-1, MainTabs.pageOf(MainTab.JUKEBOX, dm = true, jukebox = false))
     }
 
+    // 部活一覧（リュー 2026-11-09 → オーナー「全アプリに作る」）: a page left of the timeline, not in the switch.
+    @Test fun clubListIsLeftOfTheTimelineAndNotInTheSwitch() {
+        assertEquals(listOf(MainTab.CLUBS, MainTab.TIMELINE, MainTab.CHAT, MainTab.DM, MainTab.JUKEBOX), MainTabs.pages(dm = true, jukebox = true, clubs = true))
+        assertEquals(0, MainTabs.pageOf(MainTab.CLUBS, dm = true, jukebox = true, clubs = true))
+        assertEquals(1, MainTabs.pageOf(MainTab.TIMELINE, dm = true, jukebox = true, clubs = true))
+        // The app starts on 💬, now page 2.
+        assertEquals(2, MainTabs.pageOf(MainTab.CHAT, dm = false, jukebox = false, clubs = true))
+        assertEquals(3, MainTabs.pageOf(MainTab.DM, dm = true, jukebox = true, clubs = true))
+        assertEquals(4, MainTabs.pageOf(MainTab.JUKEBOX, dm = true, jukebox = true, clubs = true))
+        assertEquals(listOf(MainTab.TIMELINE, MainTab.CHAT, MainTab.DM, MainTab.JUKEBOX), MainTabs.switchTabs(dm = true, jukebox = true))
+        assertEquals(listOf(MainTab.CHAT, MainTab.DM), MainTabs.right(dm = true, jukebox = false))
+    }
+
     @Test fun wideRightSideSwitch() {
         assertEquals(listOf(MainTab.CHAT, MainTab.DM, MainTab.JUKEBOX), MainTabs.right(dm = true, jukebox = true))
         assertEquals(listOf(MainTab.CHAT, MainTab.DM), MainTabs.right(dm = true, jukebox = false))

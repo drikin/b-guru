@@ -92,7 +92,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /** Demo only — open a screen at launch (scripts/orientation-check.sh walks them):
-     *  `--es demo_tab timeline|chat|dm|jukebox`, `--ez demo_jukebox_play true`,
+     *  `--es demo_tab timeline|chat|dm|jukebox|clubs`, `--ez demo_jukebox_play true`,
      *  `--es demo_open shogi|minigame|offkai|offkai_album|offkai_none|viewer` (viewer: the first photo; needs
      *  `--es demo_images`; offkai_none: no event on, the start form and the archive),
      *  `--es demo_ops …` (the timeline's operations, TimelineStore.demoOps). */
@@ -102,6 +102,7 @@ class MainActivity : ComponentActivity() {
             "timeline" -> store.demoPage = MainTab.TIMELINE
             "dm" -> store.demoPage = MainTab.DM
             "jukebox" -> store.demoPage = MainTab.JUKEBOX
+            "clubs" -> store.demoPage = MainTab.CLUBS
         }
         if (intent.getBooleanExtra("demo_jukebox_play", false)) session.jukebox?.let { jb -> (jb.current ?: jb.items.firstOrNull())?.let(jb::play) }
         // `--es demo_ops menu|edit|delete|picker|poll_edit|club|pins|…` (TimelineStore.demoOps): the 段階 3

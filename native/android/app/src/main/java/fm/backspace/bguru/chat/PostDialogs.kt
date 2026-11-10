@@ -111,6 +111,8 @@ sealed interface PostDialog {
     data class List(val filter: String) : PostDialog
     /** 部活の表示. */
     data object ClubVisibility : PostDialog
+    /** 部活で絞り込む (the club list in a sheet; 2026-11-09). */
+    data object ClubFilter : PostDialog
     data object MutedWords : PostDialog
 }
 
@@ -136,6 +138,7 @@ fun PostDialogHost(timeline: TimelineStore, capabilities: Capabilities?, onOpenT
         is PostDialog.Club -> ClubDialog(timeline, d.post)
         is PostDialog.List -> PostListSheet(timeline, d.filter, onOpenThread)
         PostDialog.ClubVisibility -> ClubVisibilitySheet(timeline)
+        PostDialog.ClubFilter -> ClubFilterSheet(timeline)
         PostDialog.MutedWords -> MutedWordsSheet(timeline)
     }
 }

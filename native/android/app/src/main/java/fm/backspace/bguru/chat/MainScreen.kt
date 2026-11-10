@@ -50,19 +50,24 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 /** The tabs in order: 📰 💬 ✉️ 📻 (✉️ right after 💬 — 「アプリ版の DM を素直にチャットの右のタブに移動」
- *  drikin 2026-11-08; ✉️ only with DM on, 📻 only with the jukebox on). Unit-tested: MainTabsTest. */
-enum class MainTab { TIMELINE, CHAT, DM, JUKEBOX }
+ *  drikin 2026-11-08; ✉️ only with DM on, 📻 only with the jukebox on). Unit-tested: MainTabsTest.
+ *  CLUBS: the phone's club list, a page left of the timeline that is not in the switch
+ *  (リュー 2026-11-09「タイムラインからさらに左側にスワイプすると部活一覧が出るようにしても良いかも」→ オーナー「全アプリに作る」). */
+enum class MainTab { TIMELINE, CHAT, DM, JUKEBOX, CLUBS }
 
 object MainTabs {
-    /** Phone pages, in order. */
-    fun pages(dm: Boolean, jukebox: Boolean): List<MainTab> =
-        listOfNotNull(MainTab.TIMELINE, MainTab.CHAT, MainTab.DM.takeIf { dm }, MainTab.JUKEBOX.takeIf { jukebox })
+    /** Phone pages, in order ([clubs]: the club list first, left of the timeline). */
+    fun pages(dm: Boolean, jukebox: Boolean, clubs: Boolean = false): List<MainTab> =
+        listOfNotNull(MainTab.CLUBS.takeIf { clubs }, MainTab.TIMELINE, MainTab.CHAT, MainTab.DM.takeIf { dm }, MainTab.JUKEBOX.takeIf { jukebox })
+
+    /** The switch at the top: every page but the club list (it gets no segment). */
+    fun switchTabs(dm: Boolean, jukebox: Boolean): List<MainTab> = pages(dm, jukebox)
 
     /** Wide screen: the right side's switch (the timeline is always on the left). */
     fun right(dm: Boolean, jukebox: Boolean): List<MainTab> = pages(dm, jukebox).drop(1)
 
     /** The page of [tab], or -1 when that tab is not there. */
-    fun pageOf(tab: MainTab, dm: Boolean, jukebox: Boolean): Int = pages(dm, jukebox).indexOf(tab)
+    fun pageOf(tab: MainTab, dm: Boolean, jukebox: Boolean, clubs: Boolean = false): Int = pages(dm, jukebox, clubs).indexOf(tab)
 }
 
 /** Phone: timeline and chat (and the jukebox, when the server turns it on) as pages —
@@ -159,20 +164,28 @@ private fun Pages(
     onSignOut: () -> Unit,
     segments: @Composable (List<String>, Int, (Int) -> Unit, Map<Int, Int>) -> Unit,
 ) {
-    val tabs = MainTabs.pages(dm != null, jb != null)
+    // 🏷️ 📰 💬 (✉️) (📻): the club list is page 0, so every page is looked up by its tab, never by a number
+    // (the app still starts on 💬; the switch has no segment for the club list).
+    val tabs = MainTabs.pages(dm != null, jb != null, clubs = true)
+    val switchTabs = MainTabs.switchTabs(dm != null, jb != null)
+    val clubsPage = tabs.indexOf(MainTab.CLUBS)
+    val timelinePage = tabs.indexOf(MainTab.TIMELINE)
+    val chatPage = tabs.indexOf(MainTab.CHAT)
     val dmPage = tabs.indexOf(MainTab.DM)
     val jbPage = tabs.indexOf(MainTab.JUKEBOX)
-    val pager = rememberPagerState(initialPage = 1) { tabs.size } // 📰 💬 (✉️) (📻)
+    val pager = rememberPagerState(initialPage = chatPage) { tabs.size }
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
     // Switching pages hides the keyboard.
     LaunchedEffect(pager.currentPage) { focus.clearFocus() }
+    // Back on the club list: to the timeline.
+    androidx.activity.compose.BackHandler(enabled = pager.currentPage == clubsPage) { scope.launch { pager.animateScrollToPage(timelinePage) } }
     // A "reply to your post" notification: show the timeline (it opens the thread).
     // (Launched in `scope`: the timeline clears openThread at once, which would cancel a
     // scroll running inside this effect.)
-    LaunchedEffect(timeline.openThread) { if (timeline.openThread != null) scope.launch { pager.animateScrollToPage(0) } }
+    LaunchedEffect(timeline.openThread) { if (timeline.openThread != null) scope.launch { pager.animateScrollToPage(timelinePage) } }
     // 「チャットに引用」 from a post's menu: show the chat (it takes the quote, then clears it).
-    LaunchedEffect(ChatQuote.pending) { if (ChatQuote.pending != null) scope.launch { pager.animateScrollToPage(1) } }
+    LaunchedEffect(ChatQuote.pending) { if (ChatQuote.pending != null) scope.launch { pager.animateScrollToPage(chatPage) } }
     // Demo (`--es demo_tab`): start on that page.
     LaunchedEffect(store.demoPage, tabs) {
         store.demoPage?.let { t -> tabs.indexOf(t).takeIf { it >= 0 }?.let { pager.scrollToPage(it) }; store.demoPage = null }
@@ -180,32 +193,36 @@ private fun Pages(
     // ✉️ from a notification / a name in the chat / the demo: the DM page (the conversation opens there).
     LaunchedEffect(dm?.showPage, dmPage) { if (dm?.showPage == true && dmPage >= 0) { dm.showPage = false; scope.launch { pager.animateScrollToPage(dmPage) } } }
     // ☗ 将棋 from a notification: show the chat (the shogi panel opens above it).
-    LaunchedEffect(store.shogi.revealTick) { if (store.shogi.revealTick > 0) scope.launch { pager.animateScrollToPage(1) } }
+    LaunchedEffect(store.shogi.revealTick) { if (store.shogi.revealTick > 0) scope.launch { pager.animateScrollToPage(chatPage) } }
     // 🍻 オフ会 from a notification: show the chat (the panel opens above it).
-    LaunchedEffect(store.offkai.revealTick) { if (store.offkai.revealTick > 0) scope.launch { pager.animateScrollToPage(1) } }
+    LaunchedEffect(store.offkai.revealTick) { if (store.offkai.revealTick > 0) scope.launch { pager.animateScrollToPage(chatPage) } }
     // 🎧 音声をこの端末で続ける (voice_handoff): the chat page (the feature is on it).
-    LaunchedEffect(store.chatRevealTick) { if (store.chatRevealTick > 0) scope.launch { pager.animateScrollToPage(1) } }
+    LaunchedEffect(store.chatRevealTick) { if (store.chatRevealTick > 0) scope.launch { pager.animateScrollToPage(chatPage) } }
     // 📺 「みんなで見る」 on the timeline over the chat (chat_overlay): the chat page, where the player is expanded
     // (the old form floats it over every page instead).
-    LaunchedEffect(store.watch.revealTick) { if (store.watch.revealTick > 0 && store.chatOverlay) scope.launch { pager.animateScrollToPage(1) } }
+    LaunchedEffect(store.watch.revealTick) { if (store.watch.revealTick > 0 && store.chatOverlay) scope.launch { pager.animateScrollToPage(chatPage) } }
     // The playback notification / the mini player: show the jukebox.
     LaunchedEffect(jb?.showTab, jbPage) { if (jb?.showTab == true && jbPage >= 0) { pager.animateScrollToPage(jbPage); jb.showTab = false; jb.revealTick++ } }
 
     // 📰 タイムライン ・ 💬 チャット ・ ✉️ DM ・ 📻 プレイヤー — the same order and marks in every app (drikin 2026-10-20, ✉️ 2026-11-08).
-    val labels = tabs.map { tabLabel(it, store) }
-    val badges = if (dmPage >= 0) mapOf(dmPage to (dm?.badgeTotal ?: 0)) else emptyMap()
+    // The switch counts its own segments (no club list): its indexes are mapped to pages and back.
+    val labels = switchTabs.map { tabLabel(it, store) }
+    val dmSegment = switchTabs.indexOf(MainTab.DM)
+    val badges = if (dmSegment >= 0) mapOf(dmSegment to (dm?.badgeTotal ?: 0)) else emptyMap()
     val switch: @Composable () -> Unit = {
-        segments(labels, pager.currentPage, { i -> scope.launch { pager.animateScrollToPage(i) } }, badges)
+        segments(labels, switchTabs.indexOf(tabs.getOrNull(pager.currentPage)),
+            { i -> scope.launch { pager.animateScrollToPage(tabs.indexOf(switchTabs[i])) } }, badges)
     }
     // The chat page is at least partly on screen (swiping to or from it counts): its room and
     // ☗ clock run only then — they are drawn live as the page slides in.
-    val chatOnScreen by remember(pager) { derivedStateOf { abs(pager.currentPage + pager.currentPageOffsetFraction - 1f) < 1f } }
+    val chatOnScreen by remember(pager) { derivedStateOf { abs(pager.currentPage + pager.currentPageOffsetFraction - chatPage) < 1f } }
     // The neighbours stay composed from the start: deferring them saved ~30 ms of the first
     // frame but added one 150–220 ms frame right after launch (measured 2026-10-20).
     HorizontalPager(pager, Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
         when (page) {
-            0 -> TimelineScreen(timeline, store.capabilities, tabSwitch = switch, onReconnect = onSignOut, visible = pager.currentPage == 0)
-            1 -> PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch, visible = pager.currentPage == 1, onScreen = chatOnScreen) }
+            clubsPage -> ClubListPage(timeline, onPicked = { scope.launch { pager.animateScrollToPage(timelinePage) } })
+            timelinePage -> TimelineScreen(timeline, store.capabilities, tabSwitch = switch, onReconnect = onSignOut, visible = pager.currentPage == timelinePage)
+            chatPage -> PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch, visible = pager.currentPage == chatPage, onScreen = chatOnScreen) }
             // B-guru post links in DMs open the thread in the app too (like the chat).
             dmPage -> if (dm != null) PostLinksInApp(timeline) { DMPage(dm, store.members, visible = pager.currentPage == dmPage, tabSwitch = switch) }
             jbPage -> if (jb != null) JukeboxScreen(jb, store.capabilities, switch, visible = { pager.currentPage == jbPage },
@@ -236,6 +253,7 @@ private fun tabLabel(tab: MainTab, store: ChatStore): String = when (tab) {
     MainTab.CHAT -> if (store.unreadCount > 0) "💬•" else "💬"
     MainTab.DM -> "✉️"
     MainTab.JUKEBOX -> "📻"
+    MainTab.CLUBS -> "🏷️" // not in the switch
 }
 
 /** The tabs in the top bar: segments sized to their marks, drawn like the two-tab SegmentedButton row.

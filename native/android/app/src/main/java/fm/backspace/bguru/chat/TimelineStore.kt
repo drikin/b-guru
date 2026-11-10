@@ -43,6 +43,24 @@ class TimelineStore(
     var openThread by mutableStateOf<Long?>(null)
 
     private var nextCursor: String? = null
+
+    /** The club the list shows (null = all). リュー 2026-11-09「タイムラインからさらに左側にスワイプすると
+     *  部活一覧が出るようにしても良いかも」→ オーナー「全アプリに作る」: the club list page picks it. */
+    val clubFilter: String? get() = clubFilterState
+    private var clubFilterState by mutableStateOf<String?>(null)
+    /** Bumped by every change of [clubFilter]: a page fetched for an older one is dropped (A → B → A too). */
+    private var filterGen = 0
+    /** The clubs this member hides (部活の表示), left out of the club list. */
+    var hiddenClubKeys by mutableStateOf<Set<String>>(emptySet()); private set
+    /** The clubs the club list offers: the server's order, without the hidden ones. */
+    val visibleClubs: List<Pair<String, String>> get() = ClubFilterRules.visible(clubs, hiddenClubKeys)
+    val clubFilterName: String? get() = clubFilter?.let { clubs[it] ?: it }
+    /** The timeline's GET (tests: a fake that answers when told). */
+    private var fetchPosts: suspend (cursor: String?, club: String?) -> PostListResponse = { c, k -> api.posts(c, club = k) }
+    private var clock: () -> Long = { android.os.SystemClock.elapsedRealtime() }
+    private var warm: (List<String>) -> Unit = { PostMarkdown.warm(it) }
+    /** Demo only: every post, while one club is shown. */
+    private var demoAllPosts: List<Post>? = null
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val pendingRead = mutableSetOf<Long>()
     private var readJob: Job? = null
@@ -54,17 +72,21 @@ class TimelineStore(
 
     suspend fun refresh() {
         if (demo) return
-        lastRefreshAt = android.os.SystemClock.elapsedRealtime() // tried (failures wait a minute too)
+        lastRefreshAt = clock() // tried (failures wait a minute too)
         if (clubs.isEmpty()) runCatching { clubs = api.clubs().associate { it.key to it.name } }
         if (members.isEmpty() && membersJob?.isActive != true) {
             membersJob = scope.launch { runCatching { applyMembers(api.members()) } }
         }
+        val gen = filterGen
         try {
-            val r = api.posts()
+            val r = fetchPosts(null, clubFilter)
+            // The club was changed while this page was on its way: that change fetches its own.
+            if (gen != filterGen) return
             // Unchanged posts keep their instance (their rows skip recomposition), and an
             // unchanged list is not even assigned (posts uses structural equality).
             val old = posts.associateBy { it.id }
-            withContext(Dispatchers.Default) { PostMarkdown.warm(r.posts.map { it.text }) }
+            withContext(Dispatchers.Default) { warm(r.posts.map { it.text }) }
+            if (gen != filterGen) return
             posts = r.posts.map { p ->
                 val q = if (p.id in pendingRead) p.copy(unread = false) else p
                 old[q.id]?.takeIf { it == q } ?: q
@@ -74,9 +96,45 @@ class TimelineStore(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (_: Exception) {
+            if (gen != filterGen) return
             failed = posts.isEmpty()
         }
         hasLoaded = true
+    }
+
+    /** Show only [key]'s posts (null: all). The list starts again from the first page. */
+    fun setClubFilter(key: String?) {
+        if (key == clubFilter) return
+        clubFilterState = key
+        filterGen++
+        nextCursor = null
+        loadingMore = false
+        failed = false
+        if (demo) {
+            if (demoAllPosts == null) demoAllPosts = posts
+            posts = ClubFilterRules.demoPosts(demoAllPosts ?: emptyList(), key)
+            if (key == null) demoAllPosts = null
+            return
+        }
+        posts = emptyList()
+        hasLoaded = false
+        refreshAsync()
+    }
+
+    /** The hidden clubs (for the club list); kept as they were when they cannot be read. */
+    suspend fun loadHiddenClubKeys() {
+        if (clubs.isEmpty()) loadClubs()
+        if (demo) { applyHiddenClubKeys(demoHidden); return }
+        val path = capabilities?.clubVisibilityPath ?: return
+        try { applyHiddenClubKeys(ops.hiddenClubs(path)) } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+        }
+    }
+
+    /** A club hidden after it was picked: back to all. */
+    private fun applyHiddenClubKeys(h: Set<String>) {
+        if (h != hiddenClubKeys) hiddenClubKeys = h
+        if (ClubFilterRules.keep(clubFilter, h) != clubFilter) setClubFilter(null)
     }
 
     fun refreshAsync() { scope.launch { refresh() } }
@@ -105,9 +163,15 @@ class TimelineStore(
         val cursor = nextCursor ?: return
         if (loadingMore || demo) return
         loadingMore = true
+        val gen = filterGen
+        val club = clubFilter
         scope.launch {
-            runCatching { api.posts(cursor) }.getOrNull()?.let { r ->
-                withContext(Dispatchers.Default) { PostMarkdown.warm(r.posts.map { it.text }) }
+            val r = runCatching { fetchPosts(cursor, club) }.getOrNull()
+            // Another club was picked meanwhile: its list starts over and owns loadingMore now.
+            if (gen != filterGen) return@launch
+            if (r != null) {
+                withContext(Dispatchers.Default) { warm(r.posts.map { it.text }) }
+                if (gen != filterGen) return@launch
                 val known = posts.map { it.id }.toSet()
                 posts = posts + r.posts.filter { it.id !in known }
                 nextCursor = r.nextCursor
@@ -127,9 +191,9 @@ class TimelineStore(
     suspend fun pollWhileOnScreen(now: Boolean) {
         onScreen = true
         try {
-            if (now && hasLoaded && android.os.SystemClock.elapsedRealtime() - lastRefreshAt > 15_000L) refresh()
+            if (now && hasLoaded && clock() - lastRefreshAt > 15_000L) refresh()
             while (true) {
-                val wait = POLL_MS - (android.os.SystemClock.elapsedRealtime() - lastRefreshAt)
+                val wait = POLL_MS - (clock() - lastRefreshAt)
                 if (wait > 0) delay(wait)
                 refresh()
                 if (demo) return
@@ -391,7 +455,7 @@ class TimelineStore(
         val path = capabilities?.clubVisibilityPath ?: return
         scope.launch {
             if (clubs.isEmpty()) loadClubs()
-            try { hiddenClubs = ops.hiddenClubs(path) } catch (e: Exception) { clubVisibilityError = PostActions.errorText(e, "読み込めませんでした") }
+            try { hiddenClubs = ops.hiddenClubs(path).also { applyHiddenClubKeys(it) } } catch (e: Exception) { clubVisibilityError = PostActions.errorText(e, "読み込めませんでした") }
         }
     }
 
@@ -501,7 +565,10 @@ class TimelineStore(
     /** Closed: the timeline follows the new setting. */
     fun closeClubVisibility() {
         dialog = null
-        if (clubVisibilityChanged) { clubVisibilityChanged = false; refreshAsync() }
+        // The club list follows (a picked club that is now hidden goes back to all, which fetches anew).
+        val before = clubFilter
+        hiddenClubs?.let { applyHiddenClubKeys(it) }
+        if (clubVisibilityChanged) { clubVisibilityChanged = false; if (clubFilter == before) refreshAsync() }
     }
 
     fun loadList(filter: String) {
@@ -549,6 +616,11 @@ class TimelineStore(
     /** Tests only: start from these posts. */
     internal fun testPosts(list: List<Post>) { posts = list; hasLoaded = true }
     internal fun testClubs(c: Map<String, String>) { clubs = c }
+    internal fun testHiddenClubKeys(h: Set<String>) = applyHiddenClubKeys(h)
+    /** Tests only: the timeline's GET is [fetch], no clock, no members' fetch. */
+    internal fun testFetch(fetch: suspend (cursor: String?, club: String?) -> PostListResponse) {
+        fetchPosts = fetch; clock = { 0L }; warm = {}; applyMembers(listOf(MentionMember("t", "t")))
+    }
 
     /** Debug only: sample timeline for offline UI checks. */
     /** Demo only (`--ez demo_overlay true`): a post with a YouTube card on top, for 「📺 みんなで見る」 from the timeline. */
