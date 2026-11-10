@@ -224,6 +224,7 @@ targets:
       - path: ../shared/Gosatsu.swift
       - path: ../shared/RoomZoom.swift
       - path: ../shared/RoomVoiceLogic.swift
+      - path: ../shared/ClubOrdering.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: fm.backspace.bguru.chat.tests

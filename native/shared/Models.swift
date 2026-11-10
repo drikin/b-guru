@@ -141,6 +141,9 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var clubChange: Bool?
         /// 部活の表示・非表示（GET で隠している部活、PUT { club, hidden }）。無い（古いサーバ）なら出さない。
         var clubVisibility: String?
+        /// 部活一覧の自分の並び順（GET { order }、PUT { order }）と部活ごとの未読数（GET { unread }）。2026-11-09
+        var clubOrder: String?
+        var clubUnread: String?
         /// NG ワード（GET で一覧、PUT { words } で置き換え）。無い（古いサーバ）なら出さない。
         var mutedWords: String?
         var mentions: String?

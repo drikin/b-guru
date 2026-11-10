@@ -57,6 +57,7 @@ struct TimelineScreen: View {
             .task {
                 if !timeline.hasLoaded { await timeline.refresh() }
                 await timeline.loadHiddenClubs() // the club list / 部活で絞り込む leave hidden clubs out
+                await timeline.loadClubOrder()   // and follow my own order (kept on the server)
             }
             // Polling every minute is started and stopped by the window (MainView on iOS,
             // MainPanelView on the Mac): only while the timeline can be seen.

@@ -191,6 +191,27 @@ extension APIClient {
         return Set(try await perform(request("PUT", path, json: ["all": true, "hidden": hidden]), as: R.self).hidden)
     }
 
+    /// 部活一覧の自分の並び順（capabilities `club_order`。並べていなければ []）。
+    func clubOrder(path: String) async throws -> [String] {
+        struct R: Decodable { var order: [String] }
+        return try await perform(request("GET", path), as: R.self).order
+    }
+
+    /// 並び順を丸ごと置き換える（[] でカタログ順に戻す）。
+    func setClubOrder(path: String, order: [String]) async throws {
+        struct R: Decodable { var order: [String] }
+        _ = try await perform(request("PUT", path, json: ["order": order]), as: R.self)
+    }
+
+    /// 部活ごとのまだ読んでいない投稿の数（capabilities `club_unread`。0 の部活は入らない）。
+    func clubUnread(path: String) async throws -> [String: Int] {
+        // `counts` ([{ club, n }]), not `unread` ({ key: n }): this decoder's convertFromSnakeCase would
+        // rewrite the dictionary's keys too ("my_club" → "myClub").
+        struct C: Decodable { var club: String; var n: Int }
+        struct R: Decodable { var counts: [C] }
+        return Dictionary(try await perform(request("GET", path), as: R.self).counts.map { ($0.club, $0.n) }, uniquingKeysWith: { a, _ in a })
+    }
+
     /// NG ワード（capabilities `muted_words`）: 今の一覧と上限。
     func mutedWords(path: String) async throws -> MutedWordsInfo {
         try await perform(request("GET", path), as: MutedWordsInfo.self)
@@ -511,6 +532,8 @@ final class PostActionsModel {
     var canMention: Bool { features?.mentions != nil }
     var clubVisibilityPath: String? { features?.clubVisibility.flatMap { $0.hasPrefix("/api/") ? $0 : nil } }
     var mutedWordsPath: String? { features?.mutedWords.flatMap { $0.hasPrefix("/api/") ? $0 : nil } }
+    var clubOrderPath: String? { features?.clubOrder.flatMap { $0.hasPrefix("/api/") ? $0 : nil } }
+    var clubUnreadPath: String? { features?.clubUnread.flatMap { $0.hasPrefix("/api/") ? $0 : nil } }
     var customEmojiPath: String? { features?.customEmojiList }
     var lists: [PostListKind] {
         PostListKind.allCases.filter {

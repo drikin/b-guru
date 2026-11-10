@@ -244,6 +244,8 @@ private struct PagerWatcher: View {
                 pager.tab = .chat
             }
             .onChange(of: pager.tab) { _, t in
+                // 部活一覧: its unread counts again (what was read on the timeline meanwhile).
+                if t == .clubs { Task { await timeline.loadClubUnread() } }
                 // Switching pages hides the keyboard (it used to stay up over the timeline);
                 // only when it is up — resigning the first responder is not free.
                 Keyboard.dismissIfShown()

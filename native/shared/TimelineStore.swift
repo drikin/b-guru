@@ -29,8 +29,35 @@ final class TimelineStore {
     private(set) var clubFilter: String?
     /// The clubs this member hides (部活の表示), left out of the club list.
     private(set) var hiddenClubKeys: Set<String> = []
-    /// The clubs the club list offers: the server's order, without the hidden ones.
-    var visibleClubs: [ClubInfo] { clubList.filter { !hiddenClubKeys.contains($0.key) } }
+    /// The clubs the club list offers, without the hidden ones, in the order picked (`clubSort`).
+    var visibleClubs: [ClubInfo] { ClubOrdering.ordered(shownClubs, key: \.key, saved: clubOrder, unread: clubUnread, sort: clubSort) }
+    /// Without the hidden ones, in my own order (the one 「並べ替え」 moves).
+    var customOrderedClubs: [ClubInfo] { ClubOrdering.ordered(shownClubs, key: \.key, saved: clubOrder, unread: [:], sort: .custom) }
+    private var shownClubs: [ClubInfo] { clubList.filter { !hiddenClubKeys.contains($0.key) } }
+    /// Each club's posts not read yet (capabilities `club_unread`; 0 not in it). ドリキン 2026-11-09
+    /// 「部活一覧に未読数も出してほしい」.
+    private(set) var clubUnread: [String: Int] = [:]
+    /// My own order of the club list, kept on the server (every device the same; owner 2026-11-09).
+    private(set) var clubOrder: [String] = []
+    /// 「自分の順番」 / 「未読順」, per device.
+    private(set) var clubSort: ClubSort = ClubSort(rawValue: UserDefaults.standard.string(forKey: "clubSort") ?? "") ?? .custom
+    func setClubSort(_ s: ClubSort) {
+        guard s != clubSort else { return }
+        clubSort = s
+        UserDefaults.standard.set(s.rawValue, forKey: "clubSort")
+    }
+    var showsClubUnread: Bool { actions.clubUnreadPath != nil || isDemo }
+    var canReorderClubs: Bool { actions.clubOrderPath != nil || isDemo }
+    /// The listed clubs' unread posts together (「すべての部活」).
+    var clubUnreadTotal: Int { shownClubs.reduce(0) { $0 + (clubUnread[$1.key] ?? 0) } }
+    @ObservationIgnored private var clubUnreadAt = Date.distantPast
+    private var isDemo: Bool {
+        #if DEBUG
+        api.token == "demo"
+        #else
+        false
+        #endif
+    }
     var clubFilterName: String? { clubFilter.map { clubs[$0] ?? $0 } }
     /// Edit, delete, pin, bookmark, ☆, polls… (段階 3, docs/timeline-spec.md §10).
     @ObservationIgnored private(set) lazy var actions: PostActionsModel = {
@@ -115,6 +142,8 @@ final class TimelineStore {
         if api.token == "demo" { return }
         #endif
         HangWatch.note("timeline refresh (\(posts.count) posts)")
+        // The club list's unread counts follow the timeline (at most every 20 s).
+        Task { await loadClubUnread() }
         lastRefresh = Date()
         // Members' names decide which @ are drawn as mentions (the chat may have loaded them).
         if MemberDirectory.shared.isEmpty, let m = try? await api.members() { MemberDirectory.shared.set(m) }
@@ -191,6 +220,39 @@ final class TimelineStore {
         if h != hiddenClubKeys { hiddenClubKeys = h }
         // A club hidden after it was picked: back to all.
         if let c = clubFilter, h.contains(c) { await setClubFilter(nil) }
+    }
+
+    /// The unread counts again (the club list coming on screen, a timeline refresh); not more than
+    /// every 20 s unless `force`.
+    func loadClubUnread(force: Bool = false) async {
+        guard force || Date().timeIntervalSince(clubUnreadAt) > 20 else { return }
+        guard !isDemo, let path = actions.clubUnreadPath else { return }
+        clubUnreadAt = Date()
+        guard let u = try? await api.clubUnread(path: path) else { return }
+        if u != clubUnread { clubUnread = u }
+    }
+
+    /// My order of the club list from the server (kept as it was when it cannot be read).
+    func loadClubOrder() async {
+        guard !isDemo, let path = actions.clubOrderPath, let o = try? await api.clubOrder(path: path) else { return }
+        if o != clubOrder { clubOrder = o }
+    }
+
+    /// 「並べ替え」: the shown clubs in their new order. Hidden clubs I had placed keep their place
+    /// after them. Back as it was when the server says no.
+    func moveClubs(from: IndexSet, to: Int) {
+        var keys = customOrderedClubs.map(\.key)
+        keys.move(fromOffsets: from, toOffset: to)
+        let before = clubOrder
+        clubOrder = keys + before.filter { hiddenClubKeys.contains($0) && !keys.contains($0) }
+        guard !isDemo, let path = actions.clubOrderPath else { return }
+        let order = clubOrder
+        Task {
+            do { try await api.setClubOrder(path: path, order: order) } catch {
+                HangWatch.note("club order save failed: \(error.localizedDescription)")
+                if clubOrder == order { clubOrder = before }
+            }
+        }
     }
 
     func loadClubs() async {
@@ -402,6 +464,8 @@ final class TimelineStore {
         clubs = ["chat": "雑談", "pet": "ペット部", "apple": "リンゴ部", "improve": "機能改善", "car": "クルマ部"]
         clubList = DemoPostServer.clubs.map { ClubInfo(key: $0.0, name: $0.1, category: $0.2) }
         clubs = Dictionary(clubList.map { ($0.key, $0.name) }, uniquingKeysWith: { a, _ in a })
+        // 部活一覧の未読数（デモ）。
+        clubUnread = ["pet": 3, "apple": 12, "improve": 1]
         DemoPostServer.shared.timeline = self
         // 段階 3: my post with a poll (open, answers editable), someone's closed poll, my pinned
         // post, a bookmarked post and a favourite's post.
@@ -576,3 +640,4 @@ final class TimelineStore {
         return clubs[key]
     }
 }
+
