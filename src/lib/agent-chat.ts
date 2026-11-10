@@ -292,6 +292,9 @@ export function agentCapabilities(
         club_visibility: app ? "/api/agent/clubs/visibility" : null,
         // 全部 ON・全部 OFF: PUT { all: true, hidden } → { hidden: [key...] }（2026-11-08）
         club_visibility_all: app,
+        // 部活一覧の自分の並び順（GET は読むだけ、PUT { order } はアプリの鍵だけ）と部活ごとの未読数。2026-11-09
+        club_order: app ? "/api/agent/clubs/order" : null,
+        club_unread: app && can("read") ? "/api/agent/clubs/unread" : null,
         // NG ワード（GET は読むだけ、PUT { words } はアプリの鍵だけ）。2026-10-29
         muted_words: app ? "/api/agent/muted-words" : null,
         mentions: can("read") ? "/api/agent/members" : null,

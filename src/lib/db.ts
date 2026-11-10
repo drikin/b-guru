@@ -448,6 +448,16 @@ export async function initSchema() {
       PRIMARY KEY (email, club_key)
     );
 
+    -- Per-user order of the apps' club list (drikin 2026-11-09「自分でカスタマイズした順番か未読順か」,
+    -- kept on the server so every device has the same order). One row per club the member placed
+    -- (position ascending); clubs not in it follow in catalog order. lib/club-user-order.ts.
+    CREATE TABLE IF NOT EXISTS club_user_order (
+      email TEXT NOT NULL,
+      club_key TEXT NOT NULL,
+      position INTEGER NOT NULL,
+      PRIMARY KEY (email, club_key)
+    );
+
     -- User identity mapping: opaque public user_id <-> internal email.
     -- Canonical public profile URL is #/user/<user_id> (no email exposure).
     -- email is still the internal key everywhere; this table lets any email

@@ -394,6 +394,23 @@ const spec = {
         responses: { "200": { description: "{apiVersion, club, hidden}" }, "400": { description: "不正な部活キー" } },
       },
     },
+    "/api/agent/clubs/order": {
+      get: {
+        summary: "部活一覧の自分の並び順（並べていなければ []。並べていない部活はカタログ順で後ろに続く）",
+        responses: { "200": { description: "{apiVersion, order: string[]}" } },
+      },
+      put: {
+        summary: "部活一覧の並び順を丸ごと置き換える（[] でカタログ順に戻す。アプリの鍵だけ）",
+        requestBody: { content: { "application/json": { schema: { type: "object", properties: { order: { type: "array", items: { type: "string" } } }, required: ["order"] } } } },
+        responses: { "200": { description: "{apiVersion, order}" }, "400": { description: "order が配列でない" } },
+      },
+    },
+    "/api/agent/clubs/unread": {
+      get: {
+        summary: "部活ごとのまだ読んでいない投稿の数（ほかの人のルート投稿・直近 days 日・NG ワードで隠れるものは除く。0 は入らない）",
+        responses: { "200": { description: "{apiVersion, days, unread: {[club]: number}}" } },
+      },
+    },
     "/api/agent/muted-words": {
       get: {
         summary: "自分の NG ワード（NFKC・小文字にそろえた形）。含むほかの人の投稿・返信はタイムラインに出ず、知らせも来ない（自分の投稿は出る）",
