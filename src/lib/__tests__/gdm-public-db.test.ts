@@ -251,4 +251,24 @@ d("🌐 パブリック DM（DB）", () => {
     expect(await m.gdm.readGroupPhoto(B, priv.id)).toBeNull();
     expect(await m.gdm.readGroupPhoto(C, priv.id)).not.toBeNull();
   });
+  it("抜けた人を他の人がすぐ追加し直すことはできない（自分で入るのは自由）。アーカイブと名前を一緒に送っても途中まで変わらない", async () => {
+    const g = (await createPublic(a, "ひろば", [b.userId])).body.group as G;
+    expect((await m.api.gdmRemoveMemberApi(b, String(g.id), b.userId)).status).toBe(200);
+    expect((await m.api.gdmAddMembersApi(a, String(g.id), { user_ids: [b.userId] })).status).toBe(403);
+    expect((await m.api.gdmJoinApi(b, String(g.id))).status).toBe(200);
+    const r = await m.api.gdmUpdateApi(a, String(g.id), { archived: true, name: "別の名前" });
+    expect(r.status).toBe(403);
+    const t = await m.api.gdmThreadApi(a, String(g.id), new URLSearchParams());
+    expect(t.body.group).toMatchObject({ archived: false, name: "ひろば" });
+  });
+
+  it("パブリックの退出も回数に数える", async () => {
+    const g = (await createPublic(a, "ひろば")).body.group as G;
+    await sql(`INSERT INTO rate_limits (key, window_start, count) VALUES ($1, now(), 30)
+               ON CONFLICT (key) DO UPDATE SET window_start = now(), count = 30`, [`gdm-admin:${C}`]);
+    expect((await m.api.gdmJoinApi(c, String(g.id))).status).toBe(429);
+    await sql(`UPDATE rate_limits SET count = 29 WHERE key = $1`, [`gdm-admin:${C}`]);
+    expect((await m.api.gdmJoinApi(c, String(g.id))).status).toBe(200);
+    expect((await m.api.gdmRemoveMemberApi(c, String(g.id), c.userId)).status).toBe(429);
+  });
 });

@@ -416,12 +416,16 @@ async function insertMessage(
   clientId: string | null = null,
   images: string[] = []
 ): Promise<{ row: MsgRow; members: MemberRow[]; lk: Lookup }> {
+  // 発言・ビーグルの答えは、アーカイブされていないときだけ入れる（判定と書き込みのあいだにアーカイブされても入らない）。
+  // system 行（アーカイブした・戻したの知らせなど）はいつでも入れる。
   const ins = await pool.query(
-    `INSERT INTO gdm_messages (group_id, sender_email, kind, body, images) VALUES ($1, $2, $3, $4, $5::text[])
+    `INSERT INTO gdm_messages (group_id, sender_email, kind, body, images)
+     SELECT $1, $2, $3, $4, $5::text[] FROM gdm_groups WHERE id = $1 AND ($3 = 'system' OR archived_at IS NULL)
      RETURNING id, group_id, sender_email, kind, body, images, created_at, edited_at`,
     [gid, senderEmail, kind, body, images]
   );
-  const row = ins.rows[0] as MsgRow;
+  const row = ins.rows[0] as MsgRow | undefined;
+  if (!row) throw new DmError(403, "forbidden", "アーカイブされたグループです（読むだけできます）");
   await pool.query(`UPDATE gdm_groups SET updated_at = now() WHERE id = $1`, [gid]);
   if (senderEmail) {
     // 送ったら、そこまで見たことにする。
@@ -743,6 +747,8 @@ export async function updateGroup(actor: DmActor, rawGid: unknown, input: Record
   const { gid, group } = await requireMember(actor, rawGid);
   const me = normEmail(actor.email);
   let nameChanged = false;
+  // 書く前に全体を確かめる（アーカイブと名前などを一緒に送られて、途中まで変わるのを防ぐ）
+  if ((group.archived_at || input.archived === true) && ("name" in input || "beagle" in input)) assertWritable({ ...group, archived_at: group.archived_at ?? new Date() });
   if ("archived" in input) {
     if (typeof input.archived !== "boolean") throw new DmError(400, "invalid_request", "archived が不正です");
     if (!group.is_public) throw new DmError(400, "invalid_request", "アーカイブできるのはパブリック DM だけです");
@@ -772,7 +778,7 @@ export async function updateGroup(actor: DmActor, rawGid: unknown, input: Record
       }
     }
   }
-  if (group.archived_at && ("name" in input || "beagle" in input)) assertWritable(group);
+
   if ("muted" in input) {
     if (typeof input.muted !== "boolean") throw new DmError(400, "invalid_request", "muted が不正です");
     await pool.query(`UPDATE gdm_members SET muted = $3 WHERE group_id = $1 AND email = $2`, [gid, me, input.muted]);
@@ -851,6 +857,8 @@ export async function addMembers(actor: DmActor, rawGid: unknown, rawIds: unknow
     // 鍵を取ってから、操作する人がまだメンバーかを確かめ直す（同時に外されていたら断る）
     const still = await client.query(`SELECT 1 FROM gdm_members WHERE group_id = $1 AND email = $2`, [gid, me]);
     if (!still.rowCount) throw new DmError(404, "not_found", "グループが見つかりません");
+    const arch = await client.query(`SELECT archived_at FROM gdm_groups WHERE id = $1`, [gid]);
+    if (arch.rows[0]?.archived_at) throw new DmError(403, "forbidden", "アーカイブされたグループです（読むだけできます）");
     const cnt = await client.query(`SELECT count(*)::int AS c FROM gdm_members WHERE group_id = $1`, [gid]);
     if ((cnt.rows[0].c as number) + add.length > maxMembers(group)) {
       throw new DmError(400, "invalid_request", `1 グループ ${maxMembers(group)} 人までです`);
@@ -939,6 +947,8 @@ export async function removeMember(actor: DmActor, rawGid: unknown, rawUserId: u
   }
   if (!target || !members.some((m) => normEmail(m.email) === target)) throw new DmError(404, "not_found", "メンバーが見つかりません");
   const self = target === me;
+  // 🌐 パブリックの退出も数える（参加と退出のくり返しで知らせ行と配信を増やせないように。security-reviewer 2026-11-09）
+  if (self && group.is_public) await checkAdminRate(me);
   // 🌐 パブリックはだれでも入り直せるので、外すことはできない（本人が抜ける）
   if (!self && group.is_public) throw new DmError(403, "forbidden", "パブリック DM では外せません（本人が抜けます）");
   if (!self && normEmail(group.creator_email) !== me) throw new DmError(403, "forbidden", "外せるのはグループを作った人だけです");
@@ -958,7 +968,8 @@ export async function removeMember(actor: DmActor, rawGid: unknown, rawUserId: u
     }
     const del = await client.query(`DELETE FROM gdm_members WHERE group_id = $1 AND email = $2`, [gid, target]);
     if (!del.rowCount) throw new DmError(404, "not_found", "メンバーが見つかりません");
-    if (self && !g.rows[0].is_public) {
+    // パブリックでも記録する（自分で入り直すのは自由。ほかの人が追加し直すのだけを 24 時間止める。security-reviewer 2026-11-09）
+    if (self) {
       await client.query(
         `INSERT INTO gdm_leaves (group_id, email, left_at) VALUES ($1, $2, now())
          ON CONFLICT (group_id, email) DO UPDATE SET left_at = now()`,

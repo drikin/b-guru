@@ -12,6 +12,8 @@
 import path from "path";
 import { copyFile, mkdir, readdir, rename, rm, stat } from "fs/promises";
 import { pool } from "./db";
+import { dmEnabledFor } from "./dm";
+import { featureEnabledFor } from "./feature-flag";
 
 export const DM_MAX_IMAGES = 4;
 export const DM_UPLOAD_PREFIX = "dm-";
@@ -74,7 +76,7 @@ export async function allUploadedBy(email: string, urls: string[]): Promise<bool
   return Number(r.rows[0]?.c ?? 0) === urls.length;
 }
 
-/** この人がこの dm- ファイルを見てよいか（上げた本人・付いた DM の当事者・付いたグループのいまのメンバー。
+/** この人がこの dm- ファイルを見てよいか（上げた本人・付いた DM の当事者・付いたグループのいまのメンバー・🌐 パブリック DM なら使える人全員。
  *  グループは発言と同じく、入る前の発言の写真は見られない（joined_from_id）。期限を過ぎた発言の写真は見せない）。 */
 export async function canViewDmMedia(email: string, filename: string, ttl = "30 days"): Promise<boolean> {
   if (!DM_FILE_RE.test(filename)) return false;
@@ -86,8 +88,11 @@ export async function canViewDmMedia(email: string, filename: string, ttl = "30 
                      AND created_at >= now() - ($4::text)::interval)
          OR EXISTS (SELECT 1 FROM gdm_messages m JOIN gdm_members gm ON gm.group_id = m.group_id AND gm.email = $2
                      WHERE m.images @> ARRAY[$3]::text[] AND m.id > gm.joined_from_id
-                       AND m.created_at >= now() - ($4::text)::interval) AS ok`,
-    [filename, me, url, ttl]
+                       AND m.created_at >= now() - ($4::text)::interval)
+         -- 🌐 パブリック DM の写真は、グループ DM を使える人なら参加していなくても見られる（発言と同じ）
+         OR ($5 AND EXISTS (SELECT 1 FROM gdm_messages m JOIN gdm_groups g ON g.id = m.group_id AND g.is_public
+                     WHERE m.images @> ARRAY[$3]::text[] AND m.created_at >= now() - ($4::text)::interval)) AS ok`,
+    [filename, me, url, ttl, dmEnabledFor(me) && featureEnabledFor("GROUP_DM_ENABLED", me)]
   );
   return !!r.rows[0]?.ok;
 }
