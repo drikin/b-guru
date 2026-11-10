@@ -48,6 +48,7 @@ final class TimelineStore {
     }
     var showsClubUnread: Bool { actions.clubUnreadPath != nil || isDemo }
     var canReorderClubs: Bool { actions.clubOrderPath != nil || isDemo }
+    var canMarkClubRead: Bool { actions.clubReadPath != nil || isDemo }
     /// The listed clubs' unread posts together (「すべての部活」).
     var clubUnreadTotal: Int { shownClubs.reduce(0) { $0 + (clubUnread[$1.key] ?? 0) } }
     @ObservationIgnored private var clubUnreadAt = Date.distantPast
@@ -232,6 +233,23 @@ final class TimelineStore {
         if u != clubUnread { clubUnread = u }
     }
 
+    /// 「すべて既読」（nil）・「この部活を既読」. ドリキン 2026-11-09「すべてを既読にする操作が必要です。部活単位で
+    /// 既読にもしたい」. The counts and the list's unread marks go at once; the server's counts follow.
+    func markClubRead(_ key: String?) async {
+        if let key { clubUnread[key] = nil } else { clubUnread = [:] }
+        var p = posts
+        for i in p.indices where key == nil || (p[i].club ?? "__unset__") == key {
+            if p[i].unread == true { p[i].unread = false }
+            if (p[i].unreadReplies ?? 0) > 0 { p[i].unreadReplies = 0 }
+        }
+        if p != posts { posts = p }
+        guard !isDemo, let path = actions.clubReadPath else { return }
+        do { try await api.markClubRead(path: path, club: key) } catch {
+            HangWatch.note("club read failed: \(error.localizedDescription)")
+        }
+        await loadClubUnread(force: true)
+    }
+
     /// My order of the club list from the server (kept as it was when it cannot be read).
     func loadClubOrder() async {
         guard !isDemo, let path = actions.clubOrderPath, let o = try? await api.clubOrder(path: path) else { return }
@@ -317,6 +335,10 @@ final class TimelineStore {
     func sawPost(_ id: Int) {
         guard let i = posts.firstIndex(where: { $0.id == id }), posts[i].unread == true else { return }
         markRead([id])
+        // The club list's count goes down at once (the server's count follows once the read is saved).
+        if posts[i].parentId == nil, posts[i].isAuthor != true, let n = clubUnread[posts[i].club ?? "__unset__"], n > 0 {
+            clubUnread[posts[i].club ?? "__unset__"] = n - 1
+        }
         // The list shows it as read a moment later, together with the others read meanwhile:
         // each change to `posts` re-runs the whole list, and scrolling through unread posts
         // changed it for every one of them in turn.
@@ -353,6 +375,8 @@ final class TimelineStore {
             let batch = Array(self.pendingRead)
             await self.api.markPostsRead(batch)
             self.pendingRead.subtract(batch)
+            // Saved: the next look at the club list reads the counts again.
+            self.clubUnreadAt = .distantPast
         }
     }
 

@@ -203,6 +203,14 @@ extension APIClient {
         _ = try await perform(request("PUT", path, json: ["order": order]), as: R.self)
     }
 
+    /// 部活ひとつ（nil ならすべて）を既読に（capabilities `club_read`）。直近 30 日のほかの人の投稿・返信。
+    func markClubRead(path: String, club: String?) async throws {
+        struct R: Decodable { var marked: Int }
+        var body: [String: Any] = [:]
+        if let club { body["club"] = club }
+        _ = try await perform(request("POST", path, json: body), as: R.self)
+    }
+
     /// 部活ごとのまだ読んでいない投稿の数（capabilities `club_unread`。0 の部活は入らない）。
     func clubUnread(path: String) async throws -> [String: Int] {
         // `counts` ([{ club, n }]), not `unread` ({ key: n }): this decoder's convertFromSnakeCase would
@@ -534,6 +542,7 @@ final class PostActionsModel {
     var mutedWordsPath: String? { features?.mutedWords.flatMap { $0.hasPrefix("/api/") ? $0 : nil } }
     var clubOrderPath: String? { features?.clubOrder.flatMap { $0.hasPrefix("/api/") ? $0 : nil } }
     var clubUnreadPath: String? { features?.clubUnread.flatMap { $0.hasPrefix("/api/") ? $0 : nil } }
+    var clubReadPath: String? { features?.clubRead.flatMap { $0.hasPrefix("/api/") ? $0 : nil } }
     var customEmojiPath: String? { features?.customEmojiList }
     var lists: [PostListKind] {
         PostListKind.allCases.filter {
