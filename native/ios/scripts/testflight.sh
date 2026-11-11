@@ -50,8 +50,10 @@ xcodebuild -project BguruChat.xcodeproj -scheme BguruChatiOS -configuration Rele
 echo "=== 2/3 check ==="
 APP="$ARCHIVE/Products/Applications/B-guru Chat.app"
 [ -d "$APP/PlugIns/BguruChatNSE.appex" ] || { echo "NSE missing" >&2; exit 1; }
+[ -d "$APP/PlugIns/BguruChatShare.appex" ] || { echo "Share extension missing" >&2; exit 1; }
 codesign -d --entitlements :- "$APP" 2>/dev/null | grep -A1 "aps-environment" | tail -1
 if strings "$APP/B-guru Chat" | grep -q "BGURU_DEV_"; then echo "dev token hook in release binary" >&2; exit 1; fi
+if strings "$APP/PlugIns/BguruChatShare.appex/BguruChatShare" | grep -q "BGURU_DEV_"; then echo "dev hook in the share extension" >&2; exit 1; fi
 echo "archive OK: $ARCHIVE"
 
 if [ "$UPLOAD" -eq 0 ]; then echo "=== 3/3 skipped (--no-upload) ==="; exit 0; fi
