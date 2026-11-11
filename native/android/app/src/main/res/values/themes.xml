@@ -3,4 +3,11 @@
     <style name="Theme.Bguru" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@android:color/white</item>
     </style>
+    <!-- 共有メニューから開く投稿の画面: 共有元のアプリの上に重ねる（ShareActivity）。 -->
+    <style name="Theme.Bguru.Share" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">true</item>
+    </style>
 </resources>
