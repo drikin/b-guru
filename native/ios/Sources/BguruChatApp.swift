@@ -82,6 +82,28 @@ final class Session {
             t.debugLoadDemo()
             timeline = t
             s.beagleTimeline = { [weak t] in t?.beagleNotes() ?? [] }
+            // Dev only: BGURU_DEMO_TAP=chat:<message id> | post:<post id> [BGURU_DEMO_TAP_AFTER=<s>]: as if a
+            // notification was tapped — at launch, or after that many seconds with the app on screen.
+            PushCenter.shared.attach(s)
+            PushCenter.shared.session = self
+            if let tap = ProcessInfo.processInfo.environment["BGURU_DEMO_TAP"] {
+                let parts = tap.split(separator: ":")
+                let after = Double(ProcessInfo.processInfo.environment["BGURU_DEMO_TAP_AFTER"] ?? "") ?? 0
+                if parts.count == 2, parts[0] == "dm" {
+                    let peer = String(parts[1])
+                    DispatchQueue.main.asyncAfter(deadline: .now() + after) { [weak s] in
+                        NSLog("[demo-tap] %@", tap)
+                        s?.dm.open(DMPeer(userId: peer, name: nil, avatar: nil))
+                    }
+                } else if parts.count == 2, let id = Int(parts[1]) {
+                    let fire = { [weak s, weak t] in
+                        NSLog("[demo-tap] %@", tap)
+                        if parts[0] == "chat" { s?.reveal(id) } else if parts[0] == "post" { t?.openThread = id }
+                        else if parts[0] == "gdm" { s?.dm.openGroup(id) }
+                    }
+                    if after > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + after) { fire() } } else { fire() }
+                }
+            }
             // BGURU_DEMO_THREAD_CHECK=1: the long-thread check (scripts/thread-check.sh).
             ThreadCheck.runIfAsked(timeline: t)
             return

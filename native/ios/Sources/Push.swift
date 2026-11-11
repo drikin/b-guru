@@ -164,12 +164,13 @@ final class PushCenter: NSObject, UNUserNotificationCenterDelegate {
                     store.showChat?()
                     store.offkai.show()
                 } else if let dmPeer, let store = PushCenter.shared.session?.store {
-                    // ✉️ 簡易 DM: the chat page with that conversation open (its name comes with the thread).
-                    store.showChat?()
+                    // ✉️ 簡易 DM: that conversation on the ✉️ page (its name comes with the thread). Only `dm.open`
+                    // moves the pager: showChat first made it go 📰 → 💬 → ✉️ in one update, and the paging scroll
+                    // view's position binding then fought the second move forever — the app froze (0x8BADF00D,
+                    // drikin 2026-11-10「通知からのリンクでクラッシュ」).
                     store.dm.open(DMPeer(userId: dmPeer, name: nil, avatar: nil))
                 } else if let gdmGroup, let store = PushCenter.shared.session?.store {
-                    // 👥 グループ DM: the chat page with that group open.
-                    store.showChat?()
+                    // 👥 グループ DM: that group on the ✉️ page (same: only `dm.openGroup` moves the pager).
                     store.dm.openGroup(gdmGroup)
                 } else {
                     PushCenter.shared.handle(action: action, messageId: messageId, postId: postId, shogiGameId: gameId, text: text)
