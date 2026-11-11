@@ -70,6 +70,12 @@ final class ShareModel {
         text = got.text
         images = got.images
         loading = false
+        // Only a URL came (no title from the other app): read the page's title ourselves.
+        let only = got.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = URL(string: only), url.scheme?.hasPrefix("http") == true, !only.contains(" "), !only.contains("\n"),
+           let title = await PageTitle.fetch(url), text == got.text {
+            text = "\(title)\n\(only)"
+        }
     }
 
     func send() async {
@@ -209,6 +215,64 @@ struct ShareView: View {
             s += " 写真は \(model.destination.maxImages) 枚まで（薄い写真は送りません）。"
         }
         return s
+    }
+}
+
+/// The page's title (og:title, else <title>) for a URL shared without one. Short timeout, first 512 KB only.
+enum PageTitle {
+    static func fetch(_ url: URL) async -> String? {
+        var req = URLRequest(url: url, timeoutInterval: 5)
+        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        guard let (bytes, resp) = try? await URLSession.shared.bytes(for: req),
+              (resp as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? false,
+              (resp.mimeType ?? "text/html").contains("html") else { return nil }
+        var data = Data()
+        do { for try await b in bytes { data.append(b); if data.count >= 512 * 1024 { break } } } catch { if data.isEmpty { return nil } }
+        return parse(decode(data, contentType: (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type")))
+    }
+
+    /// UTF-8 unless the header or a <meta charset> says otherwise (many Japanese sites are Shift_JIS / EUC-JP).
+    static func decode(_ data: Data, contentType: String?) -> String {
+        let head = String(decoding: data.prefix(4096), as: UTF8.self)
+        let name = charset(in: contentType ?? "") ?? charset(in: head)
+        if let name, !name.lowercased().hasPrefix("utf") {
+            let cf = CFStringConvertIANACharSetNameToEncoding(name as CFString)
+            if cf != kCFStringEncodingInvalidId,
+               let s = String(data: data, encoding: String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(cf))) { return s }
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func charset(in s: String) -> String? {
+        guard let re = try? NSRegularExpression(pattern: #"charset=["']?([A-Za-z0-9_\-]+)"#, options: [.caseInsensitive]),
+              let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
+              let r = Range(m.range(at: 1), in: s) else { return nil }
+        return String(s[r])
+    }
+
+    static func parse(_ html: String) -> String? {
+        let patterns = [
+            #"<meta[^>]+property=["']og:title["'][^>]*content=["']([^"']+)["']"#,
+            #"<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:title["']"#,
+            #"<title[^>]*>([^<]+)</title>"#,
+        ]
+        for p in patterns {
+            guard let re = try? NSRegularExpression(pattern: p, options: [.caseInsensitive]),
+                  let m = re.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+                  let r = Range(m.range(at: 1), in: html) else { continue }
+            let t = decodeEntities(String(html[r])).trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\n", with: " ")
+            if !t.isEmpty { return String(t.prefix(200)) }
+        }
+        return nil
+    }
+
+    private static func decodeEntities(_ s: String) -> String {
+        var out = s
+        for (k, v) in ["&amp;": "&", "&quot;": "\"", "&#39;": "'", "&#x27;": "'", "&lt;": "<", "&gt;": ">", "&nbsp;": " "] {
+            out = out.replacingOccurrences(of: k, with: v)
+        }
+        return out
     }
 }
 

@@ -74,7 +74,9 @@ import java.util.UUID
 class ShareActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val shared = SharedInput.read(intent)
+        // Tapjacking: ignore touches while another app's window covers this one (security-reviewer 2026-11-11).
+        window.decorView.filterTouchesWhenObscured = true
+        val shared = SharedInput.read(intent, packageName)
         var token = TokenStore.load(this)
         var base = Net.BASE
         // Debug builds only: `adb shell am start … --es dev_token <token> --es dev_base http://10.0.2.2:<port>`
@@ -84,7 +86,8 @@ class ShareActivity : ComponentActivity() {
             intent.getStringExtra("dev_token")?.let { dev.edit().putString("token", it).apply() }
             intent.getStringExtra("dev_base")?.let { dev.edit().putString("base", it).apply() }
             dev.getString("token", null)?.takeIf { it.isNotBlank() }?.let { token = it }
-            dev.getString("base", null)?.takeIf { it.isNotBlank() }?.let { base = it }
+            // Only a server on this Mac: any app could send dev_base, and the token goes there.
+            dev.getString("base", null)?.takeIf { it.startsWith("http://10.0.2.2:") || it.startsWith("http://localhost:") }?.let { base = it }
         }
         setContent {
             BguruTheme {
@@ -100,7 +103,7 @@ class ShareActivity : ComponentActivity() {
 /** What the other app handed us: text (subject + text/URL) and image URIs. */
 data class SharedInput(val text: String, val images: List<Uri>) {
     companion object {
-        fun read(intent: Intent?): SharedInput {
+        fun read(intent: Intent?, ownPackage: String = ""): SharedInput {
             if (intent == null) return SharedInput("", emptyList())
             val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)?.trim().orEmpty()
             val body = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.trim().orEmpty()
@@ -113,6 +116,9 @@ data class SharedInput(val text: String, val images: List<Uri>) {
                 Intent.ACTION_SEND_MULTIPLE -> streams(intent)
                 else -> emptyList()
             }.takeIf { intent.type?.startsWith("image/") == true || intent.type == "*/*" }.orEmpty()
+                // Only other apps' content:// URIs: never file:// or this app's own providers, which we
+                // could read with our own rights (cached DM photos…) — security-reviewer 2026-11-11.
+                .filter { it.scheme == "content" && (ownPackage.isEmpty() || it.authority?.startsWith(ownPackage) != true) }
             return SharedInput(text, images.take(5))
         }
 
@@ -165,6 +171,12 @@ private fun ShareDialog(input: SharedInput, token: String?, base: String, onDone
             loading = false
         }
         if (token != null) runCatching { focus.requestFocus() }
+        // Only a URL came (no title from the other app): read the page's title ourselves.
+        val only = input.text.trim()
+        if (input.images.isEmpty() && (only.startsWith("https://") || only.startsWith("http://")) && only.none { it.isWhitespace() }) {
+            val title = PageTitle.fetch(only)
+            if (title != null && text == input.text) text = "$title\n$only"
+        }
     }
 
     val canSend = token != null && !loading && !sending && (text.isNotBlank() || photos.isNotEmpty())
@@ -248,6 +260,52 @@ private fun ShareDialog(input: SharedInput, token: String?, base: String, onDone
             TextButton(onClick = { onDone(false) }, enabled = !sending) { Text(if (token == null) "閉じる" else "キャンセル") }
         },
     )
+}
+
+/** The page's title (og:title, else <title>) for a URL shared without one. Short timeout, first 512 KB only. */
+object PageTitle {
+    suspend fun fetch(url: String): String? = withContext(Dispatchers.IO) {
+        runCatching {
+            val client = Net.http.newBuilder().callTimeout(5, java.util.concurrent.TimeUnit.SECONDS).build()
+            val req = Request.Builder().url(url)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36")
+                .build()
+            client.newCall(req).execute().use { r ->
+                if (!r.isSuccessful) return@use null
+                val type = r.header("Content-Type").orEmpty()
+                if (type.isNotEmpty() && !type.contains("html")) return@use null
+                val src = r.body?.source() ?: return@use null
+                src.request(512L * 1024)
+                val bytes = src.buffer.readByteArray(minOf(src.buffer.size, 512L * 1024))
+                parse(decode(bytes, type))
+            }
+        }.getOrNull()
+    }
+
+    /** UTF-8 unless the header or a <meta charset> says otherwise (many Japanese sites are Shift_JIS / EUC-JP). */
+    private fun decode(bytes: ByteArray, contentType: String): String {
+        val re = Regex("""charset=["']?([A-Za-z0-9_\-]+)""", RegexOption.IGNORE_CASE)
+        val head = String(bytes, 0, minOf(bytes.size, 4096), Charsets.UTF_8)
+        val name = re.find(contentType)?.groupValues?.get(1) ?: re.find(head)?.groupValues?.get(1)
+        val cs = name?.let { runCatching { java.nio.charset.Charset.forName(it) }.getOrNull() } ?: Charsets.UTF_8
+        return String(bytes, cs)
+    }
+
+    fun parse(html: String): String? {
+        val patterns = listOf(
+            Regex("""<meta[^>]+property=["']og:title["'][^>]*content=["']([^"']+)["']""", RegexOption.IGNORE_CASE),
+            Regex("""<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:title["']""", RegexOption.IGNORE_CASE),
+            Regex("""<title[^>]*>([^<]+)</title>""", RegexOption.IGNORE_CASE),
+        )
+        for (re in patterns) {
+            val t = re.find(html)?.groupValues?.get(1)?.let(::decode)?.replace('\n', ' ')?.trim().orEmpty()
+            if (t.isNotEmpty()) return t.take(200)
+        }
+        return null
+    }
+
+    private fun decode(s: String) = s.replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'")
+        .replace("&#x27;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&nbsp;", " ")
 }
 
 /** The two or three calls a share makes, with the app's token (and its shared HTTP client). */
