@@ -145,6 +145,8 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
     val photos = remember { ChatAttachments() }
     var viewing by remember { mutableStateOf<Pair<List<String>, Int>?>(null) }
     var editingId by remember { mutableStateOf<Long?>(null) }
+    // ↩️ The message the next one replies to (the bar above the box; ✕ or sending clears it).
+    var replyTarget by remember { mutableStateOf<ChatReplyRef?>(null) }
     val focus = remember { FocusRequester() }
     var refreshing by remember { mutableStateOf(false) }
     var selecting by remember { mutableStateOf<ChatMessage?>(null) }
@@ -262,7 +264,9 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
             editingId = null
             store.edit(id, text)
         } else {
-            store.send(text, photos.take()) { body, p ->
+            val reply = replyTarget
+            replyTarget = null
+            store.send(text, photos.take(), reply) { body, p ->
                 if (d.text.isEmpty()) d.text = body
                 photos.restore(p)
             }
@@ -271,17 +275,25 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
     }
 
     fun beginEdit(m: ChatMessage) {
+        replyTarget = null
         editingId = m.id
         d.text = m.visibleBody
         runCatching { focus.requestFocus() }
     }
 
-    fun replyTo(name: String) {
+    fun mentionReply(name: String) {
         val t = Mention.token(name)
         if (!d.text.startsWith(t)) d.text = t + d.text.trim()
         editingId = null
         runCatching { focus.requestFocus() }
     }
+
+    /** Reply to a message: remember it (bar above the box, sent as reply_to_id) and `@name ` (it notifies them). */
+    fun replyTo(m: ChatMessage) {
+        if (m.id > 0) replyTarget = ChatReplyRef.to(m)
+        m.authorName?.takeIf { it.isNotEmpty() }?.let { mentionReply(it) }
+    }
+
 
     // 「チャットに引用」 from a post's menu: once the chat is on screen, add the quote after
     // the draft (an edit in progress is dropped) and focus the composer, cursor at the end.
@@ -426,7 +438,8 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                                     editing = editingId == row.message.id,
                                     onReact = { store.toggleReaction(row.message.id, it) },
                                     onEdit = { beginEdit(row.message) },
-                                    onReply = row.message.authorName?.let { n -> { replyTo(n) } },
+                                    onReply = row.message.authorName?.let { { replyTo(row.message) } },
+                                    onJumpToReply = { store.reveal(it) },
                                     onDM = row.message.dmPeer(store.dm.enabled)?.let { p -> { store.dm.openConversation(p) } },
                                     onRetry = { store.retry(row) },
                                     onDiscard = { store.discard(row) },
@@ -467,6 +480,8 @@ fun ChatScreen(store: ChatStore, onSignOut: () -> Unit, tabSwitch: (@Composable 
                             }
                         },
                         editing = editingId != null,
+                        replyTarget = replyTarget,
+                        onCancelReply = { replyTarget = null },
                         photos = photos,
                         focus = focus,
                         onFocus = { composerFocused = it; if (!it) typingPaused = false },
@@ -773,6 +788,8 @@ private fun Composer(
     field: TextFieldValue,
     onField: (TextFieldValue) -> Unit,
     editing: Boolean,
+    replyTarget: ChatReplyRef? = null,
+    onCancelReply: () -> Unit = {},
     photos: ChatAttachments,
     focus: FocusRequester,
     onFocus: (Boolean) -> Unit = {},
@@ -811,6 +828,7 @@ private fun Composer(
                         TextButton(onClick = onCancelEdit) { Text("キャンセル") }
                     }
                 }
+                if (replyTarget != null && !editing) ReplyTargetBar(replyTarget, onCancelReply)
                 if (store.beagleThinking) {
                     Text("🐶 ビーグルが考え中…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -911,6 +929,7 @@ private fun MessageRow(
     onReact: (String) -> Unit,
     onEdit: () -> Unit,
     onReply: (() -> Unit)?,
+    onJumpToReply: (Long) -> Unit = {},
     onDM: (() -> Unit)? = null,
     onRetry: () -> Unit,
     onDiscard: () -> Unit,
@@ -964,6 +983,7 @@ private fun MessageRow(
                     Text(remember(m.createdAt) { time(m.createdAt) }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
                 }
             }
+            m.replyTo?.let { r -> ReplyQuote(r, onJump = { onJumpToReply(r.id) }) }
             Box {
                 val body = m.visibleBody
                 Column(horizontalAlignment = if (mine) Alignment.End else Alignment.Start, verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1261,5 +1281,43 @@ private fun SidePanel(store: ChatStore, visible: Boolean, onScreen: Boolean, com
                 ShogiPanel(store, visible, h, Modifier.fillMaxSize(), onScreen = onScreen)
             }
         }
+    }
+}
+
+
+/** ↩️ Above the message box while replying: 「〇〇さんへの返信」, the first words, ✕ to stop. */
+@Composable
+private fun ReplyTargetBar(t: ChatReplyRef, onCancel: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().height(androidx.compose.foundation.layout.IntrinsicSize.Min),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.width(3.dp).fillMaxHeight().background(AccentGreen, RoundedCornerShape(2.dp)))
+        Column(Modifier.weight(1f).padding(start = 8.dp)) {
+            Text("↩︎ ${t.authorName ?: ""} さんへの返信", style = MaterialTheme.typography.labelMedium, color = AccentGreen, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+            if (t.excerpt.isNotEmpty()) Text(t.excerpt, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        }
+        TextButton(onClick = onCancel) { Text("✕") }
+    }
+}
+
+/** ↩️ Above a reply's bubble: who it answers and their first words. Tap → jump there. */
+@Composable
+private fun ReplyQuote(r: ChatReplyRef, onJump: () -> Unit) {
+    Row(
+        Modifier.widthIn(max = 320.dp).height(androidx.compose.foundation.layout.IntrinsicSize.Min)
+            .then(if (r.gone) Modifier else Modifier.clickable(onClick = onJump))
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.width(3.dp).fillMaxHeight().background(AccentGreen.copy(alpha = 0.8f), RoundedCornerShape(2.dp)))
+        val text = if (r.gone) androidx.compose.ui.text.AnnotatedString("↩︎ 元のメッセージは消えました") else androidx.compose.ui.text.buildAnnotatedString {
+            pushStyle(androidx.compose.ui.text.SpanStyle(color = AccentGreen, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
+            append("↩︎ ${r.authorName ?: ""}  ")
+            pop()
+            append(r.excerpt)
+        }
+        Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(start = 6.dp))
     }
 }

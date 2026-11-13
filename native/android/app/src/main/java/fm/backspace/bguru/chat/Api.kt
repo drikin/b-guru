@@ -165,9 +165,10 @@ class ApiClient(val token: String) : PostOpsApi {
     suspend fun members(): List<MentionMember> = get<MembersResponse>("/api/agent/members").members
     suspend fun chatMessage(id: Long): ChatMessage = get<ChatSendResponse>("/api/agent/chat/$id").message
 
-    suspend fun post(body: String, clientId: String, images: List<String> = emptyList()): ChatMessage =
+    suspend fun post(body: String, clientId: String, images: List<String> = emptyList(), replyTo: Long? = null): ChatMessage =
         decode<ChatSendResponse>(send(request("POST", "/api/agent/chat", buildJsonObject {
             put("body", body); put("client_id", clientId)
+            if (replyTo != null) put("reply_to_id", replyTo)
             if (images.isNotEmpty()) put("images", JsonArray(images.map { JsonPrimitive(it) }))
         }))).message
 

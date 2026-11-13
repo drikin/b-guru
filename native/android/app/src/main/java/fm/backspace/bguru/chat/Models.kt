@@ -15,6 +15,21 @@ val ApiJson = Json {
     coerceInputValues = true
 }
 
+/** ↩️ The message a chat reply answers (`reply_to`). Expired / deleted → no name, empty excerpt. */
+@Serializable
+data class ChatReplyRef(val id: Long, val authorName: String? = null, val excerpt: String = "") {
+    val gone: Boolean get() = authorName.isNullOrEmpty() && excerpt.isEmpty()
+
+    companion object {
+        /** The ref for replying to [m] now (the server sends the same once stored). */
+        fun to(m: ChatMessage): ChatReplyRef {
+            val t = m.visibleBody.split(Regex("\\s+")).filter { it.isNotEmpty() }.joinToString(" ")
+            val excerpt = if (t.isEmpty()) (if (m.images.isNotEmpty()) "📷 写真" else "") else if (t.length > 60) t.take(60) + "…" else t
+            return ChatReplyRef(m.id, m.authorName, excerpt)
+        }
+    }
+}
+
 /** Mirrors `AgentChatMessageDto` in src/lib/agent-chat.ts. */
 @androidx.compose.runtime.Immutable
 @Serializable
@@ -39,6 +54,8 @@ data class ChatMessage(
     val shogiGameId: Long? = null,
     /** kind "beagle_ai": 🐶 Beagle's answer; the question it answers. */
     val replyToId: Long? = null,
+    /** ↩️ A member's reply: the message it answers (who and its first words). */
+    val replyTo: ChatReplyRef? = null,
 ) {
     val isNotice: Boolean get() = kind == "notice"
     /** The ☗ 将棋 game card (drawn as a small board when the server turns shogi on for me). */

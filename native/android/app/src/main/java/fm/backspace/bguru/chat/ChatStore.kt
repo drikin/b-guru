@@ -152,7 +152,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     /** What a pending message still has to send, by clientId. Memory only: the JPEGs
      *  stay until the post lands (or is discarded), so 再送 can re-upload them; `urls`
      *  is set once the upload succeeded, so a retry after that only re-posts. */
-    private class Outgoing(val body: String, val photos: List<ChatPhoto>, var urls: List<String>? = null)
+    private class Outgoing(val body: String, val photos: List<ChatPhoto>, var urls: List<String>? = null, val replyTo: Long? = null)
     private val outbox = HashMap<String, Outgoing>()
 
     /** Names of people who spoke recently (newest first) — ranked first in autocomplete. */
@@ -477,16 +477,16 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
 
     /** Text and/or photos. The bubble (with the local previews) shows at once; the
      *  photos upload first, then the message posts with their URLs. */
-    fun send(raw: String, photos: List<ChatPhoto> = emptyList(), restore: (String, List<ChatPhoto>) -> Unit) {
+    fun send(raw: String, photos: List<ChatPhoto> = emptyList(), replyTo: ChatReplyRef? = null, restore: (String, List<ChatPhoto>) -> Unit) {
         val body = raw.trim()
         if (body.isEmpty() && photos.isEmpty()) return
         val clientId = UUID.randomUUID().toString()
         tempSeq += 1
         val pending = ChatMessage(
             id = -tempSeq, authorId = myUserId, body = body, createdAt = Instant.now().toString(),
-            isAuthor = true, clientId = clientId, reactions = emptyList(),
+            isAuthor = true, clientId = clientId, reactions = emptyList(), replyTo = replyTo,
         )
-        outbox[clientId] = Outgoing(body, photos)
+        outbox[clientId] = Outgoing(body, photos, replyTo = replyTo?.id)
         sendError = null
         rows = rows + ChatRow(pending, SendState.PENDING, localImages = photos.map { it.preview })
         unreadCount = 0
@@ -495,7 +495,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
 
     fun retry(row: ChatRow) {
         val cid = row.message.clientId ?: return
-        if (cid !in outbox) outbox[cid] = Outgoing(row.message.body, emptyList())
+        if (cid !in outbox) outbox[cid] = Outgoing(row.message.body, emptyList(), replyTo = row.message.replyTo?.id)
         setState(SendState.PENDING, cid)
         post(cid) { _, _ -> }
     }
@@ -520,7 +520,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
                 val urls = out.urls ?: if (out.photos.isEmpty()) emptyList() else
                     api.uploadChatImages(out.photos.map { it.jpeg }, capabilities?.chatImageUpload ?: "/api/agent/chat/upload")
                         .also { out.urls = it }
-                val m = api.post(out.body, clientId, urls)
+                val m = api.post(out.body, clientId, urls, out.replyTo)
                 outbox.remove(clientId)
                 myUserId = m.authorId ?: myUserId
                 latestId = maxOf(latestId, m.id)
