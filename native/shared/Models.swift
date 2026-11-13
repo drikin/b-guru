@@ -411,6 +411,20 @@ struct APIErrorBody: Decodable, Sendable {
 
 // MARK: - Timeline (posts)
 
+/// 👤 A member's profile (GET /api/agent/users/:id) — the web's #/user/<id> header.
+struct MemberProfile: Decodable, Equatable, Sendable {
+    struct Link: Decodable, Equatable, Sendable, Hashable { var label: String; var href: String }
+    var userId: String
+    var isSelf: Bool?
+    var name: String
+    var avatar: String?
+    var bio: String?
+    var headerImage: String?
+    var links: [Link]?
+    var postCount: Int?
+    var firstPostAt: String?
+}
+
 /// Mirrors `agentPostDto` in src/app/api/agent/posts/route.ts (+ include=reactions,read).
 struct Post: Codable, Identifiable, Equatable, Sendable {
     var id: Int

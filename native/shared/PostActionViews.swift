@@ -868,6 +868,148 @@ struct PostListDialog: View {
     }
 }
 
+// MARK: - 👤 Profile
+
+/// A member's profile: header (picture, name, bio, links, how many posts since when) and their posts.
+/// Tap a post to open its thread (2026-11-12 フィードバック「アプリはアイコンをタップしてもプロフィールが見られない」).
+struct ProfileDialog: View {
+    let request: ProfileRequest
+    let timeline: TimelineStore
+    let capabilities: Capabilities?
+    @Environment(\.postActions) private var actions
+    @Environment(\.openURL) private var openURL
+    @State private var profile: MemberProfile?
+    @State private var posts: [Post] = []
+    @State private var loaded = false
+    @State private var failed = false
+    @State private var cursor: String?
+    @State private var viewing: ImageViewerItem?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label("プロフィール", systemImage: "person.crop.circle").font(.app(.headline))
+                Spacer()
+                Button { actions?.profile = nil } label: { Image(systemName: "xmark").font(.app(.callout)) }
+                    .buttonStyle(.borderless)
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityLabel("閉じる")
+            }
+            .padding(14)
+            Divider()
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    header
+                    Divider()
+                    if posts.isEmpty {
+                        Text(!loaded ? "読み込み中…" : failed ? "読み込めませんでした" : "まだ投稿がありません")
+                            .font(.app(.callout)).foregroundStyle(.secondary)
+                            .padding(24).frame(maxWidth: .infinity)
+                    }
+                    ForEach(posts) { post in
+                        Button {
+                            actions?.profile = nil
+                            timeline.openThread = post.parentId ?? post.id
+                        } label: {
+                            PostRow(post: post, clubName: post.display?.clubLabel ?? timeline.clubName(post.club),
+                                    canReact: capabilities?.canReactPosts ?? false,
+                                    onReact: { e in react(post.id, e) },
+                                    onOpenImage: { viewing = ImageViewerItem(images: post.images ?? [], index: $0) })
+                                .environment(\.postActions, nil) // the author is already open: no profile-in-profile
+                        }
+                        .buttonStyle(.plain)
+                        .onAppear { if post.id == posts.last?.id { Task { await more() } } }
+                        Divider()
+                    }
+                }
+            }
+        }
+        .imageViewer($viewing)
+        .task { await load() }
+    }
+
+    private var name: String { profile?.name ?? request.name ?? "" }
+
+    @ViewBuilder private var header: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let h = profile?.headerImage, !h.isEmpty {
+                MediaImage(path: h)
+                    .frame(maxWidth: .infinity).frame(height: 120).clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            HStack(spacing: 12) {
+                AvatarView(url: profile?.avatar ?? request.avatar, name: name, size: 64)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(name).font(.app(.title3, weight: .bold)).lineLimit(2)
+                    if let line = summary { Text(line).font(.app(.caption)).foregroundStyle(.secondary) }
+                }
+            }
+            if let bio = profile?.bio, !bio.isEmpty {
+                Text(bio).font(.app(.callout)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+            if let links = profile?.links, !links.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(links, id: \.self) { l in
+                        if let u = URL(string: l.href), ["http", "https"].contains(u.scheme?.lowercased() ?? "") {
+                            Button { openURL(u) } label: {
+                                Label(l.label.isEmpty ? l.href : l.label, systemImage: "link").font(.app(.callout))
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(14)
+    }
+
+    /// 「投稿 12 件・2024年3月から」.
+    private var summary: String? {
+        guard let p = profile else { return nil }
+        var parts: [String] = []
+        if let n = p.postCount { parts.append("投稿 \(n) 件") }
+        if let s = p.firstPostAt, let d = ProfileDialog.date(s) {
+            let c = Calendar(identifier: .gregorian).dateComponents([.year, .month], from: d)
+            if let y = c.year, let m = c.month { parts.append("\(y)年\(m)月から") }
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "・")
+    }
+
+    private static func date(_ s: String) -> Date? {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.date(from: s) ?? ISO8601DateFormatter().date(from: s)
+    }
+
+    private func load() async {
+        async let p = try? timeline.api.profile(userId: request.id)
+        async let list = try? timeline.api.posts(byAuthor: request.id)
+        let (pr, ls) = await (p, list)
+        profile = pr
+        if let ls { posts = ls.posts; cursor = ls.nextCursor; failed = false } else { failed = pr == nil }
+        loaded = true
+    }
+
+    private func more() async {
+        guard let c = cursor else { return }
+        cursor = nil
+        if let r = try? await timeline.api.posts(byAuthor: request.id, cursor: c) {
+            let known = Set(posts.map(\.id))
+            posts += r.posts.filter { !known.contains($0.id) }
+            cursor = r.nextCursor
+        }
+    }
+
+    private func react(_ id: Int, _ emoji: String) {
+        if let i = posts.firstIndex(where: { $0.id == id }) { posts[i].reactions = ChatStore.toggled(posts[i].reactions ?? [], emoji: emoji) }
+        if timeline.posts.contains(where: { $0.id == id }) {
+            timeline.toggleReaction(id, emoji: emoji)
+        } else {
+            Task { _ = try? await timeline.api.togglePostReaction(id: id, emoji: emoji) }
+        }
+    }
+}
+
 // MARK: - Toast
 
 /// 「…（タップで取り消し）」 for 5 s at the bottom (errors in red, no undo).
@@ -912,6 +1054,12 @@ struct PostActionPresenter: ViewModifier {
                 PostListDialog(kind: k, timeline: timeline, capabilities: capabilities)
                     .environment(\.postActions, actions)
                     .environment(\.postClubs, timeline.clubList)
+            }
+            .panelDialog($actions.profile, detents: [.large]) { req in
+                ProfileDialog(request: req, timeline: timeline, capabilities: capabilities)
+                    .environment(\.postActions, actions)
+                    .environment(\.postClubs, timeline.clubList)
+                    .id(req.id)
             }
             .panelDialog($actions.clubVisibility) { _ in
                 if let path = actions.clubVisibilityPath { ClubVisibilityDialog(path: path, timeline: timeline) }

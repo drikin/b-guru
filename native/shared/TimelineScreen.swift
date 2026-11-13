@@ -453,12 +453,24 @@ struct PostRow: View, Equatable {
     #endif
     @Environment(\.debugForceHover) private var debugForceHover
 
+    /// 👤 The avatar and the name open the author's profile (the web does the same).
+    private var profileTappable: Bool { actions != nil && !(post.authorId ?? "").isEmpty }
+    private func openProfile() {
+        guard let actions, let id = post.authorId, !id.isEmpty else { return }
+        actions.profile = ProfileRequest(id: id, name: post.authorName, avatar: post.authorAvatar)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             AvatarView(url: post.authorAvatar, name: post.authorName ?? "", size: 36)
+                .contentShape(Rectangle())
+                .highPriorityGesture(TapGesture().onEnded { openProfile() }, including: profileTappable ? .all : .subviews)
+                .accessibilityAddTraits(profileTappable ? .isButton : [])
+                .accessibilityLabel(profileTappable ? "\(post.authorName ?? "") のプロフィール" : "")
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(post.authorName ?? "").font(.app(.subheadline, weight: .bold)).lineLimit(1)
+                        .highPriorityGesture(TapGesture().onEnded { openProfile() }, including: profileTappable ? .all : .subviews)
                     if post.favoriteByMe == true {
                         Image(systemName: "star.fill").font(.app(.caption2)).foregroundStyle(.yellow)
                             .accessibilityLabel("お気に入り")

@@ -101,6 +101,22 @@ extension APIClient {
         return req
     }
 
+    /// 👤 A member's profile header.
+    func profile(userId: String) async throws -> MemberProfile {
+        struct R: Decodable { var profile: MemberProfile }
+        let enc = userId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? userId
+        let r: R = try await perform(get("/api/agent/users/\(enc)", query: []))
+        return r.profile
+    }
+
+    /// 👤 That member's posts (their root posts, newest activity first), as the timeline shows them.
+    func posts(byAuthor userId: String, cursor: String? = nil) async throws -> PostListResponse {
+        var q: [URLQueryItem] = [.init(name: "author_user_id", value: userId), .init(name: "limit", value: "30"),
+                                 .init(name: "include", value: "reactions,read,display")]
+        if let cursor { q.append(.init(name: "cursor", value: cursor)) }
+        return try await perform(get("/api/agent/posts", query: q))
+    }
+
     func publish(_ body: PublishBody) async throws -> Post {
         let r: PublishResponse = try await perform(request("POST", "/api/agent/publish", json: body.json))
         return r.post
@@ -495,6 +511,8 @@ final class PostActionsModel {
     var pollVoters: Post?
     var picker: ReactionPickRequest?
     var list: PostListKind?
+    /// 👤 A member's profile (tap on an avatar or a name in the timeline).
+    var profile: ProfileRequest?
     /// 「部活の表示」 dialog.
     var clubVisibility: ClubVisibilityRequest?
     /// 「NG ワード」 dialog.
@@ -997,3 +1015,11 @@ final class DemoPostServer {
     }
 }
 #endif
+
+
+/// 👤 Open a member's profile: who (the opaque user id) and what the card already shows.
+struct ProfileRequest: Identifiable, Equatable, Sendable {
+    let id: String
+    var name: String?
+    var avatar: String?
+}
