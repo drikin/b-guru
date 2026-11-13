@@ -57,6 +57,8 @@ export type AgentChatMessageDto = {
   /** kind "beagle_ai": 🐶 Beagle's answer written by a member's device (lib/beagle-ondevice.ts); the
    *  question it answers. author_name already says whose device (「ビーグル（〇〇さんの端末）」). */
   reply_to_id?: number;
+  /** ↩️ A member's reply: the message it answers. Gone → author_name null, excerpt "". */
+  reply_to?: { id: number; author_name: string | null; excerpt: string };
 };
 
 /** The body apps get for a message that is photos only. */
@@ -90,6 +92,7 @@ export function toAgentChatDto(
     ...(m.kind === "notice" ? { kind: "notice" } : {}),
     ...(m.kind === "shogi" && m.shogiGameId ? { kind: "shogi", shogi_game_id: m.shogiGameId } : {}),
     ...(m.kind === "beagle_ai" ? { kind: "beagle_ai" as const, ...(m.replyToId ? { reply_to_id: m.replyToId } : {}) } : {}),
+    ...(m.replyTo ? { reply_to: { id: m.replyTo.id, author_name: m.replyTo.authorName, excerpt: m.replyTo.excerpt } } : {}),
     created_at: m.createdAt ?? "",
     edited: !!m.edited,
     edited_at: m.editedAt ?? null,
@@ -234,6 +237,8 @@ export function agentCapabilities(
         custom_emoji: true,
         mark_read: can("read_state"),
         client_id: true,
+        // ↩️ 返信: POST に reply_to_id、メッセージに reply_to { id, author_name, excerpt }（2026-11-12）。
+        reply: can("chat"),
         max_body: CHAT_MAX_BODY,
         ttl_hours: ttlHours,
         // 🐶 @ビーグル への答えを端末内 AI（iOS 26 / macOS 26 の Foundation Models）で作って出す:

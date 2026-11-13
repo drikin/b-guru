@@ -5823,6 +5823,10 @@ export default function Home() {
   const [chatEditText, setChatEditText] = useState("");
   const chatEditInputRef = useRef<HTMLTextAreaElement | null>(null);
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
+  // ↩️ 返信先（入力欄の上に「〇〇さんへの返信」の帯）。送ったら消える（2026-11-12 フィードバック「どのコメントへの返信なのかわかりやすく」）。
+  const [chatReplyTarget, setChatReplyTarget] = useState<{ id: number; authorName: string | null; excerpt: string } | null>(null);
+  const chatReplyTargetRef = useRef(chatReplyTarget);
+  chatReplyTargetRef.current = chatReplyTarget;
   // Photos attached in the composer (already resized; `preview` is an object URL).
   const [chatPhotos, setChatPhotos] = useState<{ id: string; blob: Blob; preview: string }[]>([]);
   const chatPhotosRef = useRef(chatPhotos);
@@ -6041,7 +6045,7 @@ export default function Home() {
     }
   }, []);
 
-  const postChat = useCallback(async (body: string, clientId: string) => {
+  const postChat = useCallback(async (body: string, clientId: string, replyToId?: number) => {
     // Photos go up first (/api/chat/upload); the urls are kept on the job so a
     // retry after a failed POST does not upload them again.
     const job = chatPhotoJobsRef.current.get(clientId);
@@ -6080,7 +6084,7 @@ export default function Home() {
       const r = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(images ? { body, clientId, images } : { body, clientId }),
+        body: JSON.stringify({ body, clientId, ...(images ? { images } : {}), ...(replyToId ? { replyToId } : {}) }),
         cache: "no-store",
         signal: ac.signal,
       });
@@ -6116,6 +6120,7 @@ export default function Home() {
     // Wait for photos still being resized (the send button is disabled meanwhile).
     if ((!body && photos.length === 0) || !me || chatPhotoBusyRef.current > 0) return;
     const clientId = newChatClientId();
+    const reply = chatReplyTargetRef.current;
     const previews = photos.map((p) => p.preview);
     if (photos.length) {
       chatPhotoJobsRef.current.set(clientId, { blobs: photos.map((p) => p.blob), previews });
@@ -6136,20 +6141,22 @@ export default function Home() {
         editedAt: null,
         clientId,
         images: previews.length ? previews : undefined,
+        ...(reply ? { replyTo: reply } : {}),
         pending: true,
       },
     ]);
     setChatText("");
+    setChatReplyTarget(null);
     setChatUnread(0); // our own message counts as read
     // Keep focus (and the mobile soft keyboard) on the composer after sending.
     requestAnimationFrame(() => chatInputRef.current?.focus());
-    void postChat(body, clientId);
+    void postChat(body, clientId, reply?.id);
   }, [postChat, setChatText]);
 
   const retryChat = useCallback((row: ChatRow) => {
     if (!row.clientId) return;
     setChatMessages((prev) => markChatRetrying(prev, row.clientId!));
-    void postChat(row.body, row.clientId);
+    void postChat(row.body, row.clientId, row.replyTo?.id);
   }, [postChat]);
 
   const discardChat = useCallback((row: ChatRow) => {
@@ -6160,7 +6167,12 @@ export default function Home() {
   // Reply to someone in chat: put `@name ` at the start of the composer (keeping
   // anything already typed) and focus it. drikin 2026-10-16「リプライしたい人の
   // メッセージを選んで、直接その人に @ でメンションをつけてリプライ」。
-  const replyChatTo = useCallback((name: string) => {
+  const replyChatTo = useCallback((name: string, target?: { id: number; body: string; images?: string[] }) => {
+    if (target && target.id > 0) {
+      const t = (target.body ?? "").replace(/\s+/g, " ").trim();
+      const excerpt = t ? (t.length > 60 ? t.slice(0, 60) + "…" : t) : target.images?.length ? "📷 写真" : "";
+      setChatReplyTarget({ id: target.id, authorName: name || null, excerpt });
+    }
     const token = mentionToken(name);
     setChatText((cur) => (cur.startsWith(token) ? cur : token + cur.replace(/^\s+/, "")));
     requestAnimationFrame(() => {
@@ -12458,7 +12470,7 @@ export default function Home() {
                                   color="gray"
                                   aria-label={`${name} さんに返信`}
                                   title={`${name} さんに返信（@メンション）`}
-                                  onClick={() => replyChatTo(name)}
+                                  onClick={() => replyChatTo(name, m)}
                                 >
                                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                     <path d="M9 14 4 9l5-5" />
@@ -12486,6 +12498,7 @@ export default function Home() {
                           return (
                             <div
                               key={m.clientId ?? m.id}
+                              id={m.id > 0 ? `chat-msg-${m.id}` : undefined}
                               style={{
                                 display: "flex",
                                 justifyContent: mine ? "flex-end" : "flex-start",
@@ -12575,6 +12588,7 @@ export default function Home() {
                                      * the RIGHT of the bubble, vertically centred, and
                                      * only appear on hover (or when the message already
                                      * has reactions, which must stay visible). */}
+                                    {m.replyTo && <ChatReplyQuote reply={m.replyTo} mine={mine} />}
                                     <Group gap={4} align="center" wrap="nowrap" justify={mine ? "flex-end" : "flex-start"}>
                                       {mine && chatActions}
                                       {m.images?.length ? (
@@ -12617,6 +12631,21 @@ export default function Home() {
                       borderBottomRightRadius: 12,
                     }}
                   >
+                  {chatReplyTarget && (
+                    <div style={{ padding: "8px 10px 0" }}>
+                      <div
+                        style={{ display: "flex", alignItems: "center", gap: 8, borderLeft: "3px solid var(--mantine-color-green-6)", background: "var(--bg-subtle)", borderRadius: 6, padding: "4px 6px 4px 8px" }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0, fontSize: 12, lineHeight: 1.35 }}>
+                          <div style={{ color: "var(--mantine-color-green-7)", fontWeight: 600 }}>↩︎ {chatReplyTarget.authorName ?? ""} さんへの返信</div>
+                          <div style={{ color: "var(--mantine-color-dimmed)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{chatReplyTarget.excerpt}</div>
+                        </div>
+                        <ActionIcon size="sm" variant="subtle" color="gray" aria-label="返信をやめる" onMouseDown={(e) => e.preventDefault()} onClick={() => setChatReplyTarget(null)}>
+                          ×
+                        </ActionIcon>
+                      </div>
+                    </div>
+                  )}
                   {(chatPhotos.length > 0 || chatPhotoBusy > 0 || chatPhotoError || chatDragOver) && (
                     <div style={{ padding: "8px 10px 0" }}>
                       {chatDragOver && (
@@ -15339,4 +15368,54 @@ function NavUnread({ n }: { n: number }) {
 function DmNavUnread() {
   const n = useDmUnread();
   return n > 0 ? <NavUnread n={n} /> : null;
+}
+
+
+/** ↩️ The message a chat reply answers, above the reply's bubble: who and its first words.
+ *  Click → scroll to it and flash it (2026-11-12 フィードバック「どのコメントへの返信なのかわかりやすく」). */
+function ChatReplyQuote({ reply, mine }: { reply: { id: number; authorName: string | null; excerpt: string }; mine: boolean }) {
+  const gone = !reply.authorName && !reply.excerpt;
+  const jump = () => {
+    const el = typeof document !== "undefined" ? document.getElementById(`chat-msg-${reply.id}`) : null;
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.animate?.([{ background: "rgba(22,163,74,0.18)" }, { background: "transparent" }], { duration: 1400, easing: "ease-out" });
+  };
+  return (
+    <button
+      type="button"
+      onClick={jump}
+      disabled={gone}
+      title={gone ? undefined : "元のメッセージへ"}
+      style={{
+        all: "unset",
+        cursor: gone ? "default" : "pointer",
+        display: "block",
+        maxWidth: "100%",
+        boxSizing: "border-box",
+        marginBottom: 3,
+        marginLeft: mine ? 0 : 4,
+        padding: "2px 8px",
+        borderLeft: "3px solid var(--mantine-color-green-6)",
+        borderRadius: 4,
+        background: "var(--bg-subtle)",
+        fontSize: 11.5,
+        lineHeight: 1.35,
+        color: "var(--mantine-color-dimmed)",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        alignSelf: mine ? "flex-end" : "flex-start",
+      }}
+    >
+      {gone ? (
+        "↩︎ 元のメッセージは消えました"
+      ) : (
+        <>
+          <span style={{ color: "var(--mantine-color-green-7)", fontWeight: 600 }}>↩︎ {reply.authorName ?? ""}</span>
+          <span>{"  "}{reply.excerpt}</span>
+        </>
+      )}
+    </button>
+  );
 }

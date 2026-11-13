@@ -41,10 +41,49 @@ export interface ChatMessage {
   kind?: "notice" | "shogi" | "beagle_ai" | null;
   /** kind "beagle_ai": the question this answers (lib/beagle-ondevice.ts). */
   replyToId?: number;
+  /** ↩️ A member's reply: the message it answers (who and its first words), so every client can
+   *  show it above the body and jump to it. Gone (expired / deleted) → authorName null, excerpt "". */
+  replyTo?: ChatReplyRef;
   shogiGameId?: number;
   /** Only on the create event / POST response of the sender's own message:
    *  the client-generated id of the optimistic bubble it replaces. */
   clientId?: string;
+}
+
+export type ChatReplyRef = { id: number; authorName: string | null; excerpt: string };
+
+/** How long the quoted first words of the answered message are. */
+export const CHAT_REPLY_EXCERPT = 60;
+
+/** The answered message's first words: spaces collapsed, cut at CHAT_REPLY_EXCERPT; 📷 for photos only. */
+export function chatReplyExcerpt(body: string, images: string[] | null | undefined): string {
+  const t = (body ?? "").replace(/\s+/g, " ").trim();
+  if (!t) return images && images.length > 0 ? "📷 写真" : "";
+  return t.length > CHAT_REPLY_EXCERPT ? t.slice(0, CHAT_REPLY_EXCERPT) + "…" : t;
+}
+
+/** Fill `replyTo` of members' replies (not the Beagle's answers) with one query. */
+async function attachReplies(
+  pairs: { m: ChatMessage; replyToId: number | null | undefined; kind: string | null | undefined }[]
+): Promise<void> {
+  const want = pairs.filter((p) => p.replyToId && p.kind !== "beagle_ai");
+  if (want.length === 0) return;
+  const ids = [...new Set(want.map((p) => p.replyToId as number))];
+  const res = await pool.query(
+    `SELECT id, author_email, author_name, body, images, kind FROM chat_messages
+     WHERE id = ANY($1::int[]) AND created_at >= now() - ($2::text)::interval`,
+    [ids, CHAT_TTL]
+  );
+  const names = await resolveDisplayNames(res.rows.map((r) => r.author_email));
+  const byId = new Map<number, ChatReplyRef>();
+  for (const r of res.rows) {
+    const resolved = r.kind !== "beagle_ai" ? names.get(r.author_email) : null;
+    byId.set(r.id, { id: r.id, authorName: resolved ?? r.author_name ?? null, excerpt: chatReplyExcerpt(r.body, r.images) });
+  }
+  for (const p of want) {
+    const id = p.replyToId as number;
+    p.m.replyTo = byId.get(id) ?? { id, authorName: null, excerpt: "" };
+  }
 }
 
 /** Max body length for a chat message (shared with the composer). */
@@ -147,7 +186,7 @@ export async function listChatMessages(opts: {
   const names = await resolveDisplayNames(rows.map((r) => r.author_email));
   const ids = await emailToUserIds(rows.map((r) => r.author_email));
   const viewerEmail = opts.viewerEmail ?? null;
-  return Promise.all(
+  const out = await Promise.all(
     rows.map(async (r) => {
       const m = await mapRow(
         r,
@@ -160,6 +199,8 @@ export async function listChatMessages(opts: {
       return m;
     })
   );
+  await attachReplies(rows.map((r, i) => ({ m: out[i], replyToId: r.reply_to_id, kind: r.kind })));
+  return out;
 }
 
 /** A quiet one-line note from B-guru (kind "notice"), or an update of one (several
@@ -303,15 +344,17 @@ export async function sendChatMessage(
   email: string,
   body: string,
   clientId: string | null = null,
-  images: string[] = []
+  images: string[] = [],
+  /** ↩️ The message this replies to (ignored when it is gone or is a B-guru note). */
+  replyToId: number | null = null
 ): Promise<ChatMessage> {
-  if (!clientId) return insertAndBroadcast(email, body, null, images);
+  if (!clientId) return insertAndBroadcast(email, body, null, images, replyToId);
   const now = Date.now();
   pruneRecentSends(now);
   const key = `${email.trim().toLowerCase()}\u0000${clientId}`;
   const hit = recentSends.get(key);
   if (hit && now - hit.at < SEND_DEDUP_TTL_MS) return { ...(await hit.p) };
-  const p = insertAndBroadcast(email, body, clientId, images);
+  const p = insertAndBroadcast(email, body, clientId, images, replyToId);
   recentSends.set(key, { at: now, p });
   try {
     return await p;
@@ -325,7 +368,8 @@ async function insertAndBroadcast(
   email: string,
   body: string,
   clientId: string | null,
-  images: string[] = []
+  images: string[] = [],
+  replyToId: number | null = null
 ): Promise<ChatMessage> {
   const res = await pool.query(
     `WITH nm AS MATERIALIZED (
@@ -341,23 +385,27 @@ async function insertAndBroadcast(
        -- cleanDisplayName in SQL. JS trim() also strips U+3000, so btrim does too.
        SELECT btrim(raw, E' \\t\\r\\n\\u3000') AS s FROM nm
      ), ins AS (
-       INSERT INTO chat_messages (author_email, author_name, body, images)
+       INSERT INTO chat_messages (author_email, author_name, body, images, reply_to_id)
        SELECT $1,
               CASE WHEN strpos(s, '@') > 1
                    THEN NULLIF(btrim(substr(s, 1, strpos(s, '@') - 1), E' \\t\\r\\n\\u3000'), '')
                    ELSE NULLIF(s, '')
               END,
               $2,
-              $3::text[]
+              $3::text[],
+              -- ↩️ only a message still there, and not a B-guru note
+              (SELECT c.id FROM chat_messages c WHERE c.id = $4::int AND c.created_at >= now() - ($5::text)::interval
+                 AND c.kind IS DISTINCT FROM 'notice')
        FROM cleaned
-       RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind
+       RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind, reply_to_id
      )
      SELECT ins.*, u.user_id
      FROM ins LEFT JOIN users u ON u.email = lower(trim(ins.author_email))`,
-    [email, body, images]
+    [email, body, images, replyToId, CHAT_TTL]
   );
   const row = res.rows[0];
   const message = await mapRow(row, email, row.user_id ?? null);
+  await attachReplies([{ m: message, replyToId: row.reply_to_id, kind: row.kind }]);
   if (clientId) message.clientId = clientId;
 
   const { isAuthor: _perReceiver, ...broadcast } = message;
@@ -387,11 +435,13 @@ export async function editChatMessage(
        AND created_at >= now() - ($4::text)::interval
        -- A question the on-device Beagle answered stays as it was asked (the answer would read wrong).
        AND NOT EXISTS (SELECT 1 FROM chat_messages a WHERE a.reply_to_id = chat_messages.id AND a.kind = 'beagle_ai')
-     RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind`,
+     RETURNING id, author_email, author_name, body, edited, edited_at, created_at, images, kind, reply_to_id`,
     [body, id, email, CHAT_TTL]
   );
   if (res.rowCount === 0) return null;
-  return mapRow(res.rows[0], viewerEmail, await emailToUserId(email));
+  const m = await mapRow(res.rows[0], viewerEmail, await emailToUserId(email));
+  await attachReplies([{ m, replyToId: res.rows[0].reply_to_id, kind: res.rows[0].kind }]);
+  return m;
 }
 
 /** Edit + broadcast, shared by PATCH /api/chat/[id] and the agent API.
@@ -421,6 +471,7 @@ export async function getChatMessage(id: number, viewerEmail: string | null): Pr
   const names = await resolveDisplayNames([row.author_email]);
   const name = names.get(row.author_email);
   if (name && row.kind !== "beagle_ai") m.authorName = name;
+  await attachReplies([{ m, replyToId: row.reply_to_id, kind: row.kind }]);
   return m;
 }
 

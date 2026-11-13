@@ -66,11 +66,14 @@ export async function POST(req: NextRequest) {
   let raw: unknown = "";
   let rawImages: unknown = undefined;
   let clientId: string | null = null;
+  let replyToId: number | null = null;
   try {
     const body = await req.json();
     raw = body?.body ?? "";
     rawImages = body?.images;
     clientId = normalizeClientId(body?.clientId);
+    // ↩️ 返信先（消えていれば lib/chat.ts が無視する）
+    if (Number.isSafeInteger(body?.replyToId) && body.replyToId > 0) replyToId = body.replyToId;
   } catch {
     /* ignore */
   }
@@ -84,7 +87,7 @@ export async function POST(req: NextRequest) {
 
   let message: ChatMessage;
   try {
-    message = await sendChatMessage(email, checked.body, clientId, checked.images);
+    message = await sendChatMessage(email, checked.body, clientId, checked.images, replyToId);
     // 🐶 @ビーグル: Web には端末内 AI がないので、サーバのビーグルがすぐ答える（lib/beagle-server.ts）。
     scheduleBeagleAnswer(message, email, "web");
   } catch (e) {
