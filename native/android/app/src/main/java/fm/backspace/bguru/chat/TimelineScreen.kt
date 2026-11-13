@@ -323,6 +323,8 @@ fun PostRow(
     showReplyCount: Boolean = true,
     /** Members' names, lower-cased: which @mentions are marked (TimelineRules). */
     memberNames: Set<String> = emptySet(),
+    /** 👤 The avatar and the name open the author's profile (off inside the profile itself). */
+    profileTap: Boolean = true,
 ) {
     val context = LocalContext.current
     // Every "how to show it" decision (fold, reaction order, mentions, link card) in one place.
@@ -355,10 +357,16 @@ fun PostRow(
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Avatar(post.authorAvatar, post.authorName ?: "", 36.dp)
+            val openProfile: (() -> Unit)? = post.authorId?.takeIf { profileTap && it.isNotEmpty() && ops != null }?.let { id ->
+                { ops?.dialog = PostDialog.Profile(id, post.authorName, post.authorAvatar) }
+            }
+            Box(if (openProfile != null) Modifier.clip(CircleShape).clickable(onClickLabel = "プロフィール", onClick = openProfile) else Modifier) {
+                Avatar(post.authorAvatar, post.authorName ?: "", 36.dp)
+            }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(post.authorName ?: "", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                    Text(post.authorName ?: "", style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false).then(if (openProfile != null) Modifier.clickable(onClick = openProfile) else Modifier))
                     // Club label (root posts: callers pass the club's name). 「未設定」 in grey, like the web.
                     if (post.favoriteByMe == true && !post.isAuthor) Text("★", fontSize = 12.sp, color = Color(0xFFF59F00),
                         modifier = Modifier.semantics { contentDescription = "お気に入りの人" })

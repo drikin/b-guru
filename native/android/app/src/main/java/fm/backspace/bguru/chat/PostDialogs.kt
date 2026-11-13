@@ -114,6 +114,8 @@ sealed interface PostDialog {
     /** 部活で絞り込む (the club list in a sheet; 2026-11-09). */
     data object ClubFilter : PostDialog
     data object MutedWords : PostDialog
+    /** 👤 A member's profile (tap on an avatar or a name). */
+    data class Profile(val userId: String, val name: String?, val avatar: String?) : PostDialog
 }
 
 /** The Snackbar's message; `undo` = tap it to take the change back (5 seconds). */
@@ -137,6 +139,7 @@ fun PostDialogHost(timeline: TimelineStore, capabilities: Capabilities?, onOpenT
         is PostDialog.PollVoters -> PollVotersDialog(timeline, d.post)
         is PostDialog.Club -> ClubDialog(timeline, d.post)
         is PostDialog.List -> PostListSheet(timeline, d.filter, onOpenThread)
+        is PostDialog.Profile -> ProfileSheet(timeline, d, onOpenThread)
         PostDialog.ClubVisibility -> ClubVisibilitySheet(timeline)
         PostDialog.ClubFilter -> ClubFilterSheet(timeline)
         PostDialog.MutedWords -> MutedWordsSheet(timeline)
@@ -522,6 +525,90 @@ private fun PostListSheet(timeline: TimelineStore, filter: String, onOpenThread:
             Spacer(Modifier.height(12.dp))
         }
     }
+}
+
+// MARK: 👤 プロフィール
+
+/** A member's profile: header (picture, name, how many posts since when, bio, links) and their posts; tap = the thread.
+ *  2026-11-12 フィードバック「アプリはタイムラインのアイコンをタップしてもプロフィールが見られない」. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProfileSheet(timeline: TimelineStore, req: PostDialog.Profile, onOpenThread: (Long) -> Unit) {
+    val context = LocalContext.current
+    var profile by remember(req.userId) { mutableStateOf<MemberProfile?>(null) }
+    var posts by remember(req.userId) { mutableStateOf<kotlin.collections.List<Post>?>(null) }
+    var cursor by remember(req.userId) { mutableStateOf<String?>(null) }
+    var failed by remember(req.userId) { mutableStateOf(false) }
+    LaunchedEffect(req.userId) {
+        val p = runCatching { timeline.api.profile(req.userId) }.getOrNull()
+        val r = runCatching { timeline.api.postsBy(req.userId) }.getOrNull()
+        profile = p
+        posts = r?.posts ?: emptyList()
+        cursor = r?.nextCursor
+        failed = p == null && r == null
+    }
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    ModalBottomSheet(onDismissRequest = { timeline.dialog = null }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        LazyColumn(Modifier.fillMaxWidth().navigationBarsPadding()) {
+            item {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    profile?.headerImage?.takeIf { it.isNotEmpty() }?.let { h ->
+                        RemoteImage(ApiClient.absolute(h) ?: h, Modifier.fillMaxWidth().height(120.dp).clip(RoundedCornerShape(10.dp)))
+                    }
+                    val name = profile?.name ?: req.name ?: ""
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Avatar((profile?.avatar ?: req.avatar)?.let { ApiClient.absolute(it) ?: it }, name, 64.dp)
+                        Column {
+                            Text(name, style = MaterialTheme.typography.titleLarge)
+                            profileSummary(profile)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        }
+                    }
+                    profile?.bio?.takeIf { it.isNotEmpty() }?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+                    profile?.links?.filter { it.href.startsWith("https://") || it.href.startsWith("http://") }?.forEach { l ->
+                        Text("🔗 " + l.label.ifEmpty { l.href }, color = AccentGreen, style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.clickable { runCatching { uriHandler.openUri(l.href) } }.padding(vertical = 2.dp))
+                    }
+                }
+                HorizontalDivider()
+            }
+            val list = posts
+            when {
+                list == null -> item { Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.padding(24.dp)) } }
+                list.isEmpty() -> item {
+                    Text(if (failed) "読み込めませんでした" else "まだ投稿がありません", color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(16.dp))
+                }
+                else -> items(list, key = { it.id }) { p ->
+                    PostRow(p, timeline.clubName(p.club), App.session(context).store?.capabilities?.canReactPosts ?: false,
+                        onReact = { timeline.react(p, it) }, onOpenImage = {},
+                        onClick = { timeline.dialog = null; onOpenThread(p.parentId ?: p.id) }, memberNames = timeline.memberNames,
+                        profileTap = false)
+                    HorizontalDivider()
+                    if (p.id == list.last().id && cursor != null) LaunchedEffect(cursor) {
+                        val c = cursor ?: return@LaunchedEffect
+                        cursor = null
+                        runCatching { timeline.api.postsBy(req.userId, c) }.getOrNull()?.let { r ->
+                            val known = list.map { it.id }.toSet()
+                            posts = list + r.posts.filter { it.id !in known }
+                            cursor = r.nextCursor
+                        }
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(12.dp)) }
+        }
+    }
+}
+
+/** 「投稿 12 件・2024年3月から」. */
+private fun profileSummary(p: MemberProfile?): String? {
+    p ?: return null
+    val parts = mutableListOf<String>()
+    p.postCount?.let { parts += "投稿 $it 件" }
+    p.firstPostAt?.let { s ->
+        runCatching { java.time.Instant.parse(s).atZone(java.time.ZoneId.systemDefault()) }.getOrNull()?.let { parts += "${it.year}年${it.monthValue}月から" }
+    }
+    return parts.takeIf { it.isNotEmpty() }?.joinToString("・")
 }
 
 // MARK: 部活の表示

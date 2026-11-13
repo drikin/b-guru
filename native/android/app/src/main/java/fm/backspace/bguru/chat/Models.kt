@@ -592,6 +592,20 @@ data class PostPoll(
 @Serializable data class EmojisResponse(val emojis: List<CustomEmoji> = emptyList())
 @Serializable data class EmojiRegisterResponse(val emoji: CustomEmoji)
 
+/** 👤 A member's profile (GET /api/agent/users/:id) — the web's #/user/<id> header. */
+@Serializable data class MemberProfile(
+    val userId: String,
+    val isSelf: Boolean = false,
+    val name: String = "",
+    val avatar: String? = null,
+    val bio: String? = null,
+    val headerImage: String? = null,
+    val links: List<ProfileLink> = emptyList(),
+    val postCount: Int? = null,
+    val firstPostAt: String? = null,
+)
+@Serializable data class ProfileLink(val label: String = "", val href: String = "")
+@Serializable data class MemberProfileResponse(val profile: MemberProfile)
 @Serializable data class PostListResponse(val posts: List<Post> = emptyList(), val nextCursor: String? = null)
 @Serializable data class ThreadResponse(val post: Post, val replies: List<Post> = emptyList())
 @Serializable data class PublishResponse(val post: Post)

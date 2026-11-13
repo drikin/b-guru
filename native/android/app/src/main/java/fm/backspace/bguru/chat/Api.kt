@@ -439,6 +439,17 @@ class ApiClient(val token: String) : PostOpsApi {
     suspend fun publish(text: String, images: List<String>, parentId: Long?, extra: PublishExtra = PublishExtra()): Post =
         decode<PublishResponse>(send(request("POST", "/api/agent/publish", publishBody(text, images, parentId, extra)))).post
 
+    /** 👤 A member's profile header. */
+    suspend fun profile(userId: String): MemberProfile =
+        get<MemberProfileResponse>("/api/agent/users/" + java.net.URLEncoder.encode(userId, "UTF-8")).profile
+
+    /** 👤 That member's posts (root posts, newest activity first), as the timeline shows them. */
+    suspend fun postsBy(userId: String, cursor: String? = null): PostListResponse =
+        get("/api/agent/posts", buildMap {
+            put("author_user_id", userId); put("limit", "30"); put("include", "reactions,read,display")
+            if (cursor != null) put("cursor", cursor)
+        })
+
     /** The list with one filter: `pinned=1` (pins now, oldest pin first), `bm=1`, `fav=1`. */
     suspend fun postsWhere(filter: String, cursor: String? = null, limit: Int = 30): PostListResponse =
         get("/api/agent/posts", buildMap {
