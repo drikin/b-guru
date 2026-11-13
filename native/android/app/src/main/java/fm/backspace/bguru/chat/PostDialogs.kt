@@ -739,6 +739,7 @@ fun PostEditorDialog(timeline: TimelineStore, caps: Capabilities?, editing: Post
     val withVideo = isNew && caps?.canPostVideo == true
     val pick = rememberPhotoPicker(draft, withVideo = withVideo)
     val camera = rememberCameraCapture { ctx, uri -> draft.add(ctx, listOf(uri)) }
+    val pasteImages = rememberPostPasteImages(draft, enabled = !textOnly)
     val pickAudio = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch { draft.attachAudio(context, uri) }
     }
@@ -777,14 +778,15 @@ fun PostEditorDialog(timeline: TimelineStore, caps: Capabilities?, editing: Post
                     },
                 )
                 Column(Modifier.padding(horizontal = 16.dp).weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextField(
-                        value = draft.value, onValueChange = { draft.value = it },
+                    // 📷 An image pasted / inserted by the keyboard becomes a photo, as in the chat.
+                    PhotoTextField(
+                        value = draft.value, onValueChange = { draft.value = it }, onImages = pasteImages,
                         placeholder = { Text(composerPlaceholder(if (isNew) "いまどうしてる？" else "本文")) },
                         keyboardOptions = ComposerKeyboardOptions,
                         modifier = Modifier.fillMaxWidth()
                             .composerKeys(draft.value, { draft.value = it }, onSend = ::submit,
                                 mentionOpen = matches.isNotEmpty(), onPickMention = { matches.firstOrNull()?.let { draft.text = Mention.complete(draft.text, it.name) } }),
-                        minLines = 5,
+                        minLines = 5, maxLines = Int.MAX_VALUE, shape = TextFieldDefaults.shape,
                         colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
                     )
                     if (matches.isNotEmpty()) MentionSuggestions(matches) { draft.text = Mention.complete(draft.text, it.name) }

@@ -118,6 +118,28 @@ fun rememberPasteImages(photos: ChatAttachments, max: Int, maxSide: Int, enabled
 }
 
 /**
+ * 📷 Pasted images for a timeline post / thread reply (2026-11-13 フィードバック「タイムラインでは貼れない」):
+ * into [draft] like picked photos, at most its limit. Null when it can't take photos (text only).
+ */
+@Composable
+fun rememberPostPasteImages(draft: PostDraft, enabled: Boolean = true): ((List<Uri>) -> Unit)? {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    if (!enabled) return null
+    return remember(draft, context) {
+        { uris ->
+            val overflow = PasteImages.overflowMessage(uris.size, draft.remaining, draft.maxImages)
+            val take = uris.take(PasteImages.fits(uris.size, draft.remaining))
+            if (take.isEmpty()) draft.error = overflow
+            else scope.launch {
+                draft.add(context, take)
+                if (draft.error == null) draft.error = overflow
+            }
+        }
+    }
+}
+
+/**
  * The composers' text field. The caller keeps its [TextFieldValue]; it is mirrored into a [TextFieldState]
  * so [onImages] (pasted / inserted / dropped images) works. Text paste and typing are unchanged.
  */
@@ -131,6 +153,7 @@ fun PhotoTextField(
     enabled: Boolean = true,
     placeholder: @Composable (() -> Unit)? = null,
     maxLines: Int = 6,
+    minLines: Int = 1,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     shape: Shape = RoundedCornerShape(20.dp),
     colors: TextFieldColors = TextFieldDefaults.colors(
@@ -174,7 +197,7 @@ fun PhotoTextField(
         enabled = enabled,
         placeholder = placeholder,
         keyboardOptions = keyboardOptions,
-        lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = maxLines),
+        lineLimits = TextFieldLineLimits.MultiLine(minHeightInLines = minLines, maxHeightInLines = maxLines),
         shape = shape,
         colors = colors,
     )

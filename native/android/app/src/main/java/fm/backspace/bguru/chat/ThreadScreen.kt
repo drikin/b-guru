@@ -131,6 +131,7 @@ fun ThreadScreen(
     val matches = Mention.activeQuery(draft.text)?.let { q -> Mention.candidates(timeline.members, q.second, replies.reversed().mapNotNull { it.authorName }.distinct()) } ?: emptyList()
     LaunchedEffect(Unit) { timeline.loadMembers() }
 
+    val pasteImages = rememberPostPasteImages(draft)
     Column(Modifier.fillMaxSize().imePadding()) {
         // Pull down to reload the thread (new replies, reactions).
         PullToRefreshBox(
@@ -174,8 +175,9 @@ fun ThreadScreen(
                     DraftImages(draft)
                     DraftMedia(draft)
                     draft.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                    TextField(
-                        value = draft.value, onValueChange = { draft.value = it },
+                    // 📷 An image pasted / inserted by the keyboard becomes a photo, as in the chat.
+                    PhotoTextField(
+                        value = draft.value, onValueChange = { draft.value = it }, onImages = pasteImages,
                         placeholder = { Text(composerPlaceholder("返信")) }, maxLines = 6,
                         keyboardOptions = ComposerKeyboardOptions, shape = RoundedCornerShape(20.dp),
                         colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
