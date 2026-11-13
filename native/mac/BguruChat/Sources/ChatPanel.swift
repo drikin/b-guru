@@ -155,6 +155,14 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
                 if next != i { withAnimation(.easeOut(duration: 0.18)) { pin.tab = order[next] } }
             }
         }
+        // ⌘V of an image while the timeline's new post is open or its reply field has focus: attach it
+        // there (📷 2026-11-13 フィードバック). Before the chat's, which also shows in the split view.
+        if event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers == "v", TimelinePaste.owner != nil, pin.timelineShown,
+           !AppSettings.shared.webTimeline, let data = Self.pastedImage() {
+            NotificationCenter.default.post(name: .timelinePasteImage, object: data)
+            return
+        }
         // ⌘V with an image (and no text) on the pasteboard in the chat: attach it — to the open DM /
         // group conversation when one is over the chat (📷 DM の写真), else to the chat's message.
         if event.type == .keyDown, event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,

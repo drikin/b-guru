@@ -385,7 +385,9 @@ struct ComposeSheet: View {
                 MentionSuggestions(members: matches) { m in draft.text = Mention.complete(draft.text, with: m.name); focused = true }
             }
             PostTextInput(text: $draft.text, isFocused: $focused, placeholder: draft.poll == nil ? "いまどうしてる？" : "投票の質問",
-                          minLines: 5, maxLines: 20, onSubmit: post)
+                          minLines: 5, maxLines: 20, onSubmit: post,
+                          onPasteImage: { draft.add(imageData: $0) })
+                .timelinePhotoPaste(draft, active: true)
                 .padding(8)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
             DraftImages(draft: draft)

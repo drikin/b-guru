@@ -146,13 +146,16 @@ struct ThreadScreen: View {
             // Two rows: the field the whole width, the buttons under it. In one row with 📷, 🖼,
             // うなる and 吠える the field was a few characters wide on the iPhone (drikin
             // 2026-10-24 「テキスト入力の部分が狭すぎて文字が入力しづらい」, the Mac panel too).
-            PostTextInput(text: $draft.text, isFocused: $replyFocused, placeholder: "返信", onSubmit: { sendReply() })
+            PostTextInput(text: $draft.text, isFocused: $replyFocused, placeholder: "返信", onSubmit: { sendReply() },
+                          // 📷 ペースト / ⌘V of an image attaches it (Mac: timelinePhotoPaste below).
+                          onPasteImage: capabilities?.canPublish == true ? { draft.add(imageData: $0) } : nil)
                 .padding(.vertical, 8)
                 .padding(.horizontal, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 18).fill(Color.primary.opacity(0.06)))
                 .disabled(capabilities?.canPublish != true)
                 .onTapGesture { if capabilities?.canPublish != true { needsReconnect = true } }
+                .timelinePhotoPaste(draft, active: replyFocused && capabilities?.canPublish == true)
             HStack(alignment: .center, spacing: 14) {
                 PhotosPicker(selection: $draft.picks, maxSelectionCount: max(1, draft.maxImages - draft.images.count), matching: .images) {
                     Image(systemName: "photo.on.rectangle").font(.app(size: 20))

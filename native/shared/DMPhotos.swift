@@ -79,3 +79,52 @@ extension View {
         #endif
     }
 }
+
+// 📷 タイムラインの新規投稿・スレッドの返信へのクリップボードの画像（2026-11-13 フィードバック「タイムラインでは
+// 貼れない、チャットでは貼れる」）. iOS: PostTextInput's onPasteImage. Mac: the panel takes ⌘V first
+// (ChatPanel.sendEvent) and sends it here while a timeline composer is the paste target.
+
+extension Notification.Name {
+    /// Mac: ⌘V with an image on the pasteboard while a timeline composer is the target (object: image Data).
+    static let timelinePasteImage = Notification.Name("fm.backspace.bguru.timelinePasteImage")
+}
+
+/// Mac: the timeline composer that takes ⌘V of an image — the new post while it is open, the
+/// thread's reply bar while its field has focus. The last one to become active wins, so one paste
+/// attaches once. nil: the chat / DM take it as before.
+@MainActor
+enum TimelinePaste {
+    static var owner: UUID?
+}
+
+extension View {
+    /// Mac: while `active`, ⌘V of an image (the panel sends it) goes into `draft`. iOS: nothing
+    /// (the text box's onPasteImage does it).
+    @ViewBuilder func timelinePhotoPaste(_ draft: PostDraft, active: Bool) -> some View {
+        #if os(macOS)
+        modifier(TimelinePasteTarget(draft: draft, active: active))
+        #else
+        self
+        #endif
+    }
+}
+
+#if os(macOS)
+private struct TimelinePasteTarget: ViewModifier {
+    let draft: PostDraft
+    let active: Bool
+    @State private var id = UUID()
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: active, initial: true) { _, on in
+                if on { TimelinePaste.owner = id } else if TimelinePaste.owner == id { TimelinePaste.owner = nil }
+            }
+            .onDisappear { if TimelinePaste.owner == id { TimelinePaste.owner = nil } }
+            .onReceive(NotificationCenter.default.publisher(for: .timelinePasteImage)) { note in
+                guard TimelinePaste.owner == id, let data = note.object as? Data else { return }
+                draft.add(imageData: data)
+            }
+    }
+}
+#endif
