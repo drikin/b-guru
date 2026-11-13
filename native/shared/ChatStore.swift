@@ -544,27 +544,28 @@ final class ChatStore {
 
     /// Optimistic send. Returns immediately; the bubble is already visible (with the
     /// photos' previews). Photos are made small (long side 1280 px) and uploaded first.
-    func send(_ raw: String, photos: OutgoingPhotos? = nil, restore: @escaping (String) -> Void) {
+    func send(_ raw: String, photos: OutgoingPhotos? = nil, replyTo: ChatReplyRef? = nil, restore: @escaping (String) -> Void) {
         let body = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty || photos != nil else { return }
         let clientId = UUID().uuidString
         tempSeq += 1
-        let pending = ChatMessage(
+        var pending = ChatMessage(
             id: -tempSeq, authorId: myUserId, authorName: nil, avatar: nil, body: body,
             createdAt: ISO8601DateFormatter().string(from: Date()), edited: false, editedAt: nil,
             isAuthor: true, mentionsMe: false, clientId: clientId, reactions: []
         )
+        pending.replyTo = replyTo
         if let photos { outgoingPhotos[clientId] = photos }
         rows.append(ChatRow(pending, state: .pending))
         unreadCount = 0
         mentionCount = 0
-        post(body: body, clientId: clientId, restore: restore)
+        post(body: body, clientId: clientId, replyTo: replyTo?.id, restore: restore)
     }
 
     func retry(_ row: ChatRow) {
         guard let cid = row.message.clientId else { return }
         setState(.pending, clientId: cid)
-        post(body: row.message.body, clientId: cid, restore: { _ in })
+        post(body: row.message.body, clientId: cid, replyTo: row.message.replyTo?.id, restore: { _ in })
     }
 
     func discard(_ row: ChatRow) {
@@ -572,7 +573,7 @@ final class ChatStore {
         if let cid = row.message.clientId { outgoingPhotos[cid] = nil }
     }
 
-    private func post(body: String, clientId: String, restore: @escaping (String) -> Void) {
+    private func post(body: String, clientId: String, replyTo: Int? = nil, restore: @escaping (String) -> Void) {
         #if DEBUG
         if debugOffline {
             var m = rows.last(where: { $0.message.clientId == clientId })!.message
@@ -599,7 +600,7 @@ final class ChatStore {
                         photos.urls = urls
                     }
                 }
-                let m = try await api.post(body: body, clientId: clientId, images: urls)
+                let m = try await api.post(body: body, clientId: clientId, images: urls, replyTo: replyTo)
                 myUserId = m.authorId ?? myUserId
                 latestId = max(latestId, m.id)
                 rows = Self.reconcile(rows, with: m)

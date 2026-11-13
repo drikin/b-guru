@@ -222,9 +222,10 @@ final class APIClient: Sendable {
         return try await send(req)
     }
 
-    func post(body: String, clientId: String, images: [String] = []) async throws -> ChatMessage {
+    func post(body: String, clientId: String, images: [String] = [], replyTo: Int? = nil) async throws -> ChatMessage {
         var json: [String: Any] = ["body": body, "client_id": clientId]
         if !images.isEmpty { json["images"] = images }
+        if let replyTo { json["reply_to_id"] = replyTo }
         let r: ChatSendResponse = try await send(request("POST", "/api/agent/chat", json: json))
         return r.message
     }

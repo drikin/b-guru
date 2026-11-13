@@ -3,6 +3,22 @@ import Foundation
 /// Mirrors `AgentChatMessageDto` in src/lib/agent-chat.ts (the server is the
 /// source of truth). Unknown fields are ignored; missing optional ones default,
 /// so the web can add fields without breaking this app.
+/// ↩️ The message a chat reply answers (`reply_to` in AgentChatMessageDto).
+struct ChatReplyRef: Codable, Equatable, Hashable, Sendable {
+    var id: Int
+    var authorName: String?
+    var excerpt: String
+    /// Expired or deleted: nothing to show or jump to.
+    var gone: Bool { (authorName ?? "").isEmpty && excerpt.isEmpty }
+
+    /// The ref for replying to `m` now (the server sends the same once stored).
+    static func to(_ m: ChatMessage) -> ChatReplyRef {
+        let t = m.displayBody.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        let excerpt = t.isEmpty ? ((m.images?.isEmpty == false) ? "📷 写真" : "") : (t.count > 60 ? String(t.prefix(60)) + "…" : t)
+        return ChatReplyRef(id: m.id, authorName: m.authorName, excerpt: excerpt)
+    }
+}
+
 struct ChatMessage: Codable, Equatable, Sendable {
     var id: Int
     var authorId: String?
@@ -24,6 +40,8 @@ struct ChatMessage: Codable, Equatable, Sendable {
     var shogiGameId: Int? = nil
     /// kind "beagle_ai": 🐶 Beagle's answer written by a member's device (BeagleOnDevice); the question.
     var replyToId: Int? = nil
+    /// ↩️ A member's reply: the message it answers (who and its first words). Gone → no name, empty excerpt.
+    var replyTo: ChatReplyRef? = nil
 
     var isNotice: Bool { kind == "notice" }
     /// The game card: drawn as a small board when this app has ☗ 将棋 on (else the body as text).

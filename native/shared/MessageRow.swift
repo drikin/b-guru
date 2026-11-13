@@ -18,6 +18,8 @@ struct MessageRow: View {
     var localImages: [PlatformImage] = []
     /// Tap on a photo: open it full screen (index into `m.images`).
     var onOpenImage: ((Int) -> Void)? = nil
+    /// ↩️ Tap on the quote of the message this replies to: go there.
+    var onJumpToReply: ((Int) -> Void)? = nil
     /// ✉️ 簡易 DM to this message's author (others' messages, DM on): offered on the name / avatar and in the menu.
     var onDM: (() -> Void)? = nil
 
@@ -76,6 +78,10 @@ struct MessageRow: View {
                         if m.edited { Text("編集済み").font(.app(.caption2)).foregroundStyle(Color.accentGreen) }
                         Text(Self.time(m.createdAt)).font(.app(.caption2)).foregroundStyle(.tertiary).monospacedDigit()
                     }
+                }
+                if let r = m.replyTo {
+                    ReplyQuote(ref: r, onJump: onJumpToReply.map { f in { f(r.id) } })
+                        .frame(maxWidth: 320, alignment: mine ? .trailing : .leading)
                 }
                 bubble
                 if let rs = m.reactions, !rs.isEmpty {

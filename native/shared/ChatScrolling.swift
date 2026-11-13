@@ -386,6 +386,8 @@ final class ChatComposerModel {
     var draft: String
     /// The message open in the composer for editing (the list marks its row).
     var editingId: Int?
+    /// ↩️ The message the next one replies to (the bar above the message box; ✕ or sending clears it).
+    var replyTarget: ChatReplyRef?
     /// Photos attached to the next message (up to 4).
     let photos = PostDraft(maxImages: 4)
     /// iOS: the message box has the keyboard (bound to the text view).
@@ -409,6 +411,13 @@ final class ChatComposerModel {
         requestFocus()
     }
 
+    /// Reply to a message: remember it (shown above the box, sent as reply_to_id) and put
+    /// `@name ` at the start (keeps what was typed; the mention is what notifies them).
+    func replyTo(_ m: ChatMessage) {
+        if m.id > 0 { replyTarget = ChatReplyRef.to(m) }
+        if let name = m.authorName, !name.isEmpty { replyTo(name) } else { editingId = nil; requestFocus() }
+    }
+
     /// Reply to someone: `@name ` at the start of the composer (keeps what was typed).
     func replyTo(_ name: String) {
         let token = Mention.token(name)
@@ -420,6 +429,7 @@ final class ChatComposerModel {
     }
 
     func beginEdit(_ m: ChatMessage) {
+        replyTarget = nil
         editingId = m.id
         draft = m.displayBody
         requestFocus()
@@ -431,6 +441,62 @@ final class ChatComposerModel {
     }
 }
 
+
+/// ↩️ Above the message box while replying: 「〇〇さんへの返信」, the first words, ✕ to stop.
+struct ReplyTargetBar: View {
+    let composer: ChatComposerModel
+
+    var body: some View {
+        if let t = composer.replyTarget, composer.editingId == nil {
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 1.5).fill(Color.accentGreen).frame(width: 3)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("↩︎ \(t.authorName ?? "") さんへの返信").font(.app(.caption)).fontWeight(.semibold)
+                        .foregroundStyle(Color.accentGreen)
+                    if !t.excerpt.isEmpty {
+                        Text(t.excerpt).font(.app(.caption)).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+                Button { composer.replyTarget = nil } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("返信をやめる")
+            }
+            .padding(.vertical, 4).padding(.trailing, 4)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .combine)
+        }
+    }
+}
+
+/// ↩️ Above a reply's bubble: who it answers and their first words. Tap → jump there.
+struct ReplyQuote: View {
+    let ref: ChatReplyRef
+    var onJump: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 1.5).fill(Color.accentGreen.opacity(0.8)).frame(width: 3)
+            if ref.gone {
+                Text("↩︎ 元のメッセージは消えました").foregroundStyle(.secondary)
+            } else {
+                (Text("↩︎ \(ref.authorName ?? "")  ").fontWeight(.semibold).foregroundColor(.accentGreen)
+                 + Text(ref.excerpt).foregroundColor(.secondary))
+                    .lineLimit(1)
+            }
+        }
+        .font(.app(.caption2))
+        .padding(.vertical, 2)
+        .fixedSize(horizontal: false, vertical: true)
+        .contentShape(Rectangle())
+        .onTapGesture { if !ref.gone { onJump?() } }
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(ref.gone ? "" : "元のメッセージへ移動")
+        .accessibilityAddTraits(ref.gone ? [] : .isButton)
+    }
+}
 
 /// 🐶 next to the camera: puts @ビーグル in the message box (only where this device can answer).
 struct BeagleCallButton: View {

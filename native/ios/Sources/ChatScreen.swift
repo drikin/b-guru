@@ -226,11 +226,12 @@ private struct ChatMessageList: View {
                             onEdit: { composer.beginEdit(row.message) },
                             onRetry: { store.retry(row) },
                             onDiscard: { store.discard(row) },
-                            onReplyMention: row.message.authorName.map { name in { composer.replyTo(name) } },
+                            onReplyMention: row.message.authorName.map { _ in { composer.replyTo(row.message) } },
                             highlighted: store.highlightId == row.message.id,
                             editing: editingId == row.message.id,
                             localImages: row.message.clientId.flatMap { store.outgoingPhotos[$0]?.previews } ?? [],
                             onOpenImage: { i in viewing = ImageViewerItem(images: row.message.images ?? [], index: i) },
+                            onJumpToReply: { store.reveal($0) },
                             onDM: store.dm.enabled ? dmTarget(row.message).map { peer in { store.dm.open(peer) } } : nil
                         )
                         .equatable()
@@ -338,6 +339,7 @@ private struct ChatComposerBar: View {
                     Button("キャンセル") { composer.cancelEdit() }.font(.caption)
                 }
             }
+            ReplyTargetBar(composer: composer)
             if store.beagleThinking { BeagleThinkingLine() }
             if composer.editingId == nil {
                 DraftImages(draft: photos)
@@ -428,7 +430,9 @@ private struct ChatComposerBar: View {
         } else {
             clearComposer(sent: text)
             let composer = composer
-            store.send(text, photos: photos.takePhotos(), restore: { body in if composer.draft.isEmpty { composer.draft = body } })
+            let reply = composer.replyTarget
+            composer.replyTarget = nil
+            store.send(text, photos: photos.takePhotos(), replyTo: reply, restore: { body in if composer.draft.isEmpty { composer.draft = body } })
         }
     }
 
