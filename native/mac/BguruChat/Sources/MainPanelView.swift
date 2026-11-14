@@ -58,6 +58,11 @@ struct MainPanelView: View {
             if jukeboxOn {
                 JukeboxSlot(store: store, pin: pin)
             }
+            // 📜 台本: the rightmost tab, after 📻, the whole panel like 📝 (its own web view and
+            // login: NetaTabWeb.script; オーナー 2026-11-14「アプリは1番右のタブに追加」).
+            if let path = scriptPath {
+                NetaSlot(store: store, pin: pin, path: path, pane: .script, web: .script)
+            }
             // 「ネタ帳に送る」 inside the panel (a sheet bigger than the panel drew wrongly).
             if let post = store.netaPost {
                 Color.black.opacity(0.35).ignoresSafeArea()
@@ -92,6 +97,8 @@ struct MainPanelView: View {
             if jukeboxOn { Button("") { tab = .jukebox }.keyboardShortcut("4", modifiers: .command).hidden() }
             // 📝 is ⌘5: ⌘4 stays the player it has been since 2026-10-20 (no renumbering).
             if netaPath != nil { Button("") { tab = .neta }.keyboardShortcut("5", modifiers: .command).hidden() }
+            // 📜 is ⌘6, the next number (the rightmost tab).
+            if scriptPath != nil { Button("") { tab = .script }.keyboardShortcut("6", modifiers: .command).hidden() }
             // The text size (老眼対策): ⌘+ (also ⌘= / ⌘; on a JIS keyboard, where + is ⇧;), ⌘−, ⌘0.
             Button("") { TextScale.shared.larger() }.keyboardShortcut("+", modifiers: .command).hidden()
             Button("") { TextScale.shared.larger() }.keyboardShortcut("=", modifiers: .command).hidden()
@@ -106,6 +113,8 @@ struct MainPanelView: View {
     private var jukeboxOn: Bool { store.capabilities?.jukeboxEnabled ?? false }
     /// 📝 the entrance path (only app-issued tokens get it).
     private var netaPath: String? { store.capabilities?.netaTabPath }
+    /// 📜 the entrance path (only app-issued tokens of paid members get it).
+    private var scriptPath: String? { store.capabilities?.scriptTabPath }
 
 }
 
@@ -167,17 +176,20 @@ private struct JukeboxSlot: View {
 }
 
 /// 📝 ネタ帳: the web page is built the first time the tab is opened, then kept (its place and
-/// login survive tab switches; NetaTabWeb re-enters after 6 hours).
+/// login survive tab switches; NetaTabWeb re-enters after 6 hours). 📜 台本 uses it too
+/// (pane .script, web .script).
 private struct NetaSlot: View {
     let store: ChatStore
     let pin: PinState
     let path: String
+    var pane: MainTab = .neta
+    var web: NetaTabWeb = .shared
     @State private var built = false
 
     var body: some View {
-        let on = pin.tab == .neta
+        let on = pin.tab == pane
         if built || on {
-            NetaTab(store: store, pin: pin, path: path)
+            NetaTab(store: store, pin: pin, path: path, pane: pane, web: web)
                 .equatable()
                 .shown(on)
                 .onAppear { built = true }
@@ -240,6 +252,7 @@ private struct PanelTabWatcher: View {
                 updateVisibility()
                 // 📝 back on screen after a long while: NetaTabWeb enters again (6 h; the login lasts 12 h).
                 if seen && pin.tab == .neta { NetaTabWeb.shared.shown() }
+                if seen && pin.tab == .script { NetaTabWeb.script.shown() }
             }
             .onChange(of: pin.split) { _, _ in updateVisibility() }
             .onChange(of: jukeboxOn) { _, on in if !on && pin.tab == .jukebox { pin.tab = .chat } }
@@ -251,6 +264,7 @@ private struct PanelTabWatcher: View {
                 updateVisibility()
                 if t == .jukebox { pin.wantsHeight?(780) }
                 if t == .neta { NetaTabWeb.shared.shown() }
+                if t == .script { NetaTabWeb.script.shown() }
             }
             // The panel opens on the tab it was left on (PanelMemory); the chat's input gets
             // the caret only when the chat is the tab shown (ChatPanel.focusComposer).
@@ -262,6 +276,8 @@ private struct PanelTabWatcher: View {
                 if pin.tab == .dm, caps != nil, !(caps?.features?.dm?.enabled ?? false) { pin.tab = .chat }
                 // Remembered on 📝, but this token has no ネタ帳 tab (an older token / server).
                 if pin.tab == .neta, caps != nil, caps?.netaTabPath == nil { pin.tab = .chat }
+                // The same for 📜 (not a paid member any more, an older token / server).
+                if pin.tab == .script, caps != nil, caps?.scriptTabPath == nil { pin.tab = .chat }
             }
             // Inside the chat: ☗ / 🎮 open again where they were left (the room follows the
             // server: entering it shows you to everyone, so it is never entered by itself).
@@ -305,9 +321,9 @@ struct PanelTabSwitch: View {
         if pin.split {
             // Side by side: one switch (over the chat) — 📰💬 both, or 📻.
             if pane != .timeline {
-                PanelTabs(selection: Binding(get: { pin.tab == .jukebox || pin.tab == .dm || pin.tab == .neta ? pin.tab : .chat }, set: { pin.tab = $0 }), items: [
+                PanelTabs(selection: Binding(get: { pin.tab == .jukebox || pin.tab == .dm || pin.tab == .neta || pin.tab == .script ? pin.tab : .chat }, set: { pin.tab = $0 }), items: [
                     (.chat, store.unreadCount > 0 ? "📰💬●" : "📰💬", "タイムラインとチャット（⌘1 / ⌘2）"),
-                ] + dmItem + netaItem + jukeboxItem)
+                ] + dmItem + netaItem + jukeboxItem + scriptItem)
             }
         } else {
             tabs
@@ -327,14 +343,17 @@ struct PanelTabSwitch: View {
     /// 📝 ネタ帳 between ✉️ and 📻, when the server gives this token the tab.
     private var netaItem: [(MainTab, String, String)] { store.capabilities?.netaTabPath != nil ? [(.neta, "📝", "ネタ帳（⌘5）")] : [] }
 
+    /// 📜 台本 the rightmost, after 📻 (オーナー 2026-11-14「アプリは1番右のタブに追加」).
+    private var scriptItem: [(MainTab, String, String)] { store.capabilities?.scriptTabPath != nil ? [(.script, "📜", "台本（⌘6）")] : [] }
+
     private var tabs: some View {
-        // 📰 タイムライン ・ 💬 チャット ・ ✉️ DM ・ 📝 ネタ帳 ・ 📻 プレイヤー — the same order and marks in every app
+        // 📰 タイムライン ・ 💬 チャット ・ ✉️ DM ・ 📝 ネタ帳 ・ 📻 プレイヤー ・ 📜 台本 — the same order and marks in every app
         // (drikin 2026-10-20); segments sized to their marks (the system control made them
         // all as wide as the widest and widened the panel).
         PanelTabs(selection: $pin.tab, items: [
             (.timeline, "📰", "タイムライン（⌘1）"),
             (.chat, store.unreadCount > 0 ? "💬●" : "💬", "チャット（⌘2）"),
-        ] + dmItem + netaItem + jukeboxItem)
+        ] + dmItem + netaItem + jukeboxItem + scriptItem)
     }
 }
 
@@ -394,18 +413,21 @@ private struct JukeboxTab: View, @MainActor Equatable {
 }
 
 /// 📝 ネタ帳: the tab switch on top, the page (/neta/app, its own views and light/dark) below.
+/// 📜 台本 is the same with pane .script and web .script (/neta/app/script).
 private struct NetaTab: View, @MainActor Equatable {
     let store: ChatStore
     let pin: PinState
     let path: String
-    static func == (a: Self, b: Self) -> Bool { a.store === b.store && a.pin === b.pin && a.path == b.path }
+    var pane: MainTab = .neta
+    var web: NetaTabWeb = .shared
+    static func == (a: Self, b: Self) -> Bool { a.store === b.store && a.pin === b.pin && a.path == b.path && a.pane == b.pane && a.web === b.web }
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                PanelTabSwitch(store: store, pin: pin, pane: .neta)
+                PanelTabSwitch(store: store, pin: pin, pane: pane)
                 Spacer()
                 // No ⌘R here: the hidden tabs stay built and the web timeline's ↻ already has it.
-                Button { NetaTabWeb.shared.reload() } label: { Image(systemName: "arrow.clockwise") }
+                Button { web.reload() } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless)
                     .help("再読み込み")
             }
@@ -413,11 +435,11 @@ private struct NetaTab: View, @MainActor Equatable {
             .padding(.top, 10)
             .padding(.bottom, 8)
             Divider()
-            NetaTabView(path: path)
+            NetaTabView(path: path, web: web)
         }
         .background(.regularMaterial)
         // The page follows the app's text size (⌘+ / ⌘− / ⌘0), like the web timeline.
-        .onChange(of: TextScale.shared.scale) { _, s in NetaTabWeb.shared.setZoom(s) }
+        .onChange(of: TextScale.shared.scale) { _, s in web.setZoom(s) }
     }
 }
 

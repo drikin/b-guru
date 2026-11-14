@@ -72,11 +72,12 @@ struct MainView: View {
                 store.showChat = { pager.tab = .chat }
                 Keyboard.startTracking()
                 #if DEBUG
-                // BGURU_DEMO_TAB=timeline|jukebox|neta: start on that page (the orientation check).
+                // BGURU_DEMO_TAB=timeline|jukebox|neta|script: start on that page (the orientation check).
                 switch ProcessInfo.processInfo.environment["BGURU_DEMO_TAB"] {
                 case "timeline": pager.tab = .timeline; pager.settledTab = .timeline
                 case "jukebox": pager.tab = .jukebox; pager.settledTab = .jukebox
                 case "neta": pager.tab = .neta; pager.settledTab = .neta
+                case "script": pager.tab = .script; pager.settledTab = .script
                 default: break
                 }
                 #endif
@@ -87,6 +88,8 @@ struct MainView: View {
     private var jukeboxPath: String { store.capabilities?.jukeboxPath ?? "/api/agent/jukebox" }
     /// 📝 ネタ帳のタブの入口（nil = タブなし）。
     private var netaPath: String? { store.capabilities?.netaTabPath }
+    /// 📜 台本のタブの入口（nil = タブなし）。
+    private var scriptPath: String? { store.capabilities?.scriptTabPath }
 
     @ViewBuilder private var layout: some View {
         if hSize == .regular {
@@ -142,6 +145,12 @@ struct MainView: View {
                                     .frame(width: g.size.width, height: g.size.height)
                                     .id(MainTab.jukebox)
                             }
+                            // 📜 台本: いちばん右（オーナー 2026-11-14「アプリは 1 番右のタブに追加」）。
+                            if let scriptPath {
+                                NetaScreen(path: scriptPath, title: "台本", web: .script, tabPicker: picker)
+                                    .frame(width: g.size.width, height: g.size.height)
+                                    .id(MainTab.script)
+                            }
                         }
                         .scrollTargetLayout()
                     }
@@ -177,8 +186,10 @@ private struct LeftColumn: View {
             DMTabScreen(dm: store.dm, tabPicker: AnyView(picker))
         } else if pager.leftTab == .neta, let path = store.capabilities?.netaTabPath {
             NetaScreen(path: path, tabPicker: picker)
+        } else if pager.leftTab == .script, let path = store.capabilities?.scriptTabPath {
+            NetaScreen(path: path, title: "台本", web: .script, tabPicker: picker)
         } else {
-            TimelineScreen(timeline: timeline, capabilities: store.capabilities, tabPicker: jukeboxOn || store.dm.enabled || store.capabilities?.netaTabPath != nil ? picker : nil, onReconnect: onSignOut)
+            TimelineScreen(timeline: timeline, capabilities: store.capabilities, tabPicker: jukeboxOn || store.dm.enabled || store.capabilities?.netaTabPath != nil || store.capabilities?.scriptTabPath != nil ? picker : nil, onReconnect: onSignOut)
         }
     }
 }
@@ -238,6 +249,9 @@ private struct PagerWatcher: View {
             .onChange(of: store.capabilities?.netaTabPath != nil) { _, on in
                 if !on { if pager.tab == .neta { pager.tab = .chat }; if pager.leftTab == .neta { pager.leftTab = .timeline } }
             }
+            .onChange(of: store.capabilities?.scriptTabPath != nil) { _, on in
+                if !on { if pager.tab == .script { pager.tab = .chat }; if pager.leftTab == .script { pager.leftTab = .timeline } }
+            }
             .onChange(of: store.dm.enabled) { _, on in
                 if !on { if pager.tab == .dm { pager.tab = .chat }; if pager.leftTab == .dm { pager.leftTab = .timeline } }
             }
@@ -275,8 +289,8 @@ private struct PagerWatcher: View {
     }
 }
 
-/// 📰 タイムライン ・ 💬 チャット ・ ✉️ DM ・ 📝 ネタ帳 ・ 📻 プレイヤー — the same order and marks in every app
-/// (drikin 2026-10-20; ✉️ after 💬 since 2026-11-08; 📝 between ✉️ and 📻 since 2026-11-14). Plain Text segments (a segmented picker is a UISegmentedControl).
+/// 📰 タイムライン ・ 💬 チャット ・ ✉️ DM ・ 📝 ネタ帳 ・ 📻 プレイヤー ・ 📜 台本 — the same order and marks in every app
+/// (drikin 2026-10-20; ✉️ after 💬 since 2026-11-08; 📝 between ✉️ and 📻 and 📜 the rightmost since 2026-11-14). Plain Text segments (a segmented picker is a UISegmentedControl).
 /// Its own view: it reads the page and the unread counts, so only it redraws when they change.
 /// Unread is a mark over a segment (a dot on 💬, the count on ✉️), not in the label: a label that
 /// changed width re-laid out the navigation bar of every page.
@@ -297,8 +311,9 @@ struct PagePicker: View, @MainActor Equatable {
     var body: some View {
         let dmOn = store.dm.enabled
         let netaOn = store.capabilities?.netaTabPath != nil
+        let scriptOn = store.capabilities?.scriptTabPath != nil
         if leftColumn {
-            let tabs: [MainTab] = [.timeline] + (dmOn ? [.dm] : []) + (netaOn ? [.neta] : []) + (jukeboxOn ? [.jukebox] : [])
+            let tabs: [MainTab] = [.timeline] + (dmOn ? [.dm] : []) + (netaOn ? [.neta] : []) + (jukeboxOn ? [.jukebox] : []) + (scriptOn ? [.script] : [])
             let width = Self.segment * CGFloat(tabs.count) + 10
             Picker("表示", selection: Binding(get: { pager.leftTab }, set: { v in withAnimation(.easeOut(duration: 0.2)) { pager.leftTab = v } })) {
                 ForEach(tabs, id: \.self) { Text(Self.mark($0)).tag($0) }
@@ -310,7 +325,7 @@ struct PagePicker: View, @MainActor Equatable {
             }
             .id(tabs) // a new control for a different number of segments, not an update
         } else {
-            let tabs: [MainTab] = [.timeline, .chat] + (dmOn ? [.dm] : []) + (netaOn ? [.neta] : []) + (jukeboxOn ? [.jukebox] : [])
+            let tabs: [MainTab] = [.timeline, .chat] + (dmOn ? [.dm] : []) + (netaOn ? [.neta] : []) + (jukeboxOn ? [.jukebox] : []) + (scriptOn ? [.script] : [])
             let width = Self.segment * CGFloat(tabs.count)
             let step = width / CGFloat(tabs.count)
             Picker("表示", selection: Binding(get: { pager.tab }, set: { v in withAnimation(.easeOut(duration: 0.2)) { pager.tab = v } })) {
@@ -333,6 +348,7 @@ struct PagePicker: View, @MainActor Equatable {
         case .dm: return "✉️"
         case .neta: return "📝"
         case .jukebox: return "📻"
+        case .script: return "📜"
         case .clubs: return "🏷"
         }
     }

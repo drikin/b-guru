@@ -11,9 +11,19 @@ import WebKit
 ///  - ページが bguru-neta://reenter に移ろうとしたら（ログインが切れた）入り直す。このスキームは OS には登録しない
 ///    （ここで横取りするだけ）。
 ///  - 自分のサイトの中だけ WebView で動く。ほかのサイト・新しいタブで開くリンクは普段のブラウザで開く。
+///  - 📜 台本のタブ（いちばん右、2026-11-14）も同じ作り: NetaTabWeb.script（入口は features.neta.scriptTab、
+///    "/neta/app/enter?to=script" で /neta/app/script へ）。WebView と保存場所はタブごとに別。
 @MainActor
 final class NetaTabWeb: NSObject {
     static let shared = NetaTabWeb()
+    /// 📜 台本のタブ。
+    static let script = NetaTabWeb()
+
+    /// アプリからログアウト: 両方のタブを捨てる。
+    static func signOutAll() {
+        shared.signOut()
+        script.signOut()
+    }
 
     /// 入り直す間隔（サーバのログインは 12 時間）。
     private static let reenterAfter: TimeInterval = 6 * 3600
@@ -140,17 +150,19 @@ extension NetaTabWeb: WKNavigationDelegate, WKUIDelegate {
     }
 }
 
-/// タブの中身（SwiftUI）。path は capabilities の netaTabPath。
+/// タブの中身（SwiftUI）。path は capabilities の netaTabPath（📜 は scriptTabPath と web: .script）。
 #if os(macOS)
 struct NetaTabView: NSViewRepresentable {
     let path: String
-    func makeNSView(context: Context) -> WKWebView { NetaTabWeb.shared.view(path: path) }
+    var web: NetaTabWeb = .shared
+    func makeNSView(context: Context) -> WKWebView { web.view(path: path) }
     func updateNSView(_ nsView: WKWebView, context: Context) {}
 }
 #else
 struct NetaTabView: UIViewRepresentable {
     let path: String
-    func makeUIView(context: Context) -> WKWebView { NetaTabWeb.shared.view(path: path) }
+    var web: NetaTabWeb = .shared
+    func makeUIView(context: Context) -> WKWebView { web.view(path: path) }
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 }
 #endif

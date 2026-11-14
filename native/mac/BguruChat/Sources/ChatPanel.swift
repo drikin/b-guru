@@ -151,6 +151,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
             if store.dm.enabled { order.append(.dm) }
             if store.capabilities?.netaTabPath != nil { order.append(.neta) }
             if store.capabilities?.jukeboxEnabled ?? false { order.append(.jukebox) }
+            if store.capabilities?.scriptTabPath != nil { order.append(.script) }
             if let i = order.firstIndex(of: pin.tab) {
                 let next = max(0, min(order.count - 1, i + step))
                 if next != i { withAnimation(.easeOut(duration: 0.18)) { pin.tab = order[next] } }
@@ -620,7 +621,7 @@ final class PinState {
     var chatShown: Bool { tab == .chat || (split && tab == .timeline) }
     var timelineShown: Bool { tab == .timeline || (split && tab == .chat) }
     /// The timeline and the chat side by side now (📻, ✉️ and 📝 take the whole panel).
-    var sideBySide: Bool { split && tab != .jukebox && tab != .dm && tab != .neta }
+    var sideBySide: Bool { split && tab != .jukebox && tab != .dm && tab != .neta && tab != .script }
 }
 
 /// Two-finger horizontal swipe on the trackpad → switch chat ⇄ timeline, like
@@ -665,7 +666,7 @@ final class PanelHostingView<Content: View>: NSHostingView<Content> {
 ///   panel is dragged on that display: until then it opens under the menu bar icon, as before.
 ///   Brought back inside the display's visible area when opened (a lower resolution, the Dock).
 ///   A pinned panel keeps its own frame (`NSWindow Frame BguruChatPinned`), also fitted back on screen.
-/// - `panelTab` timeline | chat | dm | neta | jukebox, and `panelChatScreen` text | room | shogi | minigame.
+/// - `panelTab` timeline | chat | dm | neta | jukebox | script, and `panelChatScreen` text | room | shogi | minigame.
 /// Clean up: `defaults delete fm.backspace.bguru.chat panelSize` (and panelPlaces, panelTab, panelChatScreen).
 @MainActor
 enum PanelMemory {
@@ -741,12 +742,13 @@ enum PanelMemory {
         case "jukebox": .jukebox
         case "dm": .dm
         case "neta": .neta
+        case "script": .script
         default: nil
         }
     }
 
     static func saveTab(_ t: MainTab) {
-        store?.set(t == .timeline ? "timeline" : t == .jukebox ? "jukebox" : t == .dm ? "dm" : t == .neta ? "neta" : "chat", forKey: tabKey)
+        store?.set(t == .timeline ? "timeline" : t == .jukebox ? "jukebox" : t == .dm ? "dm" : t == .neta ? "neta" : t == .script ? "script" : "chat", forKey: tabKey)
     }
 
     static var savedChatScreen: String? { store?.string(forKey: chatScreenKey) }

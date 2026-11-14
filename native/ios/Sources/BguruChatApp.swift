@@ -122,7 +122,7 @@ final class Session {
         store?.stop()
         store = nil
         timeline = nil
-        NetaTabWeb.shared.signOut() // 📝 のネタ帳のログイン（揮発の保存場所）も捨てる
+        NetaTabWeb.signOutAll() // 📝 ネタ帳・📜 台本のログイン（揮発の保存場所）も捨てる
         MediaCache.shared.token = nil
         self.api = nil
         PushCenter.shared.session = nil
