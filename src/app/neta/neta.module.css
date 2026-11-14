@@ -1,0 +1,205 @@
+/* 📝 ネタ帳の公開ページ。色は globals.css の変数（Mantine の明暗に合わせて切り替わる）。 */
+.page {
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  padding-block: 20px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  color: var(--text-body);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.brand a { color: inherit; text-decoration: none; }
+.brandName { font-size: 1.05rem; font-weight: 700; color: var(--text-heading); }
+.brandSub { font-size: 0.8rem; color: var(--text-secondary); }
+
+.notice {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-tinted);
+  border: 1px solid var(--border-green-soft);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+.notice a { color: var(--text-link); }
+
+.weekHead { margin-top: 22px; }
+.weekTitle {
+  margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.3;
+  color: var(--text-heading);
+  text-wrap: balance;
+}
+.weekMeta {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.weekMeta a { color: var(--text-link); }
+
+.bar {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.tabs { display: flex; gap: 6px; }
+.tab {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-default);
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+.tabOn {
+  background: var(--text-green);
+  border-color: var(--text-green);
+  color: var(--text-on-green);
+}
+.count { font-size: 0.85rem; color: var(--text-secondary); }
+
+.weeks {
+  margin-top: 12px;
+  font-size: 0.85rem;
+}
+.weeks summary { cursor: pointer; color: var(--text-link); }
+.weekList {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.weekList a { color: var(--text-body); text-decoration: none; }
+.weekList a:hover { text-decoration: underline; }
+.weekNow { font-weight: 700; }
+
+.list { list-style: none; margin: 14px 0 0; padding: 0; }
+.item {
+  display: grid;
+  grid-template-columns: 2.4rem minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-default);
+}
+.rank {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-align: right;
+  padding-top: 2px;
+}
+.main { min-width: 0; }
+.title {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text-heading);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.title:hover { text-decoration: underline; }
+.sub {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.desc {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.featured {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--bg-unread);
+  color: var(--text-green);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.stars {
+  text-align: center;
+  min-width: 3.2rem;
+}
+.starsNum {
+  font-size: 1.15rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-green);
+}
+.starsLabel { font-size: 0.7rem; color: var(--text-secondary); }
+
+.empty { margin-top: 32px; color: var(--text-secondary); text-align: center; }
+
+.back { margin-top: 18px; font-size: 0.85rem; }
+.back a { color: var(--text-link); }
+
+.topicTitle {
+  margin: 10px 0 0;
+  font-size: 1.4rem;
+  line-height: 1.4;
+  color: var(--text-heading);
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+.topicBox {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--bg-surface);
+}
+.topicDesc {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.open {
+  display: inline-block;
+  margin-top: 12px;
+  color: var(--text-link);
+  overflow-wrap: anywhere;
+}
+.sectionTitle {
+  margin: 26px 0 0;
+  font-size: 1rem;
+  color: var(--text-heading);
+}
+.comments { list-style: none; margin: 8px 0 0; padding: 0; }
+.comment { padding: 10px 0; border-bottom: 1px solid var(--border-light); }
+.commentHead { font-size: 0.78rem; color: var(--text-secondary); }
+.commentBody { margin: 4px 0 0; white-space: pre-wrap; line-height: 1.6; overflow-wrap: anywhere; }
+
+.footer {
+  margin-top: 40px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-default);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+.footer a { color: var(--text-link); }

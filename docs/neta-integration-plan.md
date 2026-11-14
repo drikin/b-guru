@@ -56,7 +56,7 @@
 - Bluesky ログインは、並べて置けるならしばらく残す。`neta_members` に `bluesky_did` を持たせ、Bluesky でログインした人も 1 人として数える（1 人 1 票は did 単位）。あとで backspace.fm アカウントにつなげられるように。
 
 ## 参考: Ghost の無料会員になる道
-- backspace.fm の登録ボタン（Portal、`https://backspace.fm/#/portal/signup`）からメールで登録する。公開の設定 `allow_external_signup` は true（誰でも登録できる設定、2026-11-13 確認）。
+- backspace.fm の登録ボタン（Portal、`https://backspace.fm/#/portal/signup`）からメールで登録する。2026-11-14 にオーナーが Portal に Free（¥0）を出した（それまでは有料プランしか出ていなかった）。公開の設定 `allow_external_signup` は true。
 - ニュースレターの購読で登録する。
 - 有料会員が解約すると、無料会員に戻る。
 - 管理画面からの追加・インポート。

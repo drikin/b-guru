@@ -1097,5 +1097,58 @@ export async function initSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_camera_log_created ON camera_log(created_at);
+    -- 📝 ネタ帳（docs/neta-integration-plan.md、ドリキン 2026-11-13）: neta.backspace.fm（Netaspace）を取り込む。
+    -- 名前は neta_ から（Netaspace の users・sessions と B-guru の同名表がぶつかるため）。id は移行元のものを使う
+    -- （昔のリンク /topic/<id> を転送できるように）。移行のあとは scripts/neta-migrate.ts が連番を進める。
+    CREATE TABLE IF NOT EXISTS neta_weeks (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT false,
+      live_recording_date TEXT,
+      live_url TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_neta_weeks_one_active ON neta_weeks(is_active) WHERE is_active;
+    CREATE TABLE IF NOT EXISTS neta_topics (
+      id SERIAL PRIMARY KEY,
+      week_id INT NOT NULL REFERENCES neta_weeks(id),
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      description TEXT,
+      submitter TEXT NOT NULL,
+      bluesky_handle TEXT,
+      -- pending = ふつう（一覧に出る）、featured = 番組で取り上げた。
+      status TEXT NOT NULL DEFAULT 'pending',
+      -- 移行前の「聞きたい」（人に紐付いていない）。表示は legacy_stars + neta_votes の数。
+      legacy_stars INT NOT NULL DEFAULT 0,
+      featured_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_neta_topics_week ON neta_topics(week_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_neta_topics_featured ON neta_topics(featured_at DESC) WHERE status = 'featured';
+    -- 1 人 1 票（第 2 段階で使う）。voter は 'm:<ghost member id>' か 'b:<bluesky did>'。
+    CREATE TABLE IF NOT EXISTS neta_votes (
+      topic_id INT NOT NULL REFERENCES neta_topics(id) ON DELETE CASCADE,
+      voter TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (topic_id, voter)
+    );
+    CREATE TABLE IF NOT EXISTS neta_comments (
+      id SERIAL PRIMARY KEY,
+      topic_id INT NOT NULL REFERENCES neta_topics(id) ON DELETE CASCADE,
+      commenter TEXT NOT NULL,
+      bluesky_handle TEXT,
+      body TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_neta_comments_topic ON neta_comments(topic_id, created_at);
+    CREATE TABLE IF NOT EXISTS neta_scripts (
+      week_id INT PRIMARY KEY REFERENCES neta_weeks(id),
+      content TEXT NOT NULL,
+      updated_by TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 }
