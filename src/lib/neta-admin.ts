@@ -5,15 +5,16 @@
  */
 import { pool } from "./db";
 import { isAdmin } from "./admin";
-import { getSessionEmail } from "./session";
+import { getNetaViewer } from "./neta-auth";
 import { sakuraChat } from "./sakura";
 import { buildScript, extractEpisodeNumber } from "./neta-script";
 import { NetaError } from "./neta-write";
 
 /** 管理者ならメールアドレス、そうでなければ null。 */
 export async function netaAdminEmail(): Promise<string | null> {
-  const email = await getSessionEmail().catch(() => null);
-  return email && isAdmin(email) ? email : null;
+  // B-guru のログイン、またはアプリの 📝 タブのログイン（有料会員扱い）の管理者。
+  const v = await getNetaViewer().catch(() => null);
+  return v && v.tier === "paid" && isAdmin(v.email) ? v.email : null;
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

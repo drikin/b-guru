@@ -144,11 +144,16 @@ export function NetaAccount() {
           ← B-guru
         </Link>
       )}
-      {admin && !editing && (
+      {admin && !editing && (app ? (
+        // アプリの 📝 タブ: 管理画面（週・台本）は普段のブラウザで（B-guru の Web のログインで開く）。
+        <a href="/neta/admin" target="_blank" rel="noopener noreferrer" className={s.linkBtn}>
+          ⚙ 管理
+        </a>
+      ) : (
         <Link href="/neta/admin" className={s.linkBtn}>
           ⚙ 管理
         </Link>
-      )}
+      ))}
       {editing ? (
         <NameForm onDone={() => setEditing(false)} />
       ) : (
@@ -503,65 +508,102 @@ export function NetaCommentForm({ topicId }: { topicId: number }) {
   );
 }
 
-async function adminCall(url: string, method: string, body: unknown = {}): Promise<boolean> {
-  const r = await postJson(url, body, method);
-  if (!r.ok) window.alert(errText(r.data));
-  return r.ok;
-}
-
-/** 管理者だけ: 採用（番組で話した）の切り替えと削除。 */
+/** 管理者だけ: 採用（番組で話した）の切り替えと削除。確かめるのはページの中（アプリの WebView は confirm・alert を出さない）。 */
 export function NetaTopicAdmin({ topicId, featured, afterDelete }: { topicId: number; featured: boolean; afterDelete?: string }) {
   const { admin, nav } = useNeta();
   const [busy, setBusy] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [err, setErr] = useState("");
   if (!admin) return null;
+  const call = async (method: string, body: unknown = {}) => {
+    setBusy(true);
+    setErr("");
+    const r = await postJson(`/api/neta/admin/topics/${topicId}`, body, method);
+    setBusy(false);
+    if (!r.ok) setErr(errText(r.data));
+    return r.ok;
+  };
   return (
     <div className={s.adminRow}>
-      <button
-        type="button"
-        className={s.adminBtn}
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          if (await adminCall(`/api/neta/admin/topics/${topicId}`, "PATCH", { featured: !featured })) nav.refresh();
-          setBusy(false);
-        }}
-      >
-        {featured ? "採用をやめる" : "🎙 採用"}
-      </button>
-      <button
-        type="button"
-        className={`${s.adminBtn} ${s.danger}`}
-        disabled={busy}
-        onClick={async () => {
-          if (!window.confirm("このネタを消しますか？聞きたいとコメントも消え、元に戻せません")) return;
-          setBusy(true);
-          if (await adminCall(`/api/neta/admin/topics/${topicId}`, "DELETE")) {
-            if (afterDelete) nav.go(afterDelete);
-            else nav.refresh();
-          }
-          setBusy(false);
-        }}
-      >
-        削除
-      </button>
+      {asking ? (
+        <>
+          <span className={s.danger}>消しますか？聞きたいとコメントも消え、元に戻せません</span>
+          <button
+            type="button"
+            className={`${s.adminBtn} ${s.danger}`}
+            disabled={busy}
+            onClick={async () => {
+              if (!(await call("DELETE"))) return;
+              setAsking(false);
+              if (afterDelete) nav.go(afterDelete);
+              else nav.refresh();
+            }}
+          >
+            消す
+          </button>
+          <button type="button" className={s.adminBtn} disabled={busy} onClick={() => setAsking(false)}>
+            やめる
+          </button>
+        </>
+      ) : (
+        <>
+          <button
+            type="button"
+            className={s.adminBtn}
+            disabled={busy}
+            onClick={async () => {
+              if (await call("PATCH", { featured: !featured })) nav.refresh();
+            }}
+          >
+            {featured ? "採用をやめる" : "🎙 採用"}
+          </button>
+          <button type="button" className={`${s.adminBtn} ${s.danger}`} disabled={busy} onClick={() => setAsking(true)}>
+            削除
+          </button>
+        </>
+      )}
+      {err && <span className={s.err}>{err}</span>}
     </div>
   );
 }
 
-/** 管理者だけ: コメントの削除。 */
+/** 管理者だけ: コメントの削除（確かめるのはページの中）。 */
 export function NetaCommentDelete({ commentId }: { commentId: number }) {
   const { admin, nav } = useNeta();
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
   if (!admin) return null;
+  if (!asking) {
+    return (
+      <button type="button" className={`${s.linkBtn} ${s.danger}`} onClick={() => setAsking(true)}>
+        削除
+      </button>
+    );
+  }
   return (
-    <button
-      type="button"
-      className={`${s.linkBtn} ${s.danger}`}
-      onClick={async () => {
-        if (!window.confirm("このコメントを消しますか？元に戻せません")) return;
-        if (await adminCall(`/api/neta/admin/comments/${commentId}`, "DELETE")) nav.refresh();
-      }}
-    >
-      削除
-    </button>
+    <span>
+      <span className={s.danger}>消しますか？</span>{" "}
+      <button
+        type="button"
+        className={`${s.linkBtn} ${s.danger}`}
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setErr("");
+          const r = await postJson(`/api/neta/admin/comments/${commentId}`, {}, "DELETE");
+          setBusy(false);
+          if (!r.ok) return setErr(errText(r.data));
+          setAsking(false);
+          nav.refresh();
+        }}
+      >
+        消す
+      </button>{" "}
+      <button type="button" className={s.linkBtn} disabled={busy} onClick={() => setAsking(false)}>
+        やめる
+      </button>
+      {err && <span className={s.err}> {err}</span>}
+    </span>
   );
 }

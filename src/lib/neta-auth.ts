@@ -204,7 +204,7 @@ export const NETA_APP_SESSION_HOURS = 12;
 /**
  * アプリの 📝 タブ: アプリの鍵（app_issued・post スコープ。確かめるのは呼ぶ側）で本人と分かった会員を、
  * ネタ帳だけのログイン（neta_session）で入れる。B-guru の sessions は出さない（WebView から B-guru の他の機能は開かない）。
- * 権限はネタ帳の会員と同じ（管理・切り替え前の書き込みは Web の B-guru のログインだけ）。
+ * 有料会員と同じ扱い（getNetaViewer の tier は "paid"。管理者なら採用・削除もできる）。
  * 元の鍵に結ぶ（agent_token_id）: アプリのログアウト・端末ごとの失効・会員でなくなったときの失効で、このログインも効かなくなる。
  */
 export async function startAppNetaSession(email: string, agentTokenId: number): Promise<void> {
@@ -223,29 +223,42 @@ export async function endNetaSession(): Promise<void> {
  * 見ている人。B-guru の有料会員のログインが先（その人のネタ帳の行は、何かするまで無いこともある）、
  * なければネタ帳のログイン。どちらでもなければ null。
  */
+/**
+ * ネタ帳で出す名前がまだ無ければ、B-guru のプロフィールの名前（user_profiles・最後の投稿の名前）を使う
+ * （オーナー 2026-11-14「ネタ帳の名前はプロフィールから」）。保存はしないので、プロフィールを変えればネタ帳も変わる。
+ * ネタ帳で名前を決めた人は、その名前のまま。
+ */
+async function withProfileName(member: NetaMember | null, email: string): Promise<NetaMember | null> {
+  if (!member || member.displayName) return member;
+  const { resolveDisplayName } = await import("./display-name");
+  const name = await resolveDisplayName(email).catch(() => null);
+  return name ? { ...member, displayName: name } : member;
+}
+
 export async function getNetaViewer(): Promise<NetaViewer | null> {
   const paid = await getSessionEmail().catch(() => null);
-  if (paid) return { member: await findNetaMemberByEmail(paid), email: paid, tier: "paid" };
+  if (paid) return { member: await withProfileName(await findNetaMemberByEmail(paid), paid), email: paid, tier: "paid" };
   const store = await cookies();
   const token = store.get(NETA_COOKIE)?.value;
   if (!token || !/^[0-9a-f]{64}$/.test(token)) return null;
   const r = await pool.query(
-    `SELECT m.id, m.email, m.display_name FROM neta_sessions s JOIN neta_members m ON m.id = s.member_id
+    `SELECT m.id, m.email, m.display_name, s.agent_token_id FROM neta_sessions s JOIN neta_members m ON m.id = s.member_id
       LEFT JOIN agent_tokens t ON t.id = s.agent_token_id
       WHERE s.token_hash = $1 AND s.expires_at > now()
         AND (s.agent_token_id IS NULL OR (t.revoked_at IS NULL AND t.expires_at > now()))`,
     [sha256(token)]
   );
   if (!r.rows[0]?.email) return null;
-  const member = toMember(r.rows[0]);
-  return { member, email: member.email!, tier: "free" };
+  const member = (await withProfileName(toMember(r.rows[0]), r.rows[0].email))!;
+  // アプリの 📝 タブ（アプリの鍵＝有料会員で確かめ済み）は有料会員と同じ扱い（管理者なら採用・削除もできる）。
+  return { member, email: member.email!, tier: r.rows[0].agent_token_id ? "paid" : "free" };
 }
 
 /** 書き込みの前に: 見ている人のネタ帳の行を必ず用意する（有料会員の初回はここで作る）。 */
 export async function requireNetaMember(): Promise<{ viewer: NetaViewer; member: NetaMember } | null> {
   const viewer = await getNetaViewer();
   if (!viewer) return null;
-  const member = viewer.member ?? (await ensureNetaMember(viewer.email));
+  const member = viewer.member ?? (await withProfileName(await ensureNetaMember(viewer.email), viewer.email))!;
   return { viewer: { ...viewer, member }, member };
 }
 

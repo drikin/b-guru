@@ -57,13 +57,31 @@ d("アプリの 📝 タブの入口", () => {
     const a = await import("../neta-auth");
     const v = await a.getNetaViewer();
     expect(v?.email).toBe(email);
-    expect(v?.tier).toBe("free"); // 権限はネタ帳の会員と同じ（管理は Web の B-guru のログインだけ）
+    expect(v?.tier).toBe("paid"); // アプリの鍵＝有料会員で確かめ済み: 有料会員と同じ扱い（管理者なら採用・削除も）
+    // ネタ帳で名前を決めていなければ、B-guru のプロフィールの名前
+    expect(v?.member?.displayName ?? null).toBeNull();
+    await db.pool.query(`INSERT INTO user_profiles (email, display_name) VALUES ($1, 'アプリの人') ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name`, [email]);
+    expect((await a.getNetaViewer())?.member?.displayName).toBe("アプリの人");
+    const { isAdmin } = await import("../admin");
+    expect(isAdmin(email)).toBe(false);
+    const { netaAdminEmail } = await import("../neta-admin");
+    expect(await netaAdminEmail()).toBeNull(); // 管理者でなければ管理はできない
     const hrs = (await db.pool.query(`SELECT extract(epoch FROM expires_at - now()) / 3600 AS h FROM neta_sessions s JOIN neta_members m ON m.id = s.member_id WHERE m.email = $1`, [email])).rows[0].h;
     expect(Number(hrs)).toBeGreaterThan(11);
     expect(Number(hrs)).toBeLessThanOrEqual(12);
     // 元のアプリの鍵を失効させると、ネタ帳のログインも効かない
     await db.pool.query(`UPDATE agent_tokens SET revoked_at = now() WHERE id = $1`, [t.tokenId]);
     expect(await a.getNetaViewer()).toBeNull();
+  });
+
+  it("管理者のアプリの鍵: タブから管理（採用・削除）ができる", async () => {
+    const t = await auth.issueAgentToken({ email: "zenjinishikawa@gmail.com", scopes: ["read", "post"], deviceName: `iPhone-${stamp}`, appIssued: true });
+    jar.clear();
+    expect((await call(`Bearer ${t.token}`)).status).toBe(303);
+    const { netaAdminEmail } = await import("../neta-admin");
+    expect(await netaAdminEmail()).toBe("zenjinishikawa@gmail.com");
+    await db.pool.query(`UPDATE agent_tokens SET revoked_at = now() WHERE id = $1`, [t.tokenId]);
+    expect(await netaAdminEmail()).toBeNull();
   });
 
   it("外部の AI エージェントの鍵・鍵なし・でたらめな鍵: 入れない", async () => {
