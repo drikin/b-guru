@@ -236,6 +236,11 @@ const NAV_ITEMS: { key: string; label: string; icon: string }[] = [
 // lib/admin.ts). The allowlist itself must not ship in the client bundle: it
 // would publish the admins' addresses to every visitor.
 
+/** メニューの外部リンクのうち、ネタ帳（neta.backspace.fm・/neta）を指すもの。タイムラインの下の 📝 ネタ帳と二重にしない。 */
+function isOldNetaLink(href: string): boolean {
+  return /^https?:\/\/neta\.backspace\.fm(\/|$)/i.test(href) || /^(https:\/\/bsm\.backspace\.fm)?\/neta(\/|$|\?)/.test(href);
+}
+
 interface MenuLinkItem {
   id: number;
   label: string;
@@ -11033,6 +11038,17 @@ export default function Home() {
                         />
                       );
                     })}
+                  {/* 📝 ネタ帳（bsm.backspace.fm/neta）はタイムラインの下に（2026-11-14 オーナー）。同じタブで開く。 */}
+                  {item.key === "feed" && (
+                    <NavLink
+                      component="a"
+                      href="/neta"
+                      label="ネタ帳"
+                      leftSection={<span>📝</span>}
+                      data-cx="nav-neta"
+                      style={{ borderRadius: 8, marginBottom: 2 }}
+                    />
+                  )}
                 </Fragment>
               );
             })}
@@ -11072,7 +11088,8 @@ export default function Home() {
             <ClubNavRow label="未設定" activity={clubActivityUnset} trend={clubTrendUnset} active={clubFilter === CLUB_UNSET} dashed onClick={() => selectClub(CLUB_UNSET)} hidden={hiddenClubs.has(CLUB_UNSET)} onToggleHidden={() => toggleClubHidden(CLUB_UNSET)} />
 
             {/* Admin-managed external-link bookmarks */}
-            {menuLinks.map((lk) => (
+            {/* 昔のネタ帳（neta.backspace.fm）へのリンクは出さない — 📝 ネタ帳はタイムラインの下にある */}
+            {menuLinks.filter((lk) => !isOldNetaLink(lk.href)).map((lk) => (
               <div
                 key={lk.id}
                 style={{

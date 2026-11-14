@@ -95,6 +95,11 @@ export function NetaAccount() {
   }
   return (
     <div className={s.account}>
+      {viewer.tier === "paid" && !editing && (
+        <Link href="/" className={s.linkBtn}>
+          ← B-guru
+        </Link>
+      )}
       {admin && !editing && (
         <Link href="/neta/admin" className={s.linkBtn}>
           ⚙ 管理
