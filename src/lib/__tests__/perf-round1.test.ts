@@ -123,6 +123,8 @@ describe("housekeeping", () => {
     expect(sqls).toEqual([
       "DELETE FROM sessions WHERE expires_at < now()",
       "DELETE FROM otp_codes WHERE expires_at < now()",
+      "DELETE FROM neta_sessions WHERE expires_at < now()",
+      "DELETE FROM neta_login_requests WHERE created_at < now() - interval '2 days'",
       "DELETE FROM login_requests WHERE created_at < now() - interval '31 days'",
       "DELETE FROM agent_tokens WHERE expires_at < now() OR (revoked_at IS NOT NULL AND revoked_at < now() - interval '90 days')",
       "DELETE FROM agent_audit_log WHERE created_at < now() - interval '90 days'",
