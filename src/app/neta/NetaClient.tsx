@@ -15,7 +15,13 @@ type Ctx = {
   /** ログインのシートを開く。ログインできたら after を実行する（押した「聞きたい」を入れる など）。 */
   requireLogin: (after?: () => void | Promise<void>) => void;
   setDisplayName: (name: string) => void;
+  /** 画面の出し直しとページ移動。/neta のページは Next のルータ、B-guru の中（メインの列）では部品の中で切り替える。 */
+  nav: NetaNav;
+  /** B-guru の中（メインの列）に出しているか。 */
+  inApp: boolean;
 };
+
+export type NetaNav = { refresh: () => void; go: (href: string) => void };
 
 const NetaCtx = createContext<Ctx | null>(null);
 
@@ -39,12 +45,35 @@ function errText(data: Record<string, unknown>, fallback = "うまくいきま�
   return typeof data.error === "string" && data.error ? data.error : fallback;
 }
 
-export function NetaProvider({ viewer: initial, writable, admin = false, children }: { viewer: ClientViewer; writable: boolean; admin?: boolean; children: ReactNode }) {
+export function NetaProvider({
+  viewer: initial,
+  writable,
+  admin = false,
+  nav: navProp,
+  children,
+}: {
+  viewer: ClientViewer;
+  writable: boolean;
+  admin?: boolean;
+  /** B-guru の中で使うときに渡す（なければ Next のルータ）。 */
+  nav?: NetaNav;
+  children: ReactNode;
+}) {
   const [viewer, setViewer] = useState<ClientViewer>(initial);
   const [sheet, setSheet] = useState(false);
   const after = useRef<(() => void | Promise<void>) | null>(null);
   const router = useRouter();
   useEffect(() => setViewer(initial), [initial]);
+  const nav: NetaNav = navProp ?? { refresh: () => router.refresh(), go: (h) => router.push(h) };
+  // B-guru のトップ（ゲストの画面）の「ログイン」ボタンから開く。
+  useEffect(() => {
+    const open = () => {
+      after.current = null;
+      setSheet(true);
+    };
+    window.addEventListener("neta:login", open);
+    return () => window.removeEventListener("neta:login", open);
+  }, []);
 
   const requireLogin = useCallback(
     (fn?: () => void | Promise<void>) => {
@@ -59,20 +88,23 @@ export function NetaProvider({ viewer: initial, writable, admin = false, childre
   );
 
   const onLoggedIn = useCallback(
-    async (displayName: string | null) => {
-      setViewer({ displayName, tier: "free" });
+    async (displayName: string | null, paid: boolean) => {
+      setViewer({ displayName, tier: paid ? "paid" : "free" });
       setSheet(false);
       const fn = after.current;
       after.current = null;
       if (fn) await fn();
-      router.refresh();
+      // 有料会員は B-guru にも入った: トップ（ゲストの画面）なら読み直して B-guru の本体に。
+      if (paid && navProp) window.location.reload();
+      else nav.refresh();
     },
-    [router]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [navProp, router]
   );
 
   return (
     <NetaCtx.Provider
-      value={{ viewer, writable, admin, requireLogin, setDisplayName: (n) => setViewer((v) => (v ? { ...v, displayName: n } : v)) }}
+      value={{ viewer, writable, admin, requireLogin, nav, inApp: !!navProp, setDisplayName: (n) => setViewer((v) => (v ? { ...v, displayName: n } : v)) }}
     >
       {children}
       {sheet && <LoginSheet onClose={() => setSheet(false)} onDone={onLoggedIn} />}
@@ -82,10 +114,11 @@ export function NetaProvider({ viewer: initial, writable, admin = false, childre
 
 /** ヘッダの右: ログイン・名前・ログアウト。 */
 export function NetaAccount() {
-  const { viewer, writable, admin, requireLogin } = useNeta();
-  const router = useRouter();
+  const { viewer, writable, admin, requireLogin, nav, inApp } = useNeta();
   const [editing, setEditing] = useState(false);
   if (!writable && !viewer) return null;
+  // B-guru のトップ（ゲストの画面）は上のバーに「ログイン」がある。
+  if (!viewer && inApp) return null;
   if (!viewer) {
     return (
       <button type="button" className={s.accountBtn} onClick={() => requireLogin()}>
@@ -95,7 +128,7 @@ export function NetaAccount() {
   }
   return (
     <div className={s.account}>
-      {viewer.tier === "paid" && !editing && (
+      {viewer.tier === "paid" && !editing && !inApp && (
         <Link href="/" className={s.linkBtn}>
           ← B-guru
         </Link>
@@ -118,7 +151,7 @@ export function NetaAccount() {
           className={s.linkBtn}
           onClick={async () => {
             await postJson("/api/neta/auth/logout", {});
-            router.refresh();
+            nav.refresh();
           }}
         >
           ログアウト
@@ -129,11 +162,10 @@ export function NetaAccount() {
 }
 
 function NameForm({ onDone }: { onDone: () => void }) {
-  const { viewer, setDisplayName } = useNeta();
+  const { viewer, setDisplayName, nav } = useNeta();
   const [name, setName] = useState(viewer?.displayName ?? "");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  const router = useRouter();
   return (
     <form
       className={s.nameForm}
@@ -145,7 +177,7 @@ function NameForm({ onDone }: { onDone: () => void }) {
         if (!r.ok) return setErr(errText(r.data));
         setDisplayName(String(r.data.displayName));
         onDone();
-        router.refresh();
+        nav.refresh();
       }}
     >
       <input className={s.input} value={name} maxLength={30} onChange={(e) => setName(e.target.value)} placeholder="表示する名前" autoFocus aria-label="表示する名前" />
@@ -215,7 +247,7 @@ export function NetaVote({ topicId, stars: initialStars, voted: initialVoted }: 
 }
 
 /** メールだけでログイン（初めての人は backspace.fm の無料会員になる）。下から出るシート。 */
-function LoginSheet({ onClose, onDone }: { onClose: () => void; onDone: (displayName: string | null) => void | Promise<void> }) {
+function LoginSheet({ onClose, onDone }: { onClose: () => void; onDone: (displayName: string | null, paid: boolean) => void | Promise<void> }) {
   const [step, setStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -248,7 +280,7 @@ function LoginSheet({ onClose, onDone }: { onClose: () => void; onDone: (display
             }}
           >
             <p className={s.sheetText}>
-              聞きたい・投稿・コメントは、メールアドレスだけで参加できます（無料）。初めての方は backspace.fm の無料会員として登録されます。ニュースレターは届きません。
+              聞きたい・投稿・コメントは、メールアドレスだけで参加できます（無料）。初めての方は backspace.fm の無料会員として登録されます。ニュースレターは届きません。BSM の会員の方は、このログインで B-guru にも入れます。
             </p>
             <input
               className={s.input}
@@ -285,7 +317,7 @@ function LoginSheet({ onClose, onDone }: { onClose: () => void; onDone: (display
                 return setErr(errText(r.data));
               }
               const m = r.data.member as { displayName?: string | null } | undefined;
-              await onDone(m?.displayName ?? null);
+              await onDone(m?.displayName ?? null, r.data.paid === true);
             }}
           >
             <p className={s.sheetText}>
@@ -332,8 +364,7 @@ function NameField({ value, onChange }: { value: string; onChange: (v: string) =
 
 /** 今週にネタを投稿する（畳んでおき、押すと開く）。 */
 export function NetaSubmit({ initial, startOpen = false }: { initial?: { url?: string; title?: string; description?: string }; startOpen?: boolean } = {}) {
-  const { viewer, writable, requireLogin, setDisplayName } = useNeta();
-  const router = useRouter();
+  const { viewer, writable, requireLogin, setDisplayName, nav } = useNeta();
   const [open, setOpen] = useState(startOpen);
   const [url, setUrl] = useState(initial?.url ?? "");
   const [title, setTitle] = useState(initial?.title ?? "");
@@ -368,7 +399,7 @@ export function NetaSubmit({ initial, startOpen = false }: { initial?: { url?: s
         }
         if (!r.ok) return setErr(errText(r.data));
         if (needName) setDisplayName(name.trim());
-        router.push(`/neta/t/${Number(r.data.id)}`);
+        nav.go(`/neta/t/${Number(r.data.id)}`);
       }}
     >
       <label className={s.field}>
@@ -390,7 +421,15 @@ export function NetaSubmit({ initial, startOpen = false }: { initial?: { url?: s
           {dup && (
             <>
               {" "}
-              <Link href={`/neta/t/${dup.id}`}>「{dup.title}」を見る</Link>
+              <a
+                href={`/neta/t/${dup.id}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  nav.go(`/neta/t/${dup.id}`);
+                }}
+              >
+                「{dup.title}」を見る
+              </a>
             </>
           )}
         </p>
@@ -409,8 +448,7 @@ export function NetaSubmit({ initial, startOpen = false }: { initial?: { url?: s
 
 /** コメントを書く。 */
 export function NetaCommentForm({ topicId }: { topicId: number }) {
-  const { viewer, writable, requireLogin, setDisplayName } = useNeta();
-  const router = useRouter();
+  const { viewer, writable, requireLogin, setDisplayName, nav } = useNeta();
   const [body, setBody] = useState("");
   const [name, setName] = useState("");
   const [err, setErr] = useState("");
@@ -436,7 +474,7 @@ export function NetaCommentForm({ topicId }: { topicId: number }) {
         if (!r.ok) return setErr(errText(r.data));
         if (needName) setDisplayName(name.trim());
         setBody("");
-        router.refresh();
+        nav.refresh();
       }}
     >
       <label className={s.field}>
@@ -462,8 +500,7 @@ async function adminCall(url: string, method: string, body: unknown = {}): Promi
 
 /** 管理者だけ: 採用（番組で話した）の切り替えと削除。 */
 export function NetaTopicAdmin({ topicId, featured, afterDelete }: { topicId: number; featured: boolean; afterDelete?: string }) {
-  const { admin } = useNeta();
-  const router = useRouter();
+  const { admin, nav } = useNeta();
   const [busy, setBusy] = useState(false);
   if (!admin) return null;
   return (
@@ -474,7 +511,7 @@ export function NetaTopicAdmin({ topicId, featured, afterDelete }: { topicId: nu
         disabled={busy}
         onClick={async () => {
           setBusy(true);
-          if (await adminCall(`/api/neta/admin/topics/${topicId}`, "PATCH", { featured: !featured })) router.refresh();
+          if (await adminCall(`/api/neta/admin/topics/${topicId}`, "PATCH", { featured: !featured })) nav.refresh();
           setBusy(false);
         }}
       >
@@ -488,8 +525,8 @@ export function NetaTopicAdmin({ topicId, featured, afterDelete }: { topicId: nu
           if (!window.confirm("このネタを消しますか？聞きたいとコメントも消え、元に戻せません")) return;
           setBusy(true);
           if (await adminCall(`/api/neta/admin/topics/${topicId}`, "DELETE")) {
-            if (afterDelete) router.push(afterDelete);
-            else router.refresh();
+            if (afterDelete) nav.go(afterDelete);
+            else nav.refresh();
           }
           setBusy(false);
         }}
@@ -502,8 +539,7 @@ export function NetaTopicAdmin({ topicId, featured, afterDelete }: { topicId: nu
 
 /** 管理者だけ: コメントの削除。 */
 export function NetaCommentDelete({ commentId }: { commentId: number }) {
-  const { admin } = useNeta();
-  const router = useRouter();
+  const { admin, nav } = useNeta();
   if (!admin) return null;
   return (
     <button
@@ -511,7 +547,7 @@ export function NetaCommentDelete({ commentId }: { commentId: number }) {
       className={`${s.linkBtn} ${s.danger}`}
       onClick={async () => {
         if (!window.confirm("このコメントを消しますか？元に戻せません")) return;
-        if (await adminCall(`/api/neta/admin/comments/${commentId}`, "DELETE")) router.refresh();
+        if (await adminCall(`/api/neta/admin/comments/${commentId}`, "DELETE")) nav.refresh();
       }}
     >
       削除

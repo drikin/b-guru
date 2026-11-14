@@ -1,5 +1,7 @@
 "use client";
 
+import NetaBoard from "./neta/NetaBoard";
+import GuestShell from "./GuestShell";
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { buildReadPayload, mergeReadState, normalizeReadIds, PG_INT_MAX } from "@/lib/read-state";
 import { sizedAvatarSrc } from "@/lib/avatar-size";
@@ -10734,6 +10736,12 @@ export default function Home() {
     );
   }
 
+  // ログインしていない人・無料会員: 📝 ネタ帳がメインに出て、会員限定の機能はグレー（2026-11-14 オーナー）。
+  // 昔のログイン画面（下）は ?login で出せる（念のため残す）。
+  if (!auth && !(typeof window !== "undefined" && new URLSearchParams(window.location.search).has("login"))) {
+    return <GuestShell />;
+  }
+
   if (!auth) {
     return (
       <main className="flex-1 w-full max-w-md mx-auto px-6 py-16 ">
@@ -11016,6 +11024,31 @@ export default function Home() {
                       ...(active ? { background: "var(--bg-tinted)", color: "var(--text-green)", fontWeight: 600 } : {}),
                     }}
                   />
+                  {/* 📝 ネタ帳（bsm.backspace.fm/neta）はタイムラインの次、上から 2 番目（2026-11-14 オーナー）。同じタブで開く。 */}
+                  {item.key === "feed" && (
+                    <NavLink
+                      component="a"
+                      href="/neta"
+                      active={activeNav === "neta"}
+                      label="ネタ帳"
+                      leftSection={<span>📝</span>}
+                      data-cx="nav-neta"
+                      onClick={(e: React.MouseEvent) => {
+                        // メインの列をネタ帳に（2026-11-14 オーナー）。⌘クリックなどは /neta を新しいタブで。
+                        if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                        e.preventDefault();
+                        setProfileUserId(null);
+                        setAsideOpened(false);
+                        setActiveNav("neta");
+                        setNavOpened(false);
+                      }}
+                      style={{
+                        borderRadius: 8,
+                        marginBottom: 2,
+                        ...(activeNav === "neta" ? { background: "var(--bg-tinted)", color: "var(--text-green)", fontWeight: 600 } : {}),
+                      }}
+                    />
+                  )}
                   {/* 上のタブ（☆・🔖・チャット・✉️ DM）をタイムラインの下に（2026-11-08 オーナー）。スマホは上のタブのまま。 */}
                   {item.key === "feed" &&
                     feedTabRows.map((t) => {
@@ -11038,17 +11071,6 @@ export default function Home() {
                         />
                       );
                     })}
-                  {/* 📝 ネタ帳（bsm.backspace.fm/neta）はタイムラインの下に（2026-11-14 オーナー）。同じタブで開く。 */}
-                  {item.key === "feed" && (
-                    <NavLink
-                      component="a"
-                      href="/neta"
-                      label="ネタ帳"
-                      leftSection={<span>📝</span>}
-                      data-cx="nav-neta"
-                      style={{ borderRadius: 8, marginBottom: 2 }}
-                    />
-                  )}
                 </Fragment>
               );
             })}
@@ -13424,6 +13446,9 @@ export default function Home() {
               )}
             </Stack>
           )}
+
+          {/* 📝 ネタ帳（メインの列に。2026-11-14 オーナー） */}
+          {activeNav === "neta" && <NetaBoard />}
 
           {activeNav === "drinews" && (
             <Stack gap="md">

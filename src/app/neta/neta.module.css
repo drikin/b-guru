@@ -359,3 +359,5 @@ a.adminBtn { text-decoration: none; display: inline-block; }
 /* 有料への入り口（小さく、押し付けない） */
 .talkCard { margin-top: 22px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-default); font-size: 0.8rem; line-height: 1.6; color: var(--text-secondary); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
 .talkCard a { color: var(--text-link); white-space: nowrap; }
+/* B-guru の中（メインの列）に出すとき: 外側の余白はアプリ側が持つ */
+.inApp { width: 100%; color: var(--text-body); }

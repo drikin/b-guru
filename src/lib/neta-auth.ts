@@ -3,18 +3,19 @@
  *
  * - 誰でもメールだけで参加できる（backspace.fm の無料会員になる）。B-guru のログイン（lib/login.ts）と同じく、
  *   6 桁のコードとリンクを 1 通のメールで送り、どちらかが合えばログイン。10 分・1 回限り・コードは 5 回まで。
- * - ネタ帳のログインは cookie neta_session と neta_sessions 表だけ。B-guru の sessions（＝有料会員）は出さない。
- *   これで B-guru の既存の機能（getSessionEmail を使う所）は、無料会員には何も開かない。
+ * - ネタ帳のログインは cookie neta_session と neta_sessions 表。無料会員には B-guru の sessions（＝有料会員）は出さない
+ *   ので、B-guru の既存の機能（getSessionEmail を使う所）は何も開かない。BSM の有料会員と Ghost で確かめられた人だけ、
+ *   B-guru のログインと同じ扱いで sessions も出す（paidLoginFromNeta、ログインの入口を 1 つに 2026-11-14）。
  * - 有料会員が B-guru にログインしていれば、そのままネタ帳でも本人として扱う（getNetaViewer）。
  * - Ghost に会員を作るのは、メールの確認が済んでから（他人のアドレスで勝手に会員を作れないように）。
  */
 import crypto from "crypto";
 import { cookies } from "next/headers";
 import { pool } from "./db";
-import { createFreeMember, findMemberByEmail } from "./ghost";
-import { hashCode, hitLimit, LoginError, LOGIN_LIMITS, LOGIN_TTL_MIN, MAX_CODE_ATTEMPTS, newCode, newLinkToken } from "./login";
+import { createFreeMember, findMemberByEmail, isPaidMember } from "./ghost";
+import { hashCode, hitLimit, LoginError, LOGIN_LIMITS, LOGIN_TTL_MIN, MAX_CODE_ATTEMPTS, newCode, newLinkToken, notifyNewLogin } from "./login";
 import { sendEmail } from "./mailgun";
-import { getSessionEmail } from "./session";
+import { createSession, getSessionEmail, setSessionCookie } from "./session";
 
 export const NETA_COOKIE = "neta_session";
 export const NETA_SESSION_DAYS = 180;
@@ -78,7 +79,7 @@ function loginMail(code: string, link: string) {
     `ログイン画面に入力するコード: ${code}`,
     "",
     `リンクとコードは ${LOGIN_TTL_MIN} 分で無効になり、1 回しか使えません。`,
-    "初めての方は、backspace.fm の無料会員として登録されます（ニュースレターは届きません）。",
+    "初めての方は、backspace.fm の無料会員として登録されます（ニュースレターは届きません）。BSM の会員なら B-guru にも入れます。",
     "心当たりがない場合は、このメールを無視してください。誰もログインできず、登録もされません。",
   ].join("\n");
   const html = `<div style="font-family:sans-serif;line-height:1.7">
@@ -86,9 +87,9 @@ function loginMail(code: string, link: string) {
 <p><a href="${link}" style="display:inline-block;background:#16a34a;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:bold">ログインする</a></p>
 <p>ログイン画面に入力するコード</p>
 <p style="font-size:28px;font-weight:bold;letter-spacing:6px">${code}</p>
-<p style="color:#666;font-size:13px">リンクとコードは ${LOGIN_TTL_MIN} 分で無効になり、1 回しか使えません。<br>初めての方は、backspace.fm の無料会員として登録されます（ニュースレターは届きません）。<br>心当たりがない場合は、このメールを無視してください。誰もログインできず、登録もされません。</p>
+<p style="color:#666;font-size:13px">リンクとコードは ${LOGIN_TTL_MIN} 分で無効になり、1 回しか使えません。<br>初めての方は、backspace.fm の無料会員として登録されます（ニュースレターは届きません）。BSM の会員なら B-guru にも入れます。<br>心当たりがない場合は、このメールを無視してください。誰もログインできず、登録もされません。</p>
 </div>`;
-  return { subject: `ネタ帳のログインコード: ${code}`, text, html };
+  return { subject: `ネタ帳・B-guru のログインコード: ${code}`, text, html };
 }
 
 /** ログインメールを送る。誰にでも送る（登録も兼ねる）ので、回数制限がスパム対策の最前線。 */
@@ -233,4 +234,60 @@ export async function requireNetaMember(): Promise<{ viewer: NetaViewer; member:
 
 export function netaVoter(memberId: number): string {
   return `m:${memberId}`;
+}
+
+/**
+ * ネタ帳のログインで本人確認が済んだ人が BSM の有料会員なら、B-guru にも入れる（B-guru のログインと同じ扱い）。
+ * - 有料かどうかは B-guru のログイン（lib/login.ts）と同じ isPaidMember。Ghost に届かなければ入れない（ネタ帳だけ）。
+ * - 「新しい端末でログインしました」メールの「全端末ログアウト」リンクのために、login_requests に使用済みの行を 1 つ作る。
+ * 入れたら true。
+ */
+export async function paidLoginFromNeta(email: string, ip: string | null, ua: string | null): Promise<boolean> {
+  let paid = false;
+  try {
+    const g = await findMemberByEmail(email);
+    paid = !!g && isPaidMember(g);
+  } catch (e) {
+    console.error("[neta-auth] paid check failed:", (e as Error)?.message);
+    return false;
+  }
+  if (!paid) return false;
+  const token = await createSession(email);
+  await setSessionCookie(token);
+  try {
+    const { ensureUserId } = await import("./user");
+    await ensureUserId(email);
+  } catch (e) {
+    console.error("[neta-auth] ensureUserId failed:", (e as Error)?.message);
+  }
+  try {
+    const r = await pool.query(
+      `INSERT INTO login_requests (email, code_hash, link_hash, ip, expires_at, used_at)
+       VALUES ($1, '', $2, $3, now(), now()) RETURNING id`,
+      [email, sha256(crypto.randomBytes(32).toString("hex")), ip]
+    );
+    void notifyNewLogin({ email, requestId: Number(r.rows[0].id) }, ua);
+  } catch (e) {
+    console.error("[neta-auth] login notice failed:", (e as Error)?.message);
+  }
+  return true;
+}
+
+/** 画面に渡す形の「見ている人」（メールアドレスは入れない）と、聞きたいの印に使う id。 */
+export async function viewerForClient(): Promise<{
+  client: { viewer: { displayName: string | null; tier: "paid" | "free" } | null; writable: boolean; admin: boolean; live: boolean };
+  memberId: number | null;
+}> {
+  const v = await getNetaViewer().catch(() => null);
+  const { netaWritable, netaLive } = await import("./neta-write");
+  const { isAdmin } = await import("./admin");
+  return {
+    client: {
+      viewer: v ? { displayName: v.member?.displayName ?? null, tier: v.tier } : null,
+      writable: netaWritable(v),
+      admin: !!v && v.tier === "paid" && isAdmin(v.email),
+      live: netaLive(),
+    },
+    memberId: v?.member?.id ?? null,
+  };
 }

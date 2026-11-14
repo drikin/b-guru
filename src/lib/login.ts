@@ -340,6 +340,8 @@ export async function slideSession(): Promise<void> {
 export async function destroyAllSessionsFor(email: string): Promise<void> {
   const e = normalizeEmail(email);
   await pool.query(`DELETE FROM sessions WHERE email = $1`, [e]);
+  // 📝 ネタ帳のログインも（ネタ帳のログインで B-guru にも入るので、乗っ取られた端末に残さない）。
+  await pool.query(`DELETE FROM neta_sessions WHERE member_id IN (SELECT id FROM neta_members WHERE email = $1)`, [e]);
   await pool.query(
     `UPDATE agent_tokens SET revoked_at = now() WHERE email = $1 AND revoked_at IS NULL`,
     [e]

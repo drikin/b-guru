@@ -137,6 +137,9 @@ d("📝 ネタ帳の管理（DB）", () => {
   });
 
   it("新しい週は前の台本から台本ができ、今週の切り替えは 1 つだけ、ネタのある週と今週は消せない", async () => {
+    // 使い捨ての DB に前の回の台本が残っていると「いちばん新しい台本」がそれになるので、この週のもの以外は片付ける。
+    await db.pool.query(`DELETE FROM neta_scripts WHERE week_id <> $1`, [base]);
+    await db.pool.query(`UPDATE neta_scripts SET content = $2 WHERE week_id = $1`, [base, "# backspace.fm 第9000回 台本\n### 採用ネタ一覧\n（まだ採用されたネタはありません）\n---\n"]);
     const { id } = await a.createWeek({ title: "ep9001", startDate: "2026-11-15", endDate: "2026-11-22" }, "drikin");
     expect((await a.getScript(id))?.content).toContain("# backspace.fm 第9001回 台本");
     await a.setActiveWeek(id);

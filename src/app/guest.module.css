@@ -1,0 +1,77 @@
+/* B-guru のトップ（ログインしていない人・無料会員）。色は globals.css の変数（明暗は Mantine に合わせて切り替わる）。 */
+.shell { min-height: 100vh; background: var(--bg-primary); color: var(--text-body); }
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 56px;
+  padding: env(safe-area-inset-top, 0px) max(12px, env(safe-area-inset-right, 0px)) 0 max(12px, env(safe-area-inset-left, 0px));
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+}
+.menuBtn { display: none; border: none; background: none; font-size: 1.3rem; color: var(--text-body); cursor: pointer; padding: 4px 8px; }
+.logo { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.logoMark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 9px;
+  background: linear-gradient(135deg, #22c55e, #34d399); color: #fff; font-weight: 900;
+}
+.logoText { font-weight: 900; font-size: 1.1rem; color: var(--text-heading); }
+.loginBtn {
+  padding: 7px 14px; border-radius: 999px; border: none;
+  background: #15803d; color: #fff; font-weight: 700; font-size: 0.85rem; cursor: pointer; white-space: nowrap;
+}
+.body { display: flex; align-items: flex-start; }
+.side {
+  position: sticky; top: 56px;
+  width: 240px; flex-shrink: 0;
+  height: calc(100vh - 56px); overflow-y: auto;
+  padding: 10px 8px;
+  border-right: 1px solid var(--border-default);
+  background: var(--bg-primary);
+}
+.nav { display: grid; gap: 2px; }
+.item {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 10px 12px; border-radius: 8px; border: none; background: none;
+  font: inherit; font-size: 0.875rem; color: var(--text-primary); text-align: left; cursor: pointer;
+}
+.item:hover { background: var(--bg-hover); }
+.on { background: var(--bg-tinted); color: var(--text-green); font-weight: 600; }
+.icon { width: 1.3em; text-align: center; }
+.label { flex: 1; min-width: 0; }
+.locked { color: var(--text-muted); }
+.locked .icon { filter: grayscale(1); opacity: 0.6; }
+.lockedOn { background: var(--bg-subtle); }
+.lock { font-size: 0.75rem; opacity: 0.7; }
+.sep { margin: 10px 12px 4px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; color: var(--text-muted); }
+.main { flex: 1; min-width: 0; padding: 18px max(16px, env(safe-area-inset-right, 0px)) 48px max(16px, env(safe-area-inset-left, 0px)); }
+.main > * { max-width: 760px; margin-left: auto; margin-right: auto; }
+.scrim { display: none; }
+
+.lockedPanel {
+  margin-bottom: 18px; padding: 16px;
+  border-radius: 14px; border: 1px solid var(--border-green-soft); background: var(--bg-tinted);
+}
+.lockedTitle { font-weight: 700; color: var(--text-heading); }
+.lockedText { margin: 8px 0 0; font-size: 0.875rem; line-height: 1.7; color: var(--text-secondary); }
+.lockedActions { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.primary { padding: 8px 14px; border-radius: 10px; background: #15803d; color: #fff; font-weight: 700; font-size: 0.85rem; text-decoration: none; }
+.secondary { padding: 8px 14px; border-radius: 10px; border: 1px solid var(--border-green); background: var(--bg-surface); color: var(--text-green); font-weight: 700; font-size: 0.85rem; cursor: pointer; font-family: inherit; }
+.link { border: none; background: none; color: var(--text-link); font-size: 0.85rem; cursor: pointer; font-family: inherit; }
+
+@media (max-width: 767px) {
+  .menuBtn { display: inline-block; }
+  .side {
+    position: fixed; top: 56px; left: 0; bottom: 0; z-index: 40; height: auto;
+    transform: translateX(-100%); transition: transform 0.18s ease;
+    padding-left: max(8px, env(safe-area-inset-left, 0px));
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.15);
+  }
+  .sideOpen { transform: translateX(0); }
+  .scrim { display: block; position: fixed; inset: 56px 0 0 0; z-index: 35; background: rgba(0, 0, 0, 0.35); }
+  .loginBtn { padding: 6px 10px; font-size: 0.8rem; }
+}
