@@ -2,6 +2,7 @@
 
 import NetaBoard from "./neta/NetaBoard";
 import GuestShell from "./GuestShell";
+import { isAppLoginWebView } from "@/lib/app-login-webview";
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { buildReadPayload, mergeReadState, normalizeReadIds, PG_INT_MAX } from "@/lib/read-state";
 import { sizedAvatarSrc } from "@/lib/avatar-size";
@@ -10738,7 +10739,8 @@ export default function Home() {
 
   // ログインしていない人・無料会員: 📝 ネタ帳がメインに出て、会員限定の機能はグレー（2026-11-14 オーナー）。
   // 昔のログイン画面（下）は ?login で出せる（念のため残す）。
-  if (!auth && !(typeof window !== "undefined" && new URLSearchParams(window.location.search).has("login"))) {
+  // アプリのログイン画面（iOS・Mac・Android がトップを WebView で開いて「このアプリを接続」する）も昔のログイン画面のまま。
+  if (!auth && !(typeof window !== "undefined" && (new URLSearchParams(window.location.search).has("login") || isAppLoginWebView(navigator.userAgent)))) {
     return <GuestShell />;
   }
 
