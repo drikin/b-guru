@@ -101,7 +101,8 @@ class Session(private val app: Context) {
         ImageCache.token = null
         tokenTask = null
         TokenStore.delete(app)
-        // 📝 ネタ帳タブ's login (the httpOnly neta_session cookie) goes with the app's.
+        // 📝 ネタ帳タブ's and 📜 台本タブ's login (the httpOnly neta_session cookie, one cookie jar for both
+        // WebViews) goes with the app's; both WebViews were dropped in s.stop().
         NetaTabStore.clearCookies()
         scope.launch {
             Push.unregister(app, s.api)

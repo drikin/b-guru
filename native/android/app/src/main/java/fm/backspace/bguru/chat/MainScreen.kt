@@ -49,29 +49,32 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-/** The tabs in order: 📰 💬 ✉️ 📝 📻 (✉️ right after 💬 — 「アプリ版の DM を素直にチャットの右のタブに移動」
+/** The tabs in order: 📰 💬 ✉️ 📝 📻 📜 (✉️ right after 💬 — 「アプリ版の DM を素直にチャットの右のタブに移動」
  *  drikin 2026-11-08; 📝 ネタ帳 between ✉️ and 📻 — 「アプリはそもそも会員限定なので DM とプレイヤーの間のタブに
- *  ネタ帳を実装する」 2026-11-14; ✉️ only with DM on, 📝 only with capabilities.neta.tab, 📻 only with the jukebox on).
+ *  ネタ帳を実装する」 2026-11-14; 📜 台本 the rightmost — オーナー「アプリは1番右のタブに追加」 2026-11-14;
+ *  ✉️ only with DM on, 📝 only with capabilities.neta.tab, 📻 only with the jukebox on, 📜 only with capabilities.neta.scriptTab).
  *  Unit-tested: MainTabsTest.
  *  CLUBS: the phone's club list, a page left of the timeline that is not in the switch
  *  (リュー 2026-11-09「タイムラインからさらに左側にスワイプすると部活一覧が出るようにしても良いかも」→ オーナー「全アプリに作る」). */
-enum class MainTab { TIMELINE, CHAT, DM, NETA, JUKEBOX, CLUBS }
+enum class MainTab { TIMELINE, CHAT, DM, NETA, JUKEBOX, SCRIPT, CLUBS }
 
 object MainTabs {
     /** Phone pages, in order ([clubs]: the club list first, left of the timeline). */
-    fun pages(dm: Boolean, jukebox: Boolean, clubs: Boolean = false, neta: Boolean = false): List<MainTab> =
+    fun pages(dm: Boolean, jukebox: Boolean, clubs: Boolean = false, neta: Boolean = false, script: Boolean = false): List<MainTab> =
         listOfNotNull(MainTab.CLUBS.takeIf { clubs }, MainTab.TIMELINE, MainTab.CHAT, MainTab.DM.takeIf { dm },
-            MainTab.NETA.takeIf { neta }, MainTab.JUKEBOX.takeIf { jukebox })
+            MainTab.NETA.takeIf { neta }, MainTab.JUKEBOX.takeIf { jukebox }, MainTab.SCRIPT.takeIf { script })
 
     /** The switch at the top: every page but the club list (it gets no segment). */
-    fun switchTabs(dm: Boolean, jukebox: Boolean, neta: Boolean = false): List<MainTab> = pages(dm, jukebox, neta = neta)
+    fun switchTabs(dm: Boolean, jukebox: Boolean, neta: Boolean = false, script: Boolean = false): List<MainTab> =
+        pages(dm, jukebox, neta = neta, script = script)
 
     /** Wide screen: the right side's switch (the timeline is always on the left). */
-    fun right(dm: Boolean, jukebox: Boolean, neta: Boolean = false): List<MainTab> = pages(dm, jukebox, neta = neta).drop(1)
+    fun right(dm: Boolean, jukebox: Boolean, neta: Boolean = false, script: Boolean = false): List<MainTab> =
+        pages(dm, jukebox, neta = neta, script = script).drop(1)
 
     /** The page of [tab], or -1 when that tab is not there. */
-    fun pageOf(tab: MainTab, dm: Boolean, jukebox: Boolean, clubs: Boolean = false, neta: Boolean = false): Int =
-        pages(dm, jukebox, clubs, neta).indexOf(tab)
+    fun pageOf(tab: MainTab, dm: Boolean, jukebox: Boolean, clubs: Boolean = false, neta: Boolean = false, script: Boolean = false): Int =
+        pages(dm, jukebox, clubs, neta, script).indexOf(tab)
 }
 
 /** Phone: timeline and chat (and the jukebox, when the server turns it on) as pages —
@@ -88,6 +91,8 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
     val dm = store.dm.takeIf { it.enabled }
     // 📝 ネタ帳 between ✉️ and 📻 (2026-11-14): only when the server gives this token the entrance.
     val netaPath = store.capabilities?.netaTab
+    // 📜 台本 the rightmost (オーナー「アプリは1番右のタブに追加」2026-11-14): only when the server gives this token its entrance.
+    val scriptPath = store.capabilities?.scriptTab
 
     @Composable
     fun Segments(labels: List<String>, selected: Int, onSelect: (Int) -> Unit, badges: Map<Int, Int> = emptyMap()) {
@@ -108,7 +113,7 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
     Column(Modifier.fillMaxSize()) {
         Box(Modifier.weight(1f)) {
             if (wide) {
-                var right by remember { mutableStateOf(MainTab.CHAT) } // 💬, ✉️, 📝 or 📻
+                var right by remember { mutableStateOf(MainTab.CHAT) } // 💬, ✉️, 📝, 📻 or 📜
                 LaunchedEffect(jb?.showTab) { if (jb?.showTab == true) { right = MainTab.JUKEBOX; jb.showTab = false; jb.revealTick++ } }
                 // ✉️ from a notification / a name in the chat: the DM pane.
                 LaunchedEffect(dm?.showPage) { if (dm?.showPage == true) { right = MainTab.DM; dm.showPage = false } }
@@ -122,8 +127,8 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
                 LaunchedEffect(store.chatRevealTick) { if (store.chatRevealTick > 0) right = MainTab.CHAT }
                 // 📺 「みんなで見る」 over the chat (chat_overlay): the player is a window of the chat, so show the chat.
                 LaunchedEffect(store.watch.revealTick) { if (store.watch.revealTick > 0 && store.chatOverlay) right = MainTab.CHAT }
-                val rightTabs = MainTabs.right(dm != null, jb != null, neta = netaPath != null)
-                // A tab that went away (DM / ネタ帳 / the jukebox turned off): back to the chat.
+                val rightTabs = MainTabs.right(dm != null, jb != null, neta = netaPath != null, script = scriptPath != null)
+                // A tab that went away (DM / ネタ帳 / the jukebox / 台本 turned off): back to the chat.
                 if (right !in rightTabs) right = MainTab.CHAT
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
                 // A phone on its side with ☗ / 🎮 open: the board / game takes the timeline's place, beside the chat
@@ -145,12 +150,13 @@ fun MainScreen(store: ChatStore, timeline: TimelineStore, jukebox: JukeboxStore?
                         jb != null && right == MainTab.JUKEBOX -> JukeboxScreen(jb, store.capabilities, switch, onOpenThread = { timeline.openThread = it })
                         dm != null && right == MainTab.DM -> PostLinksInApp(timeline) { DMPage(dm, store.members, visible = true, tabSwitch = switch) }
                         netaPath != null && right == MainTab.NETA -> NetaTabScreen(store.netaTab, netaPath, switch, visible = true)
+                        scriptPath != null && right == MainTab.SCRIPT -> NetaTabScreen(store.scriptTab, scriptPath, switch, visible = true, title = "台本")
                         else -> PostLinksInApp(timeline) { ChatScreen(store, onSignOut = onSignOut, tabSwitch = switch) }
                     }
                 }
                 }
             } else {
-                Pages(store, timeline, jb, dm, netaPath, onSignOut) { labels, selected, onSelect, badges -> Segments(labels, selected, onSelect, badges) }
+                Pages(store, timeline, jb, dm, netaPath, scriptPath, onSignOut) { labels, selected, onSelect, badges -> Segments(labels, selected, onSelect, badges) }
             }
         }
         // No mini player under the timeline and the chat (drikin 2026-10-20): the jukebox
@@ -169,19 +175,21 @@ private fun Pages(
     jb: JukeboxStore?,
     dm: DMStore?,
     netaPath: String?,
+    scriptPath: String?,
     onSignOut: () -> Unit,
     segments: @Composable (List<String>, Int, (Int) -> Unit, Map<Int, Int>) -> Unit,
 ) {
-    // 🏷️ 📰 💬 (✉️) (📝) (📻): the club list is page 0, so every page is looked up by its tab, never by a number
+    // 🏷️ 📰 💬 (✉️) (📝) (📻) (📜): the club list is page 0, so every page is looked up by its tab, never by a number
     // (the app still starts on 💬; the switch has no segment for the club list).
-    val tabs = MainTabs.pages(dm != null, jb != null, clubs = true, neta = netaPath != null)
-    val switchTabs = MainTabs.switchTabs(dm != null, jb != null, neta = netaPath != null)
+    val tabs = MainTabs.pages(dm != null, jb != null, clubs = true, neta = netaPath != null, script = scriptPath != null)
+    val switchTabs = MainTabs.switchTabs(dm != null, jb != null, neta = netaPath != null, script = scriptPath != null)
     val clubsPage = tabs.indexOf(MainTab.CLUBS)
     val timelinePage = tabs.indexOf(MainTab.TIMELINE)
     val chatPage = tabs.indexOf(MainTab.CHAT)
     val dmPage = tabs.indexOf(MainTab.DM)
     val netaPage = tabs.indexOf(MainTab.NETA)
     val jbPage = tabs.indexOf(MainTab.JUKEBOX)
+    val scriptPage = tabs.indexOf(MainTab.SCRIPT)
     val pager = rememberPagerState(initialPage = chatPage) { tabs.size }
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
@@ -213,7 +221,8 @@ private fun Pages(
     // The playback notification / the mini player: show the jukebox.
     LaunchedEffect(jb?.showTab, jbPage) { if (jb?.showTab == true && jbPage >= 0) { pager.animateScrollToPage(jbPage); jb.showTab = false; jb.revealTick++ } }
 
-    // 📰 タイムライン ・ 💬 チャット ・ ✉️ DM ・ 📝 ネタ帳 ・ 📻 プレイヤー — the same order and marks in every app (drikin 2026-10-20, ✉️ 2026-11-08, 📝 2026-11-14).
+    // 📰 タイムライン ・ 💬 チャット ・ ✉️ DM ・ 📝 ネタ帳 ・ 📻 プレイヤー ・ 📜 台本 — the same order and marks in every app
+    // (drikin 2026-10-20, ✉️ 2026-11-08, 📝 2026-11-14, 📜 1 番右 2026-11-14).
     // The switch counts its own segments (no club list): its indexes are mapped to pages and back.
     val labels = switchTabs.map { tabLabel(it, store) }
     val dmSegment = switchTabs.indexOf(MainTab.DM)
@@ -238,6 +247,8 @@ private fun Pages(
             netaPage -> if (netaPath != null) NetaTabScreen(store.netaTab, netaPath, switch, visible = pager.currentPage == netaPage)
             jbPage -> if (jb != null) JukeboxScreen(jb, store.capabilities, switch, visible = { pager.currentPage == jbPage },
                 onOpenThread = { timeline.openThread = it })
+            // 📜: the same machinery as 📝, its own store (its own WebView, login and 6 h clock).
+            scriptPage -> if (scriptPath != null) NetaTabScreen(store.scriptTab, scriptPath, switch, visible = pager.currentPage == scriptPage, title = "台本")
         }
     }
 }
@@ -265,6 +276,7 @@ private fun tabLabel(tab: MainTab, store: ChatStore): String = when (tab) {
     MainTab.DM -> "✉️"
     MainTab.NETA -> "📝"
     MainTab.JUKEBOX -> "📻"
+    MainTab.SCRIPT -> "📜"
     MainTab.CLUBS -> "🏷️" // not in the switch
 }
 

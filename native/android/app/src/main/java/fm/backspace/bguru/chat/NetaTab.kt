@@ -55,6 +55,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
  * `Authorization: Bearer` → the server sets the httpOnly cookie `neta_session` (12 h) and 303s to /neta/app.
  * The page navigates to `bguru-neta://reenter` when that login ran out: we enter again.
  * The WebView belongs to [NetaTabStore] (lives with the sign-in), so switching tabs never reloads it.
+ * 📜 台本タブ（1 番右 — オーナー「アプリは1番右のタブに追加」2026-11-14）is a second, independent instance of the
+ * same machinery: its own [NetaTabStore] (ChatStore.scriptTab) entered at `features.neta.scriptTab`
+ * ("/neta/app/enter?to=script" → /neta/app/script), the same login, 6 h and bguru-neta://reenter.
  */
 object NetaTabLogic {
     /** Back after this long in the background: enter again (fresh login, fresh page). */
@@ -80,7 +83,8 @@ object NetaTabLogic {
         backgroundSince > 0 && now - backgroundSince >= STALE_MS
 }
 
-/** The 📝 tab's WebView and its state. Lives as long as the sign-in (ChatStore); [destroy] on sign-out. */
+/** The 📝 (or 📜) tab's WebView and its state. Lives as long as the sign-in (ChatStore); [destroy] on sign-out.
+ *  One per tab: each has its own WebView, entrance, history and 6 h clock (they share only the cookie jar). */
 class NetaTabStore(private val token: String) {
     var web by mutableStateOf<WebView?>(null); private set
     var loading by mutableStateOf(false); private set
@@ -236,10 +240,10 @@ class NetaTabStore(private val token: String) {
     }
 }
 
-/** The 📝 page: the tab switch in the bar (like the other pages), ↻, and the store's WebView. */
+/** The 📝 page (or the 📜 page, [title] "台本"): the tab switch in the bar (like the other pages), ↻, and the store's WebView. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NetaTabScreen(store: NetaTabStore, enterPath: String, tabSwitch: (@Composable () -> Unit)?, visible: Boolean) {
+fun NetaTabScreen(store: NetaTabStore, enterPath: String, tabSwitch: (@Composable () -> Unit)?, visible: Boolean, title: String = "ネタ帳") {
     val ctx = LocalContext.current
     val visibleNow by rememberUpdatedState(visible)
     LaunchedEffect(store, visible, enterPath) { if (visible) store.show(ctx, enterPath) }
@@ -261,7 +265,7 @@ fun NetaTabScreen(store: NetaTabStore, enterPath: String, tabSwitch: (@Composabl
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { if (tabSwitch != null) tabSwitch() else Text("ネタ帳", maxLines = 1) },
+                title = { if (tabSwitch != null) tabSwitch() else Text(title, maxLines = 1) },
                 actions = { TextButton(onClick = { store.reload() }) { Text("↻") } },
             )
         },
@@ -285,7 +289,7 @@ fun NetaTabScreen(store: NetaTabStore, enterPath: String, tabSwitch: (@Composabl
             if (store.loading) LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
             if (store.failed) {
                 Column(Modifier.align(Alignment.Center).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("ネタ帳を読み込めませんでした", style = MaterialTheme.typography.bodyMedium)
+                    Text("${title}を読み込めませんでした", style = MaterialTheme.typography.bodyMedium)
                     OutlinedButton(onClick = { store.reload() }, modifier = Modifier.padding(top = 12.dp)) { Text("もう一度") }
                 }
             }

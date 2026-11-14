@@ -83,6 +83,9 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     val watch = WatchStore(api)
     /** 📝 ネタ帳タブ — only when the server gives this token the entrance (capabilities.neta.tab). */
     val netaTab = NetaTabStore(api.token)
+    /** 📜 台本タブ（1 番右 — オーナー「アプリは1番右のタブに追加」2026-11-14）— 📝 と同じ仕組みの別の WebView。
+     *  only when the server gives this token its entrance (capabilities.neta.scriptTab: paid members). */
+    val scriptTab = NetaTabStore(api.token)
     /** 🍻 オフ会 — only when the server turns it on for this member (capabilities.offkai). */
     val offkai: OffkaiStore = OffkaiStore(api, app.applicationContext, reader, readerWanted = { chatReading }).also { it.fallbackMe = { myUserId } }
     private val voiceApp = app.applicationContext
@@ -302,6 +305,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         reader.stop()
         voice.close()
         netaTab.destroy()
+        scriptTab.destroy()
         scope.cancel()
     }
 

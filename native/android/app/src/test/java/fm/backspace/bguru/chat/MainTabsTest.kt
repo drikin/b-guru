@@ -4,7 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /** ✉️ is a tab right after 💬 (「アプリ版の DM を素直にチャットの右のタブに移動」 2026-11-08);
- *  📝 ネタ帳 between ✉️ and 📻 (「DM とプレイヤーの間のタブにネタ帳を実装する」 2026-11-14). */
+ *  📝 ネタ帳 between ✉️ and 📻 (「DM とプレイヤーの間のタブにネタ帳を実装する」 2026-11-14);
+ *  📜 台本 the rightmost (オーナー「アプリは1番右のタブに追加」 2026-11-14). */
 class MainTabsTest {
     @Test fun phonePagesInOrder() {
         assertEquals(listOf(MainTab.TIMELINE, MainTab.CHAT, MainTab.DM, MainTab.JUKEBOX), MainTabs.pages(dm = true, jukebox = true))
@@ -55,5 +56,27 @@ class MainTabsTest {
         // The chat stays where it was (the app starts on it).
         assertEquals(2, MainTabs.pageOf(MainTab.CHAT, dm = true, jukebox = true, clubs = true, neta = true))
         assertEquals(-1, MainTabs.pageOf(MainTab.NETA, dm = true, jukebox = true, clubs = true))
+    }
+
+    // 📜 台本 (オーナー「アプリは1番右のタブに追加」2026-11-14): after 📻, only with capabilities.neta.scriptTab.
+    @Test fun scriptTabIsTheRightmost() {
+        assertEquals(listOf(MainTab.TIMELINE, MainTab.CHAT, MainTab.DM, MainTab.NETA, MainTab.JUKEBOX, MainTab.SCRIPT),
+            MainTabs.pages(dm = true, jukebox = true, neta = true, script = true))
+        // Still the last when the tabs before it are off.
+        assertEquals(listOf(MainTab.TIMELINE, MainTab.CHAT, MainTab.DM, MainTab.NETA, MainTab.SCRIPT), MainTabs.pages(dm = true, jukebox = false, neta = true, script = true))
+        assertEquals(listOf(MainTab.TIMELINE, MainTab.CHAT, MainTab.JUKEBOX, MainTab.SCRIPT), MainTabs.pages(dm = false, jukebox = true, script = true))
+        assertEquals(listOf(MainTab.TIMELINE, MainTab.CHAT, MainTab.SCRIPT), MainTabs.pages(dm = false, jukebox = false, script = true))
+        assertEquals(listOf(MainTab.CLUBS, MainTab.TIMELINE, MainTab.CHAT, MainTab.DM, MainTab.NETA, MainTab.JUKEBOX, MainTab.SCRIPT),
+            MainTabs.pages(dm = true, jukebox = true, clubs = true, neta = true, script = true))
+        assertEquals(listOf(MainTab.TIMELINE, MainTab.CHAT, MainTab.DM, MainTab.NETA, MainTab.JUKEBOX, MainTab.SCRIPT),
+            MainTabs.switchTabs(dm = true, jukebox = true, neta = true, script = true))
+        assertEquals(listOf(MainTab.CHAT, MainTab.DM, MainTab.NETA, MainTab.JUKEBOX, MainTab.SCRIPT), MainTabs.right(dm = true, jukebox = true, neta = true, script = true))
+        assertEquals(6, MainTabs.pageOf(MainTab.SCRIPT, dm = true, jukebox = true, clubs = true, neta = true, script = true))
+        // The chat and the others stay where they were.
+        assertEquals(2, MainTabs.pageOf(MainTab.CHAT, dm = true, jukebox = true, clubs = true, neta = true, script = true))
+        assertEquals(5, MainTabs.pageOf(MainTab.JUKEBOX, dm = true, jukebox = true, clubs = true, neta = true, script = true))
+        // Without the capability: no 📜.
+        assertEquals(-1, MainTabs.pageOf(MainTab.SCRIPT, dm = true, jukebox = true, clubs = true, neta = true))
+        assertEquals(listOf(MainTab.CHAT, MainTab.DM, MainTab.NETA, MainTab.JUKEBOX), MainTabs.right(dm = true, jukebox = true, neta = true))
     }
 }

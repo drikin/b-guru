@@ -40,5 +40,25 @@ class NetaTabTest {
         assertNull(caps("""{"enabled":true}""").netaTab)
         assertNull(caps("""{"tab":"https://evil.example/x"}""").netaTab)
         assertNull(caps("""{"tab":"//evil.example/x"}""").netaTab)
+        assertNull(caps("""{"tab":"/api/agent/me"}""").netaTab) // only a ネタ帳 path
+        assertNull(caps("""{"tab":"/neta/../api/agent/me"}""").netaTab)
+        assertNull(caps("""{"tab":"/neta/app\\enter"}""").netaTab)
+    }
+
+    // 📜 台本タブ（1 番右 — オーナー「アプリは1番右のタブに追加」2026-11-14）: its own entrance, the same checks as 📝.
+    @Test fun scriptTabPathFromCapabilities() {
+        fun caps(neta: String) = ApiJson.decodeFromString<Capabilities>("""{"features":{"neta":$neta}}""")
+        val both = caps("""{"enabled":true,"tab":"/neta/app/enter","scriptTab":"/neta/app/enter?to=script"}""")
+        assertEquals("/neta/app/enter?to=script", both.scriptTab)
+        assertEquals("/neta/app/enter", both.netaTab)
+        // A token without the script entrance (not a paid member): 📝 only.
+        val netaOnly = caps("""{"enabled":true,"tab":"/neta/app/enter"}""")
+        assertNull(netaOnly.scriptTab)
+        assertEquals("/neta/app/enter", netaOnly.netaTab)
+        assertNull(caps("""{"scriptTab":"https://evil.example/x"}""").scriptTab)
+        assertNull(caps("""{"scriptTab":"//evil.example/x"}""").scriptTab)
+        assertNull(caps("""{"scriptTab":"/neta/../api/agent/me"}""").scriptTab)
+        assertNull(caps("""{"scriptTab":"/api/agent/me"}""").scriptTab)
+        assertNull(ApiJson.decodeFromString<Capabilities>("""{}""").scriptTab)
     }
 }
