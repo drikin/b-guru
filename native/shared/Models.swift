@@ -188,6 +188,8 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var enabled: Bool?
         var path: String?
         var site: String?
+        /// The 📝 tab's way in (apps only): "/neta/app/enter", opened in a WebView with the token (NetaTab.swift).
+        var tab: String?
     }
     /// 🎮 散財ダッシュ (docs/minigame-spec.md). Absent or enabled:false → nothing of it shows.
     struct MinigameFeatures: Decodable, Sendable, Equatable {
@@ -341,6 +343,11 @@ struct Capabilities: Decodable, Sendable, Equatable {
         return "/api/agent/jukebox"
     }
     var netaEnabled: Bool { features?.neta?.enabled ?? false }
+    /// 📝 ネタ帳 tab: its way in on our own server (nil = no tab). Only paths under /neta/ (the request carries the token).
+    var netaTabPath: String? {
+        guard let p = features?.neta?.tab, p.hasPrefix("/neta/"), !p.contains("..") else { return nil }
+        return p
+    }
     /// ☗ 将棋 is on for this member, and this app speaks the board's bridge (version 1).
     /// 🎮 is on for this member, and this app speaks the game's bridge (version 1).
     var minigameEnabled: Bool {

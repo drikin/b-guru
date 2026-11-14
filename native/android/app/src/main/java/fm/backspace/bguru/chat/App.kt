@@ -101,6 +101,8 @@ class Session(private val app: Context) {
         ImageCache.token = null
         tokenTask = null
         TokenStore.delete(app)
+        // 📝 ネタ帳タブ's login (the httpOnly neta_session cookie) goes with the app's.
+        NetaTabStore.clearCookies()
         scope.launch {
             Push.unregister(app, s.api)
             s.api.revokeSelf()

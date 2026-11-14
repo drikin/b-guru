@@ -4,8 +4,9 @@ import SwiftUI
 
 /// Chat or timeline (iPhone pages, the Mac panel switch).
 enum MainTab: Hashable {
-    /// In the switch's order: 📰 💬 ✉️ 📻 (✉️ DM a tab of its own right after the chat, 2026-11-08).
-    case timeline, chat, dm, jukebox
+    /// In the switch's order: 📰 💬 ✉️ 📝 📻 (✉️ DM a tab of its own right after the chat, 2026-11-08;
+    /// 📝 ネタ帳 between ✉️ and 📻, 2026-11-14 「アプリはそもそも会員限定なので DM とプレイヤーの間のタブにネタ帳」).
+    case timeline, chat, dm, neta, jukebox
     /// iPhone: the club list, a page left of the timeline (not in the switch; 2026-11-09).
     case clubs
 }

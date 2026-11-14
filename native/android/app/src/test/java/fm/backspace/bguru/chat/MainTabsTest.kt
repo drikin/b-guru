@@ -3,7 +3,8 @@ package fm.backspace.bguru.chat
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** ✉️ is a tab right after 💬 (「アプリ版の DM を素直にチャットの右のタブに移動」 2026-11-08). */
+/** ✉️ is a tab right after 💬 (「アプリ版の DM を素直にチャットの右のタブに移動」 2026-11-08);
+ *  📝 ネタ帳 between ✉️ and 📻 (「DM とプレイヤーの間のタブにネタ帳を実装する」 2026-11-14). */
 class MainTabsTest {
     @Test fun phonePagesInOrder() {
         assertEquals(listOf(MainTab.TIMELINE, MainTab.CHAT, MainTab.DM, MainTab.JUKEBOX), MainTabs.pages(dm = true, jukebox = true))
@@ -39,5 +40,20 @@ class MainTabsTest {
         assertEquals(listOf(MainTab.CHAT, MainTab.DM, MainTab.JUKEBOX), MainTabs.right(dm = true, jukebox = true))
         assertEquals(listOf(MainTab.CHAT, MainTab.DM), MainTabs.right(dm = true, jukebox = false))
         assertEquals(listOf(MainTab.CHAT), MainTabs.right(dm = false, jukebox = false))
+    }
+
+    // 📝 ネタ帳 (2026-11-14): 📰 💬 ✉️ 📝 📻, only with capabilities.neta.tab.
+    @Test fun netaTabIsBetweenDMAndThePlayer() {
+        assertEquals(listOf(MainTab.TIMELINE, MainTab.CHAT, MainTab.DM, MainTab.NETA, MainTab.JUKEBOX), MainTabs.pages(dm = true, jukebox = true, neta = true))
+        assertEquals(listOf(MainTab.TIMELINE, MainTab.CHAT, MainTab.NETA, MainTab.JUKEBOX), MainTabs.pages(dm = false, jukebox = true, neta = true))
+        assertEquals(listOf(MainTab.TIMELINE, MainTab.CHAT, MainTab.DM, MainTab.NETA), MainTabs.pages(dm = true, jukebox = false, neta = true))
+        assertEquals(listOf(MainTab.CLUBS, MainTab.TIMELINE, MainTab.CHAT, MainTab.DM, MainTab.NETA, MainTab.JUKEBOX), MainTabs.pages(dm = true, jukebox = true, clubs = true, neta = true))
+        assertEquals(listOf(MainTab.TIMELINE, MainTab.CHAT, MainTab.DM, MainTab.NETA, MainTab.JUKEBOX), MainTabs.switchTabs(dm = true, jukebox = true, neta = true))
+        assertEquals(listOf(MainTab.CHAT, MainTab.DM, MainTab.NETA, MainTab.JUKEBOX), MainTabs.right(dm = true, jukebox = true, neta = true))
+        assertEquals(4, MainTabs.pageOf(MainTab.NETA, dm = true, jukebox = true, clubs = true, neta = true))
+        assertEquals(5, MainTabs.pageOf(MainTab.JUKEBOX, dm = true, jukebox = true, clubs = true, neta = true))
+        // The chat stays where it was (the app starts on it).
+        assertEquals(2, MainTabs.pageOf(MainTab.CHAT, dm = true, jukebox = true, clubs = true, neta = true))
+        assertEquals(-1, MainTabs.pageOf(MainTab.NETA, dm = true, jukebox = true, clubs = true))
     }
 }

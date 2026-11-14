@@ -199,7 +199,8 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     )
     @Serializable data class ShogiTimeControl(val mode: String, val label: String = "", val initialMs: Long = 0, val byoyomiMs: Long = 0)
     /** 「ネタ帳に送る」: the article a post links to → BS ネタ帳 (public site). Needs the post scope. */
-    @Serializable data class NetaFeatures(val enabled: Boolean? = null, val path: String? = null, val site: String? = null)
+    /** [tab]: 📝 ネタ帳タブの入口（"/neta/app/enter"）。アプリが発行したトークンにだけ付く。 */
+    @Serializable data class NetaFeatures(val enabled: Boolean? = null, val path: String? = null, val site: String? = null, val tab: String? = null)
     /** The jukebox (backspace.fm back catalogue), behind a rollout list. */
     @Serializable data class JukeboxFeatures(val enabled: Boolean? = null, val path: String? = null)
     /** The club room (ルーム): 8-bit room view + proximity voice, behind a rollout flag. */
@@ -405,6 +406,9 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val netaPath get() = features?.neta?.path?.takeIf { it.startsWith("/api/") } ?: "/api/agent/neta"
     /** Only http(s): it is opened in the browser. */
     val netaSite get() = features?.neta?.site?.takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: "https://neta.backspace.fm"
+    /** 📝 ネタ帳タブ（DM とプレイヤーの間）の入口。null ならタブを出さない。The token goes with it,
+     *  so only a path on our own server (never "//host", never a full URL). */
+    val netaTab get() = features?.neta?.tab?.takeIf { it.startsWith("/") && !it.startsWith("//") && !it.contains('\\') }
 }
 
 /** POST /api/agent/neta reply (201 / 409 / 4xx / 5xx all share this shape). */

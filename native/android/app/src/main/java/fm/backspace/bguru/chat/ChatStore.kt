@@ -81,6 +81,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     val dm = DMStore(api).also { it.groups.fallbackMe = { myUserId } }
     /** 📺 YouTube 共同鑑賞 — only when the server turns it on for this member (capabilities.watch). */
     val watch = WatchStore(api)
+    /** 📝 ネタ帳タブ — only when the server gives this token the entrance (capabilities.neta.tab). */
+    val netaTab = NetaTabStore(api.token)
     /** 🍻 オフ会 — only when the server turns it on for this member (capabilities.offkai). */
     val offkai: OffkaiStore = OffkaiStore(api, app.applicationContext, reader, readerWanted = { chatReading }).also { it.fallbackMe = { myUserId } }
     private val voiceApp = app.applicationContext
@@ -299,6 +301,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         offkai.close()
         reader.stop()
         voice.close()
+        netaTab.destroy()
         scope.cancel()
     }
 

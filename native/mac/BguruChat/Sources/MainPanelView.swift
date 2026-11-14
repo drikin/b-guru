@@ -50,6 +50,11 @@ struct MainPanelView: View {
                 }
             }
             SplitDivider(pin: pin)
+            // 📝 ネタ帳: between ✉️ and 📻, the whole panel (the app is for members only, so no
+            // guest view; オーナー 2026-11-14「DM とプレイヤーの間のタブにネタ帳を実装する」).
+            if let path = netaPath {
+                NetaSlot(store: store, pin: pin, path: path)
+            }
             if jukeboxOn {
                 JukeboxSlot(store: store, pin: pin)
             }
@@ -85,6 +90,8 @@ struct MainPanelView: View {
             Button("") { tab = .chat }.keyboardShortcut("2", modifiers: .command).hidden()
             if store.dm.enabled { Button("") { tab = .dm }.keyboardShortcut("3", modifiers: .command).hidden() }
             if jukeboxOn { Button("") { tab = .jukebox }.keyboardShortcut("4", modifiers: .command).hidden() }
+            // 📝 is ⌘5: ⌘4 stays the player it has been since 2026-10-20 (no renumbering).
+            if netaPath != nil { Button("") { tab = .neta }.keyboardShortcut("5", modifiers: .command).hidden() }
             // The text size (老眼対策): ⌘+ (also ⌘= / ⌘; on a JIS keyboard, where + is ⇧;), ⌘−, ⌘0.
             Button("") { TextScale.shared.larger() }.keyboardShortcut("+", modifiers: .command).hidden()
             Button("") { TextScale.shared.larger() }.keyboardShortcut("=", modifiers: .command).hidden()
@@ -97,6 +104,8 @@ struct MainPanelView: View {
     }
 
     private var jukeboxOn: Bool { store.capabilities?.jukeboxEnabled ?? false }
+    /// 📝 the entrance path (only app-issued tokens get it).
+    private var netaPath: String? { store.capabilities?.netaTabPath }
 
 }
 
@@ -157,6 +166,25 @@ private struct JukeboxSlot: View {
     }
 }
 
+/// 📝 ネタ帳: the web page is built the first time the tab is opened, then kept (its place and
+/// login survive tab switches; NetaTabWeb re-enters after 6 hours).
+private struct NetaSlot: View {
+    let store: ChatStore
+    let pin: PinState
+    let path: String
+    @State private var built = false
+
+    var body: some View {
+        let on = pin.tab == .neta
+        if built || on {
+            NetaTab(store: store, pin: pin, path: path)
+                .equatable()
+                .shown(on)
+                .onAppear { built = true }
+        }
+    }
+}
+
 /// What follows the tab and the stores' requests to switch, kept out of the panel's body.
 private struct PanelTabWatcher: View {
     let store: ChatStore
@@ -208,7 +236,11 @@ private struct PanelTabWatcher: View {
     var body: some View {
         Color.clear
             .onAppear { updateVisibility() }
-            .onChange(of: pin.windowVisible) { _, _ in updateVisibility() }
+            .onChange(of: pin.windowVisible) { _, seen in
+                updateVisibility()
+                // 📝 back on screen after a long while: NetaTabWeb enters again (6 h; the login lasts 12 h).
+                if seen && pin.tab == .neta { NetaTabWeb.shared.shown() }
+            }
             .onChange(of: pin.split) { _, _ in updateVisibility() }
             .onChange(of: jukeboxOn) { _, on in if !on && pin.tab == .jukebox { pin.tab = .chat } }
             // A name in the chat, a notification, …: DMStore.open → the ✉️ tab shows it.
@@ -218,6 +250,7 @@ private struct PanelTabWatcher: View {
             .onChange(of: pin.tab) { _, t in
                 updateVisibility()
                 if t == .jukebox { pin.wantsHeight?(780) }
+                if t == .neta { NetaTabWeb.shared.shown() }
             }
             // The panel opens on the tab it was left on (PanelMemory); the chat's input gets
             // the caret only when the chat is the tab shown (ChatPanel.focusComposer).
@@ -227,6 +260,8 @@ private struct PanelTabWatcher: View {
                 if pin.tab == .jukebox, caps != nil, !(caps?.jukeboxEnabled ?? false) { pin.tab = .chat }
                 // Remembered on ✉️, but DM is not on for this member.
                 if pin.tab == .dm, caps != nil, !(caps?.features?.dm?.enabled ?? false) { pin.tab = .chat }
+                // Remembered on 📝, but this token has no ネタ帳 tab (an older token / server).
+                if pin.tab == .neta, caps != nil, caps?.netaTabPath == nil { pin.tab = .chat }
             }
             // Inside the chat: ☗ / 🎮 open again where they were left (the room follows the
             // server: entering it shows you to everyone, so it is never entered by itself).
@@ -270,9 +305,9 @@ struct PanelTabSwitch: View {
         if pin.split {
             // Side by side: one switch (over the chat) — 📰💬 both, or 📻.
             if pane != .timeline {
-                PanelTabs(selection: Binding(get: { pin.tab == .jukebox || pin.tab == .dm ? pin.tab : .chat }, set: { pin.tab = $0 }), items: [
+                PanelTabs(selection: Binding(get: { pin.tab == .jukebox || pin.tab == .dm || pin.tab == .neta ? pin.tab : .chat }, set: { pin.tab = $0 }), items: [
                     (.chat, store.unreadCount > 0 ? "📰💬●" : "📰💬", "タイムラインとチャット（⌘1 / ⌘2）"),
-                ] + dmItem + jukeboxItem)
+                ] + dmItem + netaItem + jukeboxItem)
             }
         } else {
             tabs
@@ -289,14 +324,17 @@ struct PanelTabSwitch: View {
 
     private var jukeboxItem: [(MainTab, String, String)] { jukeboxOn ? [(.jukebox, "📻", "プレイヤー（⌘4）")] : [] }
 
+    /// 📝 ネタ帳 between ✉️ and 📻, when the server gives this token the tab.
+    private var netaItem: [(MainTab, String, String)] { store.capabilities?.netaTabPath != nil ? [(.neta, "📝", "ネタ帳（⌘5）")] : [] }
+
     private var tabs: some View {
-        // 📰 タイムライン ・ 💬 チャット ・ 📻 プレイヤー — the same order and marks in every app
+        // 📰 タイムライン ・ 💬 チャット ・ ✉️ DM ・ 📝 ネタ帳 ・ 📻 プレイヤー — the same order and marks in every app
         // (drikin 2026-10-20); segments sized to their marks (the system control made them
         // all as wide as the widest and widened the panel).
         PanelTabs(selection: $pin.tab, items: [
             (.timeline, "📰", "タイムライン（⌘1）"),
             (.chat, store.unreadCount > 0 ? "💬●" : "💬", "チャット（⌘2）"),
-        ] + dmItem + jukeboxItem)
+        ] + dmItem + netaItem + jukeboxItem)
     }
 }
 
@@ -352,6 +390,34 @@ private struct JukeboxTab: View, @MainActor Equatable {
         JukeboxScreen(jukebox: store.jukebox, path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox",
                       tabPicker: PanelTabSwitch(store: store, pin: pin, pane: .jukebox))
             .background(.regularMaterial)
+    }
+}
+
+/// 📝 ネタ帳: the tab switch on top, the page (/neta/app, its own views and light/dark) below.
+private struct NetaTab: View, @MainActor Equatable {
+    let store: ChatStore
+    let pin: PinState
+    let path: String
+    static func == (a: Self, b: Self) -> Bool { a.store === b.store && a.pin === b.pin && a.path == b.path }
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                PanelTabSwitch(store: store, pin: pin, pane: .neta)
+                Spacer()
+                // No ⌘R here: the hidden tabs stay built and the web timeline's ↻ already has it.
+                Button { NetaTabWeb.shared.reload() } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.borderless)
+                    .help("再読み込み")
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+            Divider()
+            NetaTabView(path: path)
+        }
+        .background(.regularMaterial)
+        // The page follows the app's text size (⌘+ / ⌘− / ⌘0), like the web timeline.
+        .onChange(of: TextScale.shared.scale) { _, s in NetaTabWeb.shared.setZoom(s) }
     }
 }
 

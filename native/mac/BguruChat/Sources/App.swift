@@ -376,6 +376,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         } else {
             // 前のログアウトで消しきれなかった Web 版タイムラインのログインも消す。
             WebTimeline.shared.tearDown(forgetLogin: true)
+            NetaTabWeb.shared.signOut()
             showLogin()
         }
     }
@@ -464,6 +465,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         MediaCache.shared.token = nil
         Keychain.delete()
         WebTimeline.shared.tearDown(forgetLogin: true)
+        NetaTabWeb.shared.signOut() // 📝 ネタ帳のログイン（neta_session）も消す
         Updater.shared.stop()
         if revoke, let token { Task { await APIClient(token: token).revokeSelf() } }
         updateStatusIcon(unread: 0, mentions: 0, connection: .offline)

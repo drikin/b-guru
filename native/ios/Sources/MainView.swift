@@ -72,10 +72,11 @@ struct MainView: View {
                 store.showChat = { pager.tab = .chat }
                 Keyboard.startTracking()
                 #if DEBUG
-                // BGURU_DEMO_TAB=timeline|jukebox: start on that page (the orientation check).
+                // BGURU_DEMO_TAB=timeline|jukebox|neta: start on that page (the orientation check).
                 switch ProcessInfo.processInfo.environment["BGURU_DEMO_TAB"] {
                 case "timeline": pager.tab = .timeline; pager.settledTab = .timeline
                 case "jukebox": pager.tab = .jukebox; pager.settledTab = .jukebox
+                case "neta": pager.tab = .neta; pager.settledTab = .neta
                 default: break
                 }
                 #endif
@@ -84,6 +85,8 @@ struct MainView: View {
 
     private var jukeboxOn: Bool { store.capabilities?.jukeboxEnabled ?? false }
     private var jukeboxPath: String { store.capabilities?.jukeboxPath ?? "/api/agent/jukebox" }
+    /// 📝 ネタ帳のタブの入口（nil = タブなし）。
+    private var netaPath: String? { store.capabilities?.netaTabPath }
 
     @ViewBuilder private var layout: some View {
         if hSize == .regular {
@@ -127,6 +130,12 @@ struct MainView: View {
                                     .frame(width: g.size.width, height: g.size.height)
                                     .id(MainTab.dm)
                             }
+                            // 📝 ネタ帳: ✉️ と 📻 の間（オーナー 2026-11-14「DM とプレイヤーの間のタブにネタ帳」）。
+                            if let netaPath {
+                                NetaScreen(path: netaPath, tabPicker: picker)
+                                    .frame(width: g.size.width, height: g.size.height)
+                                    .id(MainTab.neta)
+                            }
                             if jukeboxOn {
                                 JukeboxScreen(jukebox: store.jukebox, path: jukeboxPath, tabPicker: picker)
                                     .modifier(AvoidsKeyboard(keyboard: keyboard))
@@ -166,8 +175,10 @@ private struct LeftColumn: View {
             JukeboxScreen(jukebox: store.jukebox, path: store.capabilities?.jukeboxPath ?? "/api/agent/jukebox", tabPicker: picker)
         } else if pager.leftTab == .dm && store.dm.enabled {
             DMTabScreen(dm: store.dm, tabPicker: AnyView(picker))
+        } else if pager.leftTab == .neta, let path = store.capabilities?.netaTabPath {
+            NetaScreen(path: path, tabPicker: picker)
         } else {
-            TimelineScreen(timeline: timeline, capabilities: store.capabilities, tabPicker: jukeboxOn || store.dm.enabled ? picker : nil, onReconnect: onSignOut)
+            TimelineScreen(timeline: timeline, capabilities: store.capabilities, tabPicker: jukeboxOn || store.dm.enabled || store.capabilities?.netaTabPath != nil ? picker : nil, onReconnect: onSignOut)
         }
     }
 }
@@ -224,6 +235,9 @@ private struct PagerWatcher: View {
             .onChange(of: jukeboxOn) { _, on in
                 if !on { if pager.tab == .jukebox { pager.tab = .chat }; if pager.leftTab == .jukebox { pager.leftTab = .timeline } }
             }
+            .onChange(of: store.capabilities?.netaTabPath != nil) { _, on in
+                if !on { if pager.tab == .neta { pager.tab = .chat }; if pager.leftTab == .neta { pager.leftTab = .timeline } }
+            }
             .onChange(of: store.dm.enabled) { _, on in
                 if !on { if pager.tab == .dm { pager.tab = .chat }; if pager.leftTab == .dm { pager.leftTab = .timeline } }
             }
@@ -261,8 +275,8 @@ private struct PagerWatcher: View {
     }
 }
 
-/// 📰 タイムライン ・ 💬 チャット ・ ✉️ DM ・ 📻 プレイヤー — the same order and marks in every app
-/// (drikin 2026-10-20; ✉️ after 💬 since 2026-11-08). Plain Text segments (a segmented picker is a UISegmentedControl).
+/// 📰 タイムライン ・ 💬 チャット ・ ✉️ DM ・ 📝 ネタ帳 ・ 📻 プレイヤー — the same order and marks in every app
+/// (drikin 2026-10-20; ✉️ after 💬 since 2026-11-08; 📝 between ✉️ and 📻 since 2026-11-14). Plain Text segments (a segmented picker is a UISegmentedControl).
 /// Its own view: it reads the page and the unread counts, so only it redraws when they change.
 /// Unread is a mark over a segment (a dot on 💬, the count on ✉️), not in the label: a label that
 /// changed width re-laid out the navigation bar of every page.
@@ -282,8 +296,9 @@ struct PagePicker: View, @MainActor Equatable {
 
     var body: some View {
         let dmOn = store.dm.enabled
+        let netaOn = store.capabilities?.netaTabPath != nil
         if leftColumn {
-            let tabs: [MainTab] = [.timeline] + (dmOn ? [.dm] : []) + (jukeboxOn ? [.jukebox] : [])
+            let tabs: [MainTab] = [.timeline] + (dmOn ? [.dm] : []) + (netaOn ? [.neta] : []) + (jukeboxOn ? [.jukebox] : [])
             let width = Self.segment * CGFloat(tabs.count) + 10
             Picker("表示", selection: Binding(get: { pager.leftTab }, set: { v in withAnimation(.easeOut(duration: 0.2)) { pager.leftTab = v } })) {
                 ForEach(tabs, id: \.self) { Text(Self.mark($0)).tag($0) }
@@ -295,7 +310,7 @@ struct PagePicker: View, @MainActor Equatable {
             }
             .id(tabs) // a new control for a different number of segments, not an update
         } else {
-            let tabs: [MainTab] = [.timeline, .chat] + (dmOn ? [.dm] : []) + (jukeboxOn ? [.jukebox] : [])
+            let tabs: [MainTab] = [.timeline, .chat] + (dmOn ? [.dm] : []) + (netaOn ? [.neta] : []) + (jukeboxOn ? [.jukebox] : [])
             let width = Self.segment * CGFloat(tabs.count)
             let step = width / CGFloat(tabs.count)
             Picker("表示", selection: Binding(get: { pager.tab }, set: { v in withAnimation(.easeOut(duration: 0.2)) { pager.tab = v } })) {
@@ -316,6 +331,7 @@ struct PagePicker: View, @MainActor Equatable {
         case .timeline: return "📰"
         case .chat: return "💬"
         case .dm: return "✉️"
+        case .neta: return "📝"
         case .jukebox: return "📻"
         case .clubs: return "🏷"
         }
