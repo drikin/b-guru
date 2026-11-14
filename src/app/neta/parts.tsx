@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { getNetaViewer } from "@/lib/neta-auth";
 import { netaWritable } from "@/lib/neta-write";
+import { isAdmin } from "@/lib/admin";
 import { NetaAccount, type ClientViewer } from "./NetaClient";
 import s from "./neta.module.css";
 
@@ -9,12 +10,14 @@ import s from "./neta.module.css";
 export const NETA_LEGACY_SITE = "https://neta.backspace.fm";
 
 /** 見ている人（押せる所に渡す形。メールアドレスは渡さない）と、書き込めるか・聞きたいの印に使う id。 */
-export async function loadNetaViewer(): Promise<{ viewer: ClientViewer; writable: boolean; memberId: number | null }> {
+export async function loadNetaViewer(): Promise<{ viewer: ClientViewer; writable: boolean; memberId: number | null; admin: boolean }> {
   const v = await getNetaViewer().catch(() => null);
   return {
     viewer: v ? { displayName: v.member?.displayName ?? null, tier: v.tier } : null,
     writable: netaWritable(v),
     memberId: v?.member?.id ?? null,
+    // 管理（採用・削除・週・台本）は B-guru の有料会員としてログインしている管理者だけ。
+    admin: !!v && v.tier === "paid" && isAdmin(v.email),
   };
 }
 

@@ -10,6 +10,8 @@ export type ClientViewer = { displayName: string | null; tier: "paid" | "free" }
 type Ctx = {
   viewer: ClientViewer;
   writable: boolean;
+  /** B-guru の管理者（採用・削除・管理画面）。 */
+  admin: boolean;
   /** ログインのシートを開く。ログインできたら after を実行する（押した「聞きたい」を入れる など）。 */
   requireLogin: (after?: () => void | Promise<void>) => void;
   setDisplayName: (name: string) => void;
@@ -37,7 +39,7 @@ function errText(data: Record<string, unknown>, fallback = "うまくいきま�
   return typeof data.error === "string" && data.error ? data.error : fallback;
 }
 
-export function NetaProvider({ viewer: initial, writable, children }: { viewer: ClientViewer; writable: boolean; children: ReactNode }) {
+export function NetaProvider({ viewer: initial, writable, admin = false, children }: { viewer: ClientViewer; writable: boolean; admin?: boolean; children: ReactNode }) {
   const [viewer, setViewer] = useState<ClientViewer>(initial);
   const [sheet, setSheet] = useState(false);
   const after = useRef<(() => void | Promise<void>) | null>(null);
@@ -70,7 +72,7 @@ export function NetaProvider({ viewer: initial, writable, children }: { viewer: 
 
   return (
     <NetaCtx.Provider
-      value={{ viewer, writable, requireLogin, setDisplayName: (n) => setViewer((v) => (v ? { ...v, displayName: n } : v)) }}
+      value={{ viewer, writable, admin, requireLogin, setDisplayName: (n) => setViewer((v) => (v ? { ...v, displayName: n } : v)) }}
     >
       {children}
       {sheet && <LoginSheet onClose={() => setSheet(false)} onDone={onLoggedIn} />}
@@ -80,7 +82,7 @@ export function NetaProvider({ viewer: initial, writable, children }: { viewer: 
 
 /** ヘッダの右: ログイン・名前・ログアウト。 */
 export function NetaAccount() {
-  const { viewer, writable, requireLogin } = useNeta();
+  const { viewer, writable, admin, requireLogin } = useNeta();
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   if (!writable && !viewer) return null;
@@ -93,6 +95,11 @@ export function NetaAccount() {
   }
   return (
     <div className={s.account}>
+      {admin && !editing && (
+        <Link href="/neta/admin" className={s.linkBtn}>
+          ⚙ 管理
+        </Link>
+      )}
       {editing ? (
         <NameForm onDone={() => setEditing(false)} />
       ) : (
@@ -438,5 +445,70 @@ export function NetaCommentForm({ topicId }: { topicId: number }) {
         </button>
       </div>
     </form>
+  );
+}
+
+async function adminCall(url: string, method: string, body: unknown = {}): Promise<boolean> {
+  const r = await postJson(url, body, method);
+  if (!r.ok) window.alert(errText(r.data));
+  return r.ok;
+}
+
+/** 管理者だけ: 採用（番組で話した）の切り替えと削除。 */
+export function NetaTopicAdmin({ topicId, featured, afterDelete }: { topicId: number; featured: boolean; afterDelete?: string }) {
+  const { admin } = useNeta();
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  if (!admin) return null;
+  return (
+    <div className={s.adminRow}>
+      <button
+        type="button"
+        className={s.adminBtn}
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          if (await adminCall(`/api/neta/admin/topics/${topicId}`, "PATCH", { featured: !featured })) router.refresh();
+          setBusy(false);
+        }}
+      >
+        {featured ? "採用をやめる" : "🎙 採用"}
+      </button>
+      <button
+        type="button"
+        className={`${s.adminBtn} ${s.danger}`}
+        disabled={busy}
+        onClick={async () => {
+          if (!window.confirm("このネタを消しますか？聞きたいとコメントも消え、元に戻せません")) return;
+          setBusy(true);
+          if (await adminCall(`/api/neta/admin/topics/${topicId}`, "DELETE")) {
+            if (afterDelete) router.push(afterDelete);
+            else router.refresh();
+          }
+          setBusy(false);
+        }}
+      >
+        削除
+      </button>
+    </div>
+  );
+}
+
+/** 管理者だけ: コメントの削除。 */
+export function NetaCommentDelete({ commentId }: { commentId: number }) {
+  const { admin } = useNeta();
+  const router = useRouter();
+  if (!admin) return null;
+  return (
+    <button
+      type="button"
+      className={`${s.linkBtn} ${s.danger}`}
+      onClick={async () => {
+        if (!window.confirm("このコメントを消しますか？元に戻せません")) return;
+        if (await adminCall(`/api/neta/admin/comments/${commentId}`, "DELETE")) router.refresh();
+      }}
+    >
+      削除
+    </button>
   );
 }

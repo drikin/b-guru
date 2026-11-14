@@ -54,6 +54,13 @@ async function main() {
   const active = weeks.filter((w) => w.is_active);
   console.log(`移行元: 週 ${weeks.length}（今週 ${active.map((w) => w.title).join(", ") || "なし"}）、話題 ${topics.length}（週なし ${orphan} は除く）、聞きたい ${stars}、コメント ${comments.length}、台本 ${scripts.length}`);
   if (active.length > 1) throw new Error("今週が 2 つ以上あります");
+  // B-guru の管理画面で作った週があるなら、もう B-guru が本番（切り替えの後）。移行元の週で上書きしないよう止める。
+  const srcWeekIds = new Set(weeks.map((w) => Number(w.id)));
+  const own = (await dst.query(`SELECT id, title FROM neta_weeks ORDER BY id`)).rows.filter((w) => !srcWeekIds.has(Number(w.id)));
+  if (own.length > 0 && !process.argv.includes("--force")) {
+    console.error(`B-guru で作った週があります（${own.map((w) => w.title).join(", ")}）。切り替えの後は流さないでください（どうしてもなら --force）`);
+    process.exit(3);
+  }
   if (DRY_RUN) {
     console.log("--dry-run: 書き込みはしません");
     return;

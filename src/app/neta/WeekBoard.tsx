@@ -5,7 +5,7 @@ import {
   countTopics, getCurrentWeek, getWeek, listTopics, listWeeks, netaDate, netaHost, netaLiveDate, netaPreview, type NetaSort, type NetaWeek,
 } from "@/lib/neta-board";
 import { votedTopicIds } from "@/lib/neta-write";
-import { NetaProvider, NetaSubmit, NetaVote } from "./NetaClient";
+import { NetaProvider, NetaSubmit, NetaTopicAdmin, NetaVote } from "./NetaClient";
 import { loadNetaViewer, NetaFooter, NetaHeader } from "./parts";
 import s from "./neta.module.css";
 
@@ -22,11 +22,11 @@ export async function loadWeek(weekId: number | null): Promise<{ week: NetaWeek;
 
 export default async function WeekBoard({ weekId, sort }: { weekId: number | null; sort: NetaSort }) {
   const loaded = await loadWeek(weekId);
-  const { viewer, writable, memberId } = await loadNetaViewer();
+  const { viewer, writable, memberId, admin } = await loadNetaViewer();
   if (!loaded) {
     if (weekId != null) notFound();
     return (
-      <NetaProvider viewer={viewer} writable={writable}>
+      <NetaProvider viewer={viewer} writable={writable} admin={admin}>
         <main className={s.page}>
           <NetaHeader writable={writable} />
           <p className={s.empty}>まだ週がありません</p>
@@ -40,7 +40,7 @@ export default async function WeekBoard({ weekId, sort }: { weekId: number | nul
   const voted = await votedTopicIds(memberId, topics.map((t) => t.id));
   const isCurrent = current?.id === week.id;
   return (
-    <NetaProvider viewer={viewer} writable={writable}>
+    <NetaProvider viewer={viewer} writable={writable} admin={admin}>
     <main className={s.page}>
       <NetaHeader writable={writable} />
       <section className={s.weekHead}>
@@ -109,6 +109,7 @@ export default async function WeekBoard({ weekId, sort }: { weekId: number | nul
                     {t.comments > 0 && <span>コメント {t.comments}</span>}
                   </div>
                   {preview && <p className={s.desc}>{preview}</p>}
+                  <NetaTopicAdmin topicId={t.id} featured={t.featured} />
                 </div>
                 <NetaVote topicId={t.id} stars={t.stars} voted={voted.has(t.id)} />
               </li>

@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { getTopic, netaDate, netaHost, netaPreview, netaSafeHref } from "@/lib/neta-board";
 import { votedTopicIds } from "@/lib/neta-write";
-import { NetaCommentForm, NetaProvider, NetaVote } from "../../NetaClient";
+import { NetaCommentDelete, NetaCommentForm, NetaProvider, NetaTopicAdmin, NetaVote } from "../../NetaClient";
 import { loadNetaViewer, NetaFooter, NetaHeader } from "../../parts";
 import s from "../../neta.module.css";
 
@@ -28,10 +28,10 @@ export default async function NetaTopicPage({ params }: { params: Promise<{ id: 
   const { topic, week, comments } = got;
   const href = netaSafeHref(topic.url);
   const host = netaHost(topic.url);
-  const { viewer, writable, memberId } = await loadNetaViewer();
+  const { viewer, writable, memberId, admin } = await loadNetaViewer();
   const voted = (await votedTopicIds(memberId, [topic.id])).has(topic.id);
   return (
-    <NetaProvider viewer={viewer} writable={writable}>
+    <NetaProvider viewer={viewer} writable={writable} admin={admin}>
     <main className={s.page}>
       <NetaHeader writable={writable} />
       <div className={s.back}>
@@ -45,6 +45,7 @@ export default async function NetaTopicPage({ params }: { params: Promise<{ id: 
             <span>{topic.submitter}</span>
             <span>{netaDate(topic.createdAt)}</span>
           </div>
+          <NetaTopicAdmin topicId={topic.id} featured={topic.featured} afterDelete={week && !week.isActive ? `/neta/w/${week.id}` : "/neta"} />
         </div>
         <NetaVote topicId={topic.id} stars={topic.stars} voted={voted} />
       </div>
@@ -64,7 +65,7 @@ export default async function NetaTopicPage({ params }: { params: Promise<{ id: 
           {comments.map((c) => (
             <li key={c.id} className={s.comment}>
               <div className={s.commentHead}>
-                {c.commenter} ・ {netaDate(c.createdAt)}
+                {c.commenter} ・ {netaDate(c.createdAt)} <NetaCommentDelete commentId={c.id} />
               </div>
               <p className={s.commentBody}>{c.body}</p>
             </li>

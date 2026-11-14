@@ -28,3 +28,5 @@ export const CLOSED = () =>
 export function idParam(raw: string): number {
   return /^\d{1,9}$/.test(raw) ? Number(raw) : -1;
 }
+
+export const NOT_ADMIN = () => NextResponse.json({ error: "管理者だけの操作です" }, { status: 403 });
