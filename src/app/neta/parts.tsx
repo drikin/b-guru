@@ -1,7 +1,7 @@
 /* 📝 ネタ帳の公開ページの頭と足（サーバで描画）。 */
 import Link from "next/link";
 import { getNetaViewer } from "@/lib/neta-auth";
-import { netaWritable } from "@/lib/neta-write";
+import { netaLive, netaWritable } from "@/lib/neta-write";
 import { isAdmin } from "@/lib/admin";
 import { NetaAccount, type ClientViewer } from "./NetaClient";
 import s from "./neta.module.css";
@@ -31,7 +31,7 @@ export function NetaHeader({ writable }: { writable: boolean }) {
         </Link>
         <NetaAccount />
       </header>
-      {writable ? null : <p className={s.notice}>
+      {netaLive() ? null : <p className={s.notice}>
         いまは試験公開中です。ネタの投稿と「聞きたい」は、これまでどおり{" "}
         <a href={NETA_LEGACY_SITE} target="_blank" rel="noopener noreferrer">
           neta.backspace.fm

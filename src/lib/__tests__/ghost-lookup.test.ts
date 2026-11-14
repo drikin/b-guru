@@ -53,13 +53,13 @@ describe("findMemberByEmail", () => {
   });
 
   it("直接の答えが「居ない」なら null（会員でない）", async () => {
-    respond((u) => (u.includes("filter=") ? { members: [] } : { members: [member("a@x")], meta: { pagination: { next: null } } }));
+    respond((u) => (decodeURIComponent(u).includes("filter=email:") ? { members: [] } : { members: [member("a@x")], meta: { pagination: { next: null } } }));
     await ghost.listMembers();
     expect(await ghost.findMemberByEmail("nobody@x")).toBeNull();
   });
 
   it("直接の問い合わせが届かない（応答しない・5xx）なら GhostUnavailableError（unreachable）", async () => {
-    respond((u) => (u.includes("filter=") ? "hang" : { members: [member("a@x")], meta: { pagination: { next: null } } }));
+    respond((u) => (decodeURIComponent(u).includes("filter=email:") ? "hang" : { members: [member("a@x")], meta: { pagination: { next: null } } }));
     await ghost.listMembers();
     await expect(ghost.findMemberByEmail("late@x")).rejects.toMatchObject({ name: "GhostUnavailableError", unreachable: true });
     respond(() => 503);
@@ -84,6 +84,8 @@ describe("listMembers", () => {
       };
     });
     const all = await ghost.listMembers();
+    // 無料会員は Ghost の側で外す（📝 ネタ帳で無料会員が増えても一覧が上限で切れないように）
+    expect(decodeURIComponent(urls()[0])).toContain("filter=status:-free");
     expect(all).toHaveLength(2500);
     expect(fetchMock).toHaveBeenCalledTimes(25);
     expect(ghost.MEMBER_LIST_MAX_PAGES).toBe(200);

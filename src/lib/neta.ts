@@ -5,6 +5,7 @@
 
 export const NETA_API = process.env.NETA_API_URL?.trim() || "http://127.0.0.1:5000";
 export const NETA_SITE = "https://neta.backspace.fm";
+export const OWN_NETA_SITE = "https://bsm.backspace.fm/neta";
 
 const TITLE_MAX = 200;
 const DESCRIPTION_MAX = 1000;
@@ -46,8 +47,10 @@ export function normalizeNetaInput(body: unknown): { ok: true; value: NetaInput 
   return { ok: true, value: { url, title, description: description || null } };
 }
 
-/** Sends one topic to ネタ帳 as `submitter` (the member's B-guru display name). */
+/** Sends one topic to ネタ帳 as `submitter` (the member's B-guru display name).
+ *  切り替えの後（NETA_WRITE_ENABLED=1）は neta.backspace.fm ではなく、B-guru の中のネタ帳（neta_ 表）に直接入れる。 */
 export async function submitToNeta(input: NetaInput, submitter: string, fetchImpl: typeof fetch = fetch): Promise<NetaResult> {
+  if (process.env.NETA_WRITE_ENABLED === "1") return submitToOwnNeta(input, submitter);
   let res: Response;
   try {
     res = await fetchImpl(`${NETA_API}/api/topics`, {
@@ -98,4 +101,25 @@ export function netaRateOk(email: string, now = Date.now()): boolean {
   recent.push(now);
   sent.set(email, recent);
   return true;
+}
+
+/** 切り替えの後: B-guru の中のネタ帳に入れる（答えの形は今までと同じ）。 */
+async function submitToOwnNeta(input: NetaInput, submitter: string): Promise<NetaResult> {
+  const { insertTopic, parseTopic, NetaError, netaDisplayName } = await import("./neta-write");
+  try {
+    const f = parseTopic({ title: input.title, url: input.url, description: input.description ?? "" });
+    const { id } = await insertTopic(f, netaDisplayName(submitter) || "B-guru の会員", null);
+    return { status: 201, body: { ok: true, topicId: id, site: OWN_NETA_SITE } };
+  } catch (e) {
+    if (e instanceof NetaError && e.code === "duplicate") {
+      const ex = (e.extra.existing ?? {}) as { title?: string; submitter?: string };
+      return {
+        status: 409,
+        body: { ok: false, code: "duplicate", error: "今週のネタ帳にはもう投稿されています", existing: { title: String(ex.title ?? ""), submitter: String(ex.submitter ?? "") } },
+      };
+    }
+    if (e instanceof NetaError && e.status === 400) return { status: 400, body: { ok: false, code: "neta_rejected", error: e.message } };
+    console.error("[neta] own submit failed:", (e as Error)?.message);
+    return { status: 502, body: { ok: false, code: "neta_error", error: "ネタ帳でエラーが起きました" } };
+  }
 }

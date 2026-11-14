@@ -356,3 +356,6 @@ a.adminBtn { text-decoration: none; display: inline-block; }
 .titleList { margin: 0; padding-left: 1.4em; display: grid; gap: 8px; }
 .titlePick { border: none; background: none; padding: 0; text-align: left; color: var(--text-heading); font-weight: 600; font-size: 0.95rem; cursor: pointer; font-family: inherit; }
 .titlePick:hover { text-decoration: underline; }
+/* 有料への入り口（小さく、押し付けない） */
+.talkCard { margin-top: 22px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border-default); font-size: 0.8rem; line-height: 1.6; color: var(--text-secondary); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.talkCard a { color: var(--text-link); white-space: nowrap; }

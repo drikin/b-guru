@@ -7,7 +7,7 @@ import { adminWeeks, netaAdminEmail } from "@/lib/neta-admin";
 import NetaAdmin from "./NetaAdmin";
 import s from "../neta.module.css";
 
-export const metadata: Metadata = { title: "管理" };
+export const metadata: Metadata = { title: "管理", robots: { index: false, follow: false } };
 
 export default async function NetaAdminPage() {
   await connection();

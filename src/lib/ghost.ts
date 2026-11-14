@@ -172,7 +172,9 @@ export async function listMembers(): Promise<GhostMember[]> {
   // MEMBER_LIST_MAX_PAGES ページ（100 人ずつ）。60 秒のキャッシュがあるので Ghost への問い合わせは
   // 1 分に「会員数 ÷ 100」回まで。上限に達したらログを残す（findMemberByEmail は直接確かめるので誤判定しない）。
   while (hasMore) {
-    const url = `${base}/ghost/api/admin/members/?limit=100&page=${page}&include=tiers&order=created_at%20asc`;
+    // 無料会員は最初から外す（使う所はどこも有料・comped だけに絞っている。📝 ネタ帳で無料会員がいくら増えても、
+    // 一覧が上限で切れて新しい有料会員が @ 補完などから落ちないように。一人ずつの確認は findMemberByEmail が直接引く）。
+    const url = `${base}/ghost/api/admin/members/?limit=100&page=${page}&include=tiers&order=created_at%20asc&filter=${encodeURIComponent("status:-free")}`;
     const res = await fetch(url, {
       headers: {
         Authorization: `Ghost ${token}`,

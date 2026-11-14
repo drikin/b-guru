@@ -26,6 +26,8 @@ async function getText(url: string): Promise<string> {
 
 /** ネタ帳: アクティブ週のトピックを取得。 */
 export async function fetchNeta(base: string = NETSPACE_BASE): Promise<BeagleNewsItem[]> {
+  // 切り替えの後（NETA_WRITE_ENABLED=1）は B-guru の中のネタ帳（neta_ 表）を直接読む。
+  if (base === NETSPACE_BASE && process.env.NETA_WRITE_ENABLED === "1") return fetchOwnNeta();
   const weeks = (await getJson(`${base}/api/weeks`)) as any[];
   if (!Array.isArray(weeks) || weeks.length === 0) return [];
   const week = weeks.find((w) => w.isActive) ?? weeks[0];
@@ -41,6 +43,22 @@ export async function fetchNeta(base: string = NETSPACE_BASE): Promise<BeagleNew
       summary: String(t.description || "").slice(0, 500),
       publishedAt: t.createdAt ? new Date(t.createdAt).toISOString() : new Date().toISOString(),
       score: Number(t.starsCount) || 0,
+    }));
+}
+
+async function fetchOwnNeta(): Promise<BeagleNewsItem[]> {
+  const { getCurrentWeek, listTopics } = await import("../neta-board");
+  const week = await getCurrentWeek();
+  if (!week) return [];
+  return (await listTopics(week.id, "stars"))
+    .filter((t) => t.title && t.url.startsWith("http"))
+    .map((t) => ({
+      source: "neta" as const,
+      title: t.title.slice(0, 300),
+      url: t.url,
+      summary: (t.description || "").slice(0, 500),
+      publishedAt: t.createdAt,
+      score: t.stars,
     }));
 }
 

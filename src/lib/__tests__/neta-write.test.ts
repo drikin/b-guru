@@ -53,6 +53,14 @@ describe("📝 ネタ帳の書き込みの小物", async () => {
     expect(w.netaDisplayName(123)).toBe("");
   });
 
+  it("出演者・運営と紛らわしい名前は使えない", () => {
+    expect(w.netaReservedName("ドリキン")).toBe(true);
+    expect(w.netaReservedName("ﾄﾞﾘｷﾝ（本物）")).toBe(true);
+    expect(w.netaReservedName("D r i k i n")).toBe(true);
+    expect(w.netaReservedName("西川 善司")).toBe(true);
+    expect(w.netaReservedName("ねこ")).toBe(false);
+  });
+
   it("ログイン後の戻り先は /neta の中だけ", () => {
     expect(a.netaNext("/neta/t/12")).toBe("/neta/t/12");
     expect(a.netaNext("/neta?sort=new")).toBe("/neta?sort=new");
@@ -180,5 +188,33 @@ d("📝 ネタ帳の書き込み（DB）", () => {
     await expect(w.addComment(m, null, base, { body: " " })).rejects.toMatchObject({ code: "body" });
     await expect(w.addComment(m, null, base, { body: "あ".repeat(1001) })).rejects.toMatchObject({ code: "body" });
     await expect(w.addComment(m, null, 2_000_000_000, { body: "x" })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("拡張（ログインなし）: 名前つきで入り、聞きたいは入らない。名前なし・送り元不明は断る。同じ URL は 409", async () => {
+    const r = await w.createTopicFromExtension("198.51.100.7", { url: "https://ext.example/a", title: "拡張から", submitter: " ぽち ", description: "x" });
+    const row = (await db.pool.query(`SELECT submitter, member_id FROM neta_topics WHERE id = $1`, [r.id])).rows[0];
+    expect(row).toEqual({ submitter: "ぽち", member_id: null });
+    expect((await db.pool.query(`SELECT count(*)::int AS n FROM neta_votes WHERE topic_id = $1`, [r.id])).rows[0].n).toBe(0);
+    await expect(w.createTopicFromExtension("198.51.100.7", { url: "https://ext.example/b", title: "x" })).rejects.toMatchObject({ code: "name" });
+    await expect(w.createTopicFromExtension(null, { url: "https://ext.example/b", title: "x", submitter: "a" })).rejects.toMatchObject({ status: 400 });
+    await expect(w.createTopicFromExtension("198.51.100.7", { url: "https://ext.example/a", title: "x", submitter: "a" })).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("B-guru の「ネタ帳に送る」は切り替えの後、B-guru の中に入る（答えの形は今までと同じ）", async () => {
+    const n = await import("../neta");
+    const prev = process.env.NETA_WRITE_ENABLED;
+    process.env.NETA_WRITE_ENABLED = "1";
+    try {
+      const notCalled = (async () => {
+        throw new Error("neta.backspace.fm には送らない");
+      }) as unknown as typeof fetch;
+      const ok = await n.submitToNeta({ url: "https://own.example/1", title: "中へ", description: null }, "ドリキン", notCalled);
+      expect(ok).toMatchObject({ status: 201, body: { ok: true, site: "https://bsm.backspace.fm/neta" } });
+      const dup = await n.submitToNeta({ url: "https://own.example/1", title: "中へ", description: null }, "だれか", notCalled);
+      expect(dup).toMatchObject({ status: 409, body: { code: "duplicate", existing: { submitter: "ドリキン" } } });
+    } finally {
+      if (prev === undefined) delete process.env.NETA_WRITE_ENABLED;
+      else process.env.NETA_WRITE_ENABLED = prev;
+    }
   });
 });

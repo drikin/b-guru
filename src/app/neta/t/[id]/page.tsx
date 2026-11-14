@@ -73,6 +73,21 @@ export default async function NetaTopicPage({ params }: { params: Promise<{ id: 
         </ul>
       )}
       <NetaCommentForm topicId={topic.id} />
+      <aside className={s.talkCard}>
+        {viewer?.tier === "paid" ? (
+          <>
+            <span>💬 このネタ、B-guru でも話してみませんか？</span>
+            <Link href="/">B-guru を開く</Link>
+          </>
+        ) : (
+          <>
+            <span>🎧 番組を聞きながら、みんなでネタの話をする場所「B-guru」は BSM（backspace.fm の有料会員）向けです。</span>
+            <a href="https://backspace.fm/" target="_blank" rel="noopener noreferrer">
+              BSM について
+            </a>
+          </>
+        )}
+      </aside>
       <NetaFooter />
     </main>
     </NetaProvider>

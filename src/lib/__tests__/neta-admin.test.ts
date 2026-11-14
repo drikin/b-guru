@@ -10,6 +10,13 @@ if (URL_) process.env.DATABASE_URL = URL_;
 const d = URL_ ? describe : describe.skip;
 
 let aiReply = "";
+const sentMails: { to: string; subject: string; text: string }[] = [];
+vi.mock("../mailgun", () => ({
+  sendEmail: async (m: { to: string; subject: string; text: string }) => {
+    sentMails.push(m);
+    return { message: "ok" };
+  },
+}));
 const aiPrompts: string[] = [];
 vi.mock("../sakura", () => ({
   sakuraChat: async (o: { messages: { content: string }[] }) => {
@@ -168,5 +175,25 @@ d("📝 ネタ帳の管理（DB）", () => {
     await db.pool.query(`INSERT INTO neta_votes (topic_id, voter) VALUES ($1, 'm:1')`, [base]);
     await a.deleteTopic(base);
     expect((await db.pool.query(`SELECT count(*)::int AS n FROM neta_votes WHERE topic_id = $1`, [base])).rows[0].n).toBe(0);
+  });
+
+  it("初めて採用したら、ネタ帳にログインして投稿した人にだけメール（1 回だけ）", async () => {
+    const mem = (await db.pool.query(`INSERT INTO neta_members (email) VALUES ($1) RETURNING id`, [`feat-${base}@test.local`])).rows[0].id;
+    const t = (await db.pool.query(
+      `INSERT INTO neta_topics (week_id, title, url, submitter, member_id) VALUES ($1, '採用されるネタ', 'https://f.example', 'ぽち', $2) RETURNING id`,
+      [base, mem]
+    )).rows[0].id;
+    sentMails.length = 0;
+    expect(await a.setTopicFeatured(t, true)).toEqual({ notified: true });
+    expect(sentMails).toHaveLength(1);
+    expect(sentMails[0].to).toBe(`feat-${base}@test.local`);
+    expect(sentMails[0].subject).toContain("ep9000");
+    expect(sentMails[0].text).toContain(`/neta/t/${t}`);
+    expect(await a.setTopicFeatured(t, true)).toEqual({ notified: false });
+    await a.setTopicFeatured(t, false);
+    expect(await a.setTopicFeatured(t, true)).toEqual({ notified: false });
+    expect(sentMails).toHaveLength(1);
+    // 拡張からのネタ（人に紐付かない）は送らない
+    expect(await a.setTopicFeatured(base + 1, true)).toEqual({ notified: false });
   });
 });

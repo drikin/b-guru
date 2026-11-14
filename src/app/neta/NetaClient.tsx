@@ -326,13 +326,13 @@ function NameField({ value, onChange }: { value: string; onChange: (v: string) =
 }
 
 /** 今週にネタを投稿する（畳んでおき、押すと開く）。 */
-export function NetaSubmit() {
+export function NetaSubmit({ initial, startOpen = false }: { initial?: { url?: string; title?: string; description?: string }; startOpen?: boolean } = {}) {
   const { viewer, writable, requireLogin, setDisplayName } = useNeta();
   const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [url, setUrl] = useState("");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const [open, setOpen] = useState(startOpen);
+  const [url, setUrl] = useState(initial?.url ?? "");
+  const [title, setTitle] = useState(initial?.title ?? "");
+  const [description, setDescription] = useState(initial?.description ?? "");
   const [name, setName] = useState("");
   const [err, setErr] = useState("");
   const [dup, setDup] = useState<{ id: number; title: string } | null>(null);
@@ -345,12 +345,13 @@ export function NetaSubmit() {
       </button>
     );
   }
-  const needName = !viewer?.displayName;
+  const needName = !!viewer && !viewer.displayName;
   return (
     <form
       className={s.submitForm}
       onSubmit={async (e) => {
         e.preventDefault();
+        if (!viewer) return requireLogin();
         setBusy(true);
         setErr("");
         setDup(null);
@@ -394,7 +395,7 @@ export function NetaSubmit() {
           やめる
         </button>
         <button type="submit" className={s.primaryBtn} disabled={busy}>
-          {busy ? "送っています…" : "投稿する"}
+          {busy ? "送っています…" : viewer ? "投稿する" : "ログインして投稿する"}
         </button>
       </div>
     </form>

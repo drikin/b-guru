@@ -151,14 +151,58 @@ export async function deleteWeek(id: number): Promise<void> {
   await pool.query(`DELETE FROM neta_weeks WHERE id = $1`, [id]);
 }
 
-/** 採用（番組で話した）にする・戻す。 */
-export async function setTopicFeatured(id: number, featured: boolean): Promise<void> {
+/** 採用（番組で話した）にする・戻す。初めて採用したとき、投稿した人（ネタ帳にログインして投稿した人）にメールで知らせる。 */
+export async function setTopicFeatured(id: number, featured: boolean): Promise<{ notified: boolean }> {
   const r = await pool.query(
-    `UPDATE neta_topics SET status = $2, featured_at = CASE WHEN $2 = 'featured' THEN COALESCE(featured_at, now()) ELSE NULL END
-      WHERE id = $1 RETURNING id`,
+    `WITH old AS (SELECT id, status FROM neta_topics WHERE id = $1 FOR UPDATE)
+     UPDATE neta_topics t SET status = $2, featured_at = CASE WHEN $2 = 'featured' THEN COALESCE(t.featured_at, now()) ELSE NULL END
+       FROM old WHERE t.id = old.id
+     RETURNING t.id, t.title, t.week_id, t.member_id, old.status AS old_status`,
     [id, featured ? "featured" : "pending"]
   );
-  if (!r.rows[0]) throw new NetaError(404, "ネタが見つかりません");
+  const row = r.rows[0];
+  if (!row) throw new NetaError(404, "ネタが見つかりません");
+  if (!featured || row.old_status === "featured" || !row.member_id) return { notified: false };
+  return { notified: await notifyFeatured(Number(row.id), String(row.title), Number(row.week_id), Number(row.member_id)) };
+}
+
+const NETA_BASE = (process.env.APP_BASE_URL || "https://bsm.backspace.fm").replace(/\/+$/, "");
+
+/** 「あなたのネタが番組で取り上げられました」メール（ベストエフォート）。有料への案内は末尾に 1 行だけ。 */
+async function notifyFeatured(topicId: number, title: string, weekId: number, memberId: number): Promise<boolean> {
+  try {
+    const m = await pool.query(`SELECT email FROM neta_members WHERE id = $1`, [memberId]);
+    const email: string | undefined = m.rows[0]?.email;
+    if (!email) return false;
+    // 同じネタで 2 回送らない（採用を戻して付け直したときなど）。
+    const { hitLimit } = await import("./login");
+    if (!(await hitLimit(`neta-featured-mail:${topicId}`, { limit: 1, window: "3650 days" }))) return false;
+    const w = await pool.query(`SELECT title FROM neta_weeks WHERE id = $1`, [weekId]);
+    const ep = String(w.rows[0]?.title ?? "番組");
+    const link = `${NETA_BASE}/neta/t/${topicId}`;
+    const { sendEmail } = await import("./mailgun");
+    const esc = (x: string) => x.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+    await sendEmail({
+      to: email,
+      subject: `ネタ帳: あなたのネタが ${ep} で取り上げられました`,
+      text: [
+        `backspace.fm のネタ帳に投稿してくれた「${title}」が、${ep} で取り上げられました。ありがとうございます！`,
+        "",
+        `ネタのページ: ${link}`,
+        "",
+        "番組を聞きながらみんなで話す場所「B-guru」は、BSM（backspace.fm の有料会員）向けに開いています: https://backspace.fm/",
+      ].join("\n"),
+      html: `<div style="font-family:sans-serif;line-height:1.7">
+<p>backspace.fm のネタ帳に投稿してくれた「${esc(title)}」が、${esc(ep)} で取り上げられました。ありがとうございます！</p>
+<p><a href="${link}">ネタのページを開く</a></p>
+<p style="color:#666;font-size:13px">番組を聞きながらみんなで話す場所「B-guru」は、BSM（backspace.fm の有料会員）向けに開いています: <a href="https://backspace.fm/">backspace.fm</a></p>
+</div>`,
+    });
+    return true;
+  } catch (e) {
+    console.error("[neta-admin] featured mail failed:", (e as Error)?.message);
+    return false;
+  }
 }
 
 /** ネタを消す（聞きたいとコメントも一緒に消える）。 */

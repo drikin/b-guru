@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import NetaLinkLogin from "./NetaLinkLogin";
 import s from "../neta.module.css";
 
-export const metadata: Metadata = { title: "ログイン" };
+export const metadata: Metadata = { title: "ログイン", robots: { index: false, follow: false } };
 
 export default function NetaLoginPage() {
   return (
