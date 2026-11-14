@@ -73,6 +73,11 @@ d("↩️ チャットの返信（DB）", () => {
     expect(m.chat.chatReplyExcerpt("", ["/api/media/chat-1.jpg"])).toBe("📷 写真");
   });
 
+  it("URL はサイト名だけ（リンクでない長い URL を引用に出さない）", () => {
+    expect(m.chat.chatReplyExcerpt("https://maps.app.goo.gl/J35XZS9U?g_st=ic ドーナツが美味しい", [])).toBe("🔗 maps.app.goo.gl ドーナツが美味しい");
+    expect(m.chat.chatReplyExcerpt("見て https://www.example.com/a/b", [])).toBe("見て 🔗 example.com");
+  });
+
   it("ない・消えた返信先は保存しない／消えたら名前なしで返す", async () => {
     const none = await m.chat.sendChatMessage(A, "どこにも返信していない", null, [], 2_000_000_000);
     expect(none.replyTo).toBeUndefined();

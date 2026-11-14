@@ -15390,8 +15390,9 @@ function ChatReplyQuote({ reply, mine }: { reply: { id: number; authorName: stri
       style={{
         all: "unset",
         cursor: gone ? "default" : "pointer",
-        display: "block",
+        display: "flex",
         maxWidth: "100%",
+        minWidth: 0,
         boxSizing: "border-box",
         marginBottom: 3,
         marginLeft: mine ? 0 : 4,
@@ -15412,8 +15413,20 @@ function ChatReplyQuote({ reply, mine }: { reply: { id: number; authorName: stri
         "↩︎ 元のメッセージは消えました"
       ) : (
         <>
-          <span style={{ color: "var(--mantine-color-green-7)", fontWeight: 600 }}>↩︎ {reply.authorName ?? ""}</span>
-          <span>{"  "}{reply.excerpt}</span>
+          <span style={{ color: "var(--mantine-color-green-7)", fontWeight: 600, flexShrink: 0 }}>↩︎ {reply.authorName ?? ""}</span>
+          {/* 冒頭は自分の幅で切る（中の span が枠の外へ伸びて、チャットが横にはみ出したと数えられないように）。 */}
+          <span
+            style={{
+              flex: "1 1 auto",
+              minWidth: 0,
+              paddingLeft: 6,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {reply.excerpt}
+          </span>
         </>
       )}
     </button>

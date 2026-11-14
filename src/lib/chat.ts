@@ -57,7 +57,18 @@ export const CHAT_REPLY_EXCERPT = 60;
 
 /** The answered message's first words: spaces collapsed, cut at CHAT_REPLY_EXCERPT; 📷 for photos only. */
 export function chatReplyExcerpt(body: string, images: string[] | null | undefined): string {
-  const t = (body ?? "").replace(/\s+/g, " ").trim();
+  // URL はサイト名だけに（🔗 maps.app.goo.gl）。引用は押すと元へ飛ぶだけでリンクにはしないので、長い URL を
+  // そのまま出すと、リンクでない URL が残るうえ冒頭が URL で埋まる（2026-11-14 デプロイ後のチェックで判明）。
+  const t = (body ?? "")
+    .replace(/https?:\/\/[^\s<>"']+/gi, (u) => {
+      try {
+        return `🔗 ${new URL(u).hostname.replace(/^www\./, "")}`;
+      } catch {
+        return "🔗";
+      }
+    })
+    .replace(/\s+/g, " ")
+    .trim();
   if (!t) return images && images.length > 0 ? "📷 写真" : "";
   return t.length > CHAT_REPLY_EXCERPT ? t.slice(0, CHAT_REPLY_EXCERPT) + "…" : t;
 }
