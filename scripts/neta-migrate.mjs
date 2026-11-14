@@ -99,9 +99,13 @@ async function main() {
         [s.week_id, s.content, s.updated_by, s.updated_at]
       );
     }
-    // id を持ち込んだので、次に B-guru で作る行が重ならないよう連番を進める。
+    // id を持ち込んだので、次に B-guru で作る行が重ならないよう連番を進める（戻さない。話題とコメントは
+    // initSchema が 10,000,000 から始めているので、ここでは触らないことになる）。
     for (const tbl of ["neta_weeks", "neta_topics", "neta_comments"]) {
-      await c.query(`SELECT setval(pg_get_serial_sequence('${tbl}', 'id'), GREATEST((SELECT COALESCE(max(id), 0) FROM ${tbl}), 1))`);
+      const seq = (await c.query(`SELECT pg_get_serial_sequence($1, 'id') AS s`, [tbl])).rows[0].s;
+      const cur = Number((await c.query(`SELECT last_value FROM ${seq}`)).rows[0].last_value);
+      const max = Number((await c.query(`SELECT COALESCE(max(id), 0) AS m FROM ${tbl}`)).rows[0].m);
+      if (max > cur) await c.query(`SELECT setval($1, $2)`, [seq, max]);
     }
     await c.query("COMMIT");
   } catch (e) {

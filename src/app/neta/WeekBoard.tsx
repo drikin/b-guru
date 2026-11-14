@@ -4,7 +4,9 @@ import { notFound } from "next/navigation";
 import {
   countTopics, getCurrentWeek, getWeek, listTopics, listWeeks, netaDate, netaHost, netaLiveDate, netaPreview, type NetaSort, type NetaWeek,
 } from "@/lib/neta-board";
-import { NetaFooter, NetaHeader } from "./parts";
+import { votedTopicIds } from "@/lib/neta-write";
+import { NetaProvider, NetaSubmit, NetaVote } from "./NetaClient";
+import { loadNetaViewer, NetaFooter, NetaHeader } from "./parts";
 import s from "./neta.module.css";
 
 export function weekHref(week: NetaWeek, current: NetaWeek | null, sort: NetaSort): string {
@@ -20,22 +22,27 @@ export async function loadWeek(weekId: number | null): Promise<{ week: NetaWeek;
 
 export default async function WeekBoard({ weekId, sort }: { weekId: number | null; sort: NetaSort }) {
   const loaded = await loadWeek(weekId);
+  const { viewer, writable, memberId } = await loadNetaViewer();
   if (!loaded) {
     if (weekId != null) notFound();
     return (
-      <main className={s.page}>
-        <NetaHeader />
-        <p className={s.empty}>まだ週がありません</p>
-        <NetaFooter />
-      </main>
+      <NetaProvider viewer={viewer} writable={writable}>
+        <main className={s.page}>
+          <NetaHeader writable={writable} />
+          <p className={s.empty}>まだ週がありません</p>
+          <NetaFooter />
+        </main>
+      </NetaProvider>
     );
   }
   const { week, current } = loaded;
   const [topics, total, weeks] = await Promise.all([listTopics(week.id, sort), countTopics(week.id), listWeeks()]);
+  const voted = await votedTopicIds(memberId, topics.map((t) => t.id));
   const isCurrent = current?.id === week.id;
   return (
+    <NetaProvider viewer={viewer} writable={writable}>
     <main className={s.page}>
-      <NetaHeader />
+      <NetaHeader writable={writable} />
       <section className={s.weekHead}>
         <h1 className={s.weekTitle}>{week.title || "（題名なし）"}</h1>
         <div className={s.weekMeta}>
@@ -51,6 +58,8 @@ export default async function WeekBoard({ weekId, sort }: { weekId: number | nul
           )}
         </div>
       </section>
+
+      {isCurrent && <NetaSubmit />}
 
       <div className={s.bar}>
         <nav className={s.tabs} aria-label="並べ方">
@@ -101,10 +110,7 @@ export default async function WeekBoard({ weekId, sort }: { weekId: number | nul
                   </div>
                   {preview && <p className={s.desc}>{preview}</p>}
                 </div>
-                <div className={s.stars} aria-label={`聞きたい ${t.stars}`}>
-                  <div className={s.starsNum}>{t.stars}</div>
-                  <div className={s.starsLabel}>聞きたい</div>
-                </div>
+                <NetaVote topicId={t.id} stars={t.stars} voted={voted.has(t.id)} />
               </li>
             );
           })}
@@ -112,5 +118,6 @@ export default async function WeekBoard({ weekId, sort }: { weekId: number | nul
       )}
       <NetaFooter />
     </main>
+    </NetaProvider>
   );
 }

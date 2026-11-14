@@ -203,3 +203,129 @@
   line-height: 1.7;
 }
 .footer a { color: var(--text-link); }
+
+/* ---- 第 2 段階: 押せる所 ---- */
+.account { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 0.85rem; }
+.accountBtn {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--text-green);
+  background: transparent;
+  color: var(--text-green);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.linkBtn {
+  border: none;
+  background: none;
+  padding: 4px 2px;
+  color: var(--text-link);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.primaryBtn {
+  padding: 8px 16px;
+  border-radius: 10px;
+  border: none;
+  background: var(--text-green);
+  color: var(--text-on-green);
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+:global([data-mantine-color-scheme="dark"]) .primaryBtn { background: #15803d; }
+.primaryBtn:disabled { opacity: 0.55; cursor: default; }
+.input, .textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-body);
+  font-size: 16px; /* iPhone で拡大されないように */
+  font-family: inherit;
+}
+.textarea { resize: vertical; line-height: 1.6; }
+.codeInput { font-size: 1.4rem; letter-spacing: 0.3em; text-align: center; font-variant-numeric: tabular-nums; }
+.err { margin: 0; color: #dc2626; font-size: 0.85rem; overflow-wrap: anywhere; }
+.err a { color: var(--text-link); }
+.errSmall { display: block; max-width: 6rem; color: #dc2626; font-size: 0.7rem; text-align: center; }
+.nameForm { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.nameForm .input { width: 12rem; padding: 6px 9px; }
+.nameForm .primaryBtn { padding: 6px 12px; }
+
+.voteWrap { display: flex; flex-direction: column; align-items: center; }
+.vote {
+  min-width: 3.6rem;
+  padding: 6px 6px 4px;
+  border-radius: 12px;
+  border: 1px solid var(--border-green);
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: pointer;
+  font-family: inherit;
+}
+.vote:hover { background: var(--bg-hover); }
+.voteOn { background: var(--bg-unread); border-color: var(--text-green); }
+.voteOn .starsLabel { color: var(--text-green); font-weight: 700; }
+.vote:disabled { cursor: default; }
+
+.submitOpen {
+  margin-top: 14px;
+  width: 100%;
+  padding: 11px;
+  border-radius: 12px;
+  border: 1px dashed var(--border-green);
+  background: var(--bg-tinted);
+  color: var(--text-green);
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.submitForm {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border-green);
+  background: var(--bg-surface);
+  display: grid;
+  gap: 10px;
+}
+.field { display: grid; gap: 4px; min-width: 0; }
+.fieldLabel { font-size: 0.8rem; color: var(--text-secondary); }
+
+.sheetBack {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.sheet {
+  width: 100%;
+  max-width: 480px;
+  box-sizing: border-box;
+  background: var(--bg-surface);
+  color: var(--text-body);
+  border-radius: 16px 16px 0 0;
+  padding: 18px max(18px, env(safe-area-inset-right, 0px)) calc(18px + env(safe-area-inset-bottom, 0px)) max(18px, env(safe-area-inset-left, 0px));
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.25);
+}
+@media (min-width: 640px) {
+  .sheetBack { align-items: center; }
+  .sheet { border-radius: 16px; }
+}
+.sheetTitle { margin: 0; font-size: 1.1rem; color: var(--text-heading); }
+.sheetText { margin: 0; font-size: 0.85rem; line-height: 1.7; color: var(--text-secondary); overflow-wrap: anywhere; }
+.sheetForm { margin-top: 10px; display: grid; gap: 12px; }
+.sheetActions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; flex-wrap: wrap; }
+.loginPage { margin-top: 40px; text-align: center; color: var(--text-secondary); }
+.topicHead { margin-top: 10px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }
+.topicHead .topicTitle { margin-top: 0; }

@@ -1150,5 +1150,48 @@ export async function initSchema() {
       updated_by TEXT,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    -- 📝 ネタ帳の第 2 段階: ネタ帳に参加する人（backspace.fm の無料・有料会員）。B-guru の users / user_profiles には
+    -- 入れない（補完や会員一覧に混ざらないように）。有料会員も、ネタ帳で何かしたときにここに 1 行できる。
+    -- display_name は本人がネタ帳で決めた名前だけ（公開ページに出る）。B-guru の名前は使わない。
+    CREATE TABLE IF NOT EXISTS neta_members (
+      id SERIAL PRIMARY KEY,
+      email TEXT UNIQUE,
+      ghost_member_id TEXT,
+      display_name TEXT,
+      bluesky_did TEXT UNIQUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    -- ネタ帳だけのログイン（cookie neta_session）。B-guru の sessions とは別: sessions は「ある＝有料会員」の前提で
+    -- 86 か所が使っているので、無料会員にはそちらを出さない。token は SHA-256 だけを置く。
+    CREATE TABLE IF NOT EXISTS neta_sessions (
+      token_hash TEXT PRIMARY KEY,
+      member_id INT NOT NULL REFERENCES neta_members(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_neta_sessions_member ON neta_sessions(member_id);
+    -- ネタ帳のログインメール（B-guru の login_requests と同じ作り。別の表にして B-guru のログインと混ざらないように）。
+    CREATE TABLE IF NOT EXISTS neta_login_requests (
+      id SERIAL PRIMARY KEY,
+      email TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      link_hash TEXT NOT NULL,
+      attempts INT NOT NULL DEFAULT 0,
+      ip TEXT,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_neta_login_requests_email ON neta_login_requests(email, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_neta_login_requests_link ON neta_login_requests(link_hash);
+    ALTER TABLE neta_topics ADD COLUMN IF NOT EXISTS member_id INT REFERENCES neta_members(id) ON DELETE SET NULL;
+    ALTER TABLE neta_comments ADD COLUMN IF NOT EXISTS member_id INT REFERENCES neta_members(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS idx_neta_topics_week_url ON neta_topics(week_id, url);
+    -- B-guru で増えた話題・コメントの id は 10,000,000 から（neta.backspace.fm と並べて動かす間、移行スクリプトが
+    -- 移行元の id で上書きしても、こちらで増えた行とぶつからないように）。
+    DO $$ BEGIN
+      IF (SELECT last_value FROM neta_topics_id_seq) < 10000000 THEN PERFORM setval('neta_topics_id_seq', 10000000, false); END IF;
+      IF (SELECT last_value FROM neta_comments_id_seq) < 10000000 THEN PERFORM setval('neta_comments_id_seq', 10000000, false); END IF;
+    END $$;
   `);
 }

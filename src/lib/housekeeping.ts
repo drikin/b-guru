@@ -26,6 +26,9 @@ export async function purgeExpiredAuthRows(): Promise<{
 }> {
   const s = await pool.query(`DELETE FROM sessions WHERE expires_at < now()`);
   const o = await pool.query(`DELETE FROM otp_codes WHERE expires_at < now()`);
+  // 📝 ネタ帳のログイン（lib/neta-auth.ts）: 期限切れのセッションと 2 日より前のログインメール。
+  await pool.query(`DELETE FROM neta_sessions WHERE expires_at < now()`);
+  await pool.query(`DELETE FROM neta_login_requests WHERE created_at < now() - interval '2 days'`);
   const lr = await pool.query(
     `DELETE FROM login_requests WHERE created_at < now() - interval '31 days'`
   );

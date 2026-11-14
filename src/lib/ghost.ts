@@ -199,3 +199,41 @@ export async function listMembers(): Promise<GhostMember[]> {
   setCachedMembers(members);
   return members;
 }
+
+/**
+ * 📝 ネタ帳から来た人を backspace.fm の無料会員にする（メールの確認が済んでから呼ぶ）。
+ * ニュースレターは購読しない（newsletters: []）、Ghost からのメールは送らない（send_email=false）。
+ * label「ネタ帳」でネタ帳からの登録と分かるようにする。もういれば（422）その人を引いて返す。
+ */
+export async function createFreeMember(email: string): Promise<GhostMember | null> {
+  const base = process.env.GHOST_ADMIN_API_URL!;
+  const key = process.env.GHOST_ADMIN_API_KEY!;
+  let res: Response;
+  try {
+    res = await fetch(`${base}/ghost/api/admin/members/?send_email=false`, {
+      method: "POST",
+      headers: {
+        Authorization: `Ghost ${makeToken(key)}`,
+        "Accept-Version": "v6.0",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ members: [{ email: email.toLowerCase(), labels: [{ name: "ネタ帳" }], newsletters: [] }] }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(ghostTimeoutMs),
+    });
+  } catch (e) {
+    throw new GhostUnavailableError(`Ghost に届きません: ${(e as Error)?.message}`, true);
+  }
+  if (res.status === 422) return findMemberByEmail(email);
+  if (!res.ok) {
+    throw new GhostUnavailableError(
+      `Ghost members create error: ${res.status} ${await res.text().catch(() => "")}`,
+      res.status >= 500,
+      res.status
+    );
+  }
+  const data = await res.json();
+  const m: GhostMember | undefined = data.members?.[0];
+  if (m) memberByEmail.set(m.email.toLowerCase(), m);
+  return m ?? null;
+}
