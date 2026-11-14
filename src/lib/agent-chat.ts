@@ -337,7 +337,10 @@ export function agentCapabilities(
       // The club room (8-bit room view + proximity voice), behind a rollout flag.
       room: { enabled: !!opts.room, path: "/api/agent/room" },
       // Send the article a post links to into BS ネタ帳 (neta.backspace.fm) — POST { url, title, description? }.
-      neta: { enabled: can("post"), path: "/api/agent/neta", site: process.env.NETA_WRITE_ENABLED === "1" ? "https://bsm.backspace.fm/neta" : "https://neta.backspace.fm" },
+      // `tab`: the 📝 tab between ✉️ and 📻 (apps only — app-issued tokens): open it in a WebView with
+      // Authorization: Bearer <token> on the first load; it lands on /neta/app logged in to ネタ帳 only.
+      // A link to bguru-neta://reenter from the page = open `tab` again (the login ran out).
+      neta: { enabled: can("post"), path: "/api/agent/neta", site: process.env.NETA_WRITE_ENABLED === "1" ? "https://bsm.backspace.fm/neta" : "https://neta.backspace.fm", ...(opts.appIssued && can("post") ? { tab: "/neta/app/enter" } : {}) },
       // Past backspace.fm episodes to listen to (Art19), behind a rollout flag.
       jukebox: { enabled: !!opts.jukebox, path: "/api/agent/jukebox" },
       // ☗ 将棋 (docs/shogi-spec.md), behind SHOGI_ENABLED. The board is a web page the app

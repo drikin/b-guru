@@ -1170,6 +1170,8 @@ export async function initSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_neta_sessions_member ON neta_sessions(member_id);
+    -- アプリの 📝 タブのログイン（/neta/app/enter）は元のアプリの鍵に結ぶ: 鍵が失効・期限切れ・消えたらネタ帳のログインも効かない。
+    ALTER TABLE neta_sessions ADD COLUMN IF NOT EXISTS agent_token_id INT REFERENCES agent_tokens(id) ON DELETE CASCADE;
     -- ネタ帳のログインメール（B-guru の login_requests と同じ作り。別の表にして B-guru のログインと混ざらないように）。
     CREATE TABLE IF NOT EXISTS neta_login_requests (
       id SERIAL PRIMARY KEY,

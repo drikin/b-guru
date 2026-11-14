@@ -19,7 +19,12 @@ type Ctx = {
   nav: NetaNav;
   /** B-guru の中（メインの列）に出しているか。 */
   inApp: boolean;
+  /** B-guru のアプリの 📝 タブ（WebView）か。ログインはアプリの鍵（ログアウト・ログインのシートは出さない）。 */
+  app: boolean;
 };
+
+/** アプリの 📝 タブでログインが切れていたら: アプリに入り直しを頼む（アプリがこの URL を受けて /neta/app/enter を開き直す）。 */
+export const NETA_APP_REENTER = "bguru-neta://reenter";
 
 export type NetaNav = { refresh: () => void; go: (href: string) => void };
 
@@ -50,11 +55,13 @@ export function NetaProvider({
   writable,
   admin = false,
   nav: navProp,
+  app = false,
   children,
 }: {
   viewer: ClientViewer;
   writable: boolean;
   admin?: boolean;
+  app?: boolean;
   /** B-guru の中で使うときに渡す（なければ Next のルータ）。 */
   nav?: NetaNav;
   children: ReactNode;
@@ -81,10 +88,14 @@ export function NetaProvider({
         void fn?.();
         return;
       }
+      if (app) {
+        window.location.href = NETA_APP_REENTER;
+        return;
+      }
       after.current = fn ?? null;
       setSheet(true);
     },
-    [viewer]
+    [viewer, app]
   );
 
   const onLoggedIn = useCallback(
@@ -104,7 +115,7 @@ export function NetaProvider({
 
   return (
     <NetaCtx.Provider
-      value={{ viewer, writable, admin, requireLogin, nav, inApp: !!navProp, setDisplayName: (n) => setViewer((v) => (v ? { ...v, displayName: n } : v)) }}
+      value={{ viewer, writable, admin, requireLogin, nav, inApp: !!navProp, app, setDisplayName: (n) => setViewer((v) => (v ? { ...v, displayName: n } : v)) }}
     >
       {children}
       {sheet && <LoginSheet onClose={() => setSheet(false)} onDone={onLoggedIn} />}
@@ -114,7 +125,7 @@ export function NetaProvider({
 
 /** ヘッダの右: ログイン・名前・ログアウト。 */
 export function NetaAccount() {
-  const { viewer, writable, admin, requireLogin, nav, inApp } = useNeta();
+  const { viewer, writable, admin, requireLogin, nav, inApp, app } = useNeta();
   const [editing, setEditing] = useState(false);
   if (!writable && !viewer) return null;
   // B-guru のトップ（ゲストの画面）は上のバーに「ログイン」がある。
@@ -145,7 +156,7 @@ export function NetaAccount() {
           {viewer.displayName ? `👤 ${viewer.displayName}` : "名前を決める"}
         </button>
       )}
-      {viewer.tier === "free" && !editing && (
+      {viewer.tier === "free" && !editing && !app && (
         <button
           type="button"
           className={s.linkBtn}

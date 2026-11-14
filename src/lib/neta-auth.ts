@@ -181,11 +181,12 @@ export async function verifyNetaLogin(input: { email?: string; code?: string; to
 }
 
 /** ネタ帳のセッションを作って cookie を付ける（Route Handler から）。 */
-export async function startNetaSession(memberId: number): Promise<void> {
+export async function startNetaSession(memberId: number, opts: { hours?: number; agentTokenId?: number } = {}): Promise<void> {
   const token = crypto.randomBytes(32).toString("hex");
+  const hours = opts.hours ?? NETA_SESSION_DAYS * 24;
   await pool.query(
-    `INSERT INTO neta_sessions (token_hash, member_id, expires_at) VALUES ($1, $2, now() + make_interval(days => $3))`,
-    [sha256(token), memberId, NETA_SESSION_DAYS]
+    `INSERT INTO neta_sessions (token_hash, member_id, expires_at, agent_token_id) VALUES ($1, $2, now() + make_interval(hours => $3), $4)`,
+    [sha256(token), memberId, hours, opts.agentTokenId ?? null]
   );
   const store = await cookies();
   store.set(NETA_COOKIE, token, {
@@ -193,8 +194,22 @@ export async function startNetaSession(memberId: number): Promise<void> {
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    maxAge: NETA_SESSION_DAYS * 86400,
+    maxAge: hours * 3600,
   });
+}
+
+/** アプリの 📝 タブ（WebView）のログインの長さ。タブを開くたびにアプリの鍵で入り直すので短くてよい。 */
+export const NETA_APP_SESSION_HOURS = 12;
+
+/**
+ * アプリの 📝 タブ: アプリの鍵（app_issued・post スコープ。確かめるのは呼ぶ側）で本人と分かった会員を、
+ * ネタ帳だけのログイン（neta_session）で入れる。B-guru の sessions は出さない（WebView から B-guru の他の機能は開かない）。
+ * 権限はネタ帳の会員と同じ（管理・切り替え前の書き込みは Web の B-guru のログインだけ）。
+ * 元の鍵に結ぶ（agent_token_id）: アプリのログアウト・端末ごとの失効・会員でなくなったときの失効で、このログインも効かなくなる。
+ */
+export async function startAppNetaSession(email: string, agentTokenId: number): Promise<void> {
+  const member = await ensureNetaMember(email);
+  await startNetaSession(member.id, { hours: NETA_APP_SESSION_HOURS, agentTokenId });
 }
 
 export async function endNetaSession(): Promise<void> {
@@ -216,7 +231,9 @@ export async function getNetaViewer(): Promise<NetaViewer | null> {
   if (!token || !/^[0-9a-f]{64}$/.test(token)) return null;
   const r = await pool.query(
     `SELECT m.id, m.email, m.display_name FROM neta_sessions s JOIN neta_members m ON m.id = s.member_id
-      WHERE s.token_hash = $1 AND s.expires_at > now()`,
+      LEFT JOIN agent_tokens t ON t.id = s.agent_token_id
+      WHERE s.token_hash = $1 AND s.expires_at > now()
+        AND (s.agent_token_id IS NULL OR (t.revoked_at IS NULL AND t.expires_at > now()))`,
     [sha256(token)]
   );
   if (!r.rows[0]?.email) return null;

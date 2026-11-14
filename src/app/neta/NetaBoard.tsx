@@ -62,7 +62,8 @@ function InLink({ href, go, className, children }: { href: string; go: (h: strin
   );
 }
 
-export default function NetaBoard() {
+/** app: B-guru のアプリの 📝 タブ（/neta/app）。 */
+export default function NetaBoard({ app = false }: { app?: boolean }) {
   const [view, setView] = useState<View>({ kind: "week", weekId: null, sort: "stars" });
   const [board, setBoard] = useState<BoardData | null>(null);
   const [topic, setTopic] = useState<TopicData | null>(null);
@@ -103,7 +104,7 @@ export default function NetaBoard() {
   if (!me) return <p className={s.empty}>{error || "読み込んでいます…"}</p>;
 
   return (
-    <NetaProvider viewer={me.viewer} writable={me.writable} admin={me.admin} nav={nav}>
+    <NetaProvider viewer={me.viewer} writable={me.writable} admin={me.admin} nav={nav} app={app}>
       <div className={s.inApp}>
         <header className={s.brand}>
           <InLink href="/neta" go={go}>
