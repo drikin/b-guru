@@ -1,6 +1,6 @@
 /* GET /neta/app/enter — アプリの 📝 タブ（WebView）の入口。WebView の最初の読み込みに Authorization: Bearer <アプリの鍵>
  * を付けて開く。鍵が B-guru のアプリで出したもの（app_issued・post）なら、ネタ帳だけのログイン（neta_session、12 時間）を
- * 置いて /neta/app へ。外部の AI エージェントの鍵では入れない。B-guru の sessions は出さない。 */
+ * 置いて /neta/app へ（?to=script なら 📜 台本のタブ /neta/app/script へ）。外部の AI エージェントの鍵では入れない。B-guru の sessions は出さない。 */
 import { NextRequest } from "next/server";
 import { requireAppIssued, verifyAgentToken, AgentAuthError } from "@/lib/agent-auth";
 import { clientIp } from "@/lib/client-ip";
@@ -28,5 +28,6 @@ export async function GET(req: NextRequest) {
     console.error("[neta-app] enter failed:", (e as Error)?.message);
     return page(500, "ネタ帳を開けませんでした。しばらくしてからもう一度お試しください。");
   }
-  return new Response(null, { status: 303, headers: { ...HEADERS, Location: "/neta/app" } });
+  const to = new URL(req.url).searchParams.get("to") === "script" ? "/neta/app/script" : "/neta/app";
+  return new Response(null, { status: 303, headers: { ...HEADERS, Location: to } });
 }

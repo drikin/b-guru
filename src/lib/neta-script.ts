@@ -132,3 +132,31 @@ export function buildScript(base: string | null, weekTitle: string, adopted: { t
   s = replaceAdoptedTopics(s, adopted.map(adoptedLine).join("\n"));
   return s.replace(/第XXX回/g, n !== undefined ? `第${n}回` : weekTitle).replace(/第回/g, weekTitle);
 }
+
+/* ---- 📜 台本（単独の機能、2026-11-14）: 「- [ ] 」のチェックを見る画面から押して切り替える ---- */
+
+/** チェック欄（「- [ ] 」「* [x] 」など、行の頭のリスト）。見る画面の ☐/☑ と、切り替えの数え方をそろえる。 */
+const CHECK_RE = /^(\s*[-*+]\s+)\[( |x|X)\]/gm;
+
+/** 台本の中のチェック欄の数。 */
+export function countChecks(content: string): number {
+  return (content.match(CHECK_RE) || []).length;
+}
+
+/** n 番目（0 から）のチェック欄を切り替えた台本。範囲の外なら null。 */
+export function toggleNthCheck(content: string, n: number): string | null {
+  if (!Number.isInteger(n) || n < 0) return null;
+  let i = 0;
+  let hit = false;
+  const out = content.replace(CHECK_RE, (m, head: string, mark: string) => {
+    if (i++ !== n) return m;
+    hit = true;
+    return `${head}[${mark === " " ? "x" : " "}]`;
+  });
+  return hit ? out : null;
+}
+
+/** 見る画面用: チェック欄を ☐ / ☑ の文字に（Markdown の変換のあと、li の頭の文字で何番目かを数える）。 */
+export function checksToMarks(content: string): string {
+  return content.replace(CHECK_RE, (_m, head: string, mark: string) => `${head}${mark === " " ? "☐" : "☑"}`);
+}

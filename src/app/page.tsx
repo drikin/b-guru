@@ -1,6 +1,7 @@
 "use client";
 
 import NetaBoard from "./neta/NetaBoard";
+import ScriptBoard from "./neta/ScriptBoard";
 import GuestShell from "./GuestShell";
 import { isAppLoginWebView } from "@/lib/app-login-webview";
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -11051,6 +11052,30 @@ export default function Home() {
                       }}
                     />
                   )}
+                  {/* 📜 台本（ネタ帳の次。有料会員は読める・出演者＝管理者が直す。2026-11-14 オーナー） */}
+                  {item.key === "feed" && (
+                    <NavLink
+                      component="a"
+                      href="/neta/script"
+                      active={activeNav === "script"}
+                      label="台本"
+                      leftSection={<span>📜</span>}
+                      data-cx="nav-script"
+                      onClick={(e: React.MouseEvent) => {
+                        if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+                        e.preventDefault();
+                        setProfileUserId(null);
+                        setAsideOpened(false);
+                        setActiveNav("script");
+                        setNavOpened(false);
+                      }}
+                      style={{
+                        borderRadius: 8,
+                        marginBottom: 2,
+                        ...(activeNav === "script" ? { background: "var(--bg-tinted)", color: "var(--text-green)", fontWeight: 600 } : {}),
+                      }}
+                    />
+                  )}
                   {/* 上のタブ（☆・🔖・チャット・✉️ DM）をタイムラインの下に（2026-11-08 オーナー）。スマホは上のタブのまま。 */}
                   {item.key === "feed" &&
                     feedTabRows.map((t) => {
@@ -13451,6 +13476,9 @@ export default function Home() {
 
           {/* 📝 ネタ帳（メインの列に。2026-11-14 オーナー） */}
           {activeNav === "neta" && <NetaBoard />}
+
+          {/* 📜 台本（メインの列に。2026-11-14 オーナー） */}
+          {activeNav === "script" && <ScriptBoard />}
 
           {activeNav === "drinews" && (
             <Stack gap="md">

@@ -1,0 +1,54 @@
+/* 📜 台本。色は globals.css の変数（Mantine の明暗に合わせて切り替わる）。 */
+.wrap { width: 100%; max-width: 760px; margin: 0 auto; color: var(--text-body); }
+.head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.title { margin: 0; font-size: 1.35rem; color: var(--text-heading); }
+.week {
+  min-width: 0;
+  max-width: 100%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  color: var(--text-body);
+  font-size: 16px;
+  font-family: inherit;
+}
+.bar { margin-top: 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.spacer { flex: 1; }
+.row { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+.msg { margin: 8px 0 0; font-size: 0.85rem; color: var(--text-secondary); }
+
+/* 見る画面（Markdown を整えたもの）。台本は声に出して読むので、行間を広めに。 */
+.doc {
+  margin-top: 12px;
+  padding: 4px 18px 18px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--bg-surface);
+  line-height: 1.85;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.doc h1 { font-size: 1.3rem; margin: 18px 0 6px; color: var(--text-heading); text-wrap: balance; }
+.doc h2 {
+  font-size: 1.1rem;
+  margin: 26px 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-heading);
+}
+.doc h3 { font-size: 1rem; margin: 18px 0 4px; color: var(--text-heading); }
+.doc p { margin: 8px 0; }
+.doc ul, .doc ol { margin: 6px 0; padding-left: 1.4em; }
+.doc hr { border: 0; border-top: 1px dashed var(--border-default); margin: 22px 0; }
+.doc a { color: var(--text-link); }
+.doc strong { color: var(--text-heading); }
+.doc code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; }
+.doc blockquote { margin: 8px 0; padding-left: 12px; border-left: 3px solid var(--border-default); color: var(--text-secondary); }
+
+/* チェック欄（☐/☑ で始まる li）: 丸の印を消し、済んだものは薄く。管理者は押せる。 */
+.doc li[data-check] { list-style: none; margin-left: -1.2em; border-radius: 6px; padding: 1px 6px; }
+.doc li[data-check="on"] { color: var(--text-secondary); text-decoration: line-through; text-decoration-color: var(--border-default); }
+.canCheck li[data-check] { cursor: pointer; user-select: none; }
+.canCheck li[data-check]:hover { background: var(--bg-hover); }

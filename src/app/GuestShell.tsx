@@ -8,6 +8,7 @@ import g from "./guest.module.css";
 
 const LOCKED: { key: string; icon: string; label: string; about: string }[] = [
   { key: "feed", icon: "🏠", label: "タイムライン", about: "番組の感想や気になったことを投稿して、みんなと話せます。" },
+  { key: "script", icon: "📜", label: "台本", about: "毎週の番組の台本を読めます。" },
   { key: "favorites", icon: "☆", label: "お気に入り", about: "気に入った投稿をあとで見返せます。" },
   { key: "bookmarks", icon: "🔖", label: "ブックマーク", about: "投稿を自分用にとっておけます。" },
   { key: "chat", icon: "💬", label: "チャット", about: "番組を聞きながら、リアルタイムにおしゃべりできます。" },

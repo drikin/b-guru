@@ -340,7 +340,8 @@ export function agentCapabilities(
       // `tab`: the 📝 tab between ✉️ and 📻 (apps only — app-issued tokens): open it in a WebView with
       // Authorization: Bearer <token> on the first load; it lands on /neta/app logged in to ネタ帳 only.
       // A link to bguru-neta://reenter from the page = open `tab` again (the login ran out).
-      neta: { enabled: can("post"), path: "/api/agent/neta", site: process.env.NETA_WRITE_ENABLED === "1" ? "https://bsm.backspace.fm/neta" : "https://neta.backspace.fm", ...(opts.appIssued && can("post") ? { tab: "/neta/app/enter" } : {}) },
+      // scriptTab: the 📜 台本 tab (rightmost), same entrance, lands on /neta/app/script.
+      neta: { enabled: can("post"), path: "/api/agent/neta", site: process.env.NETA_WRITE_ENABLED === "1" ? "https://bsm.backspace.fm/neta" : "https://neta.backspace.fm", ...(opts.appIssued && can("post") ? { tab: "/neta/app/enter", scriptTab: "/neta/app/enter?to=script" } : {}) },
       // Past backspace.fm episodes to listen to (Art19), behind a rollout flag.
       jukebox: { enabled: !!opts.jukebox, path: "/api/agent/jukebox" },
       // ☗ 将棋 (docs/shogi-spec.md), behind SHOGI_ENABLED. The board is a web page the app
