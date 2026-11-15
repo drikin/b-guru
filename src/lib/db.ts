@@ -222,7 +222,7 @@ export async function initSchema() {
     SELECT v.label, v.icon, v.href, v.sort_order
     FROM (VALUES
       ('デスブロ', '📺', 'https://dvlog.jp/', 1),
-      ('ネタ帳', '🗒️', 'https://neta.backspace.fm/', 2)
+      ('ネタ帳', '🗒️', 'https://bsm.backspace.fm/neta', 2)
     ) AS v(label, icon, href, sort_order)
     WHERE NOT EXISTS (SELECT 1 FROM menu_links);
 

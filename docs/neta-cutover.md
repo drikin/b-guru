@@ -1,6 +1,6 @@
 # ネタ帳の切り替え手順（neta.backspace.fm → bsm.backspace.fm/neta）
 
-> **2026-11-16 02:31（日本時間）に切り替え済み**（オーナー「新サイトを今週から本番運用に」）。最後の移行は 77 週・7852 件・昔の票 17641・コメント 268・台本 31。今週は ep681（id 90、11/15〜11/22）。nginx の控えは VPS の `/home/ubuntu/nginx-neta-before-202611160231.conf`、`.env.production` の控えは `/home/ubuntu/env.production.bak-neta-*`。残り: 5（メニューのリンク）と 6（Netaspace の後始末）。
+> **2026-11-16 02:31（日本時間）に切り替え済み**（オーナー「新サイトを今週から本番運用に」）。最後の移行は 77 週・7852 件・昔の票 17641・コメント 268・台本 31。今週は ep681（id 90、11/15〜11/22）。nginx の控えは VPS の `/home/ubuntu/nginx-neta-before-202611160231.conf`、`.env.production` の控えは `/home/ubuntu/env.production.bak-neta-*`。同日 03:32 に転送先を B-guru のトップ（`https://bsm.backspace.fm/`）に変えた（オーナー「転送先は /neta じゃなくて BSM のトップで」。`?week=` と `/submit` は /neta の同じ場所のまま）。メニューの「🗒️ ネタ帳」（menu_links id 2）は `https://bsm.backspace.fm/neta` に直した。残り: 6（Netaspace の後始末）。
 
 第 4 段階（2026-11-13 用意）。**本番の DB・nginx・環境変数を変えるので、実行はオーナーの OK と日時が決まってから。**
 決まっていること（オーナー 2026-11-13）: 昔の Chrome 拡張からの投稿は今までどおり受ける（ログインなし・名前つき）、Bluesky ログインは切り替えでやめる。
