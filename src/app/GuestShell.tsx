@@ -25,18 +25,22 @@ function openLogin() {
 export default function GuestShell() {
   const [locked, setLocked] = useState<(typeof LOCKED)[number] | null>(null);
   const [menu, setMenu] = useState(false);
-  // neta.backspace.fm から転送されてきた人向けに、ネタ帳にログインしていなければ引っ越しの案内を出す（2026-11-16）。
-  const [netaGuest, setNetaGuest] = useState(false);
+  // ネタ帳にログインしているか（null は まだ分からない）。ログインしていれば上のバーの「ログイン」と
+  // 引っ越しの案内を出さない（2026-11-16。無料ログインの後もボタンが残っていた）。
+  const [netaLoggedIn, setNetaLoggedIn] = useState<boolean | null>(null);
   useEffect(() => {
     let alive = true;
     fetch("/api/neta/me", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (alive && d && d.viewer === null) setNetaGuest(true);
+        if (alive && d) setNetaLoggedIn((cur) => cur ?? d.viewer !== null);
       })
       .catch(() => {});
+    const onViewer = (e: Event) => setNetaLoggedIn(!!(e as CustomEvent<{ loggedIn: boolean }>).detail?.loggedIn);
+    window.addEventListener("neta:viewer", onViewer);
     return () => {
       alive = false;
+      window.removeEventListener("neta:viewer", onViewer);
     };
   }, []);
 
@@ -91,9 +95,11 @@ export default function GuestShell() {
           <span className={g.logoMark}>B</span>
           <span className={g.logoText}>B-guru</span>
         </div>
-        <button type="button" className={g.loginBtn} onClick={openLogin}>
-          ログイン / 無料登録
-        </button>
+        {netaLoggedIn === false && (
+          <button type="button" className={g.loginBtn} onClick={openLogin}>
+            ログイン / 無料登録
+          </button>
+        )}
       </header>
       <div className={g.body}>
         <aside className={`${g.side} ${menu ? g.sideOpen : ""}`}>{nav}</aside>
@@ -121,7 +127,7 @@ export default function GuestShell() {
               </div>
             </section>
           )}
-          {netaGuest && <NetaMovedNotice />}
+          {netaLoggedIn === false && <NetaMovedNotice />}
           <NetaBoard />
         </main>
       </div>

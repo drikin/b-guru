@@ -71,6 +71,10 @@ export function NetaProvider({
   const after = useRef<(() => void | Promise<void>) | null>(null);
   const router = useRouter();
   useEffect(() => setViewer(initial), [initial]);
+  // B-guru のトップ（ゲストの画面）の上のバーが「ログイン」を出すかどうかを知るため、ログインの状態を知らせる（2026-11-16）。
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("neta:viewer", { detail: { loggedIn: !!viewer } }));
+  }, [viewer]);
   const nav: NetaNav = navProp ?? { refresh: () => router.refresh(), go: (h) => router.push(h) };
   // B-guru のトップ（ゲストの画面）の「ログイン」ボタンから開く。
   useEffect(() => {
