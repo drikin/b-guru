@@ -216,6 +216,17 @@ function RoomChrome({ s, extra }: { s: RoomSnapshot; extra?: ReactNode }) {
   );
 }
 
+/** マイクの絵。オフのときは赤い斜線を重ねる（絵文字の 🎙 だけではオンとオフの違いが分かりにくかった）。 */
+function MicIcon({ off }: { off: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="3" width="6" height="11" rx="3" fill={off ? "none" : "currentColor"} />
+      <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7" />
+      {off && <path d="M4 4l16 16" stroke="var(--mantine-color-red-6, #fa5252)" strokeWidth="2.8" />}
+    </svg>
+  );
+}
+
 function RoomControls({ s, v, me, speaking }: { s: RoomSnapshot; v: VoiceSnapshot; me: RoomMember | null; speaking: Set<string> }) {
   const listening = me?.mode === "room" ? me.listening : s.wantListening;
   const connected = v.phase === "connected" || v.phase === "reconnecting";
@@ -253,8 +264,11 @@ function RoomControls({ s, v, me, speaking }: { s: RoomSnapshot; v: VoiceSnapsho
           size="compact-sm"
           variant={micOn ? "filled" : "default"}
           color="green"
+          // オフは赤い斜線のマイクと赤い文字で、オン（緑で塗る）と一目で分かるように（ドリキン 2026-11-14）
+          c={micOn ? undefined : listening && connected ? "red" : undefined}
           disabled={!listening || !connected || v.micBusy}
           aria-pressed={micOn}
+          aria-label={micOn ? "マイク オン" : "マイク オフ"}
           loading={v.micBusy}
           onClick={() => void setRoomMic(!micOn)}
           style={{
@@ -262,7 +276,10 @@ function RoomControls({ s, v, me, speaking }: { s: RoomSnapshot; v: VoiceSnapsho
             outlineOffset: active ? 1 + Math.round(v.micLevel * 3) : 0,
           }}
         >
-          🎙 {micOn ? "オン" : "オフ"}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <MicIcon off={!micOn} />
+            {micOn ? "オン" : "オフ"}
+          </span>
         </Button>
       </Tooltip>
       <HearPopover s={s} v={v} me={me} speaking={speaking} />
@@ -872,7 +889,7 @@ function RoomMap({ s, speaking }: { s: RoomSnapshot; speaking: Set<string> }) {
       )}
       {zone && (!hint || expanded) && (
         <div className={`${css.overlay} ${css.zone}`}>
-          {zone.kind === "stage" ? (v.micOn ? "🎙 ステージ：部室の全員に聞こえています" : "ステージ（🎙 オフ）") : `${zone.name}にいます`}
+          {zone.kind === "stage" ? (v.micOn ? "🎙 ステージ：部室の全員に聞こえています" : "ステージ（マイク オフ）") : `${zone.name}にいます`}
         </div>
       )}
       <div className={css.react} role="group" aria-label="リアクション">
