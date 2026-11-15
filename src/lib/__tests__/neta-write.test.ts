@@ -217,4 +217,36 @@ d("📝 ネタ帳の書き込み（DB）", () => {
       else process.env.NETA_WRITE_ENABLED = prev;
     }
   });
+
+  it("切り替えの前でも「ネタ帳に送る」は B-guru の中へ。B-guru の側の今週が終わっていたら昔のネタ帳へ", async () => {
+    const n = await import("../neta");
+    const prev = process.env.NETA_WRITE_ENABLED;
+    delete process.env.NETA_WRITE_ENABLED;
+    try {
+      await db.pool.query(`UPDATE neta_weeks SET end_date = '2999-12-31' WHERE id = $1`, [base]);
+      const notCalled = (async () => {
+        throw new Error("neta.backspace.fm には送らない");
+      }) as unknown as typeof fetch;
+      const ok = await n.submitToNeta({ url: "https://own.example/before", title: "前から中へ", description: null }, "ドリキン", notCalled);
+      expect(ok).toMatchObject({ status: 201, body: { ok: true, site: "https://bsm.backspace.fm/neta" } });
+
+      await db.pool.query(`UPDATE neta_weeks SET end_date = '2000-01-01' WHERE id = $1`, [base]);
+      expect(await w.ownWeekOpen()).toBe(false);
+      let legacyCalled = 0;
+      const legacy = (async () => {
+        legacyCalled++;
+        return new Response(JSON.stringify({ id: 5 }), { status: 201 });
+      }) as unknown as typeof fetch;
+      const old = await n.submitToNeta({ url: "https://own.example/stale", title: "週が古い", description: null }, "ドリキン", legacy);
+      expect(legacyCalled).toBe(1);
+      expect(old).toMatchObject({ status: 201, body: { site: "https://neta.backspace.fm" } });
+      expect(await w.ownWeekOpen("2026-11-15")).toBe(false);
+    } finally {
+      await db.pool.query(`UPDATE neta_weeks SET end_date = '2026-11-15' WHERE id = $1`, [base]);
+      if (prev === undefined) delete process.env.NETA_WRITE_ENABLED;
+      else process.env.NETA_WRITE_ENABLED = prev;
+    }
+    expect(await w.ownWeekOpen("2026-11-15")).toBe(true);
+    expect(await w.ownWeekOpen("2026-11-16")).toBe(false);
+  });
 });

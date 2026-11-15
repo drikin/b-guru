@@ -48,9 +48,18 @@ export function normalizeNetaInput(body: unknown): { ok: true; value: NetaInput 
 }
 
 /** Sends one topic to ネタ帳 as `submitter` (the member's B-guru display name).
- *  切り替えの後（NETA_WRITE_ENABLED=1）は neta.backspace.fm ではなく、B-guru の中のネタ帳（neta_ 表）に直接入れる。 */
+ *  送り先は B-guru の中のネタ帳（neta_ 表）。切り替えの前から（ドリキン 2026-11-14「新しいネタ帳に送る」）。
+ *  ただし切り替えの前で、B-guru の側の今週がもう終わっている（移行をまだやり直していない）ときは、
+ *  終わった週に入れないよう neta.backspace.fm へ送る。 */
 export async function submitToNeta(input: NetaInput, submitter: string, fetchImpl: typeof fetch = fetch): Promise<NetaResult> {
   if (process.env.NETA_WRITE_ENABLED === "1") return submitToOwnNeta(input, submitter);
+  const { ownWeekOpen } = await import("./neta-write");
+  if (await ownWeekOpen().catch(() => false)) return submitToOwnNeta(input, submitter);
+  return submitToLegacyNeta(input, submitter, fetchImpl);
+}
+
+/** 昔のネタ帳（neta.backspace.fm）へ、Chrome 拡張と同じ POST /api/topics で送る。 */
+async function submitToLegacyNeta(input: NetaInput, submitter: string, fetchImpl: typeof fetch): Promise<NetaResult> {
   let res: Response;
   try {
     res = await fetchImpl(`${NETA_API}/api/topics`, {
@@ -103,7 +112,7 @@ export function netaRateOk(email: string, now = Date.now()): boolean {
   return true;
 }
 
-/** 切り替えの後: B-guru の中のネタ帳に入れる（答えの形は今までと同じ）。 */
+/** B-guru の中のネタ帳に入れる（答えの形は昔のネタ帳に送るときと同じ）。 */
 async function submitToOwnNeta(input: NetaInput, submitter: string): Promise<NetaResult> {
   const { insertTopic, parseTopic, NetaError, netaDisplayName } = await import("./neta-write");
   try {

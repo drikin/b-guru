@@ -5283,6 +5283,7 @@ export default function Home() {
   const [netaSending, setNetaSending] = useState(false);
   const [netaError, setNetaError] = useState<string | null>(null);
   const [netaDone, setNetaDone] = useState(false);
+  const [netaSentSite, setNetaSentSite] = useState("https://bsm.backspace.fm/neta");
   const [savingEdit, setSavingEdit] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -8911,6 +8912,7 @@ export default function Home() {
       });
       const d = await res.json().catch(() => null);
       if (res.ok && d?.ok) {
+        if (typeof d.site === "string" && /^https:\/\/(bsm|neta)\.backspace\.fm(\/|$)/.test(d.site)) setNetaSentSite(d.site);
         setNetaDone(true);
       } else if (res.status === 409 && d?.existing) {
         setNetaError(`今週のネタ帳には ${d.existing.submitter ?? "ほかの人"} さんが「${d.existing.title ?? ""}」として投稿済みです`);
@@ -14271,7 +14273,7 @@ export default function Home() {
         </Group>
       </Modal>
 
-      {/* 「ネタ帳に送る」確認 — ネタ帳 (neta.backspace.fm) は公開サイト */}
+      {/* 「ネタ帳に送る」確認 — ネタ帳は公開サイト（送り先は B-guru の中のネタ帳、2026-11-14） */}
       <Modal
         opened={!!netaPost}
         onClose={closeNeta}
@@ -14287,8 +14289,8 @@ export default function Home() {
             <Group justify="space-between">
               <Button
                 component="a"
-                href="https://neta.backspace.fm"
-                target="_blank"
+                href={netaSentSite}
+                target={netaSentSite.startsWith("https://bsm.") ? undefined : "_blank"}
                 rel="noopener"
                 variant="light"
                 size="xs"

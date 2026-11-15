@@ -1,6 +1,8 @@
 # 「ネタ帳に送る」— 仕様（2026-10-20）
 
-タイムラインの投稿に貼られた**記事の URL**を、BS ネタ帳（https://neta.backspace.fm、公開サイト）に送る。
+タイムラインの投稿に貼られた**記事の URL**を、BS ネタ帳（公開サイト）に送る。
+
+> 2026-11-14 から送り先は B-guru の中のネタ帳（https://bsm.backspace.fm/neta）。切り替えの前で B-guru の側の今週が終わっている（移行をやり直していない）ときだけ neta.backspace.fm に送る。どちらに入ったかは答えの `site` で分かる。
 B-guru の投稿の URL（bsm.backspace.fm/#/post/…）は送らない（ドリキン 2026-10-20）。
 
 ## サーバ
@@ -10,7 +12,7 @@ B-guru の投稿の URL（bsm.backspace.fm/#/post/…）は送らない（ドリ
   - url: http(s) の外部の記事だけ（bsm.backspace.fm は不可）。title: 必須・200 文字まで。description: 1000 文字まで。
 - 投稿者名は会員の B-guru の表示名（サーバが決める）。
 - 返事:
-  - 201 `{ ok: true, topicId, site: "https://neta.backspace.fm" }`
+  - 201 `{ ok: true, topicId, site }`（`https://bsm.backspace.fm/neta` か、上の例外のとき `https://neta.backspace.fm`）
   - 409 `{ ok: false, code: "duplicate", error, existing: { title, submitter } }` … 今週のネタ帳に同じ URL がある
   - 400 / 429 / 502 `{ ok: false, code, error }`（error は会員向けの日本語）
 - アプリが使えるか: capabilities の `features.neta = { enabled, path: "/api/agent/neta", site }`（enabled = post スコープあり）
@@ -28,6 +30,6 @@ B-guru の投稿の URL（bsm.backspace.fm/#/post/…）は送らない（ドリ
    - 注意書き: 「ネタ帳は公開サイトです。B-guru の表示名で投稿されます。」
    - ボタン: キャンセル / 送る（題名が空なら押せない、送っている間は二重に押せない）。
 3. **結果**:
-   - 成功: 「ネタ帳に送りました」＋「ネタ帳を開く」（https://neta.backspace.fm）。
+   - 成功: 「ネタ帳に送りました」＋「ネタ帳を開く」（capabilities の `site`、今は https://bsm.backspace.fm/neta）。
    - 409: 「今週のネタ帳には {submitter} さんが「{title}」として投稿済みです」。
    - それ以外: サーバの error をそのまま。

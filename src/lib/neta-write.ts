@@ -116,6 +116,13 @@ export async function setVote(member: NetaMember, topicId: number, on: boolean, 
   return { voted: on, stars: await topicStars(topicId) };
 }
 
+/** B-guru の側の今週の受付が開いているか（今週があって、終わりの日が今日〔日本時間〕より前でない）。 */
+export async function ownWeekOpen(today = new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10)): Promise<boolean> {
+  const r = await pool.query(`SELECT end_date FROM neta_weeks WHERE is_active LIMIT 1`);
+  const end = String(r.rows[0]?.end_date ?? "");
+  return /^\d{4}-\d{2}-\d{2}/.test(end) && end.slice(0, 10) >= today;
+}
+
 /** 切り替え済みか（neta.backspace.fm から B-guru へ。書き込みを全員に開け、検索に載せ、拡張の受け口を開ける）。 */
 export function netaLive(): boolean {
   return process.env.NETA_WRITE_ENABLED === "1";

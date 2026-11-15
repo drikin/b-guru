@@ -1,5 +1,7 @@
 /** Sending a post's article to BS ネタ帳 (lib/neta.ts). */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+// ここでは昔のネタ帳（neta.backspace.fm）へ送る形を見る: B-guru の側の今週は閉じている扱い。
+vi.mock("../neta-write", () => ({ ownWeekOpen: async () => false }));
 import { netaRateOk, netaUrlOk, normalizeNetaInput, submitToNeta } from "../neta";
 
 describe("what can be sent", () => {
