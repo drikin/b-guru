@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import s from "./neta.module.css";
+import { useNetaUrlInfo } from "./useNetaUrlInfo";
 
 export type ClientViewer = { displayName: string | null; tier: "paid" | "free" } | null;
 
@@ -393,6 +394,7 @@ export function NetaSubmit({ initial, startOpen = false }: { initial?: { url?: s
   const [err, setErr] = useState("");
   const [dup, setDup] = useState<{ id: number; title: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const auto = useNetaUrlInfo(url, { setTitle, setDescription, setUrl }, { enabled: open && writable });
   if (!writable) return null;
   if (!open) {
     return (
@@ -425,6 +427,7 @@ export function NetaSubmit({ initial, startOpen = false }: { initial?: { url?: s
       <label className={s.field}>
         <span className={s.fieldLabel}>記事の URL</span>
         <input className={s.input} type="url" inputMode="url" required value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" autoFocus />
+        {auto.loading ? <span className={s.fieldLabel}>題名と一言を読み込んでいます…</span> : auto.note ? <span className={s.err}>{auto.note}</span> : null}
       </label>
       <label className={s.field}>
         <span className={s.fieldLabel}>タイトル</span>

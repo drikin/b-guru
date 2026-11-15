@@ -341,7 +341,8 @@ export function agentCapabilities(
       // Authorization: Bearer <token> on the first load; it lands on /neta/app logged in to ネタ帳 only.
       // A link to bguru-neta://reenter from the page = open `tab` again (the login ran out).
       // scriptTab: the 📜 台本 tab (rightmost), same entrance, lands on /neta/app/script.
-      neta: { enabled: can("post"), path: "/api/agent/neta", site: "https://bsm.backspace.fm/neta", ...(opts.appIssued && can("post") ? { tab: "/neta/app/enter", scriptTab: "/neta/app/enter?to=script" } : {}) },
+      // urlinfo: GET ?url= → { title, description, finalUrl?, note? } to fill the send sheet (2026-11-16).
+      neta: { enabled: can("post"), path: "/api/agent/neta", urlinfo: "/api/agent/neta/urlinfo", site: "https://bsm.backspace.fm/neta", ...(opts.appIssued && can("post") ? { tab: "/neta/app/enter", scriptTab: "/neta/app/enter?to=script" } : {}) },
       // Past backspace.fm episodes to listen to (Art19), behind a rollout flag.
       jukebox: { enabled: !!opts.jukebox, path: "/api/agent/jukebox" },
       // ☗ 将棋 (docs/shogi-spec.md), behind SHOGI_ENABLED. The board is a web page the app

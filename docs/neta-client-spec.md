@@ -33,3 +33,9 @@ B-guru の投稿の URL（bsm.backspace.fm/#/post/…）は送らない（ドリ
    - 成功: 「ネタ帳に送りました」＋「ネタ帳を開く」（capabilities の `site`、今は https://bsm.backspace.fm/neta）。
    - 409: 「今週のネタ帳には {submitter} さんが「{title}」として投稿済みです」。
    - それ以外: サーバの error をそのまま。
+
+
+## URL から題名と一言の補完（2026-11-16、オリジナルのネタ帳の /api/fetch-url-info を戻した）
+- Web: `GET /api/neta/urlinfo?url=`（ログインなしでも可、1 分 20 回）。アプリ: capabilities の `features.neta.urlinfo`（`/api/agent/neta/urlinfo`、スコープ post）。
+- 答え: `{ url, finalUrl?, title, description, note? }`。空いている欄だけ埋める（手で書いたものは上書きしない）。`note` は案内（Google ニュースなど）。
+- X は FxTwitter → oEmbed、YouTube は oEmbed（題名）＋ページの og:description（一言）、t.co は転送先をたどる。中身は `src/lib/neta-urlinfo.ts`（内部の宛先には接続しない）。

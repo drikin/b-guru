@@ -3,6 +3,7 @@
 import NetaBoard from "./neta/NetaBoard";
 import ScriptBoard from "./neta/ScriptBoard";
 import GuestShell from "./GuestShell";
+import { useNetaUrlInfo } from "./neta/useNetaUrlInfo";
 import { isAppLoginWebView } from "@/lib/app-login-webview";
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { buildReadPayload, mergeReadState, normalizeReadIds, PG_INT_MAX } from "@/lib/read-state";
@@ -5283,6 +5284,8 @@ export default function Home() {
   const [netaSending, setNetaSending] = useState(false);
   const [netaError, setNetaError] = useState<string | null>(null);
   const [netaDone, setNetaDone] = useState(false);
+  // URL から題名と一言を補完する（空いている欄だけ。ドリキン 2026-11-16「オリジナルのネタ帳の補完を復活」）。
+  const netaAuto = useNetaUrlInfo(netaUrl, { setTitle: setNetaTitle, setDescription: setNetaDesc }, { enabled: !!netaPost && !netaDone });
   const [netaSentSite, setNetaSentSite] = useState("https://bsm.backspace.fm/neta");
   const [savingEdit, setSavingEdit] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -14319,6 +14322,9 @@ export default function Home() {
                 <Text size="sm" fw={500}>URL</Text>
                 <Text size="sm" c="dimmed" style={{ wordBreak: "break-all" }}>{netaUrl}</Text>
               </Box>
+            )}
+            {(netaAuto.loading || netaAuto.note) && (
+              <Text size="xs" c={netaAuto.note ? "red" : "dimmed"}>{netaAuto.loading ? "題名と一言を読み込んでいます…" : netaAuto.note}</Text>
             )}
             <TextInput
               label="題名"
