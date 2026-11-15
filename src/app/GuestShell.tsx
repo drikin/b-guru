@@ -2,8 +2,9 @@
 /* B-guru のトップを、ログインしていない人・無料会員に出す形（2026-11-14 オーナー）。
  * 📝 ネタ帳がメインの列に出て、BSM（有料会員）限定の機能は左のメニューにグレーで並ぶだけ（押すと案内）。
  * 会員のデータは何も読まない（ネタ帳の公開 API だけ）。ログインは 1 つ: 有料会員なら B-guru の本体に入る。 */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import NetaBoard from "./neta/NetaBoard";
+import { NetaMovedNotice } from "./neta/NetaMovedNotice";
 import g from "./guest.module.css";
 
 const LOCKED: { key: string; icon: string; label: string; about: string }[] = [
@@ -24,6 +25,20 @@ function openLogin() {
 export default function GuestShell() {
   const [locked, setLocked] = useState<(typeof LOCKED)[number] | null>(null);
   const [menu, setMenu] = useState(false);
+  // neta.backspace.fm から転送されてきた人向けに、ネタ帳にログインしていなければ引っ越しの案内を出す（2026-11-16）。
+  const [netaGuest, setNetaGuest] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/neta/me", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (alive && d && d.viewer === null) setNetaGuest(true);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const lockedItem = (it: (typeof LOCKED)[number]) => (
     <button
@@ -106,6 +121,7 @@ export default function GuestShell() {
               </div>
             </section>
           )}
+          {netaGuest && <NetaMovedNotice />}
           <NetaBoard />
         </main>
       </div>

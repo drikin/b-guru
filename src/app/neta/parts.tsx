@@ -4,6 +4,7 @@ import { getNetaViewer } from "@/lib/neta-auth";
 import { netaLive, netaWritable } from "@/lib/neta-write";
 import { isAdmin } from "@/lib/admin";
 import { NetaAccount, type ClientViewer } from "./NetaClient";
+import { NetaMovedNotice } from "./NetaMovedNotice";
 import s from "./neta.module.css";
 
 /** 書き込みを開けるまで（NETA_WRITE_ENABLED）、投稿と「聞きたい」は neta.backspace.fm のまま（切り替えの日にこの案内を外す）。 */
@@ -40,19 +41,7 @@ export async function NetaHeader({ writable }: { writable: boolean }) {
         </a>{" "}
         でどうぞ。
       </p>}
-      {netaLive() && !loggedIn ? (
-        <div className={s.notice}>
-          <p style={{ margin: 0, fontWeight: 700 }}>ネタ帳は neta.backspace.fm からここへ引っ越しました</p>
-          <ul style={{ margin: "6px 0 0", paddingLeft: "1.2em" }}>
-            <li>これまでの週のネタと「聞きたい」の数は、そのまま引き継いでいます。</li>
-            <li>読むのは、だれでもログインなしでできます。</li>
-            <li>
-              「聞きたい」・投稿・コメントには、<b>backspace.fm の無料登録</b>が要ります。メールアドレスだけで、お金はかかりません。右上の「ログイン / 無料登録」からどうぞ。
-            </li>
-            <li>すでに backspace.fm に登録している方（BSM の会員の方も）は、同じメールアドレスでログインしてください。</li>
-          </ul>
-        </div>
-      ) : null}
+      {netaLive() && !loggedIn ? <NetaMovedNotice /> : null}
     </>
   );
 }
