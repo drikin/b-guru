@@ -9,13 +9,14 @@
  * - Google ニュース: 元の記事の URL を入れてもらう（取らない）。
  * - それ以外: ページの og:title / <title>、og:description / description。取れなければ Microlink。
  *
- * 安全: http(s) と 80/443 だけ。接続の瞬間に宛先の IP を確かめる（内部・ループバック・リンクローカルは断る。
+ * 安全: http(s) と 80/443 だけ。1 回の補完は全体で 20 秒まで。接続の瞬間に宛先の IP を確かめる（内部・ループバック・リンクローカルは断る。
  * DNS を差し替える手口〔rebinding〕も効かない）。転送は 5 回まで毎回確かめる。読むのは 3MB まで（YouTube のページは 1.5MB ほどあり、meta が後ろにある）、8 秒まで。 */
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import dns from "node:dns";
 import zlib from "node:zlib";
+import { Writable, pipeline } from "node:stream";
 import { decodeHtmlBytes, extractYoutubeId } from "./urlpreview";
 
 export type NetaUrlInfo = {
@@ -37,28 +38,32 @@ const MAX_REDIRECTS = 5;
 
 /* ---------- 宛先の確かめ ---------- */
 
-export function isPrivateIp(ip: string): boolean {
-  if (net.isIPv4(ip)) {
-    const [a, b] = ip.split(".").map(Number);
-    if (a === 10 || a === 127 || a === 0) return true;
-    if (a === 169 && b === 254) return true; // link-local / クラウドのメタデータ
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT・Tailscale
-    if (a === 198 && (b === 18 || b === 19)) return true; // ベンチマーク用
-    if (a >= 224) return true; // マルチキャスト・予約
-    return false;
+/** 内部・予約の宛先（ループバック・プライベート・リンクローカル・CGNAT/Tailscale・IPv4 互換/対応・NAT64・6to4・Teredo など）。
+ * VPS 自身の公開 IP も入れる（80/443 で自分の nginx に届かないように）。NETA_URLINFO_BLOCK_IPS で足せる。 */
+const blocked = new net.BlockList();
+for (const [a, p] of [
+  ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12],
+  ["192.0.0.0", 24], ["192.0.2.0", 24], ["192.168.0.0", 16], ["198.18.0.0", 15], ["198.51.100.0", 24], ["203.0.113.0", 24], ["224.0.0.0", 3],
+] as const) blocked.addSubnet(a, p, "ipv4");
+for (const [a, p] of [
+  ["::", 96], ["64:ff9b::", 96], ["64:ff9b:1::", 48], ["100::", 64], ["2001::", 32], ["2001:db8::", 32],
+  ["2002::", 16], ["fc00::", 7], ["fe80::", 10], ["fec0::", 10], ["ff00::", 8],
+] as const) blocked.addSubnet(a, p, "ipv6");
+for (const ip of ["153.127.198.207", ...(process.env.NETA_URLINFO_BLOCK_IPS ?? "").split(",").map((x) => x.trim()).filter(Boolean)]) {
+  try {
+    blocked.addAddress(ip, net.isIPv6(ip) ? "ipv6" : "ipv4");
+  } catch {
+    /* 形の悪いものは無視 */
   }
-  if (net.isIPv6(ip)) {
-    const v = ip.toLowerCase();
-    if (v === "::1" || v === "::") return true;
-    if (v.startsWith("fe8") || v.startsWith("fe9") || v.startsWith("fea") || v.startsWith("feb")) return true;
-    if (v.startsWith("fc") || v.startsWith("fd")) return true;
-    if (v.startsWith("ff")) return true;
-    const mapped = v.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return isPrivateIp(mapped[1]);
-    if (v.startsWith("::ffff:") || v.startsWith("64:ff9b:")) return true;
-    return false;
+}
+
+export function isPrivateIp(ip: string): boolean {
+  const v = ip.toLowerCase();
+  if (net.isIPv4(v)) return blocked.check(v, "ipv4");
+  if (net.isIPv6(v)) {
+    // IPv4 対応アドレス（::ffff:…）は使わない。BlockList に ::ffff:0:0/96 を入れると IPv4 が全部当たるので、ここで断る。
+    if (v.startsWith("::ffff:") || v.startsWith("0:0:0:0:0:ffff:")) return true;
+    return blocked.check(v, "ipv6");
   }
   return true;
 }
@@ -85,7 +90,7 @@ export function publicHttpUrl(raw: unknown): URL | null {
 }
 
 /** 接続のときに使う名前解決: 内部の宛先が 1 つでも混じれば断る。 */
-function guardedLookup(hostname: string, options: dns.LookupOptions, cb: (...a: any[]) => void) {
+function guardedLookup(hostname: string, options: dns.LookupOptions, cb: (...a: unknown[]) => void) {
   dns.lookup(hostname, { ...options, all: true }, (err, addrs) => {
     if (err) return cb(err);
     const list = (addrs as dns.LookupAddress[]) ?? [];
@@ -99,9 +104,18 @@ function guardedLookup(hostname: string, options: dns.LookupOptions, cb: (...a: 
 
 type Got = { status: number; url: string; headers: http.IncomingHttpHeaders; body: Buffer };
 
-/** 1 回の GET（転送はたどらない）。 */
-function getOnce(u: URL, headers: Record<string, string>): Promise<Got> {
+/** 1 回の GET（転送はたどらない）。deadline を過ぎたら必ず切る（少しずつ送ってくる相手・途中で切れた圧縮にも）。 */
+function getOnce(u: URL, headers: Record<string, string>, deadline: number): Promise<Got> {
   return new Promise((resolve, reject) => {
+    const left = deadline - Date.now();
+    if (left <= 0) return reject(new Error("timeout"));
+    let settled = false;
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
     const mod = u.protocol === "https:" ? https : http;
     const req = mod.request(
       u,
@@ -109,59 +123,71 @@ function getOnce(u: URL, headers: Record<string, string>): Promise<Got> {
         method: "GET",
         headers: { "User-Agent": UA, "Accept-Encoding": "gzip, deflate, br", ...headers },
         lookup: guardedLookup as unknown as net.LookupFunction,
-        timeout: TIMEOUT_MS,
+        timeout: Math.min(TIMEOUT_MS, left),
       },
       (res) => {
         const status = res.statusCode ?? 0;
         if (status >= 300 && status < 400) {
           res.resume();
-          return resolve({ status, url: u.toString(), headers: res.headers, body: Buffer.alloc(0) });
+          req.destroy();
+          return settle(() => resolve({ status, url: u.toString(), headers: res.headers, body: Buffer.alloc(0) }));
         }
         const enc = String(res.headers["content-encoding"] || "").toLowerCase();
-        const stream =
+        const decomp =
           enc === "gzip" || enc === "x-gzip"
-            ? res.pipe(zlib.createGunzip())
+            ? zlib.createGunzip()
             : enc === "deflate"
-              ? res.pipe(zlib.createInflate())
+              ? zlib.createInflate()
               : enc === "br"
-                ? res.pipe(zlib.createBrotliDecompress())
-                : res;
+                ? zlib.createBrotliDecompress()
+                : null;
         const chunks: Buffer[] = [];
         let size = 0;
-        let done = false;
-        const finish = () => {
-          if (done) return;
-          done = true;
-          resolve({ status, url: u.toString(), headers: res.headers, body: Buffer.concat(chunks) });
-        };
-        stream.on("data", (c: Buffer) => {
-          size += c.length;
-          if (size > MAX_BYTES) {
-            chunks.push(c.subarray(0, Math.max(0, c.length - (size - MAX_BYTES))));
-            finish();
-            req.destroy();
-            return;
-          }
-          chunks.push(c);
+        const done = () => settle(() => resolve({ status, url: u.toString(), headers: res.headers, body: Buffer.concat(chunks) }));
+        const sink = new Writable({
+          write(c: Buffer, _e, cb) {
+            size += c.length;
+            if (size > MAX_BYTES) {
+              chunks.push(c.subarray(0, Math.max(0, c.length - (size - MAX_BYTES))));
+              done();
+              req.destroy();
+              return cb(new Error("too big"));
+            }
+            chunks.push(c);
+            cb();
+          },
         });
-        stream.on("end", finish);
-        stream.on("error", (e) => (done ? undefined : chunks.length ? finish() : reject(e)));
+        const onEnd = (err?: Error | null) => {
+          if (!err) return done();
+          // 上限で切った・途中で切れた: 読めた分があればそれで、なければ失敗。
+          if (chunks.length) done();
+          else settle(() => reject(err));
+        };
+        if (decomp) pipeline(res, decomp, sink, onEnd);
+        else pipeline(res, sink, onEnd);
       }
     );
+    const timer = setTimeout(() => {
+      req.destroy(new Error("timeout"));
+      settle(() => reject(new Error("timeout")));
+    }, left);
     req.on("timeout", () => req.destroy(new Error("timeout")));
-    req.on("error", reject);
+    req.on("error", (e) => settle(() => reject(e)));
+    // 途中で切れたときは pipeline が「早すぎる終わり」のエラーを出す。どれも来なくても timer が必ず切る。
     req.end();
   });
 }
 
-/** 転送を確かめながらたどる GET。 */
-export async function safeGet(raw: string, headers: Record<string, string> = {}): Promise<Got> {
+/** テスト用（宛先の確かめはしない。ルートからは使わない）。 */
+export const __getOnceForTest = getOnce;
+
+/** 転送を確かめながらたどる GET。deadline は呼んだ側と共有する（1 回の補完全体で 20 秒まで）。 */
+export async function safeGet(raw: string, headers: Record<string, string> = {}, deadline = Date.now() + TIMEOUT_MS * 2): Promise<Got> {
   let u = publicHttpUrl(raw);
   if (!u) throw new Error("bad url");
-  const deadline = Date.now() + TIMEOUT_MS * 2;
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     if (Date.now() > deadline) throw new Error("timeout");
-    const r = await getOnce(u, headers);
+    const r = await getOnce(u, headers, deadline);
     if (r.status >= 300 && r.status < 400) {
       const loc = r.headers.location;
       if (!loc) return r;
@@ -206,12 +232,20 @@ export function clean(s: string | undefined | null, max: number): string {
   return chars.length > max ? chars.slice(0, max - 1).join("") + "…" : one;
 }
 
-/** <meta> を属性の順番によらず読む。 */
+/** <meta> を属性の順番によらず読む。前から一度だけ進む（閉じていないタグが並んでも重くならない）。 */
 export function parseHtmlMeta(html: string): { title: string; description: string } {
-  const head = html.slice(0, 3_000_000);
+  const head = html.length > 3_000_000 ? html.slice(0, 3_000_000) : html;
+  const lower = head.toLowerCase();
   const metas = new Map<string, string>();
-  for (const m of head.matchAll(/<meta\b[^>]*>/gi)) {
-    const tag = m[0];
+  let pos = 0;
+  while (metas.size < 200) {
+    const at = lower.indexOf("<meta", pos);
+    if (at < 0) break;
+    const end = lower.indexOf(">", at + 5);
+    if (end < 0) break;
+    pos = end + 1;
+    if (end - at > 4000) continue; // 長すぎるタグは見ない
+    const tag = head.slice(at, end + 1);
     const attr = (name: string) => tag.match(new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s"'>]+))`, "i"));
     const key = attr("property") ?? attr("name");
     const content = attr("content");
@@ -220,7 +254,13 @@ export function parseHtmlMeta(html: string): { title: string; description: strin
     const v = content[2] ?? content[3] ?? content[4] ?? "";
     if (k && v && !metas.has(k)) metas.set(k, v);
   }
-  const titleTag = head.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? "";
+  let titleTag = "";
+  const t0 = lower.indexOf("<title");
+  if (t0 >= 0) {
+    const open = lower.indexOf(">", t0);
+    const close = open >= 0 ? lower.indexOf("</title>", open) : -1;
+    if (close > open && close - open < 10_000) titleTag = head.slice(open + 1, close);
+  }
   return {
     title: metas.get("og:title") || metas.get("twitter:title") || titleTag,
     description: metas.get("og:description") || metas.get("twitter:description") || metas.get("description") || "",
@@ -255,8 +295,9 @@ function poorTitle(t: string): boolean {
   return !s || s === "- YouTube" || s === "YouTube" || s.includes("YouTube でお気に入りの動画") || /^(X|Twitter)$/.test(s);
 }
 
-async function getJson(url: string): Promise<any> {
-  const r = await safeGet(url, { Accept: "application/json" });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- 外部 API の JSON をその場で読む
+async function getJson(url: string, dl: number): Promise<any> {
+  const r = await safeGet(url, { Accept: "application/json" }, dl);
   if (r.status !== 200) return null;
   try {
     return JSON.parse(r.body.toString("utf8"));
@@ -265,11 +306,12 @@ async function getJson(url: string): Promise<any> {
   }
 }
 
-async function fromPage(url: string): Promise<{ title: string; description: string; finalUrl: string } | null> {
-  const r = await safeGet(url, {
-    Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "ja,en-US;q=0.8,en;q=0.6",
-  });
+async function fromPage(url: string, dl: number): Promise<{ title: string; description: string; finalUrl: string } | null> {
+  const r = await safeGet(
+    url,
+    { Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8", "Accept-Language": "ja,en-US;q=0.8,en;q=0.6" },
+    dl
+  );
   if (r.status !== 200) return null;
   const ct = String(r.headers["content-type"] || "");
   if (ct && !/html|xml/i.test(ct)) return null;
@@ -278,16 +320,18 @@ async function fromPage(url: string): Promise<{ title: string; description: stri
   return { title: m.title, description: m.description, finalUrl: r.url };
 }
 
-async function fromMicrolink(url: string): Promise<{ title: string; description: string } | null> {
-  const d = await getJson(`https://api.microlink.io/?url=${encodeURIComponent(url)}`).catch(() => null);
+async function fromMicrolink(url: string, dl: number): Promise<{ title: string; description: string } | null> {
+  // 合言葉らしいもの（token・key・sig など）が URL に入っていたら、外のサービスには渡さない。
+  if (/[?&#](?:[^=&#]*?)(token|key|sig|signature|auth|session|secret|password|code)[^=&#]*=/i.test(url)) return null;
+  const d = await getJson(`https://api.microlink.io/?url=${encodeURIComponent(url)}`, dl).catch(() => null);
   if (d?.status !== "success" || !d.data) return null;
   return { title: String(d.data.title || ""), description: String(d.data.description || "") };
 }
 
-async function fromX(url: string): Promise<{ title: string; description: string; finalUrl?: string } | null> {
+async function fromX(url: string, dl: number): Promise<{ title: string; description: string; finalUrl?: string } | null> {
   const st = parseXStatus(url);
   if (st) {
-    const d = await getJson(`https://api.fxtwitter.com/${st.user}/status/${st.id}`).catch(() => null);
+    const d = await getJson(`https://api.fxtwitter.com/${st.user}/status/${st.id}`, dl).catch(() => null);
     const tw = d?.tweet;
     if (tw) {
       if (tw.article?.title) return { title: String(tw.article.title), description: String(tw.article.preview_text || "") };
@@ -295,12 +339,12 @@ async function fromX(url: string): Promise<{ title: string; description: string;
       const text = raw.replace(/https?:\/\/t\.co\/\S+/g, "").trim();
       const name = String(tw.author?.name || tw.author?.screen_name || st.user);
       // ポストに外部の記事のリンクがあれば、その記事の題名（一言はポストの文）。
-      for (const t of (raw.match(/https?:\/\/t\.co\/\S+/g) ?? []).slice(0, 3)) {
+      for (const t of (raw.match(/https?:\/\/t\.co\/\S+/g) ?? []).slice(0, 2)) {
         try {
-          const hop = await safeGet(t);
+          const hop = await safeGet(t, {}, dl);
           const dest = hop.url;
           if (!dest || isXUrl(dest) || isTco(dest)) continue;
-          const page = await fromPage(dest).catch(() => null);
+          const page = await fromPage(dest, dl).catch(() => null);
           if (page && !poorTitle(page.title)) return { title: page.title, description: text, finalUrl: undefined };
         } catch {
           /* 次のリンクへ */
@@ -309,7 +353,7 @@ async function fromX(url: string): Promise<{ title: string; description: string;
       return { title: text ? `${name}: ${text}` : `${name}のポスト`, description: text };
     }
   }
-  const o = await getJson(`https://publish.twitter.com/oembed?url=${encodeURIComponent(url)}&omit_script=true`).catch(() => null);
+  const o = await getJson(`https://publish.twitter.com/oembed?url=${encodeURIComponent(url)}&omit_script=true`, dl).catch(() => null);
   if (o?.author_name) {
     const p = String(o.html || "").match(/<p[^>]*>([\s\S]*?)<\/p>/)?.[1] ?? "";
     const text = decodeEntities(p.replace(/<[^>]+>/g, "")).replace(/https?:\/\/t\.co\/\S+/g, "").trim();
@@ -318,13 +362,13 @@ async function fromX(url: string): Promise<{ title: string; description: string;
   return null;
 }
 
-async function fromYoutube(url: string, id: string): Promise<{ title: string; description: string } | null> {
+async function fromYoutube(url: string, id: string, dl: number): Promise<{ title: string; description: string } | null> {
   const watch = `https://www.youtube.com/watch?v=${id}`;
-  const o = await getJson(`https://www.youtube.com/oembed?url=${encodeURIComponent(watch)}&format=json`).catch(() => null);
+  const o = await getJson(`https://www.youtube.com/oembed?url=${encodeURIComponent(watch)}&format=json`, dl).catch(() => null);
   let description = "";
   try {
     // 同意画面を避けるクッキー（EU 向け）。題名は oEmbed のほうが確実なので、ここは一言だけ。
-    const r = await safeGet(watch, { Accept: "text/html", "Accept-Language": "ja,en;q=0.8", Cookie: "SOCS=CAI; CONSENT=YES+" });
+    const r = await safeGet(watch, { Accept: "text/html", "Accept-Language": "ja,en;q=0.8", Cookie: "SOCS=CAI; CONSENT=YES+" }, dl);
     if (r.status === 200) {
       const m = parseHtmlMeta(decodeHtmlBytes(new Uint8Array(r.body), String(r.headers["content-type"] || "")));
       if (!poorTitle(m.title) && !m.description.includes("YouTube でお気に入りの動画") && !/^Enjoy the videos and music you love/.test(m.description)) {
@@ -344,7 +388,7 @@ async function fromYoutube(url: string, id: string): Promise<{ title: string; de
 const cache = new Map<string, { at: number; v: NetaUrlInfo }>();
 const CACHE_MS = 24 * 3600_000;
 
-export async function fetchNetaUrlInfo(raw: string, depth = 0): Promise<NetaUrlInfo> {
+export async function fetchNetaUrlInfo(raw: string, depth = 0, dl = Date.now() + 20_000): Promise<NetaUrlInfo> {
   const u = publicHttpUrl(raw);
   if (!u) return { url: String(raw ?? ""), title: "", description: "", note: "URL が正しくありません" };
   const url = u.toString();
@@ -367,24 +411,24 @@ export async function fetchNetaUrlInfo(raw: string, depth = 0): Promise<NetaUrlI
       return done("", "", undefined, "Google ニュースのリンクからは元の記事が分かりません。元の記事の URL を入れてください");
     }
     if (isTco(url) && depth < 2) {
-      const hop = await safeGet(url).catch(() => null);
+      const hop = await safeGet(url, {}, dl).catch(() => null);
       if (hop?.url && hop.url !== url) {
-        const r = await fetchNetaUrlInfo(hop.url, depth + 1);
+        const r = await fetchNetaUrlInfo(hop.url, depth + 1, dl);
         return done(r.title, r.description, r.finalUrl ?? hop.url, r.note);
       }
     }
     if (isXUrl(url)) {
-      const x = await fromX(url).catch(() => null);
+      const x = await fromX(url, dl).catch(() => null);
       if (x && !poorTitle(x.title)) return done(x.title, x.description, x.finalUrl);
     }
     const yt = extractYoutubeId(url);
     if (yt) {
-      const y = await fromYoutube(url, yt).catch(() => null);
+      const y = await fromYoutube(url, yt, dl).catch(() => null);
       if (y) return done(y.title, y.description);
     }
-    const page = await fromPage(url).catch(() => null);
+    const page = await fromPage(url, dl).catch(() => null);
     if (page && !poorTitle(page.title)) return done(page.title, page.description, page.finalUrl);
-    const ml = await fromMicrolink(url);
+    const ml = await fromMicrolink(url, dl);
     if (ml && !poorTitle(ml.title)) return done(ml.title, ml.description);
     return done(page?.title && !poorTitle(page.title) ? page.title : "", page?.description ?? "", page?.finalUrl, "題名を取れませんでした。手で入れてください");
   } catch {

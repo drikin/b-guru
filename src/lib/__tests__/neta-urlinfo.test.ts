@@ -1,13 +1,15 @@
 /* 📝 URL から題名と一言の補完（lib/neta-urlinfo.ts）の小物。外には出ない（ネットにつながない）。 */
 import { describe, it, expect } from "vitest";
-import { clean, isPrivateIp, isXUrl, parseHtmlMeta, parseXStatus, publicHttpUrl, urlInfoRateOk, fetchNetaUrlInfo } from "../neta-urlinfo";
+import http from "node:http";
+import zlib from "node:zlib";
+import { __getOnceForTest, clean, isPrivateIp, isXUrl, parseHtmlMeta, parseXStatus, publicHttpUrl, urlInfoRateOk, fetchNetaUrlInfo } from "../neta-urlinfo";
 
 describe("宛先の確かめ（SSRF）", () => {
   it("内部・ループバック・リンクローカル・CGNAT の IP は断る", () => {
     for (const ip of ["127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.100.1.1", "0.0.0.0", "::1", "fe80::1", "fd00::1", "::ffff:127.0.0.1", "224.0.0.1"]) {
       expect(isPrivateIp(ip), ip).toBe(true);
     }
-    for (const ip of ["8.8.8.8", "153.127.198.207", "2606:4700::1111"]) expect(isPrivateIp(ip), ip).toBe(false);
+    for (const ip of ["8.8.8.8", "1.1.1.1", "2606:4700::1111"]) expect(isPrivateIp(ip), ip).toBe(false);
   });
   it("http(s)・80/443 だけ、資格情報・localhost・内部の IP の URL は通さない", () => {
     expect(publicHttpUrl("https://example.com/a?b=1")?.hostname).toBe("example.com");
@@ -77,5 +79,53 @@ describe("回数の上限", () => {
     for (let i = 0; i < 20; i++) expect(urlInfoRateOk("k", now)).toBe(true);
     expect(urlInfoRateOk("k", now)).toBe(false);
     expect(urlInfoRateOk("k", now + 61_000)).toBe(true);
+  });
+});
+
+describe("止められないこと（セキュリティレビュー 2026-11-16）", () => {
+  it("閉じていない <meta や <title が大量に並んでもすぐ終わる", () => {
+    const t = Date.now();
+    parseHtmlMeta("<meta ".repeat(200_000));
+    parseHtmlMeta("<title>".repeat(200_000));
+    parseHtmlMeta("<meta content=x ".repeat(100_000) + ">");
+    expect(Date.now() - t).toBeLessThan(1500);
+  });
+  it("IPv4 互換・NAT64・6to4・Teredo・VPS 自身の IP も断る", () => {
+    for (const ip of ["::7f00:1", "64:ff9b:1::1", "2002:7f00:1::", "2001:0:1::1", "153.127.198.207", "192.0.0.1"]) {
+      expect(isPrivateIp(ip), ip).toBe(true);
+    }
+    expect(publicHttpUrl("http://[::127.0.0.1]/")).toBeNull();
+  });
+  it("圧縮の途中で切られても、必ず答えが返る（止まらない）", async () => {
+    const gz = zlib.gzipSync(Buffer.from("<title>" + "x".repeat(50_000) + "</title>"));
+    const srv = http.createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/html", "Content-Encoding": "gzip" });
+      res.write(gz.subarray(0, 50));
+      setTimeout(() => res.socket?.destroy(), 50);
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+    const port = (srv.address() as { port: number }).port;
+    const t = Date.now();
+    const out = await __getOnceForTest(new URL(`http://127.0.0.1:${port}/`), {}, Date.now() + 5000).then(
+      () => "ok",
+      () => "err"
+    );
+    srv.close();
+    expect(["ok", "err"]).toContain(out);
+    expect(Date.now() - t).toBeLessThan(3000);
+  });
+  it("少しずつ送ってくる相手も締め切りで切る", async () => {
+    const srv = http.createServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      const iv = setInterval(() => res.write("a"), 100);
+      res.on("close", () => clearInterval(iv));
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+    const port = (srv.address() as { port: number }).port;
+    const t = Date.now();
+    await __getOnceForTest(new URL(`http://127.0.0.1:${port}/`), {}, Date.now() + 800).catch(() => null);
+    srv.closeAllConnections();
+    srv.close();
+    expect(Date.now() - t).toBeLessThan(2000);
   });
 });
