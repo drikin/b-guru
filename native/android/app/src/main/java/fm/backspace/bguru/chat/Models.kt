@@ -203,7 +203,9 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
      *  [scriptTab]: 📜 台本タブの入口（"/neta/app/enter?to=script"）。アプリが発行した有料会員のトークンにだけ付く（2026-11-14）。 */
     @Serializable data class NetaFeatures(val enabled: Boolean? = null, val path: String? = null, val site: String? = null, val tab: String? = null,
         // The server sends "scriptTab" (camelCase); ApiJson's snake_case would look for "script_tab" only.
-        @kotlinx.serialization.json.JsonNames("scriptTab") val scriptTab: String? = null)
+        @kotlinx.serialization.json.JsonNames("scriptTab") val scriptTab: String? = null,
+        // GET {urlinfo}?url= → title / description for the send dialog (2026-11-16); all lower case on the wire.
+        val urlinfo: String? = null)
     /** The jukebox (backspace.fm back catalogue), behind a rollout list. */
     @Serializable data class JukeboxFeatures(val enabled: Boolean? = null, val path: String? = null)
     /** The club room (ルーム): 8-bit room view + proximity voice, behind a rollout flag. */
@@ -407,6 +409,8 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val netaEnabled get() = features?.neta?.enabled ?: false
     /** Only paths on our own server (the request carries the token). */
     val netaPath get() = features?.neta?.path?.takeIf { it.startsWith("/api/") } ?: "/api/agent/neta"
+    /** Where to ask for a link's title and description (null: not offered). Our own server only. */
+    val netaUrlInfoPath get() = features?.neta?.urlinfo?.takeIf { it.startsWith("/api/") && ".." !in it }
     /** Only http(s): it is opened in the browser. */
     val netaSite get() = features?.neta?.site?.takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: "https://neta.backspace.fm"
     /** 📝 ネタ帳タブ（DM とプレイヤーの間）の入口。null ならタブを出さない。 */
@@ -419,6 +423,16 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     private fun netaEntrance(p: String?): String? =
         p?.takeIf { it.startsWith("/neta/") && !it.startsWith("//") && !it.contains("..") && !it.contains('\\') }
 }
+
+/** GET /api/agent/neta/urlinfo reply: a link's title and description (empty when they could not be read). */
+@Serializable
+data class NetaUrlInfo(
+    val title: String? = null,
+    val description: String? = null,
+    // The server sends "finalUrl" (camelCase); ApiJson's snake_case would look for "final_url" only.
+    @kotlinx.serialization.json.JsonNames("finalUrl") val finalUrl: String? = null,
+    val note: String? = null,
+)
 
 /** POST /api/agent/neta reply (201 / 409 / 4xx / 5xx all share this shape). */
 @Serializable

@@ -61,4 +61,22 @@ class NetaTabTest {
         assertNull(caps("""{"scriptTab":"/api/agent/me"}""").scriptTab)
         assertNull(ApiJson.decodeFromString<Capabilities>("""{}""").scriptTab)
     }
+
+    @Test fun urlInfoPathFromCapabilities() {
+        fun caps(neta: String) = ApiJson.decodeFromString<Capabilities>("""{"features":{"neta":$neta}}""")
+        assertEquals("/api/agent/neta/urlinfo", caps("""{"enabled":true,"urlinfo":"/api/agent/neta/urlinfo"}""").netaUrlInfoPath)
+        assertNull(caps("""{"enabled":true}""").netaUrlInfoPath)
+        assertNull(caps("""{"urlinfo":"https://evil.example/x"}""").netaUrlInfoPath)
+        assertNull(caps("""{"urlinfo":"/api/../x"}""").netaUrlInfoPath)
+    }
+
+    @Test fun urlInfoReplyDecodes() {
+        val r = ApiJson.decodeFromString<NetaUrlInfo>(
+            """{"apiVersion":"x","url":"https://t.co/a","finalUrl":"https://example.com/","title":"題名","description":"一言","note":"n"}"""
+        )
+        assertEquals("題名", r.title)
+        assertEquals("一言", r.description)
+        assertEquals("https://example.com/", r.finalUrl)
+        assertEquals("n", r.note)
+    }
 }

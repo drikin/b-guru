@@ -972,6 +972,12 @@ final class ChatStore {
         return await api.sendToNeta(path: capabilities?.netaPath ?? "/api/agent/neta", url: url, title: title, description: description)
     }
 
+    /// A link's title and description to fill the send sheet (nil: not offered, or it could not be read).
+    func netaUrlInfo(url: String) async -> NetaUrlInfo? {
+        guard let path = capabilities?.netaUrlInfoPath else { return nil }
+        return await api.netaUrlInfo(path: path, url: url)
+    }
+
     /// Opens a B-guru post's link in the timeline instead of the browser.
     static func openPostLinks(in timeline: TimelineStore) -> OpenURLAction {
         OpenURLAction { url in

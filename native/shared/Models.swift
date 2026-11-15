@@ -192,6 +192,8 @@ struct Capabilities: Decodable, Sendable, Equatable {
         var tab: String?
         /// The 📜 台本 tab's way in (apps only, rightmost tab): "/neta/app/enter?to=script" (NetaTabWeb.script).
         var scriptTab: String?
+        /// GET {urlinfo}?url= → title / description to fill the send sheet (2026-11-16). Absent on older servers.
+        var urlinfo: String?
     }
     /// 🎮 散財ダッシュ (docs/minigame-spec.md). Absent or enabled:false → nothing of it shows.
     struct MinigameFeatures: Decodable, Sendable, Equatable {
@@ -377,6 +379,11 @@ struct Capabilities: Decodable, Sendable, Equatable {
     var netaPath: String {
         if let p = features?.neta?.path, p.hasPrefix("/api/") { return p }
         return "/api/agent/neta"
+    }
+    /// Where to ask for a link's title and description (nil: the server does not offer it).
+    var netaUrlInfoPath: String? {
+        guard let p = features?.neta?.urlinfo, p.hasPrefix("/api/"), !p.contains("..") else { return nil }
+        return p
     }
     /// This token may join (has the "voice" scope — older tokens must sign in again).
     var canJoinVoice: Bool { features?.voice?.join ?? false }
@@ -727,6 +734,14 @@ enum NetaLinks {
         }
         return out
     }
+}
+
+/// GET /api/agent/neta/urlinfo — a link's title and description (empty when they could not be read).
+struct NetaUrlInfo: Decodable, Sendable, Equatable {
+    var title: String?
+    var description: String?
+    var finalUrl: String?
+    var note: String?
 }
 
 enum NetaOutcome: Equatable, Sendable {

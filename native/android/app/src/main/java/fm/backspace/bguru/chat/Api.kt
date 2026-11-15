@@ -424,6 +424,14 @@ class ApiClient(val token: String) : PostOpsApi {
         }
     }
 
+    /** GET {path}?url= — a link's title and description to fill the 「ネタ帳に送る」 dialog
+     *  (lib/neta-urlinfo.ts, 2026-11-16). null on any failure: the dialog just stays as it was. */
+    suspend fun netaUrlInfo(url: String, path: String): NetaUrlInfo? = runCatching {
+        Net.http.newCall(request("GET", path, query = mapOf("url" to url))).await().use { resp ->
+            if (resp.code != 200) null else ApiJson.decodeFromString<NetaUrlInfo>(resp.body.string())
+        }
+    }.getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it else null }
+
     // MARK: timeline
 
     /** `club`: only that club's root posts (部活で絞り込む, 2026-11-09); null = all. */

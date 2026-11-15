@@ -16,6 +16,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -88,6 +89,22 @@ fun NetaDialog(post: Post, candidates: List<String>, onDismiss: () -> Unit) {
     val session = App.session(context)
     val caps = session.store?.capabilities
     val site = caps?.netaSite ?: "https://neta.backspace.fm"
+    // URL から題名と一言を補完（オリジナルのネタ帳の動き、2026-11-16）: 空いている欄だけ埋める。URL を選び直したら聞き直す。
+    var looking by remember { mutableStateOf(false) }
+    var lookNote by remember { mutableStateOf("") }
+    LaunchedEffect(url) {
+        val store = session.store
+        val path = caps?.netaUrlInfoPath
+        if (store == null || store.demo || path == null) return@LaunchedEffect
+        looking = true; lookNote = ""
+        val info = store.api.netaUrlInfo(url, path)
+        looking = false
+        if (info != null) {
+            if (title.isBlank() && !info.title.isNullOrBlank()) title = info.title.take(200)
+            if (description.isBlank() && !info.description.isNullOrBlank()) description = info.description.take(1000)
+            lookNote = info.note.orEmpty()
+        }
+    }
 
     if (sent) {
         AlertDialog(
@@ -132,6 +149,11 @@ fun NetaDialog(post: Post, candidates: List<String>, onDismiss: () -> Unit) {
                                 modifier = Modifier.weight(1f))
                         }
                     }
+                }
+                if (looking) {
+                    Text("題名と一言を読み込んでいます…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else if (lookNote.isNotEmpty()) {
+                    Text(lookNote, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
                 OutlinedTextField(title, { title = it.take(200) }, label = { Text("題名（必須）") },
                     enabled = !sending, modifier = Modifier.fillMaxWidth())

@@ -13,6 +13,9 @@ struct NetaSheet: View {
     @State private var note = ""
     @State private var sending = false
     @State private var outcome: NetaOutcome?
+    /// Filling the title and description from the link (オリジナルのネタ帳の補完、2026-11-16).
+    @State private var looking = false
+    @State private var lookNote = ""
     private let urls: [String]
 
     init(post: Post, store: ChatStore, onClose: @escaping () -> Void) {
@@ -41,6 +44,22 @@ struct NetaSheet: View {
         }
         .padding(20)
         .frame(maxWidth: 420, alignment: .leading)
+        .task(id: url) { await fill(for: url) }
+    }
+
+    /// Asks the server for the link's title and description and fills only the empty fields
+    /// (what the member typed stays). Picking another link asks again.
+    private func fill(for link: String) async {
+        guard !link.isEmpty else { return }
+        looking = true
+        lookNote = ""
+        let info = await store.netaUrlInfo(url: link)
+        guard !Task.isCancelled, link == url else { return }
+        looking = false
+        guard let info else { return }
+        if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let t = info.title, !t.isEmpty { title = String(t.prefix(200)) }
+        if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let d = info.description, !d.isEmpty { note = String(d.prefix(1000)) }
+        lookNote = info.note ?? ""
     }
 
     @ViewBuilder private var form: some View {
@@ -58,6 +77,12 @@ struct NetaSheet: View {
             } else {
                 Text(url).font(.app(.callout)).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
             }
+        }
+        if looking {
+            Label("題名と一言を読み込んでいます…", systemImage: "arrow.down.circle")
+                .font(.app(.caption)).foregroundStyle(.secondary)
+        } else if !lookNote.isEmpty {
+            Text(lookNote).font(.app(.caption)).foregroundStyle(.red)
         }
         VStack(alignment: .leading, spacing: 4) {
             Text("題名").font(.app(.caption)).foregroundStyle(.secondary)

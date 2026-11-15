@@ -133,6 +133,22 @@ final class APIClient: Sendable {
         }
     }
 
+    /// GET {path}?url= — a link's title and description for the send sheet (lib/neta-urlinfo.ts). nil on any failure.
+    func netaUrlInfo(path: String, url: String) async -> NetaUrlInfo? {
+        guard var comps = URLComponents(url: APIClient.baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false) else { return nil }
+        comps.queryItems = [.init(name: "url", value: url)]
+        var req = request("GET", path)
+        req.url = comps.url
+        req.timeoutInterval = 25
+        do {
+            let (data, resp) = try await session.data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            return try JSONDecoder().decode(NetaUrlInfo.self, from: data)
+        } catch {
+            return nil
+        }
+    }
+
     // MARK: ☗ 将棋 (docs/shogi-spec.md: GET = scope read, POST = scope chat)
 
     /// GET {path}/games?status=… — the lobby (ended: the latest 20).
