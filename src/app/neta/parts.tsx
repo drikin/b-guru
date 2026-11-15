@@ -21,7 +21,9 @@ export async function loadNetaViewer(): Promise<{ viewer: ClientViewer; writable
   };
 }
 
-export function NetaHeader({ writable }: { writable: boolean }) {
+export async function NetaHeader({ writable }: { writable: boolean }) {
+  // 切り替えの後、まだログインしていない人に「引っ越したこと」と「参加には無料登録が要ること」を出す（ドリキン 2026-11-15）。
+  const loggedIn = netaLive() ? !!(await getNetaViewer().catch(() => null)) : true;
   return (
     <>
       <header className={s.brand}>
@@ -38,6 +40,19 @@ export function NetaHeader({ writable }: { writable: boolean }) {
         </a>{" "}
         でどうぞ。
       </p>}
+      {netaLive() && !loggedIn ? (
+        <div className={s.notice}>
+          <p style={{ margin: 0, fontWeight: 700 }}>ネタ帳は neta.backspace.fm からここへ引っ越しました</p>
+          <ul style={{ margin: "6px 0 0", paddingLeft: "1.2em" }}>
+            <li>これまでの週のネタと「聞きたい」の数は、そのまま引き継いでいます。</li>
+            <li>読むのは、だれでもログインなしでできます。</li>
+            <li>
+              「聞きたい」・投稿・コメントには、<b>backspace.fm の無料登録</b>が要ります。メールアドレスだけで、お金はかかりません。右上の「ログイン / 無料登録」からどうぞ。
+            </li>
+            <li>すでに backspace.fm に登録している方（BSM の会員の方も）は、同じメールアドレスでログインしてください。</li>
+          </ul>
+        </div>
+      ) : null}
     </>
   );
 }

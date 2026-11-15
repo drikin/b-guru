@@ -10,6 +10,10 @@
 - B-guru の「ネタ帳に送る」（Web・アプリ・AI エージェント）が、neta.backspace.fm ではなく B-guru の中に入る。アプリが開くネタ帳の場所（capabilities の `features.neta.site`）も `https://bsm.backspace.fm/neta` に（アプリの配信は要らない）。
 - 🐶 ビーグルが読むネタ帳も B-guru の中（neta_ 表）に。
 
+## 一度に流すスクリプト（2026-11-15）
+Mac の端末から `scripts/neta-cutover.sh`。段階ごとに y/N を聞く。順番は「スイッチ → 最後の移行 → nginx → 今週を ep681 に → 確かめる」（移行と nginx の間を空けないため、下の手順とは 1 と 2 が逆）。nginx の前後は `docs/neta-cutover/nginx-neta-{before,after}.conf`、書き換えるのは今の設定が before と同じ（md5）ときだけ。
+切り替えの後、まだログインしていない人には /neta の頭に「引っ越したこと・参加には backspace.fm の無料登録（メールだけ）が要ること」を出す（`parts.tsx` の NetaHeader）。
+
 ## 手順（目安 20 分。人の少ない時間に）
 1. **最後の移行**（本番 DB に書く: オーナーに聞いてから）。VPS で、移行元は neta-app の pm2 env の `DATABASE_URL`、移行先は bsm-portal の `.env.production`（値は出さない）。
    - `--dry-run` で件数を見る → 本番。B-guru で作った週があると止まる（それなら管理画面で作ったものを確かめてから）。
