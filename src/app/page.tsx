@@ -286,15 +286,16 @@ function SafeAvatar({
   radius?: string;
   color?: string;
 }) {
-  const [failed, setFailed] = useState(false);
-  const showImg = !!src && !failed;
+  // 失敗を src ごとに覚える（アイコンを上げ直したら新しい URL でもう一度読む）
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const showImg = !!src && failedSrc !== src;
   return (
     <Avatar
       src={showImg ? sizedAvatarSrc(src, size) : undefined}
       radius={radius}
       color={color}
       size={size}
-      onError={() => setFailed(true)}
+      onError={() => setFailedSrc(src ?? null)}
     >
       {initial
         .charAt(0)
@@ -2989,11 +2990,20 @@ function BannerCropper({
   onApply,
   onCancel,
   uploading,
+  aspect = BANNER_ASPECT,
+  outW = BANNER_OUT_W,
+  round = false,
 }: {
   src: string;
   onApply: (blob: Blob) => void;
   onCancel: () => void;
   uploading: boolean;
+  /** 幅:高さ（アイコンは 1）。 */
+  aspect?: number;
+  /** 書き出す幅（px）。 */
+  outW?: number;
+  /** 丸く見せる（アイコン）。書き出しは正方形のまま。 */
+  round?: boolean;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -3003,7 +3013,7 @@ function BannerCropper({
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const dragRef = useRef<{ px: number; py: number; pan: { x: number; y: number } } | null>(null);
 
-  const ch = Math.round(cw / BANNER_ASPECT);
+  const ch = Math.round(cw / aspect);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -3055,9 +3065,9 @@ function BannerCropper({
   const apply = () => {
     const el = imgRef.current;
     if (!img || !cw || !el) return;
-    const outH = Math.round(BANNER_OUT_W / BANNER_ASPECT);
+    const outH = Math.round(outW / aspect);
     const canvas = document.createElement("canvas");
-    canvas.width = BANNER_OUT_W;
+    canvas.width = outW;
     canvas.height = outH;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -3068,7 +3078,7 @@ function BannerCropper({
     const sy = -oy / s;
     const sw = cw / s;
     const sh = ch / s;
-    ctx.drawImage(el, sx, sy, sw, sh, 0, 0, BANNER_OUT_W, outH);
+    ctx.drawImage(el, sx, sy, sw, sh, 0, 0, outW, outH);
     canvas.toBlob(
       (b) => {
         if (b) onApply(b);
@@ -3083,14 +3093,15 @@ function BannerCropper({
       <Box
         ref={wrapRef}
         style={{
-          width: "100%",
-          aspectRatio: `${BANNER_ASPECT}/1`,
+          width: round ? "min(100%, 320px)" : "100%",
+          margin: round ? "0 auto" : undefined,
+          aspectRatio: `${aspect}/1`,
           overflow: "hidden",
           position: "relative",
           cursor: "grab",
           touchAction: "none",
           background: "#e8ecef",
-          borderRadius: 8,
+          borderRadius: round ? "50%" : 8,
         }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -5310,6 +5321,11 @@ export default function Home() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileUploading, setProfileUploading] = useState(false);
   const profileHeaderRef = useRef<HTMLInputElement>(null);
+  // 自分で上げるアイコン（/api/profile/avatar）。null = まだ聞いていない
+  const profileAvatarRef = useRef<HTMLInputElement>(null);
+  const [avatarCustom, setAvatarCustom] = useState<boolean | null>(null);
+  const [avatarCrop, setAvatarCrop] = useState<{ url: string } | null>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
   // Header-image banner crop editor (drag-to-pan + zoom, then crop+resize)
   const [cropModalOpen, setCropModalOpen] = useState(false);
   const [cropSource, setCropSource] = useState<{ url: string; file: File } | null>(null);
@@ -8712,7 +8728,73 @@ export default function Home() {
       : [{ label: "", href: "" }];
     setProfileLinks(links);
     setEditingProfile(true);
+    if (profileData.isSelf) {
+      setAvatarCustom(null);
+      fetch("/api/profile/avatar", { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => setAvatarCustom(d ? !!d.custom : false))
+        .catch(() => setAvatarCustom(false));
+    }
   }, [profileData]);
+
+  // ---- 自分のアイコン: 選ぶ → 丸く切り抜く → 上げる ----
+  const onProfileAvatarPick = useCallback((files: FileList | null) => {
+    if (!files || !files[0]) return;
+    setAvatarCrop({ url: URL.createObjectURL(files[0]) });
+    setActionError(null);
+  }, []);
+  const closeAvatarCrop = useCallback(() => {
+    setAvatarCrop((c) => {
+      if (c) URL.revokeObjectURL(c.url);
+      return null;
+    });
+  }, []);
+  const applyAvatarUrl = useCallback((avatar: string) => {
+    setProfileData((p) => (p ? { ...p, avatar } : p));
+    setAuth((a) => (a ? { ...a, avatar } : a));
+  }, []);
+  const onAvatarApply = useCallback(
+    (blob: Blob) => {
+      setAvatarUploading(true);
+      (async () => {
+        try {
+          const fd = new FormData();
+          fd.append("image", new File([blob], "avatar.jpg", { type: "image/jpeg" }));
+          const res = await fetch("/api/profile/avatar", { method: "POST", body: fd });
+          const d = await res.json().catch(() => ({}));
+          if (!res.ok || !d.avatar) {
+            setActionError(d.error || "アイコンを保存できませんでした");
+            return;
+          }
+          applyAvatarUrl(d.avatar);
+          setAvatarCustom(true);
+          closeAvatarCrop();
+        } catch {
+          setActionError("アイコンを保存できませんでした");
+        } finally {
+          setAvatarUploading(false);
+        }
+      })();
+    },
+    [applyAvatarUrl, closeAvatarCrop]
+  );
+  const resetAvatar = useCallback(async () => {
+    setAvatarUploading(true);
+    try {
+      const res = await fetch("/api/profile/avatar", { method: "DELETE" });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.avatar) {
+        setActionError(d.error || "戻せませんでした");
+        return;
+      }
+      applyAvatarUrl(d.avatar);
+      setAvatarCustom(false);
+    } catch {
+      setActionError("戻せませんでした");
+    } finally {
+      setAvatarUploading(false);
+    }
+  }, [applyAvatarUrl]);
 
   // Open the header-image crop editor (drag-to-pan + zoom, then crop+resize to
   // the banner aspect). The file itself is NOT uploaded until the user applies
@@ -14500,6 +14582,50 @@ export default function Home() {
             minRows={3}
             placeholder="自己紹介（Markdown 可）"
           />
+          {profileData?.isSelf ? (
+            <Box>
+              <Text size="xs" c="dimmed" mb={4}>
+                アイコン
+              </Text>
+              <Group gap="sm" wrap="nowrap">
+                <SafeAvatar src={profileData.avatar} initial={profileData.name || "?"} size="lg" />
+                <Stack gap={4} style={{ minWidth: 0 }}>
+                  <Group gap="xs">
+                    <Button
+                      size="xs"
+                      variant="light"
+                      color="gray"
+                      loading={avatarUploading}
+                      disabled={avatarUploading}
+                      onClick={() => profileAvatarRef.current?.click()}
+                    >
+                      画像をアップロード
+                    </Button>
+                    {avatarCustom ? (
+                      <Button size="xs" variant="subtle" color="red" disabled={avatarUploading} onClick={resetAvatar}>
+                        Gravatar に戻す
+                      </Button>
+                    ) : null}
+                  </Group>
+                  <Text size="xs" c="dimmed">
+                    {avatarCustom
+                      ? "アップロードした画像を使っています。保存を押さなくてもすぐ変わります。"
+                      : "今は Gravatar の画像です。画像を選ぶと B-guru だけのアイコンにできます。"}
+                  </Text>
+                </Stack>
+              </Group>
+              <input
+                ref={profileAvatarRef}
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  onProfileAvatarPick(e.currentTarget.files);
+                  e.currentTarget.value = "";
+                }}
+              />
+            </Box>
+          ) : null}
           <Box>
             <Text size="xs" c="dimmed" mb={4}>
               ヘッダー画像
@@ -14651,6 +14777,30 @@ export default function Home() {
                 return null;
               });
             }}
+          />
+        ) : null}
+      </Modal>
+
+      {/* アイコンの切り抜き */}
+      <Modal
+        opened={!!avatarCrop}
+        onClose={() => {
+          if (!avatarUploading) closeAvatarCrop();
+        }}
+        centered={!kbOpen}
+        withCloseButton
+        title="アイコンを切り抜く"
+        size="md"
+      >
+        {avatarCrop ? (
+          <BannerCropper
+            src={avatarCrop.url}
+            aspect={1}
+            outW={1024}
+            round
+            uploading={avatarUploading}
+            onApply={onAvatarApply}
+            onCancel={closeAvatarCrop}
           />
         ) : null}
       </Modal>

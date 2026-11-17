@@ -1,5 +1,6 @@
 /* Feed posts library: DB CRUD + image + URL preview helpers */
 import crypto from "crypto";
+import { avatarPathForMd5 } from "./custom-avatar";
 import { pool } from "./db";
 import { noMutedWordSql } from "./muted-words";
 import { fetchUrlPreview, UrlPreview } from "./urlpreview";
@@ -669,7 +670,8 @@ export function gravatarUrl(email: string): string {
     .createHash("md5")
     .update((email || "").trim().toLowerCase())
     .digest("hex");
-  return `/api/avatar/${md5}`;
+  // 自分で上げたアイコンがあれば ?v=版 が付く（lib/custom-avatar.ts）。
+  return avatarPathForMd5(md5);
 }
 
 /* 「いいね」（POST /api/posts/[id]/like・toggleLike）は廃止（2026-10-22 オーナー決定）。

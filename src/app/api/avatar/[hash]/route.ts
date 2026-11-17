@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import { mkdir, readFile, writeFile, stat } from "fs/promises";
 import path from "path";
 import { DEFAULT_AVATAR_SIZE, pickAvatarSize } from "@/lib/avatar-size";
+import { readCustomAvatar } from "@/lib/custom-avatar";
 
 // GET /api/avatar/[hash] — proxy + disk-cache Gravatar images.
 //
@@ -60,6 +61,23 @@ export async function GET(
   }
 
   const size = pickAvatarSize(req.nextUrl.searchParams.get("s"));
+
+  // ---- 自分で上げたアイコン（lib/custom-avatar.ts）が先 ----
+  // ?v=版 付きの URL は版ごとに中身が変わらないので immutable。版なしの URL（古いキャッシュの一覧など）
+  // にも上げた画像を返すが、変えたり消したりしたら早く戻るよう短く。
+  const custom = await readCustomAvatar(key, size);
+  if (custom) {
+    const versioned = !!req.nextUrl.searchParams.get("v");
+    return new NextResponse(new Uint8Array(custom), {
+      status: 200,
+      headers: {
+        "Content-Type": "image/jpeg",
+        "X-Content-Type-Options": "nosniff",
+        "Cache-Control": versioned ? "public, max-age=31536000, immutable" : "public, max-age=300",
+        "X-Avatar-Source": "custom",
+      },
+    });
+  }
   // 250 keeps the original file names so the existing disk cache stays valid.
   const base = size === DEFAULT_AVATAR_SIZE ? key : `${key}-${size}`;
   const cachePath = path.join(CACHE_DIR, `${base}.img`);

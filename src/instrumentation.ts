@@ -25,6 +25,9 @@ export async function register() {
       // 🐶 ビーグルのリマインド: 止まっていた間に過ぎた予定も含めて鳴らす（20 秒ごと）。
       const { ensureReminderSweeper } = await import("@/lib/beagle-reminders");
       ensureReminderSweeper();
+      // 自分で上げたアイコンの版の一覧（/api/avatar/<md5>?v=）をメモリに。
+      const { ensureCustomAvatars } = await import("@/lib/custom-avatar");
+      ensureCustomAvatars();
     } catch (e) {
       console.error("[bsm] initSchema failed:", e);
     }

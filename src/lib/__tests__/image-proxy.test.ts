@@ -22,7 +22,8 @@ describe("gravatarUrl returns a same-origin proxy path", () => {
     const fn = src.slice(src.indexOf("export function gravatarUrl"));
     const body = fn.slice(0, fn.indexOf("\n}"));
     expect(body).not.toContain("gravatar.com");
-    expect(body).toContain("/api/avatar/");
+    // 同じオリジンの /api/avatar/<md5>（自分で上げたアイコンなら ?v= 付き）を avatarPathForMd5 が作る
+    expect(body).toContain("avatarPathForMd5(md5)");
   });
 
   it("still short-circuits the system poster to the app icon", () => {
@@ -111,7 +112,8 @@ describe("no API route leaks a raw gravatar.com URL to the client", () => {
       // assign a raw avatar_image straight into the response.
       expect(src).not.toMatch(/avatar:\s*m\.avatar_image\s*\|\|\s*null/);
       expect(src).not.toMatch(/avatar\s*=\s*member\.avatar_image\s*\|\|\s*null/);
-      expect(src).toContain("/api/avatar/");
+      // /api/avatar/<md5> は avatarPathForMd5（lib/custom-avatar.ts）が作る
+      expect(src).toMatch(/avatarPathForMd5\(|\/api\/avatar\//);
     });
   }
 });

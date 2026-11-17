@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSessionEmail } from "@/lib/session";
+import { avatarPathForMd5 } from "@/lib/custom-avatar";
 import { getProfile } from "@/lib/profile";
 import { findMemberByEmail } from "@/lib/ghost";
 import { gravatarUrl } from "@/lib/posts";
@@ -21,7 +22,7 @@ export const dynamic = "force-dynamic";
 function toProxiedAvatar(avatar: string | null | undefined): string | null {
   if (!avatar) return null;
   const m = avatar.match(/gravatar\.com\/avatar\/([a-f0-9]{32})/i);
-  if (m) return `/api/avatar/${m[1].toLowerCase()}`;
+  if (m) return avatarPathForMd5(m[1].toLowerCase());
   return avatar;
 }
 

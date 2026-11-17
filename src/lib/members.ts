@@ -3,6 +3,7 @@
  * Opaque user ids only: this list goes to every signed-in member, so it must
  * never carry email addresses. Cached in-process for 60 s (Ghost API). */
 import { cleanDisplayName } from "./display-name";
+import { avatarPathForMd5 } from "./custom-avatar";
 import { listMembers } from "./ghost";
 import { gravatarUrl } from "./posts";
 import { resolveDisplayNames } from "./display-name";
@@ -25,7 +26,7 @@ const CACHE_TTL = 60_000;
 export function toProxiedAvatar(avatar: string | null | undefined): string | null {
   if (!avatar) return null;
   const m = avatar.match(/gravatar\.com\/avatar\/([a-f0-9]{32})/i);
-  if (m) return `/api/avatar/${m[1].toLowerCase()}`;
+  if (m) return avatarPathForMd5(m[1].toLowerCase());
   return avatar;
 }
 

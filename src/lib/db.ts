@@ -405,7 +405,7 @@ export async function initSchema() {
 
     -- User profiles (profile timeline). Keyed by posts.author_email.
     -- display_name/bio/header_image are optional; fallback name = latest
-    -- posts.author_name, avatar = Gravatar (no custom avatar field).
+    -- posts.author_name, avatar = Gravatar（自分で上げたアイコンは下の user_avatars）.
     CREATE TABLE IF NOT EXISTS user_profiles (
       email TEXT PRIMARY KEY,
       display_name TEXT,
@@ -415,6 +415,15 @@ export async function initSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     CREATE INDEX IF NOT EXISTS idx_user_profiles_updated ON user_profiles(updated_at DESC);
+
+    -- 自分で上げたアイコン（lib/custom-avatar.ts、2026-11-16）。md5 はメールの md5（Gravatar と同じ鍵）で、
+    -- /api/avatar/<md5> がこれを先に返す。画像は data/avatars/<md5>-<px>.jpg、version は URL の ?v=。
+    CREATE TABLE IF NOT EXISTS user_avatars (
+      md5 TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      version BIGINT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
 
     -- Per-user club visibility (drikin 2026-10-02): eye toggle in the left
     -- sidebar hides a club's content from the timeline for THIS user only.

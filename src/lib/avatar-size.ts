@@ -23,6 +23,8 @@ export type AvatarSize = keyof typeof AVATAR_PX;
 
 /** Add `?s=` to same-origin Gravatar proxy URLs; anything else is untouched. */
 export function sizedAvatarSrc(src: string, size: AvatarSize): string {
+  // 自分で上げたアイコンは ?v=版 付き（lib/custom-avatar.ts）。
+  if (/^\/api\/avatar\/[a-f0-9]{32}\?v=\d+$/.test(src)) return `${src}&s=${AVATAR_PX[size]}`;
   if (!/^\/api\/avatar\/[a-f0-9]{32}$/.test(src)) return src;
   return `${src}?s=${AVATAR_PX[size]}`;
 }

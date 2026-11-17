@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
+import { avatarPathForMd5 } from "@/lib/custom-avatar";
 import { findMemberByEmail, isPaidMember } from "@/lib/ghost";
 import { gravatarUrl } from "@/lib/posts";
 import { clientIp } from "@/lib/client-ip";
@@ -106,7 +107,7 @@ export async function GET(req: NextRequest) {
     const rawAvatar =
       member.avatar_image && member.avatar_image.trim() ? member.avatar_image.trim() : null;
     const gm = rawAvatar?.match(/gravatar\.com\/avatar\/([a-f0-9]{32})/i);
-    const avatar = gm ? `/api/avatar/${gm[1].toLowerCase()}` : rawAvatar || gravatarUrl(email);
+    const avatar = gm ? avatarPathForMd5(gm[1].toLowerCase()) : rawAvatar || gravatarUrl(email);
     return NextResponse.json({ isPaidMember: true, name, avatar }, { headers: NO_CACHE });
   } catch (e: any) {
     console.error("bsm/member-check:", e?.message);
