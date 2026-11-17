@@ -5,6 +5,7 @@ import { NextRequest } from "next/server";
 import { withAgent } from "@/lib/agent-auth";
 import { getProfile } from "@/lib/profile";
 import { userIdToEmail } from "@/lib/user";
+import { emailMd5, hasCustomAvatar } from "@/lib/custom-avatar";
 import { NO_CACHE } from "../../_lib";
 
 export const dynamic = "force-dynamic";
@@ -18,13 +19,16 @@ export async function GET(req: NextRequest, { params }: Ctx) {
     const email = /^[A-Za-z0-9_-]{4,64}$/.test(id) ? await userIdToEmail(id) : null;
     const p = email ? await getProfile(email) : null;
     if (!email || !p) return { status: 404, body: { error: "ユーザーが見つかりません", code: "not_found" }, headers: NO_CACHE };
+    const isSelf = ctx.userId === (p.userId ?? id);
     return {
       status: 200,
       body: {
         apiVersion: 1,
         profile: {
           user_id: p.userId ?? id,
-          is_self: ctx.userId === (p.userId ?? id),
+          is_self: isSelf,
+          // 本人にだけ: アイコンが自分で上げたものか（POST/DELETE /api/agent/profile/avatar）。無ければ古いサーバ。
+          ...(isSelf ? { avatar_custom: hasCustomAvatar(emailMd5(email)) } : {}),
           name: p.name,
           avatar: p.avatar,
           bio: p.bio,

@@ -781,9 +781,12 @@ struct GDMGroupPhoto: View {
 
 /// 「写真を設定」: iPhone / iPad — the photo library (PhotosPicker); Mac — a file (NSOpenPanel: JPEG・PNG・HEIC・WebP).
 /// Hands back the picked image's bytes as they are (the store shrinks them).
-private struct GDMPhotoPickButton: View {
+struct GDMPhotoPickButton: View {
     let title: String
     let disabled: Bool
+    /// What it sets, for VoiceOver and the Mac panel (「グループの」写真 / 「自分の」アイコン).
+    var owner: String = "グループの"
+    var panelTitle: String = "グループの写真"
     let onPicked: (Data) -> Void
     let onUnreadable: () -> Void
     #if os(iOS)
@@ -797,7 +800,7 @@ private struct GDMPhotoPickButton: View {
         }
         .buttonStyle(.borderless)
         .disabled(disabled)
-        .accessibilityLabel("グループの\(title)")
+        .accessibilityLabel("\(owner)\(title)")
         .onChange(of: pick) { _, item in
             guard let item else { return }
             pick = nil
@@ -808,7 +811,7 @@ private struct GDMPhotoPickButton: View {
         #else
         Button {
             Task {
-                guard let url = await Self.choose() else { return }
+                guard let url = await Self.choose(title: panelTitle) else { return }
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                 if let data = try? Data(contentsOf: url), !data.isEmpty { onPicked(data) } else { onUnreadable() }
@@ -818,7 +821,7 @@ private struct GDMPhotoPickButton: View {
         }
         .buttonStyle(.borderless)
         .disabled(disabled)
-        .accessibilityLabel("グループの\(title)")
+        .accessibilityLabel("\(owner)\(title)")
         #endif
     }
 
@@ -833,9 +836,9 @@ private struct GDMPhotoPickButton: View {
         return nil
     }
     #else
-    private static func choose() async -> URL? {
+    private static func choose(title: String) async -> URL? {
         let panel = NSOpenPanel()
-        panel.title = "グループの写真"
+        panel.title = title
         panel.prompt = "選ぶ"
         panel.canChooseFiles = true
         panel.canChooseDirectories = false

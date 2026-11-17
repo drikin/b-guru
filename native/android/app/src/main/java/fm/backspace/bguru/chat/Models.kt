@@ -623,6 +623,8 @@ data class PostPoll(
 @Serializable data class MemberProfile(
     val userId: String,
     val isSelf: Boolean = false,
+    /** Only on my own profile: whether my icon is one I uploaded (null = an older server without icon upload). */
+    val avatarCustom: Boolean? = null,
     val name: String = "",
     val avatar: String? = null,
     val bio: String? = null,
@@ -633,6 +635,7 @@ data class PostPoll(
 )
 @Serializable data class ProfileLink(val label: String = "", val href: String = "")
 @Serializable data class MemberProfileResponse(val profile: MemberProfile)
+@Serializable data class MyAvatarResponse(val avatar: String, val custom: Boolean = false)
 @Serializable data class PostListResponse(val posts: List<Post> = emptyList(), val nextCursor: String? = null)
 @Serializable data class ThreadResponse(val post: Post, val replies: List<Post> = emptyList())
 @Serializable data class PublishResponse(val post: Post)

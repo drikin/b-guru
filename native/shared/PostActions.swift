@@ -109,6 +109,29 @@ extension APIClient {
         return r.profile
     }
 
+    /// 👤 My icon: one JPEG (already shrunk on the device) as multipart `image` → the new avatar path.
+    func setMyAvatar(jpeg: Data) async throws -> String {
+        struct R: Decodable { var avatar: String }
+        let boundary = "bguru-\(UUID().uuidString)"
+        var req = request("POST", "/api/agent/profile/avatar")
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        var body = Data()
+        body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"image\"; filename=\"avatar.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n".utf8))
+        body.append(jpeg)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        req.httpBody = body
+        req.timeoutInterval = 120
+        let r: R = try await send(req)
+        return r.avatar
+    }
+
+    /// 👤 Back to Gravatar → the avatar path after.
+    func removeMyAvatar() async throws -> String {
+        struct R: Decodable { var avatar: String }
+        let r: R = try await send(request("DELETE", "/api/agent/profile/avatar"))
+        return r.avatar
+    }
+
     /// 👤 That member's posts (their root posts, newest activity first), as the timeline shows them.
     func posts(byAuthor userId: String, cursor: String? = nil) async throws -> PostListResponse {
         var q: [URLQueryItem] = [.init(name: "author_user_id", value: userId), .init(name: "limit", value: "30"),

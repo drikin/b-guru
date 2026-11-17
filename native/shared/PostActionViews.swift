@@ -884,6 +884,8 @@ struct ProfileDialog: View {
     @State private var failed = false
     @State private var cursor: String?
     @State private var viewing: ImageViewerItem?
+    @State private var avatarBusy = false
+    @State private var avatarError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -944,6 +946,7 @@ struct ProfileDialog: View {
                     if let line = summary { Text(line).font(.app(.caption)).foregroundStyle(.secondary) }
                 }
             }
+            if profile?.isSelf == true, let custom = profile?.avatarCustom { avatarControls(custom: custom) }
             if let bio = profile?.bio, !bio.isEmpty {
                 Text(bio).font(.app(.callout)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
@@ -961,6 +964,63 @@ struct ProfileDialog: View {
             }
         }
         .padding(14)
+    }
+
+    /// 自分のプロフィールだけ: 「アイコンを変える」（写真から。サーバが真ん中を正方形に切る）と「Gravatar に戻す」。
+    @ViewBuilder private func avatarControls(custom: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 14) {
+                GDMPhotoPickButton(title: "アイコンを変える", disabled: avatarBusy, owner: "自分の", panelTitle: "アイコンにする画像") { data in
+                    Task { await setAvatar(data) }
+                } onUnreadable: {
+                    avatarError = "画像を読み込めませんでした（別の写真で試してください）"
+                }
+                if custom {
+                    Button(role: .destructive) { Task { await resetAvatar() } } label: {
+                        Label("Gravatar に戻す", systemImage: "arrow.uturn.backward").font(.app(.callout))
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.red)
+                    .disabled(avatarBusy)
+                }
+                if avatarBusy { ProgressView().controlSize(.small) }
+            }
+            Text(avatarError ?? (custom ? "アップロードした画像を使っています。" : "今は Gravatar の画像です。写真の真ん中を丸く切り抜いて使います。"))
+                .font(.app(.caption))
+                .foregroundStyle(avatarError == nil ? Color.secondary : Color.red)
+        }
+    }
+
+    private func setAvatar(_ original: Data) async {
+        guard !avatarBusy else { return }
+        avatarBusy = true
+        avatarError = nil
+        defer { avatarBusy = false }
+        let jpeg = await Task.detached(priority: .userInitiated) {
+            PostDraft.uploadJPEG(original, maxSide: 1024, quality: 0.88)
+        }.value
+        guard let jpeg else { avatarError = "この画像は使えません（画像として読めませんでした）"; return }
+        do {
+            let path = try await timeline.api.setMyAvatar(jpeg: jpeg)
+            profile?.avatar = path
+            profile?.avatarCustom = true
+        } catch {
+            if case let .http(_, _, message)? = error as? APIError, let message { avatarError = message } else { avatarError = "アイコンを変えられませんでした" }
+        }
+    }
+
+    private func resetAvatar() async {
+        guard !avatarBusy else { return }
+        avatarBusy = true
+        avatarError = nil
+        defer { avatarBusy = false }
+        do {
+            let path = try await timeline.api.removeMyAvatar()
+            profile?.avatar = path
+            profile?.avatarCustom = false
+        } catch {
+            if case let .http(_, _, message)? = error as? APIError, let message { avatarError = message } else { avatarError = "戻せませんでした" }
+        }
     }
 
     /// 「投稿 12 件・2024年3月から」.

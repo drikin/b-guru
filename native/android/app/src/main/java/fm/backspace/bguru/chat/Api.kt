@@ -391,6 +391,16 @@ class ApiClient(val token: String) : PostOpsApi {
         val req = Request.Builder().url(Net.BASE + "$base/$groupId/photo").header("Authorization", "Bearer $token").post(form).build()
         return decode<GDMGroupResponse>(send(req)).group
     }
+    /** 👤 My icon: one JPEG (shrunk on the device) as multipart `image` → the new avatar path. */
+    suspend fun setMyAvatar(jpeg: ByteArray): MyAvatarResponse {
+        val form = MultipartBody.Builder().setType(MultipartBody.FORM)
+            .addFormDataPart("image", "avatar.jpg", jpeg.toRequestBody("image/jpeg".toMediaType()))
+            .build()
+        val req = Request.Builder().url(Net.BASE + "/api/agent/profile/avatar").header("Authorization", "Bearer $token").post(form).build()
+        return decode(send(req))
+    }
+    /** 👤 Back to Gravatar. */
+    suspend fun removeMyAvatar(): MyAvatarResponse = decode(send(request("DELETE", "/api/agent/profile/avatar")))
     suspend fun gdmRemovePhoto(groupId: Long, base: String = "/api/agent/gdm"): GDMGroup =
         decode<GDMGroupResponse>(send(request("DELETE", "$base/$groupId/photo"))).group
     /** One message (for a notification): the message and its group. */

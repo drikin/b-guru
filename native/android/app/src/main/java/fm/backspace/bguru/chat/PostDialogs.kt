@@ -539,6 +539,31 @@ private fun ProfileSheet(timeline: TimelineStore, req: PostDialog.Profile, onOpe
     var posts by remember(req.userId) { mutableStateOf<kotlin.collections.List<Post>?>(null) }
     var cursor by remember(req.userId) { mutableStateOf<String?>(null) }
     var failed by remember(req.userId) { mutableStateOf(false) }
+    // 自分のアイコン（写真から。サーバが真ん中を正方形に切る）
+    val scope = rememberCoroutineScope()
+    var avatarBusy by remember { mutableStateOf(false) }
+    var avatarError by remember { mutableStateOf<String?>(null) }
+    fun avatarFailed(e: Exception, fallback: String) {
+        avatarError = (e as? ApiError.Http)?.serverMessage ?: fallback
+    }
+    val pickAvatar = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        avatarBusy = true
+        avatarError = null
+        scope.launch {
+            try {
+                val jpeg = ChatAttachments.jpeg(context, uri, 1024, 88)
+                val r = timeline.api.setMyAvatar(jpeg)
+                profile = profile?.copy(avatar = r.avatar, avatarCustom = true)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                avatarFailed(e, "アイコンを変えられませんでした")
+            } finally {
+                avatarBusy = false
+            }
+        }
+    }
     LaunchedEffect(req.userId) {
         val p = runCatching { timeline.api.profile(req.userId) }.getOrNull()
         val r = runCatching { timeline.api.postsBy(req.userId) }.getOrNull()
@@ -562,6 +587,33 @@ private fun ProfileSheet(timeline: TimelineStore, req: PostDialog.Profile, onOpe
                             Text(name, style = MaterialTheme.typography.titleLarge)
                             profileSummary(profile)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         }
+                    }
+                    val custom = profile?.avatarCustom
+                    if (profile?.isSelf == true && custom != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { pickAvatar.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                                enabled = !avatarBusy) { Text("アイコンを変える") }
+                            if (custom) TextButton(onClick = {
+                                avatarBusy = true
+                                avatarError = null
+                                scope.launch {
+                                    try {
+                                        val r = timeline.api.removeMyAvatar()
+                                        profile = profile?.copy(avatar = r.avatar, avatarCustom = false)
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        avatarFailed(e, "戻せませんでした")
+                                    } finally {
+                                        avatarBusy = false
+                                    }
+                                }
+                            }, enabled = !avatarBusy) { Text("Gravatar に戻す", color = MaterialTheme.colorScheme.error) }
+                            if (avatarBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        }
+                        Text(avatarError ?: if (custom) "アップロードした画像を使っています。" else "今は Gravatar の画像です。写真の真ん中を丸く切り抜いて使います。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (avatarError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     profile?.bio?.takeIf { it.isNotEmpty() }?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                     profile?.links?.filter { it.href.startsWith("https://") || it.href.startsWith("http://") }?.forEach { l ->

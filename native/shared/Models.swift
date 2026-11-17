@@ -437,6 +437,8 @@ struct MemberProfile: Decodable, Equatable, Sendable {
     struct Link: Decodable, Equatable, Sendable, Hashable { var label: String; var href: String }
     var userId: String
     var isSelf: Bool?
+    /// Only on my own profile: whether my icon is one I uploaded (nil = an older server without icon upload).
+    var avatarCustom: Bool?
     var name: String
     var avatar: String?
     var bio: String?
