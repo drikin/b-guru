@@ -12,7 +12,7 @@ import { emailToUserId } from "./user";
 import { resolveDisplayNames } from "./display-name";
 import { featureEnabledFor } from "./feature-flag";
 import { mapChatRow } from "./chat";
-import { sakuraChat, SAKURA_MODEL } from "./sakura";
+import { sakuraChat, BEAGLE_MODEL } from "./sakura";
 import { BEAGLE_NAME, stripBeagleCall } from "./beagle-ondevice";
 import { isActiveMember, sendSystemDm } from "./dm";
 import { pushChatMessage } from "./push-notify";
@@ -142,7 +142,7 @@ async function readWithAi(body: string, now: Date): Promise<unknown> {
   const wd = ["日", "月", "火", "水", "木", "金", "土"][j.wd];
   const nowText = `${j.y}-${String(j.mo).padStart(2, "0")}-${String(j.d).padStart(2, "0")}T${String(j.h).padStart(2, "0")}:${String(j.mi).padStart(2, "0")}（${wd}曜）`;
   const r = await sakuraChat({
-    model: SAKURA_MODEL,
+    model: BEAGLE_MODEL,
     messages: [
       { role: "system", content: AI_PROMPT },
       { role: "user", content: `今（日本時間）: ${nowText}\n依頼: ${stripBeagleCall(body).trim().slice(0, 300)}` },

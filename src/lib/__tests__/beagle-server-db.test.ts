@@ -11,6 +11,7 @@ const calls: { messages: { role: string; content: string }[] }[] = [];
 const judge = { calls: 0, answer: '{"to_beagle": true}' };
 vi.mock("../sakura", () => ({
   SAKURA_MODEL: "gpt-oss-120b",
+  BEAGLE_MODEL: "gpt-oss-120b",
   sakuraChat: vi.fn(async (opts: { messages: { role: string; content: string }[] }) => {
     if (opts.messages[0].content.includes("to_beagle")) {
       judge.calls++;

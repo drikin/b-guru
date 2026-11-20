@@ -42,6 +42,7 @@ const asks: { system: string; user: string }[] = [];
 let nextAnswer = "まとめだわん";
 vi.mock("../sakura", () => ({
   SAKURA_MODEL: "test-model",
+  BEAGLE_MODEL: "test-model",
   sakuraChat: async (o: { messages: { role: string; content: string }[] }) => {
     asks.push({ system: o.messages[0].content, user: o.messages[1].content });
     return { content: nextAnswer, model: "test-model" };

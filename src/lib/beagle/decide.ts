@@ -1,5 +1,5 @@
 /* ビーグルエージェント: 意思決定（LLM に JSON アクションプランを出力させる） */
-import { sakuraChat, SAKURA_MODEL } from "../sakura";
+import { sakuraChat, BEAGLE_MODEL } from "../sakura";
 import type { BeagleDecision, BeagleNewsItem, BeagleTimelineSignal } from "./types";
 
 function nowJstLabel(now: Date): string {
@@ -113,7 +113,7 @@ export async function decide(opts: {
 
   const attempt = async () => {
     const res = await sakuraChat({
-      model: SAKURA_MODEL,
+      model: BEAGLE_MODEL,
       messages,
       temperature: 0.8,
       max_tokens: 2000,

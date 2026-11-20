@@ -7,6 +7,11 @@
 export const SAKURA_BASE =
   process.env.SAKURA_AI_BASE_URL || "https://api.ai.sakura.ad.jp/v1";
 export const SAKURA_MODEL = process.env.SAKURA_AI_MODEL || "gpt-oss-120b";
+/** 🐶 ビーグル（チャットの答え・判定・自分から動く判断・リマインド・グループ・将棋の実況）だけのモデル。
+ *  2026-11-19 オーナーの依頼で DeepSeek-V4.1-Flash に。校正などほかの機能は SAKURA_MODEL のまま。
+ *  さくらでは preview なので、失敗したらその 1 回だけ SAKURA_MODEL でやり直す（sakuraChat の中）。 */
+export const BEAGLE_MODEL =
+  process.env.SAKURA_BEAGLE_MODEL || "preview/DeepSeek-V4.1-Flash-1017";
 export const SAKURA_REASONING_MODEL =
   process.env.SAKURA_AI_REASONING_MODEL || "preview/Qwen3.6-35B-A3B";
 
@@ -16,6 +21,9 @@ export const ALLOWED_MODELS = new Set([
   "preview/Qwen3.6-35B-A3B",
   "preview/Kimi-K2.6",
   "preview/gemma-4-31B-it",
+  "preview/DeepSeek-V4.1-Flash-1017",
+  "preview/GLM-5.3-Flash",
+  BEAGLE_MODEL,
 ]);
 
 export interface ChatTurn {
@@ -35,7 +43,7 @@ export interface SakuraResult {
  * or disallowed it falls back to the default fast model. Throws on missing key
  * / network / non-200 so the caller can 5xx.
  */
-export async function sakuraChat(opts: {
+async function sakuraChatOnce(opts: {
   model?: string;
   messages: ChatTurn[];
   temperature?: number;
@@ -79,4 +87,21 @@ export async function sakuraChat(opts: {
     throw new Error("さくらのAI Engine が空の応答を返しました");
   }
   return { content, reasoning: msg?.reasoning, model, usage: data?.usage };
+}
+
+type SakuraChatOpts = Parameters<typeof sakuraChatOnce>[0];
+
+/**
+ * さくらの AI Engine を呼ぶ。ビーグルのモデル（preview）が失敗したら、打ち切り以外はその 1 回だけ
+ * 既定のモデル（SAKURA_MODEL）でやり直す（preview が落ちてもビーグルが黙らない）。
+ */
+export async function sakuraChat(opts: SakuraChatOpts): Promise<SakuraResult> {
+  try {
+    return await sakuraChatOnce(opts);
+  } catch (e) {
+    const usedBeagle = opts.model === BEAGLE_MODEL && BEAGLE_MODEL !== SAKURA_MODEL;
+    if (!usedBeagle || opts.signal?.aborted) throw e;
+    console.warn(`[sakura] ${BEAGLE_MODEL} failed, falling back to ${SAKURA_MODEL}:`, String((e as Error)?.message ?? e).slice(0, 200));
+    return await sakuraChatOnce({ ...opts, model: SAKURA_MODEL });
+  }
 }

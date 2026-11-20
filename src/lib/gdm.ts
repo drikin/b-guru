@@ -23,7 +23,7 @@ import { pushGdm, syncRead } from "./push-notify";
 import { asksBeagle, stripBeagleCall } from "./beagle-call";
 import { sanitizeBeagleAnswer } from "./beagle-ondevice";
 import { beagleServerEnabledFor, beagleUnderLimits, SERVER_MAX_CHARS, SERVER_MAX_TOKENS } from "./beagle-server";
-import { sakuraChat, SAKURA_MODEL } from "./sakura";
+import { sakuraChat, BEAGLE_MODEL } from "./sakura";
 import { buildGroupBeaglePrompt, GDM_BEAGLE_HISTORY, GDM_BEAGLE_SYSTEM_PROMPT, type GdmBeagleLine } from "./gdm-beagle";
 import {
   DM_MAX_BODY,
@@ -1327,7 +1327,7 @@ export async function answerGroupBeagle(gid: number, questionId: number, askerEm
     lastReadId,
   });
   const r = await sakuraChat({
-    model: SAKURA_MODEL,
+    model: BEAGLE_MODEL,
     messages: [
       { role: "system", content: GDM_BEAGLE_SYSTEM_PROMPT },
       { role: "user", content },

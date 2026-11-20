@@ -12,6 +12,7 @@ let aiReply = "{}";
 const calls: { messages: { role: string; content: string }[] }[] = [];
 vi.mock("../sakura", () => ({
   SAKURA_MODEL: "gpt-oss-120b",
+  BEAGLE_MODEL: "gpt-oss-120b",
   sakuraChat: vi.fn(async (opts: { messages: { role: string; content: string }[] }) => {
     calls.push(opts);
     return { content: aiReply, model: "gpt-oss-120b" };

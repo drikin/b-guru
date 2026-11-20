@@ -5,14 +5,14 @@
  *   2. 評価: ビーグルの探索（worker、乱数なし・深さ 3・400ms まで）。ビーグルがどこかの対局で考え中なら終わるまで待つ
  *      （ビーグルの手が最優先。探索をぶつけない）。実況の評価は時間切れでも worker を捨てない（結果を捨てるだけ）。
  *   3. ひな形を先に: 評価が出たらすぐ事実からのひな形の文を保存・配信（帯が毎手必ず更新される）。
- *   4. AI（さくらの AI Engine、ビーグルと同じ sakuraChat・SAKURA_MODEL。思考は少なめ reasoning_effort: low）に事実だけを渡し、
+ *   4. AI（さくらの AI Engine、ビーグルと同じ sakuraChat・BEAGLE_MODEL。思考は少なめ reasoning_effort: low）に事実だけを渡し、
  *      検査を通ったら同じ手の実況を AI の文に置き換えて配り直す。対局者の名前は AI に渡さない（「先手」「後手」→ あとで差し替え）。
  *      費用の上限: 1 日の呼び出し数（SHOGI_COMMENTARY_DAILY_AI、既定 600）、連続 5 回の失敗（空・429・タイムアウトなど）で
  *      10 分止める。公開前は、実況を見せる人（フラグのメール）が対局者か観戦中の対局だけ AI を呼ぶ。
  *   5. 見どころ（形勢逆転・詰み筋）だけ、公開後に 1 局 2 件までチャットへ（間を 4 分あける。1 手ずつは流さない）。
  *      終局は既存の終局カード・ビーグルの投稿（「分かれ目」）にまとめる。 */
 import { pool } from "./db";
-import { sakuraChat, SAKURA_MODEL, type ChatTurn } from "./sakura";
+import { sakuraChat, BEAGLE_MODEL, type ChatTurn } from "./sakura";
 import { emitLive } from "./live";
 import { INITIAL_SFEN, sideToMove, otherSide, type Side } from "./shogi-rules";
 import { MATE_BOUND } from "./shogi-engine";
@@ -114,12 +114,12 @@ function runnerFor(gameId: number): LatestOnly<Job> {
   return r;
 }
 
-/** 既定の AI: ビーグルと同じクライアント（sakuraChat）・同じモデル設定（SAKURA_MODEL）。テストでは外に出ない。 */
+/** 既定の AI: ビーグルと同じクライアント（sakuraChat）・同じモデル設定（BEAGLE_MODEL）。テストでは外に出ない。 */
 const defaultAi: CommentaryAi = async (messages, signal) => {
   if (process.env.VITEST) throw new Error("AI is disabled in tests");
   const call = (effort: boolean) =>
     sakuraChat({
-      model: SAKURA_MODEL,
+      model: BEAGLE_MODEL,
       messages,
       temperature: 0.7,
       max_tokens: AI_MAX_TOKENS,
