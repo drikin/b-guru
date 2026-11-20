@@ -1,6 +1,6 @@
 /* 部活動ラベル自動付与（さくらのAI Engine）— サーバー専用。
  *
- * ルート投稿の本文を さくらのAI Engine（gpt-oss-120b）で解析し、B-guru の
+ * ルート投稿の本文を さくらのAI Engine（SAKURA_MODEL）で解析し、B-guru の
  * 部活動リスト（club-catalog.ts）から「もっとも当てはまる部活」を 1 つだけ
  * 付与する。当てはまる部活がなければ club=NULL（ラベルなし）にする。
  *
@@ -70,7 +70,7 @@ export async function generateClubDefinition(input: {
       { role: "system", content: sys },
       { role: "user", content: user },
     ],
-    // gpt-oss-120b は先に reasoning（思考）を出力するため、最終文まで出せるだけの余裕を持つ。
+    // 推論型（DeepSeek・gpt-oss）は先に reasoning（思考）を出力するため、最終文まで出せるだけの余裕を持つ。
     max_tokens: 500,
     temperature: 0.3,
   });
@@ -156,7 +156,7 @@ export async function classifyPost(postId: number): Promise<string | null> {
         { role: "user", content: userMsg },
       ],
       temperature: 0.1,
-      // gpt-oss-120b は先に reasoning（思考）を出力する。max_tokens が小さいと
+      // 推論型（DeepSeek・gpt-oss）は先に reasoning（思考）を出力する。max_tokens が小さいと
       // reasoning 中に token 上限へ達して content:null／空応答になる（実測）。
       // 思考を完了させて最終キーまで出させるため多めに割り当てる。
       max_tokens: 2000,

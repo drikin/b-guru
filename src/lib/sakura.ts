@@ -1,19 +1,19 @@
 /* AI relay helper for さくらのAI Engine (Sakura Internet).
- * OpenAI-compatible chat completions. Base model is the fast gpt-oss-120b
- * (default). A reasoning model (preview/Qwen3.6-35B-A3B) is available via
- * per-request override. The API key lives server-side only (env), never exposed
+ * OpenAI-compatible chat completions. 2026-11-19 から既定は DeepSeek-V4.1-Flash
+ * （さくらでは preview）。失敗したらその 1 回だけ gpt-oss-120b（SAKURA_FALLBACK_MODEL）でやり直す。 The API key lives server-side only (env), never exposed
  * to the client.
  */
 export const SAKURA_BASE =
   process.env.SAKURA_AI_BASE_URL || "https://api.ai.sakura.ad.jp/v1";
-export const SAKURA_MODEL = process.env.SAKURA_AI_MODEL || "gpt-oss-120b";
-/** 🐶 ビーグル（チャットの答え・判定・自分から動く判断・リマインド・グループ・将棋の実況）だけのモデル。
- *  2026-11-19 オーナーの依頼で DeepSeek-V4.1-Flash に。校正などほかの機能は SAKURA_MODEL のまま。
- *  さくらでは preview なので、失敗したらその 1 回だけ SAKURA_MODEL でやり直す（sakuraChat の中）。 */
-export const BEAGLE_MODEL =
-  process.env.SAKURA_BEAGLE_MODEL || "preview/DeepSeek-V4.1-Flash-1017";
+export const SAKURA_MODEL =
+  process.env.SAKURA_AI_MODEL || "preview/DeepSeek-V4.1-Flash-1017";
+/** 既定のモデルが失敗したときの代わり（正式提供のモデル）。 */
+export const SAKURA_FALLBACK_MODEL =
+  process.env.SAKURA_AI_FALLBACK_MODEL || "gpt-oss-120b";
+/** 🐶 ビーグルのモデル。ふだんは SAKURA_MODEL と同じ（ビーグルだけ変えたいときは SAKURA_BEAGLE_MODEL）。 */
+export const BEAGLE_MODEL = process.env.SAKURA_BEAGLE_MODEL || SAKURA_MODEL;
 export const SAKURA_REASONING_MODEL =
-  process.env.SAKURA_AI_REASONING_MODEL || "preview/Qwen3.6-35B-A3B";
+  process.env.SAKURA_AI_REASONING_MODEL || "preview/DeepSeek-V4.1-Flash-1017";
 
 /** Models the app is allowed to reach (blocks arbitrary model injection). */
 export const ALLOWED_MODELS = new Set([
@@ -23,6 +23,9 @@ export const ALLOWED_MODELS = new Set([
   "preview/gemma-4-31B-it",
   "preview/DeepSeek-V4.1-Flash-1017",
   "preview/GLM-5.3-Flash",
+  SAKURA_MODEL,
+  SAKURA_FALLBACK_MODEL,
+  SAKURA_REASONING_MODEL,
   BEAGLE_MODEL,
 ]);
 
@@ -92,16 +95,16 @@ async function sakuraChatOnce(opts: {
 type SakuraChatOpts = Parameters<typeof sakuraChatOnce>[0];
 
 /**
- * さくらの AI Engine を呼ぶ。ビーグルのモデル（preview）が失敗したら、打ち切り以外はその 1 回だけ
- * 既定のモデル（SAKURA_MODEL）でやり直す（preview が落ちてもビーグルが黙らない）。
+ * さくらの AI Engine を呼ぶ。失敗したら（打ち切り以外）その 1 回だけ SAKURA_FALLBACK_MODEL で
+ * やり直す（preview のモデルが落ちたり空で返したりしても機能が止まらない）。
  */
 export async function sakuraChat(opts: SakuraChatOpts): Promise<SakuraResult> {
   try {
     return await sakuraChatOnce(opts);
   } catch (e) {
-    const usedBeagle = opts.model === BEAGLE_MODEL && BEAGLE_MODEL !== SAKURA_MODEL;
-    if (!usedBeagle || opts.signal?.aborted) throw e;
-    console.warn(`[sakura] ${BEAGLE_MODEL} failed, falling back to ${SAKURA_MODEL}:`, String((e as Error)?.message ?? e).slice(0, 200));
-    return await sakuraChatOnce({ ...opts, model: SAKURA_MODEL });
+    const used = opts.model && ALLOWED_MODELS.has(opts.model) ? opts.model : SAKURA_MODEL;
+    if (used === SAKURA_FALLBACK_MODEL || opts.signal?.aborted) throw e;
+    console.warn(`[sakura] ${used} failed, falling back to ${SAKURA_FALLBACK_MODEL}:`, String((e as Error)?.message ?? e).slice(0, 200));
+    return await sakuraChatOnce({ ...opts, model: SAKURA_FALLBACK_MODEL });
   }
 }
