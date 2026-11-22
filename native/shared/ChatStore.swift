@@ -55,6 +55,7 @@ final class ChatStore {
     /// mention becomes a system notification.
     var isVisible = false {
         didSet {
+            if !isVisible, oldValue { trimHidden() }
             if isVisible {
                 if !oldValue { beginViewing() }
                 markReadSoon()
@@ -447,12 +448,32 @@ final class ChatStore {
         }
     }
 
+    /// Mac: the chat's List (ChatView) builds every row it holds, so the rows are kept to the newest
+    /// `keptRows` — read ones only, and only while the chat is not on screen (a row going away
+    /// under the member's eyes would move what they read). Measured 2026-11-21: 200 rows ≈ +116 MB,
+    /// 400 and more ≈ +220 MB over the lazy stack. The app loads 100 and a reconnect loads them again.
+    #if os(macOS)
+    static let keptRows = 200
+    #endif
+
+    private func trimHidden() {
+        #if os(macOS)
+        let extra = rows.count - Self.keptRows
+        guard extra > 0, !isVisible, scrollTarget == nil else { return }
+        let read = readCursor ?? 0
+        // Only from the top, and never past a row that is unread or still being sent.
+        let drop = rows.prefix(extra).prefix { $0.message.id > 0 && $0.message.id <= read }.count
+        if drop > 0 { rows.removeFirst(drop) }
+        #endif
+    }
+
     private func received(_ m: ChatMessage) {
         latestId = max(latestId, m.id)
         if m.isAuthor { myUserId = m.authorId }
         let alreadyShown = rows.contains { $0.message.id == m.id }
         if m.isBeagleAI, let q = beagleWaitingFor, m.replyToId == q { beagleWaitingFor = nil; beagleThinking = false }
         rows = Self.reconcile(rows, with: m)
+        trimHidden()
         if (m.isNotice || m.kind == "shogi"), !isVisible, !alreadyShown { onAnnouncement?(m) }
         // A quiet note (room comings and goings): in the list, but never unread or notified.
         // 🐶 Beagle's on-device answers are not unread (the server does not count them either).
