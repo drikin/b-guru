@@ -54,6 +54,18 @@ describe("📝 台本の小物", async () => {
     const s = sc.buildScript(prev, "ep681", []);
     expect(s).toBe("# backspace.fm 第681回 台本\n第681回 です\n### 採用ネタ一覧\n（まだ採用されたネタはありません）\n---\nおわり");
   });
+
+  it("新しい週の台本: 前の週の番号だけを替え、ほかは一字も変えない", () => {
+    const prev = "# backspace.fm 第680回 台本\n- [x] 音声チェック\nep680 です（第 680 回）。第6800回と ep6801 と第1680回はそのまま\n### 採用ネタ一覧\n- [古い](https://o/ep680) by x\n---\nおわり";
+    expect(sc.carryOverScript(prev, "ep680", "ep681")).toBe(
+      "# backspace.fm 第681回 台本\n- [x] 音声チェック\nep681 です（第 681 回）。第6800回と ep6801 と第1680回はそのまま\n### 採用ネタ一覧\n- [古い](https://o/ep681) by x\n---\nおわり"
+    );
+  });
+
+  it("新しい週の台本: 前の週の番号が分からなければ回の表記をそろえる、新しい番号が分からなければそのまま", () => {
+    expect(sc.carryOverScript("第680回 と 第XXX回", "特別回", "ep681")).toBe("第681回 と 第681回");
+    expect(sc.carryOverScript("第680回", "ep680", "特別回")).toBe("第680回");
+  });
 });
 
 describe("📝 タイトル案の読み取り", async () => {

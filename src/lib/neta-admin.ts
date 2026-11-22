@@ -7,7 +7,7 @@ import { pool } from "./db";
 import { isAdmin } from "./admin";
 import { getNetaViewer } from "./neta-auth";
 import { sakuraChat } from "./sakura";
-import { buildScript, extractEpisodeNumber } from "./neta-script";
+import { buildScript, carryOverScript, extractEpisodeNumber } from "./neta-script";
 import { NetaError } from "./neta-write";
 
 /** 管理者ならメールアドレス、そうでなければ null。 */
@@ -87,7 +87,46 @@ async function latestScript(excludeWeekId: number): Promise<string | null> {
   return r.rows[0]?.content ?? null;
 }
 
-/** 新しい週を作る。前の週の台本をもとに台本も作る（失敗しても週はできる）。今週にはしない（切り替えは別）。 */
+/** その週より前（開始日の順、同じなら ID の順）でいちばん新しい、中身のある台本と、その週の題名。 */
+async function previousScript(weekId: number): Promise<{ content: string; title: string } | null> {
+  const r = await pool.query(
+    `SELECT s.content, w.title FROM neta_scripts s
+       JOIN neta_weeks w ON w.id = s.week_id
+       JOIN neta_weeks cur ON cur.id = $1
+      WHERE (w.start_date, w.id) < (cur.start_date, cur.id) AND btrim(s.content) <> ''
+      ORDER BY w.start_date DESC, w.id DESC LIMIT 1`,
+    [weekId]
+  );
+  return r.rows[0] ? { content: String(r.rows[0].content), title: String(r.rows[0].title) } : null;
+}
+
+/** 新しい週の最初の台本: 前の週の台本の回の番号だけを変えたもの。前の台本がなければひな形。 */
+export async function initialScript(weekId: number, weekTitle: string): Promise<string> {
+  const prev = await previousScript(weekId);
+  return prev ? carryOverScript(prev.content, prev.title, weekTitle) : buildScript(null, weekTitle, []);
+}
+
+/**
+ * 台本がまだない週に最初の台本を入れる（あれば何もしない）。週を SQL で直接作ったとき（引っ越しのスクリプトなど）も、
+ * 開いたときに前の週から引き継がれる。ただし開いただけのときは、台本のある週より古い週（引っ越し前の台本のない週）には作らない。
+ * 管理画面で週を作ったとき（always）は必ず作る。
+ */
+export async function ensureScript(weekId: number, by = "system", always = false): Promise<void> {
+  const w = await pool.query(
+    `SELECT w.title FROM neta_weeks w
+      WHERE w.id = $1 AND NOT EXISTS (SELECT 1 FROM neta_scripts s WHERE s.week_id = w.id)
+        AND ($2 OR NOT EXISTS (SELECT 1 FROM neta_scripts s JOIN neta_weeks o ON o.id = s.week_id
+                                WHERE (o.start_date, o.id) > (w.start_date, w.id)))`,
+    [weekId, always]
+  );
+  if (!w.rows[0]) return;
+  await pool.query(
+    `INSERT INTO neta_scripts (week_id, content, updated_by) VALUES ($1, $2, $3) ON CONFLICT (week_id) DO NOTHING`,
+    [weekId, await initialScript(weekId, String(w.rows[0].title)), by]
+  );
+}
+
+/** 新しい週を作る。前の週の台本の回の番号だけを変えた台本も作る（失敗しても週はできる）。今週にはしない（切り替えは別）。 */
 export async function createWeek(input: WeekInput, by: string): Promise<{ id: number }> {
   const w = parseWeek(input);
   const r = await pool.query(
@@ -96,11 +135,7 @@ export async function createWeek(input: WeekInput, by: string): Promise<{ id: nu
   );
   const id = Number(r.rows[0].id);
   try {
-    const base = await latestScript(id);
-    await pool.query(
-      `INSERT INTO neta_scripts (week_id, content, updated_by) VALUES ($1, $2, $3) ON CONFLICT (week_id) DO NOTHING`,
-      [id, buildScript(base, String(w.title), []), `system (${by})`]
-    );
+    await ensureScript(id, `system (${by})`, true);
   } catch (e) {
     console.error("[neta-admin] script for new week failed:", (e as Error)?.message);
   }
@@ -218,6 +253,7 @@ export async function deleteComment(id: number): Promise<void> {
 }
 
 export async function getScript(weekId: number): Promise<{ content: string; updatedBy: string | null; updatedAt: string } | null> {
+  await ensureScript(weekId).catch((e) => console.error("[neta-admin] ensureScript failed:", (e as Error)?.message));
   const r = await pool.query(`SELECT content, updated_by, updated_at FROM neta_scripts WHERE week_id = $1`, [weekId]);
   const x = r.rows[0];
   return x ? { content: String(x.content), updatedBy: x.updated_by ?? null, updatedAt: new Date(x.updated_at).toISOString() } : null;

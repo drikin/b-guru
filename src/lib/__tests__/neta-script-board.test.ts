@@ -69,7 +69,10 @@ d("📜 台本", () => {
     get = await import("../../app/api/script/route");
     rw = await import("../../app/api/script/[weekId]/route");
     await db.pool.query(`UPDATE neta_weeks SET is_active = false WHERE is_active`);
-    await db.pool.query(`INSERT INTO neta_weeks (id, title, start_date, end_date, is_active) VALUES ($1, 'ep7777', '2026-11-08', '2026-11-15', true)`, [week]);
+    // 前の週（台本あり）と、台本のない今週。日付は遠い先にして、使い捨ての DB に残るほかのテストの週より後ろにする。
+    await db.pool.query(`INSERT INTO neta_weeks (id, title, start_date, end_date) VALUES ($1, 'ep7776', '2099-01-01', '2099-01-08')`, [week - 1]);
+    await db.pool.query(`INSERT INTO neta_scripts (week_id, content, updated_by) VALUES ($1, $2, 'test')`, [week - 1, "# backspace.fm 第7776回 台本\n- [x] 音声\nep7776 のおわり"]);
+    await db.pool.query(`INSERT INTO neta_weeks (id, title, start_date, end_date, is_active) VALUES ($1, 'ep7777', '2099-01-08', '2099-01-15', true)`, [week]);
   });
 
   const req = (method: string, path: string, body?: unknown) =>
@@ -100,7 +103,9 @@ d("📜 台本", () => {
     const j = await g.json();
     expect(j.admin).toBe(false);
     expect(j.weekId).toBe(week);
-    expect(j.script).toBeNull();
+    // 台本のない新しい週は、開いたときに前の週の台本（なければひな形）の回の番号だけを変えたものが入る
+    expect(j.script.content).toBe("# backspace.fm 第7777回 台本\n- [x] 音声\nep7777 のおわり");
+    expect(j.script.updatedBy).toBe("system");
     expect((await rw.PUT(req("PUT", `/api/script/${week}`, { content: "x", base: null }), ctx)).status).toBe(403);
     expect((await rw.PATCH(req("PATCH", `/api/script/${week}`, { check: 0 }), ctx)).status).toBe(403);
     expect((await rw.POST(req("POST", `/api/script/${week}`, {}), ctx)).status).toBe(403);
@@ -119,11 +124,12 @@ d("📜 台本", () => {
     const regen = await (await rw.POST(req("POST", `/api/script/${week}`, {}), ctx)).json();
     expect(typeof regen.content).toBe("string"); // 前の週の台本（テストの DB では別のテストのもの）がもと
 
-    const first = await rw.PUT(req("PUT", `/api/script/${week}`, { content: "# 台本\n- [ ] 音声\n- [ ] 録音\n", base: null }), ctx);
+    const v0 = (await (await get.GET(req("GET", "/api/script"))).json()).script;
+    const first = await rw.PUT(req("PUT", `/api/script/${week}`, { content: "# 台本\n- [ ] 音声\n- [ ] 録音\n", base: v0.updatedAt }), ctx);
     expect(first.status).toBe(200);
     const v1 = (await first.json()).script;
     expect(v1.updatedBy).not.toContain("@");
-    // もう 1 人も「まだない」と思って作る → 409
+    // 「まだない」と思って作る → 409（もうある）
     const dup = await rw.PUT(req("PUT", `/api/script/${week}`, { content: "別の台本", base: null }), ctx);
     expect(dup.status).toBe(409);
     expect((await dup.json()).script.content).toContain("音声");

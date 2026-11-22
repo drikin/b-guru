@@ -133,6 +133,22 @@ export function buildScript(base: string | null, weekTitle: string, adopted: { t
   return s.replace(/第XXX回/g, n !== undefined ? `第${n}回` : weekTitle).replace(/第回/g, weekTitle);
 }
 
+/**
+ * 前の週の台本を引き継ぐ（2026-11-21 オーナー「前回の週のもののエピソード番号だけを更新したものを初期台本に」）。
+ * 前の週の番号（第P回 / epP）だけを新しい番号に置き換え、ほかは一字も変えない。
+ * 前の週の番号が分からないときは、台本の中の回の表記をすべて新しい番号にそろえる。
+ */
+export function carryOverScript(prev: string, prevTitle: string, newTitle: string): string {
+  const n = extractEpisodeNumber(newTitle);
+  if (n === undefined) return prev.replace(/第XXX回/g, newTitle);
+  const p = extractEpisodeNumber(prevTitle);
+  if (p === undefined || p === n) return replaceEpisodeNumber(prev, newTitle, n);
+  return prev
+    .replace(new RegExp(`第(\\s*)${p}(\\s*)回`, "g"), `第$1${n}$2回`)
+    .replace(new RegExp(`\\b(ep\\s*)${p}\\b`, "gi"), `$1${n}`)
+    .replace(/第XXX回/g, `第${n}回`);
+}
+
 /* ---- 📜 台本（単独の機能、2026-11-14）: 「- [ ] 」のチェックを見る画面から押して切り替える ---- */
 
 /** チェック欄（「- [ ] 」「* [x] 」など、行の頭のリスト）。見る画面の ☐/☑ と、切り替えの数え方をそろえる。 */

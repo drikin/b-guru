@@ -9,7 +9,7 @@ import { pool } from "./db";
 import { isAdmin } from "./admin";
 import { resolveDisplayName } from "./display-name";
 import { getNetaViewer } from "./neta-auth";
-import { NETA_SCRIPT_MAX } from "./neta-admin";
+import { ensureScript, NETA_SCRIPT_MAX } from "./neta-admin";
 import { countChecks, toggleNthCheck } from "./neta-script";
 import { NetaError } from "./neta-write";
 
@@ -45,6 +45,7 @@ export async function scriptWeeks(): Promise<ScriptWeek[]> {
 }
 
 export async function readScript(weekId: number): Promise<ScriptDoc | null> {
+  await ensureScript(weekId).catch((e) => console.error("[script] ensureScript failed:", (e as Error)?.message));
   const r = await pool.query(`SELECT content, updated_by, updated_at FROM neta_scripts WHERE week_id = $1`, [weekId]);
   return r.rows[0] ? toDoc(r.rows[0]) : null;
 }
