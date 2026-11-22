@@ -62,6 +62,9 @@ struct TimelineScreen: View {
             // Polling every minute is started and stopped by the window (MainView on iOS,
             // MainPanelView on the Mac): only while the timeline can be seen.
             .modifier(OpenThreadWhenShown(timeline: timeline, open: open))
+            .onChange(of: macThread != nil || !path.isEmpty, initial: true) { _, open in
+                if timeline.threadShown != open { timeline.threadShown = open }
+            }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { Task { await timeline.refresh() } }
             }

@@ -9,6 +9,7 @@ import SwiftUI
 @MainActor
 final class ChatPanel: NSPanel, NSWindowDelegate {
     private let store: ChatStore
+    private let timeline: TimelineStore
     let pin = PinState()
     /// Bumped on every present/dismiss. A fade-out only hides the panel if no
     /// present() happened meanwhile — otherwise clicking the menu bar icon
@@ -33,6 +34,7 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
 
     init(store: ChatStore, timeline: TimelineStore, onSignOut: @escaping () -> Void) {
         self.store = store
+        self.timeline = timeline
         super.init(contentRect: NSRect(x: 0, y: 0, width: 380, height: 560),
                    styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
                    backing: .buffered, defer: false)
@@ -145,6 +147,13 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
         // The cheap tracker first; the view lookup only once a swipe has fired (it ran on
         // every scroll event and made all scrolling heavier — drikin 2026-10-19).
         if event.type == .scrollWheel, let step = swipe.handle(event), !overSidewaysScroller(event), !overWebTimeline(event) {
+            // Inside a thread / a DM conversation the swipe is "back" (fingers to the right) and never
+            // switches tabs (drikin 2026-11-21「二階層以下にいるときは戻るを優先してタブが切り替わらないように」).
+            if let back = swipeBack(event) {
+                if step < 0 { back() }
+                super.sendEvent(event)
+                return
+            }
             // 📰 → 💬 → 📻 (the tabs' order), one step per swipe (drikin 2026-10-19: with three
             // tabs the swipe only went between the first two).
             var order: [MainTab] = [.timeline, .chat]
@@ -203,6 +212,18 @@ final class ChatPanel: NSPanel, NSWindowDelegate {
             return
         }
         super.sendEvent(event)
+    }
+
+    /// What a sideways swipe does instead of switching tabs: one step back, when the swipe is over
+    /// something opened over a list — the timeline's thread (side by side: over the timeline's half)
+    /// or a DM conversation / group. nil = on a top level, the swipe switches tabs.
+    private func swipeBack(_ event: NSEvent) -> (() -> Void)? {
+        if pin.tab == .dm, store.dm.isDeep { return { [store] in store.dm.back() } }
+        if pin.timelineShown, timeline.threadShown, !AppSettings.shared.webTimeline,
+           !pin.sideBySide || event.locationInWindow.x < frame.width - SplitLayout.chatWidth(frame.width) {
+            return { NotificationCenter.default.post(name: .timelineBack, object: nil) }
+        }
+        return nil
     }
 
     /// ← (no modifiers) also leaves the thread, like the mouse's back button (drikin 2026-10-24).

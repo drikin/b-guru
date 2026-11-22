@@ -153,6 +153,9 @@ struct MainView: View {
                             }
                         }
                         .scrollTargetLayout()
+                        // Inside a thread / a DM conversation the edge swipe is "back" only: the pages stay
+                        // (drikin 2026-11-21: both moved — the stack went back and the page changed too).
+                        .background { PagerScrollLock(pager: pager, timeline: timeline, dm: store.dm) }
                     }
                     .scrollTargetBehavior(.paging)
                     .scrollIndicators(.hidden)
@@ -494,5 +497,55 @@ private struct KeyboardOverlapReader: UIViewRepresentable {
             }
             onChange?(height.rounded(), animated)
         }
+    }
+}
+
+
+/// Turns the page scroll (the horizontal paging ScrollView it sits in) off while the page on screen
+/// has something pushed over its list (a thread, a DM conversation), on again when it is back.
+/// Its own view, so only it follows the page and the stacks (not MainView's body with every page).
+/// UIKit's own switch: SwiftUI's `.scrollDisabled` is inherited by every scroll view inside the
+/// pages, which would also stop the thread and the conversation from scrolling.
+private struct PagerScrollLock: View {
+    let pager: PagerState
+    let timeline: TimelineStore
+    let dm: DMStore
+
+    var body: some View {
+        let locked: Bool = switch pager.tab {
+        case .timeline: timeline.threadShown
+        case .dm: dm.enabled && dm.isDeep
+        default: false
+        }
+        PagerScrollSwitch(locked: locked).allowsHitTesting(false)
+    }
+}
+
+private struct PagerScrollSwitch: UIViewRepresentable {
+    let locked: Bool
+
+    final class Marker: UIView {
+        var locked = false { didSet { apply() } }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            apply()
+        }
+        func apply() {
+            var v = superview
+            while let s = v, !(s is UIScrollView) { v = s.superview }
+            guard let pager = v as? UIScrollView, pager.isScrollEnabled == locked else { return }
+            pager.isScrollEnabled = !locked
+        }
+    }
+
+    func makeUIView(context: Context) -> Marker {
+        let m = Marker()
+        m.isUserInteractionEnabled = false
+        m.locked = locked
+        return m
+    }
+
+    func updateUIView(_ m: Marker, context: Context) {
+        if m.locked != locked { m.locked = locked }
     }
 }

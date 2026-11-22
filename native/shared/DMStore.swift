@@ -125,6 +125,10 @@ final class DMStore {
         }
     }
 
+    /// A conversation (or a group / its members) is open over the list: a sideways swipe goes back,
+    /// not to another tab.
+    var isDeep: Bool { (route ?? .list) != .list }
+
     var openPeer: DMPeer? {
         if case let .thread(p) = route { return p }
         return nil

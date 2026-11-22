@@ -20,6 +20,10 @@ enum MainTab: Hashable {
 @Observable
 final class TimelineStore {
     private(set) var posts: [Post] = []
+    /// A thread (or anything pushed over the list) is open: a sideways swipe goes back there and
+    /// does not switch tabs (iPhone: the page scroll stops; Mac: the panel's swipe) — drikin 2026-11-21
+    /// 「二階層以下にいるときは戻るを優先してタブが切り替わらないように」. Set by TimelineScreen.
+    var threadShown = false
     private(set) var hasLoaded = false
     private(set) var loadingMore = false
     private(set) var failed = false
