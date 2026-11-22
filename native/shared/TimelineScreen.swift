@@ -261,6 +261,8 @@ private struct TimelinePostList: View {
     /// the app coming back) and reordered the hidden list just the same (drikin 2026-10-23).
     @State private var frozen: [Post]?
     @State private var list = ListScrollHandle()
+    /// Mac: bumped to build the list afresh (see the unfreeze below).
+    @State private var generation = 0
     private var posts: [Post] { frozen ?? timeline.posts }
     @Environment(\.screenVisibility) private var visibility
     private var onScreen: Bool { visibility?.timeline ?? true }
@@ -301,6 +303,7 @@ private struct TimelinePostList: View {
             // GIFs and videos stand still under an open thread (the Mac keeps the list built).
             .environment(\.mediaActive, !threadOpen)
         }
+        .id(generation)
         .modifier(TopTracker(atTop: $atTop))
         .pullToRefresh { await timeline.refresh(full: true) }
         .scrollDismissesKeyboard(.immediately)
@@ -311,6 +314,22 @@ private struct TimelinePostList: View {
             newAbove += new[..<i].filter { id in posts.first { $0.id == id }?.isAuthor != true }.count
         }
         .onChange(of: threadOpen || !onScreen, initial: true) { _, hidden in
+            #if os(macOS)
+            // Coming back at the top to posts in a new order (a refresh while hidden moved threads
+            // with new replies up): a fresh list, not the lazy stack reordering what it had built.
+            // That reorder is where the panel froze again — opened on the timeline after the
+            // morning's refreshes, the main thread at 100 % in the lazy stack's placement six seconds
+            // later (a member's hangs.log 2026-11-18, macOS 26). At the top nothing is lost; further
+            // down (and back from a thread) the place is kept, as before. drikin 2026-11-22.
+            if !hidden, atTop, let was = frozen, was.map(\.id) != timeline.posts.map(\.id) {
+                HangWatch.note("timeline rebuilt on show (\(was.count) → \(timeline.posts.count) posts, new order)")
+                #if DEBUG
+                NSLog("[timeline] rebuilt on show (%d → %d posts)", was.count, timeline.posts.count)
+                #endif
+                generation += 1
+                newAbove = 0
+            }
+            #endif
             frozen = hidden ? timeline.posts : nil
         }
         .onChange(of: atTop) { _, top in if top { newAbove = 0 } }
