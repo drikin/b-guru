@@ -77,13 +77,20 @@ struct ChatScrolling: ViewModifier {
     #else
     static let anchorsSizeChanges = true
     #endif
+    /// Where the list last was (BottomTracker writes it on every scroll; a plain box, so writing it
+    /// redraws nothing).
+    @State private var place = ScrollPlace()
     /// The last moments `followGrowth` scrolled.
     @State private var follows: [Date] = []
 
     /// Rows grew while the list was at the bottom: back to the bottom, once per update and at most
     /// 8 times in 3 s (more means the list is chasing its own estimates; it stops and says so).
+    /// Not in the second after going to the unread line: the Mac's List (a table) puts its first
+    /// offset at the bottom once its rows are in, after that jump, and following it took the list
+    /// back down (where the member is is left to BottomTracker, which reads it from the scroll).
     private func followGrowth() {
-        guard !Self.anchorsSizeChanges, onScreen, store.scrollTarget == nil, store.highlightId == nil else { return }
+        guard !Self.anchorsSizeChanges, onScreen, store.scrollTarget == nil, store.highlightId == nil,
+              Date().timeIntervalSince(wentToUnreadAt) > 1 else { return }
         let now = Date()
         follows = follows.filter { now.timeIntervalSince($0) < 3 }
         guard follows.count < 8 else {
@@ -109,13 +116,22 @@ struct ChatScrolling: ViewModifier {
                 proxy.scrollTo(row.id, anchor: .top)
                 newBelow = atBottom ? 0 : unread
             }
+            // Then where it really is, once the list has settled (the Mac's List moved its offset
+            // after these scrolls without a scroll change that BottomTracker reads): up at the
+            // unread line → not at the bottom (「↓ 新着 N」, no following); all on the last screen
+            // → at the bottom (following goes on). drikin 2026-11-21, QA.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                guard onScreen, let below = place.below, Date().timeIntervalSince(wentToUnreadAt) < 1 else { return }
+                atBottom = below < 120
+                newBelow = atBottom ? 0 : unread
+            }
         }
     }
 
     func body(content: Content) -> some View {
         content
             .keepsBottomOnResize(Self.anchorsSizeChanges && atBottom && onScreen)
-            .modifier(BottomTracker(atBottom: $atBottom, grewAtBottom: followGrowth))
+            .modifier(BottomTracker(atBottom: $atBottom, place: place, grewAtBottom: followGrowth))
             .onChange(of: store.scrollTarget) { _, _ in jumpToTarget() }
             .onChange(of: store.rows.last?.id) { _, _ in
                 if jumpToTarget() { return }
@@ -222,8 +238,16 @@ struct JumpButton: View {
 /// iOS 18+). Only scrolling (or the view changing size) moves it: a new row growing the
 /// content must not count as "scrolled up" — that made the list stop following right
 /// after one's own message went out.
+/// Where the chat list is scrolled to, kept outside SwiftUI's state (read when needed, never drawn).
+@MainActor
+final class ScrollPlace {
+    /// How far the visible part's bottom is from the end of the content (nil before the first scroll geometry).
+    var below: CGFloat?
+}
+
 private struct BottomTracker: ViewModifier {
     @Binding var atBottom: Bool
+    let place: ScrollPlace
     /// The content grew under a list that was at the bottom (the Mac follows by hand, see
     /// ChatScrolling.anchorsSizeChanges).
     var grewAtBottom: () -> Void = {}
@@ -253,6 +277,7 @@ private struct BottomTracker: ViewModifier {
                 Metrics(top: g.visibleRect.minY, height: g.visibleRect.height,
                         below: g.contentSize.height - g.visibleRect.maxY)
             } action: { old, new in
+                place.below = new.below
                 #if DEBUG
                 if ProcessInfo.processInfo.environment["BGURU_LOG_BOTTOM"] != nil {
                     NSLog("[bottom] top %.0f→%.0f h %.0f→%.0f below %.0f→%.0f atBottom=%d", old.top, new.top, old.height, new.height, old.below, new.below, atBottom ? 1 : 0)

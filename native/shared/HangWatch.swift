@@ -191,8 +191,11 @@ final class HangWatch: NSObject, @unchecked Sendable {
     // MARK: watcher (on `queue`)
 
     private func tick() {
-        let now = DispatchTime.now().uptimeNanoseconds // stops while the Mac sleeps
+        // The main thread's mark first, then the clock: read the other way round, a mark set in
+        // between was newer than `now`, and `now &- busySince` wrapped to 18446744073.7 s — false
+        // "not responding" reports with the main thread idle (hangs.log 2026-11-19, 27 of them).
         let busySince = busyLock.withLock { $0 }
+        let now = DispatchTime.now().uptimeNanoseconds // stops while the Mac sleeps
         if busySince == 0 || busySince != stallStart && reportedStage > 0 {
             // Asleep in its run loop again, or it took a step after a reported stall.
             if reportedStage > 0 {
@@ -205,6 +208,7 @@ final class HangWatch: NSObject, @unchecked Sendable {
             if busySince == 0 { return }
         }
         stallStart = busySince
+        guard now >= busySince else { return }
         let stalled = Double(now &- busySince) / 1e9
         let stages: [Double] = [3, 8, 20]
         guard reportedStage < stages.count, stalled >= stages[reportedStage] else { return }

@@ -300,25 +300,42 @@ private struct ChatMessageList: View {
     /// a notification's — must already be in the list when the jump is asked for).
     private var rows: [ChatRow] { onScreen ? store.rows : (frozen ?? store.rows) }
 
+    /// The rows that start a run of one author's messages (they show the name and time).
+    private static func headerIds(_ rows: [ChatRow]) -> Set<String> {
+        var ids = Set<String>()
+        var prev: ChatMessage?
+        for row in rows {
+            if prev == nil || prev?.authorId != row.message.authorId || row.message.isAuthor != prev?.isAuthor { ids.insert(row.id) }
+            prev = row.message
+        }
+        return ids
+    }
+
+    // A List, not a ScrollView with a LazyVStack (drikin 2026-11-21, D): on the Mac a List is an
+    // NSTableView that places its rows itself, one hosted row each. SwiftUI's lazy stack froze the
+    // panel again and again on macOS 26 — the main thread at 100 % inside its own placement
+    // (LazySubviewPlacements / LayoutChildGeometries) while members scrolled the chat
+    // (hangs.log 2026-11-18, 11-21), after seven fixes around it since October.
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 6) {
-                    if rows.isEmpty {
-                        Text(store.hasLoaded ? "今日はまだ静かだわん" : "読み込み中…")
-                            .font(.app(.callout)).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity).padding(.top, 40)
-                    }
-                    let canReact = store.capabilities?.canReact ?? false
-                    let canEdit = store.capabilities?.canEdit ?? false
-                    let editingId = composer.editingId
-                    let rows = rows
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                        let prev = idx > 0 ? rows[idx - 1].message : nil
+            List {
+                if rows.isEmpty {
+                    Text(store.hasLoaded ? "今日はまだ静かだわん" : "読み込み中…")
+                        .font(.app(.callout)).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity).padding(.top, 40)
+                        .chatListRow()
+                }
+                let canReact = store.capabilities?.canReact ?? false
+                let canEdit = store.capabilities?.canEdit ?? false
+                let editingId = composer.editingId
+                let rows = rows
+                let headers = Self.headerIds(rows)
+                ForEach(rows) { row in
+                    VStack(alignment: .leading, spacing: 6) {
                         if store.unreadMarkerId == row.message.id { UnreadDivider() }
                         MessageRow(
                             row: row,
-                            showHeader: prev == nil || prev?.authorId != row.message.authorId || row.message.isAuthor != prev?.isAuthor,
+                            showHeader: headers.contains(row.id),
                             canReact: canReact,
                             canEdit: canEdit,
                             onReact: { store.toggleReaction(row.message.id, emoji: $0) },
@@ -334,14 +351,16 @@ private struct ChatMessageList: View {
                             onDM: store.dm.enabled ? dmTarget(row.message).map { peer in { store.dm.open(peer) } } : nil
                         )
                         .equatable()
-                        .id(row.id)
                     }
-                    ChatBottomSentinel(atBottom: $atBottom)
+                    .chatListRow()
                 }
-                .listScrollHandle(list)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                ChatBottomSentinel(atBottom: $atBottom)
+                    .chatListRow(EdgeInsets(top: 0, leading: 0, bottom: 5, trailing: 0))
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .environment(\.defaultMinListRowHeight, 1)
+            .listScrollHandle(list)
             .opensAtBottom()
             .chatScrolling(store: store, proxy: proxy, atBottom: $atBottom, newBelow: $newBelow, list: list)
             // Reacting to / editing the LAST message makes its row taller (chips
@@ -658,5 +677,17 @@ private struct KeepAwakeMenu: View {
             }
             Text("ふたを閉じる・スリープを選んだときは普通に眠ります")
         }
+    }
+}
+
+private extension View {
+    /// A row of the chat's List: no separator, no background or selection look, the chat's own spacing —
+    /// 10 pt at the sides as before, less the table's own cell padding (8 left, 9 right, measured on
+    /// macOS 27 with -demoChatCheck), and the 6 pt between messages.
+    func chatListRow(_ insets: EdgeInsets = EdgeInsets(top: 3, leading: 2, bottom: 3, trailing: 1)) -> some View {
+        self
+            .listRowInsets(insets)
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
     }
 }
