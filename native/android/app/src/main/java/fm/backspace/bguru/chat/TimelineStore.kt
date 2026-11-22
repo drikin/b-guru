@@ -41,6 +41,9 @@ class TimelineStore(
     private var membersJob: Job? = null
     /** Set by a "reply to your post" notification: show the timeline and open this thread. */
     var openThread by mutableStateOf<Long?>(null)
+    /** A thread is open over the list: a sideways swipe does not switch tabs there (back is the
+     *  system's edge gesture) — drikin 2026-11-21 「二階層以下にいるときは戻るを優先」. Set by TimelineScreen. */
+    var threadShown by mutableStateOf(false)
 
     private var nextCursor: String? = null
 

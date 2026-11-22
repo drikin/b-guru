@@ -240,6 +240,8 @@ class DMStore(private val api: ApiClient) {
     /** What the ✉️ page shows (empty: the list). Back pops one. */
     var stack by mutableStateOf<List<Route>>(emptyList()); private set
     val route: Route? get() = stack.lastOrNull()
+    /** A conversation (or a group / its members) is open over the inbox: a sideways swipe does not switch tabs. */
+    val isDeep: Boolean get() = stack.any { it != Route.Inbox }
     val openPeer: DMPeer? get() = (route as? Route.Conversation)?.peer
 
     var rows by mutableStateOf<List<DMRow>>(emptyList()); private set

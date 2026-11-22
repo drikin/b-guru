@@ -69,6 +69,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
@@ -154,6 +155,8 @@ fun TimelineScreen(
         timeline.openThread?.let { threadId = it; timeline.openThread = null }
     }
     BackHandler(enabled = threadId != null) { threadId = null }
+    LaunchedEffect(threadId) { timeline.threadShown = threadId != null }
+    DisposableEffect(Unit) { onDispose { timeline.threadShown = false } }
 
     fun compose() { if (capabilities?.canPublish == true) timeline.dialog = PostDialog.Compose() else needsReconnect = true }
     var listsMenu by remember { mutableStateOf(false) }
