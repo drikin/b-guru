@@ -759,7 +759,9 @@ final class ChatStore {
         // and one more message arriving 8 s later (the "↓ 新着" button when scrolled up).
         if ProcessInfo.processInfo.environment["BGURU_DEMO_UNREAD"] != nil {
             let who = ["mazzo", "takuto", "coban", "りとる"]
-            rows += (10..<50).map { i in msg(i, who[i % who.count], "未読のメッセージ \(i - 9) 件目。ここまでの話の続きです。") }
+            // BGURU_DEMO_UNREAD_COUNT=N: N unread instead of 40 (2: they fit on the last screen).
+            let n = Int(ProcessInfo.processInfo.environment["BGURU_DEMO_UNREAD_COUNT"] ?? "") ?? 40
+            rows += (10..<(10 + n)).map { i in msg(i, who[i % who.count], "未読のメッセージ \(i - 9) 件目。ここまでの話の続きです。") }
             readCursor = 4
             Task {
                 try? await Task.sleep(for: .seconds(8))
@@ -857,6 +859,62 @@ final class ChatStore {
         received(ChatMessage(id: id, authorId: author, authorName: author, avatar: nil, body: body,
                              createdAt: ISO8601DateFormatter().string(from: Date()), edited: false, editedAt: nil,
                              isAuthor: false, mentionsMe: mention, clientId: nil, reactions: nil, images: images, kind: kind))
+    }
+
+    /// -demoChatStress: a day's worth of chat (rows of every shape: long text that wraps, many
+    /// reaction kinds that fold onto more lines, ↩️ replies, notices, emoji-only, links, photos when
+    /// BGURU_DEMO_PHOTOS is set) for the Mac's scroll stress check (ChatStress.swift).
+    func debugLoadStress(count: Int) {
+        let who = ["mazzo", "takuto", "coban", "りとる", "NORIO TAKAHASHI", "Ryu Ishii", "ドリキン"]
+        let emoji = ["❤️", "👍", "😂", "🎉", "🙏", "👀", "🔥", "😇", "💸", "🍣", "🚀", "🐶"]
+        let base = ProcessInfo.processInfo.environment["BGURU_DEMO_PHOTOS"]
+        rows = (1...count).map { i in debugStressMessage(i, who: who, emoji: emoji, photos: base) }
+        latestId = count
+        hasLoaded = true
+    }
+
+    func debugStressMessage(_ i: Int, who: [String], emoji: [String], photos: String?) -> ChatRow {
+        let author = who[(i * 7) % who.count]
+        let mine = author == "ドリキン"
+        let long = String(repeating: "長めの発言で折り返しを確かめます。リンク https://backspace.fm/ep\(i) も入れて。", count: 1 + i % 5)
+        let bodies = [ "おはようございます", long, "😂", "@mazzo さん それは散財案件ですね", "了解です！",
+                       "新しい MacBook の話、配信で聞きたいです \(i)", long + "\n\n改行も入れて、もう一段落。" ]
+        var m = ChatMessage(id: i, authorId: mine ? "me" : author, authorName: author, avatar: nil,
+                            body: bodies[i % bodies.count], createdAt: "2026-11-21T0\(i % 10):\(10 + i % 50):00Z",
+                            edited: i % 13 == 0, editedAt: nil, isAuthor: mine, mentionsMe: i % 17 == 0,
+                            clientId: nil, reactions: nil)
+        if i % 3 == 0 {
+            let n = 1 + (i % emoji.count)
+            m.reactions = (0..<n).map { k in Reaction(emoji: emoji[(i + k) % emoji.count], count: 1 + (i + k) % 9, mine: k == 0, reactors: []) }
+        }
+        if i % 5 == 0, i > 1 {
+            m.replyTo = ChatReplyRef(id: i - 1, authorName: who[((i - 1) * 7) % who.count], excerpt: "ひとつ前の発言の最初のところ \(i - 1)")
+            m.replyToId = i - 1
+        }
+        if i % 29 == 0 { m.kind = "notice"; m.body = "\(author) さんが部室に入りました" }
+        if let photos, i % 11 == 0 { m.images = i % 22 == 0 ? ["\(photos)/photo1.jpg"] : ["\(photos)/photo2.jpg", "\(photos)/photo3.jpg"] }
+        return ChatRow(m)
+    }
+
+    /// One step of the stress check: a new message (sometimes), a reaction or an edit on a random row.
+    func debugStressTick(_ step: Int) {
+        let who = ["mazzo", "takuto", "coban", "りとる"]
+        let emoji = ["❤️", "👍", "😂", "🎉", "🙏", "👀", "🔥"]
+        if step % 3 == 0 {
+            let id = (rows.last?.message.id ?? 0) + 1
+            var m = debugStressMessage(id, who: who, emoji: emoji, photos: nil).message
+            m.reactions = nil
+            received(m)
+        }
+        guard !rows.isEmpty else { return }
+        let i = (step * 7919) % rows.count
+        if step % 2 == 0 {
+            let e = emoji[step % emoji.count]
+            rows[i].message.reactions = ChatStore.toggled(rows[i].message.reactions ?? [], emoji: e)
+        } else if step % 5 == 1, !rows[i].message.isNotice {
+            rows[i].message.body += " （追記 \(step)）"
+            rows[i].message.edited = true
+        }
     }
 
     func debugAddReactionToLast() {

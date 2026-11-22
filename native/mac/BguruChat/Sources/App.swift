@@ -247,6 +247,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 if let i = CommandLine.arguments.firstIndex(of: "-panelMemoryCheck"), i + 1 < CommandLine.arguments.count {
                     self.runPanelMemoryCheck(phase: CommandLine.arguments[i + 1], store: store)
                 }
+                // -demoChatStress S [-stressRows N]: the chat scrolled like a trackpad for S seconds (ChatStress.swift).
+                if let i = CommandLine.arguments.firstIndex(of: "-demoChatStress"), i + 1 < CommandLine.arguments.count,
+                   let s = Double(CommandLine.arguments[i + 1]) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        if let panel = self.panel { ChatStress.run(panel: panel, store: store, seconds: s) }
+                    }
+                }
+                if CommandLine.arguments.contains("-demoClickCheck") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        if let panel = self.panel { ChatStress.clickCheck(panel: panel) }
+                    }
+                }
+                if CommandLine.arguments.contains("-demoChatCheck") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        if let panel = self.panel { ChatStress.check(panel: panel, store: store) }
+                    }
+                }
                 if CommandLine.arguments.contains("-demoTimelineTab") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.panel?.pin.tab = .timeline }
                 }
