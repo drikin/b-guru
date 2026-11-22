@@ -604,22 +604,28 @@ private final class MicMeter: NSObject, AudioRenderer, @unchecked Sendable {
 
 /// 出入りの効果音を鳴らす（VoiceSfxTone で作った WAV を AVAudioPlayer で）。音声のセッションの設定には触らない
 /// （LiveKit が決めた今のセッションのまま鳴らす）。鳴るのはつながっている間と、抜ける直前だけ。
-@MainActor
-private final class VoiceSfxPlayer {
+/// 鳴らすのは自分のキューで: AVAudioPlayer.play() は出力の装置が眠っていると起きるまで
+/// 待つ（AudioQueue の StartIO_Sync）ので、メインで鳴らすと部室に人が出入りした瞬間にパネルが 9 秒近く
+/// 固まった（会員の hangs.log 2026-11-16、main CPU 0 %・waiting で AVAudioPlayer play の中）— ドリキン 2026-11-22。
+private final class VoiceSfxPlayer: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "fm.backspace.bguru.voice-sfx", qos: .userInitiated)
+    // 以下は queue の上だけで触る。
     private var cache: [String: Data] = [:]
     private var playing: [AVAudioPlayer] = []
 
     func play(_ kind: VoiceSfxTone.Kind, mine: Bool) {
-        let key = "\(kind)-\(mine)"
-        let data: Data
-        if let hit = cache[key] { data = hit } else {
-            data = VoiceSfxTone.wav(VoiceSfxTone.samples(kind, mine: mine))
-            cache[key] = data
+        queue.async { [self] in
+            let key = "\(kind)-\(mine)"
+            let data: Data
+            if let hit = cache[key] { data = hit } else {
+                data = VoiceSfxTone.wav(VoiceSfxTone.samples(kind, mine: mine))
+                cache[key] = data
+            }
+            playing.removeAll { !$0.isPlaying }
+            guard let p = try? AVAudioPlayer(data: data) else { return }
+            p.prepareToPlay()
+            p.play()
+            playing.append(p) // 鳴り終わるまで手放さない
         }
-        playing.removeAll { !$0.isPlaying }
-        guard let p = try? AVAudioPlayer(data: data) else { return }
-        p.prepareToPlay()
-        p.play()
-        playing.append(p) // 鳴り終わるまで手放さない
     }
 }
