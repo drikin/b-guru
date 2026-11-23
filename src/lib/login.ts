@@ -125,6 +125,30 @@ function loginMail(code: string, link: string) {
   return { subject: `B-guru ログインコード: ${code}`, text, html };
 }
 
+export function notMemberMail(email: string) {
+  const text = [
+    "B-guru へのログインが頼まれましたが、",
+    `このアドレス（${email}）は backspace.fm の有料会員として見つかりませんでした。`,
+    "",
+    "backspace.fm に別のメールアドレスで登録している場合は、ログイン画面でそのアドレスを入れ直してください。",
+    "登録したアドレスは、backspace.fm から届いたメール（入会・お支払いのお知らせなど）の宛先で確かめられます。",
+    "会員状況は https://backspace.fm/#/portal/account で確認できます。",
+    "",
+    "心当たりがない場合は、このメールを無視してください。",
+  ].join("\n");
+  const html = `<div style="font-family:sans-serif;line-height:1.7">
+<p>B-guru へのログインが頼まれましたが、このアドレス（${escapeHtml(email)}）は backspace.fm の有料会員として見つかりませんでした。</p>
+<p>backspace.fm に<b>別のメールアドレスで登録している場合</b>は、ログイン画面でそのアドレスを入れ直してください。登録したアドレスは、backspace.fm から届いたメール（入会・お支払いのお知らせなど）の宛先で確かめられます。</p>
+<p>会員状況は <a href="https://backspace.fm/#/portal/account">backspace.fm のアカウントページ</a> で確認できます。</p>
+<p style="color:#666;font-size:13px">心当たりがない場合は、このメールを無視してください。</p>
+</div>`;
+  return { subject: "B-guru: このアドレスは会員として見つかりませんでした", text, html };
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+}
+
 /**
  * ログインメールを頼む。会員でない・回数オーバーでないかぎり、呼び出し側は
  * 会員かどうかに関係なく同じ返事を返すこと。
@@ -146,7 +170,18 @@ export async function requestLogin(email: string, ip: string | null): Promise<vo
     // Fail closed if Ghost is unreachable
     throw new LoginError(502, "認証サービスに接続できません。しばらくしてから再試行してください");
   }
-  if (!member || !isPaidMember(member)) return;
+  if (!member || !isPaidMember(member)) {
+    // 有料会員でなくても、そのアドレス宛てに「見つからなかった」と知らせる。画面の返事は
+    // 会員のときと同じなので、別のアドレスで登録している人が「メールが来ない」で止まらないように。
+    // 届くのはそのメールボックスの持ち主だけなので、誰が会員かは外から分からない。
+    // 送りすぎは上の回数制限（アドレスごと・IP ごと）で止まる。失敗しても返事は変えない。
+    try {
+      await sendEmail({ to: email, ...notMemberMail(email) });
+    } catch (e) {
+      console.error("[login] not-member mail send failed:", (e as Error)?.message);
+    }
+    return;
+  }
 
   // 前に送ったコードとリンクは使えなくする（いつも最新の 1 通だけが有効）。
   await pool.query(

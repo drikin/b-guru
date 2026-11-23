@@ -78,10 +78,36 @@ describe("requestLogin", () => {
     expect(query.mock.calls.some((c) => /UPDATE login_requests SET expires_at = now\(\)/.test(c[0]))).toBe(true);
   });
 
-  it("会員でなければメールを送らず、エラーにもしない（同じ返事にするため）", async () => {
+  it("会員でなければコードは作らず「見つかりません」のメールだけ送る（返事は同じ）", async () => {
     findMemberByEmail.mockResolvedValue(null);
     route([[/^INSERT INTO rate_limits/, () => ({ rows: [{ count: 1 }] })]]);
     await expect(requestLogin("x@y.z", "1.2.3.4")).resolves.toBeUndefined();
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    const mail = sendEmail.mock.calls[0][0];
+    expect(mail.to).toBe("x@y.z");
+    expect(mail.subject).toContain("見つかりませんでした");
+    expect(mail.subject).not.toMatch(/\d{6}/);
+    expect(mail.text).not.toMatch(/login\/verify/);
+    expect(query.mock.calls.some((c) => /login_requests/.test(c[0]))).toBe(false);
+  });
+
+  it("有料でない会員（無料・期限切れ）にも同じ案内を送る", async () => {
+    findMemberByEmail.mockResolvedValue({ status: "free" });
+    route([[/^INSERT INTO rate_limits/, () => ({ rows: [{ count: 1 }] })]]);
+    await requestLogin("f@y.z", null);
+    expect(sendEmail.mock.calls[0][0].subject).toContain("見つかりませんでした");
+  });
+
+  it("案内メールの送信に失敗しても返事は変えない", async () => {
+    findMemberByEmail.mockResolvedValue(null);
+    sendEmail.mockRejectedValue(new Error("mailgun down"));
+    route([[/^INSERT INTO rate_limits/, () => ({ rows: [{ count: 1 }] })]]);
+    await expect(requestLogin("x@y.z", null)).resolves.toBeUndefined();
+  });
+
+  it("会員でなくても回数制限は効く（案内メールも送らない）", async () => {
+    route([[/^INSERT INTO rate_limits/, (p) => ({ rows: [{ count: String(p[0]).startsWith("login-mail:") ? 6 : 1 }] })]]);
+    await expect(requestLogin("x@y.z", "1.2.3.4")).rejects.toMatchObject({ status: 429 });
     expect(sendEmail).not.toHaveBeenCalled();
   });
 
