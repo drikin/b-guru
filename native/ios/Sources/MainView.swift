@@ -30,6 +30,8 @@ struct MainView: View {
     @State private var visibility = ScreenVisibility()
     /// iPhone: how much of the pager the software keyboard covers.
     @State private var keyboard = KeyboardOverlap()
+    /// iPad: the timeline column's width (dragged at the line; kept between launches).
+    @AppStorage("ipadTimelineWidth") private var leftWidth: Double = ColumnSplit.defaultWidth
 
     var body: some View {
         // No mini player under the timeline and the chat (drikin 2026-10-20: not needed —
@@ -93,11 +95,18 @@ struct MainView: View {
 
     @ViewBuilder private var layout: some View {
         if hSize == .regular {
-            HStack(spacing: 0) {
-                LeftColumn(store: store, timeline: timeline, pager: pager, jukeboxOn: jukeboxOn, onSignOut: onSignOut)
-                    .frame(minWidth: 320, idealWidth: 420, maxWidth: 480)
-                Divider()
-                ChatScreen(store: store, onSignOut: onSignOut)
+            // The line between the timeline and the chat can be dragged (drikin 2026-11-24);
+            // the width is remembered. Double-tap the line to go back to the usual width.
+            GeometryReader { g in
+                let width = ColumnSplit.clamp(leftWidth, total: g.size.width)
+                HStack(spacing: 0) {
+                    LeftColumn(store: store, timeline: timeline, pager: pager, jukeboxOn: jukeboxOn, onSignOut: onSignOut)
+                        .frame(width: width)
+                    Divider()
+                        .overlay { ColumnSplitHandle(width: $leftWidth, current: width, total: g.size.width) }
+                        .zIndex(1)
+                    ChatScreen(store: store, onSignOut: onSignOut)
+                }
             }
         } else {
             let picker = PagePicker(store: store, pager: pager, jukeboxOn: jukeboxOn)
@@ -547,5 +556,62 @@ private struct PagerScrollSwitch: UIViewRepresentable {
 
     func updateUIView(_ m: Marker, context: Context) {
         if m.locked != locked { m.locked = locked }
+    }
+}
+
+/// iPad: how wide the timeline column may be next to the chat.
+enum ColumnSplit {
+    static let defaultWidth: Double = 420
+    static let minLeft: Double = 300
+    static let minRight: Double = 340
+
+    /// Keeps both columns usable at the current window width (Split View / Stage Manager
+    /// windows can be narrow): the timeline at least minLeft, the chat at least minRight.
+    static func clamp(_ w: Double, total: Double) -> Double {
+        let upper = max(minLeft, total - minRight)
+        return min(max(w, minLeft), upper)
+    }
+}
+
+/// The grab area on the line between the columns: wider than the line so a finger or the
+/// pointer finds it, with a small grip in the middle. Drag to resize, double-tap to reset.
+private struct ColumnSplitHandle: View {
+    @Binding var width: Double
+    let current: Double
+    let total: Double
+    @State private var start: Double?
+
+    var body: some View {
+        Color.clear
+            .frame(width: 20)
+            .contentShape(Rectangle())
+            .overlay {
+                Capsule()
+                    .fill(start == nil ? Color.secondary.opacity(0.35) : Color.accentColor)
+                    .frame(width: 5, height: 44)
+            }
+            .hoverEffect(.highlight)
+            .gesture(
+                DragGesture(minimumDistance: 2, coordinateSpace: .global)
+                    .onChanged { v in
+                        let s = start ?? current
+                        if start == nil { start = s }
+                        width = ColumnSplit.clamp(s + v.translation.width, total: total)
+                    }
+                    .onEnded { _ in start = nil }
+            )
+            .onTapGesture(count: 2) {
+                withAnimation(.snappy) { width = ColumnSplit.defaultWidth }
+            }
+            .accessibilityElement()
+            .accessibilityLabel("タイムラインとチャットの境界")
+            .accessibilityValue("\(Int(current)) ポイント")
+            .accessibilityAdjustableAction { dir in
+                switch dir {
+                case .increment: width = ColumnSplit.clamp(current + 40, total: total)
+                case .decrement: width = ColumnSplit.clamp(current - 40, total: total)
+                @unknown default: break
+                }
+            }
     }
 }
