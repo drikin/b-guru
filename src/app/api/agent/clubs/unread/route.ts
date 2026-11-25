@@ -17,5 +17,5 @@ export async function GET(req: NextRequest) {
     const counts = Object.entries(unread).map(([club, n]) => ({ club, n }));
     return { status: 200, body: { apiVersion: 1, days: UNREAD_DAYS, unread, counts }, headers: {} };
   });
-  return agentJson(out);
+  return agentJson(out, req);
 }

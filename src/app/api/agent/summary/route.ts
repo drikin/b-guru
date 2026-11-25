@@ -35,5 +35,5 @@ export async function GET(req: NextRequest) {
       headers: {},
     };
   });
-  return agentJson(out);
+  return agentJson(out, req);
 }

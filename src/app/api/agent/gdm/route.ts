@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
   const out = await withAgent(req, "GET /api/agent/gdm", "read", async (ctx) => gdmListApi({ email: ctx.email, userId: ctx.userId }));
-  return agentJson(out);
+  return agentJson(out, req);
 }
 
 export async function POST(req: NextRequest) {

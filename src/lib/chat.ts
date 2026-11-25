@@ -180,15 +180,26 @@ export async function listChatMessages(opts: {
   before?: number;
   limit?: number;
   viewerEmail?: string | null;
+  /** Only messages newer than this id (the apps' catch-up after a reconnect). */
+  after?: number;
+  /** Only ids in [from, to] (the range an app already has, to compare). */
+  from?: number;
+  to?: number;
+  /** Only these ids (an app re-reading the ones that changed). */
+  ids?: number[];
 } = {}): Promise<ChatMessage[]> {
-  const limit = Math.min(opts.limit ?? CHAT_PAGE_SIZE, 200);
+  const limit = Math.min(opts.limit ?? CHAT_PAGE_SIZE, 201);
   const res = await pool.query(
     `SELECT * FROM chat_messages
      WHERE ($1::int IS NULL OR id < $1)
        AND created_at >= now() - ($2::text)::interval
+       AND ($4::int IS NULL OR id > $4)
+       AND ($5::int IS NULL OR id >= $5)
+       AND ($6::int IS NULL OR id <= $6)
+       AND ($7::int[] IS NULL OR id = ANY($7::int[]))
      ORDER BY id DESC
      LIMIT $3`,
-    [opts.before ?? null, CHAT_TTL, limit]
+    [opts.before ?? null, CHAT_TTL, limit, opts.after ?? null, opts.from ?? null, opts.to ?? null, opts.ids ?? null]
   );
   // Reverse so the returned array is chronological (oldest first).
   const rows = res.rows.reverse();

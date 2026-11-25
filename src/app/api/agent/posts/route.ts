@@ -13,7 +13,7 @@ import { getBookmarkedPostIds } from "@/lib/bookmarks";
 import { userIdToEmail } from "@/lib/user";
 import { withAgent, sanitizeLikePattern } from "@/lib/agent-auth";
 import { agentCreatePost, asAgentPostDto } from "@/lib/agent-write";
-import { NO_CACHE } from "../_lib";
+import { NO_CACHE, agentJson } from "../_lib";
 import { agentPostDto } from "@/lib/agent-post-dto";
 import { parseInclude, timelineExtras } from "@/lib/agent-timeline";
 
@@ -93,10 +93,7 @@ export async function GET(req: NextRequest) {
       headers: {} as Record<string, string>,
     };
   });
-  return new Response(JSON.stringify(out.body), {
-    status: out.status,
-    headers: { "Content-Type": "application/json", ...NO_CACHE },
-  });
+  return agentJson(out, req);
 }
 
 /* POST /api/agent/posts — 新規投稿・返信（スコープ write）。自分名義のみ・

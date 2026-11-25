@@ -3,6 +3,7 @@
  *   POST : 送信（スコープ chat）。{ body, client_id?, images?, reply_to_id? }（reply_to_id: ↩️ 返信先のメッセージ。消えていれば無視）（images は /api/agent/chat/upload の結果、4 枚まで。あれば body は空でよい）。Web の POST /api/chat と
  *          同じ lib（sendChatMessage）を通るので、検証・配信・既読の挙動が一致する。
  * DTO は lib/agent-chat.ts が正本（email を含めない）。 */
+import { createHash } from "crypto";
 import { NextRequest } from "next/server";
 import { scheduleBeagleAnswer } from "@/lib/beagle-server";
 import {
@@ -22,25 +23,59 @@ import { agentJson } from "../_lib";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
+/* GET options for the apps' cache (all optional; without them it is the old full page):
+ *   after=<id>          only messages newer than <id> (default limit 200). "more": true when there
+ *                       were more than the limit — the app then reads the whole page again.
+ *   after=<id>&from=<f> also "window": [[id, sig], …] for the messages it has, f ≤ id ≤ after,
+ *                       that still exist. A sig that changed (an edit, a reaction, a notice
+ *                       rewritten, a renamed author) → re-read those ids; an id not in the window
+ *                       was deleted or expired.
+ *   ids=1,2,3           only these messages (at most 200).
+ * Every message carries "sig": a short hash of what the viewer sees of it. */
 export async function GET(req: NextRequest) {
   const out = await withAgent(req, "GET /api/agent/chat", "read", async (ctx) => {
     const sp = req.nextUrl.searchParams;
-    const rawLimit = Number(sp.get("limit") ?? "50");
+    const posInt = (k: string) => {
+      const n = Number(sp.get(k) ?? "");
+      return Number.isInteger(n) && n > 0 && n <= 2147483647 ? n : undefined;
+    };
+    const after = posInt("after");
+    const from = after !== undefined ? posInt("from") : undefined;
+    const ids = (sp.get("ids") ?? "")
+      .split(",")
+      .map((x) => Number(x))
+      .filter((n) => Number.isInteger(n) && n > 0 && n <= 2147483647)
+      .slice(0, 200);
+    const rawLimit = Number(sp.get("limit") ?? (after !== undefined ? "200" : "50"));
     const limit = Number.isInteger(rawLimit) ? Math.min(Math.max(rawLimit, 1), 200) : 50;
-    const beforeRaw = Number(sp.get("before") ?? "");
-    const before = Number.isInteger(beforeRaw) && beforeRaw > 0 ? beforeRaw : undefined;
+    const before = posInt("before");
     const withReactions = (sp.get("include") ?? "").split(",").includes("reactions");
 
-    const [messages, unreadCount, latestId, viewer, lastReadId] = await Promise.all([
-      listChatMessages({ limit, before, viewerEmail: ctx.email }),
+    const list =
+      ids.length > 0
+        ? listChatMessages({ ids, limit: 200, viewerEmail: ctx.email })
+        : after !== undefined
+          ? listChatMessages({ after, limit: limit + 1, viewerEmail: ctx.email })
+          : listChatMessages({ limit, before, viewerEmail: ctx.email });
+    const windowList =
+      from !== undefined && after !== undefined && from <= after
+        ? listChatMessages({ from, to: after, limit: 200, viewerEmail: ctx.email })
+        : Promise.resolve(null);
+    const [fetched, windowMsgs, unreadCount, latestId, viewer, lastReadId] = await Promise.all([
+      list,
+      windowList,
       getUnreadCount(ctx.email),
       getLatestChatId(),
       chatViewerFor(ctx.email, ctx.userId),
       getChatLastReadId(ctx.email),
     ]);
-    const reactions = withReactions
-      ? await getReactions("chat", messages.map((m) => m.id), ctx.email)
-      : null;
+    // after: read one more than the limit to know whether there were more (the newest are kept).
+    const more = ids.length === 0 && after !== undefined && fetched.length > limit;
+    const messages = more ? fetched.slice(fetched.length - limit) : fetched;
+    const allIds = [...messages.map((m) => m.id), ...(windowMsgs ?? []).map((m) => m.id)];
+    const reactions = withReactions ? await getReactions("chat", allIds, ctx.email) : null;
+    const dto = (m: (typeof messages)[number]) =>
+      withSig(toAgentChatDto(m, viewer, reactions ? reactions.get(m.id) ?? [] : undefined));
     return {
       status: 200,
       body: {
@@ -48,14 +83,19 @@ export async function GET(req: NextRequest) {
         unread_count: unreadCount,
         latest_id: latestId,
         last_read_id: lastReadId,
-        messages: messages.map((m) =>
-          toAgentChatDto(m, viewer, reactions ? reactions.get(m.id) ?? [] : undefined)
-        ),
+        messages: messages.map(dto),
+        ...(after !== undefined && ids.length === 0 ? { more } : {}),
+        ...(windowMsgs ? { window: windowMsgs.map((m) => [m.id, dto(m).sig]) } : {}),
       },
       headers: {},
     };
   });
   return agentJson(out);
+}
+
+/** A short hash of the message as this viewer sees it (body, names, reactions, …). */
+function withSig<T extends object>(dto: T): T & { sig: string } {
+  return { ...dto, sig: createHash("sha1").update(JSON.stringify(dto)).digest("hex").slice(0, 12) };
 }
 
 export async function POST(req: NextRequest) {

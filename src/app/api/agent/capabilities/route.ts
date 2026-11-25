@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
     body: withGdm(ctx.scopes, gdmEnabledFor(ctx.email), withDm(ctx.scopes, dmEnabledFor(ctx.email), agentCapabilities(ctx.scopes, { voice: voiceEnabledFor(ctx.email), voiceAdmin: isAdmin(ctx.email), room: roomEnabledFor(ctx.email), jukebox: jukeboxEnabledFor(ctx.email) && !jukeboxBrokenClient(req.headers.get("user-agent")), shogi: shogiEnabledFor(ctx.email), shogiCommentary: commentaryEnabledFor(ctx.email), minigame: minigameEnabledFor(ctx.email), watch: watchEnabledFor(ctx.email), offkai: offkaiEnabledFor(ctx.email), chatOverlay: featureEnabledFor(CHAT_OVERLAY_FLAG, ctx.email), appIssued: ctx.appIssued, macAssistant: macAssistantEnabledFor(ctx.email), beagleOnDevice: beagleOnDeviceEnabledFor(ctx.email), beagleServer: beagleServerEnabledFor(ctx.email) }))),
     headers: {},
   }));
-  return agentJson(out);
+  return agentJson(out, req);
 }
 
 /** 👥 グループ DM（GROUP_DM_ENABLED）: features.gdm と stream・通知の "gdm"（lib/gdm.ts、docs/group-dm-spec.md）。 */

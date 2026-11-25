@@ -10,5 +10,5 @@ export const runtime = "nodejs";
 
 export async function GET(req: NextRequest) {
   const out = await withAgent(req, "GET /api/agent/dm", "read", (ctx) => dmListApi({ email: ctx.email, userId: ctx.userId }));
-  return agentJson(out);
+  return agentJson(out, req);
 }

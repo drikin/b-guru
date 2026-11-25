@@ -1,4 +1,5 @@
 /* /api/agent/* 共通: 統一エラー JSON 化 + No-Cache ヘッダ。既存 /api/* は触らない。 */
+import { createHash } from "crypto";
 import { NextResponse } from "next/server";
 import { AgentAuthError } from "@/lib/agent-auth";
 
@@ -16,12 +17,24 @@ export function agentErrorResponse(e: unknown): NextResponse {
   );
 }
 
-/** withAgent の戻り値 → JSON Response（各ルート共通の締め）。 */
-export function agentJson(out: { status: number; body: unknown; headers?: Record<string, string> }): Response {
-  return new Response(JSON.stringify(out.body), {
-    status: out.status,
-    headers: { "Content-Type": "application/json", ...NO_CACHE, ...(out.headers ?? {}) },
-  });
+/** withAgent の戻り値 → JSON Response（各ルート共通の締め）。
+ *  req を渡すと（GET の 200 だけ）ETag を付け、アプリが If-None-Match で同じものを持っていれば
+ *  304 で本文を送らない（1 分ごとのタイムラインの取り直しなど、ほとんど変わらないもの）。 */
+export function agentJson(
+  out: { status: number; body: unknown; headers?: Record<string, string> },
+  req?: Request
+): Response {
+  const text = JSON.stringify(out.body);
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...NO_CACHE, ...(out.headers ?? {}) };
+  if (req && req.method === "GET" && out.status === 200) {
+    const etag = `"${createHash("sha1").update(text).digest("base64url").slice(0, 22)}"`;
+    headers.ETag = etag;
+    const inm = req.headers.get("if-none-match");
+    if (inm && inm.split(",").some((t) => t.trim().replace(/^W\//, "") === etag)) {
+      return new Response(null, { status: 304, headers: { ...NO_CACHE, ETag: etag } });
+    }
+  }
+  return new Response(text, { status: out.status, headers });
 }
 
 /** 正の int32 ID か（PG integer 範囲外は 22003 になるので弾く）。 */
