@@ -3,7 +3,6 @@
  *   POST : 送信（スコープ chat）。{ body, client_id?, images?, reply_to_id? }（reply_to_id: ↩️ 返信先のメッセージ。消えていれば無視）（images は /api/agent/chat/upload の結果、4 枚まで。あれば body は空でよい）。Web の POST /api/chat と
  *          同じ lib（sendChatMessage）を通るので、検証・配信・既読の挙動が一致する。
  * DTO は lib/agent-chat.ts が正本（email を含めない）。 */
-import { createHash } from "crypto";
 import { NextRequest } from "next/server";
 import { scheduleBeagleAnswer } from "@/lib/beagle-server";
 import {
@@ -17,7 +16,7 @@ import {
 } from "@/lib/chat";
 import { getReactions } from "@/lib/reactions";
 import { withAgent } from "@/lib/agent-auth";
-import { AGENT_API_VERSION, chatViewerFor, toAgentChatDto } from "@/lib/agent-chat";
+import { AGENT_API_VERSION, chatViewerFor, toAgentChatDto, withChatSig } from "@/lib/agent-chat";
 import { agentJson } from "../_lib";
 
 export const dynamic = "force-dynamic";
@@ -75,7 +74,7 @@ export async function GET(req: NextRequest) {
     const allIds = [...messages.map((m) => m.id), ...(windowMsgs ?? []).map((m) => m.id)];
     const reactions = withReactions ? await getReactions("chat", allIds, ctx.email) : null;
     const dto = (m: (typeof messages)[number]) =>
-      withSig(toAgentChatDto(m, viewer, reactions ? reactions.get(m.id) ?? [] : undefined));
+      withChatSig(toAgentChatDto(m, viewer, reactions ? reactions.get(m.id) ?? [] : undefined));
     return {
       status: 200,
       body: {
@@ -93,10 +92,6 @@ export async function GET(req: NextRequest) {
   return agentJson(out);
 }
 
-/** A short hash of the message as this viewer sees it (body, names, reactions, …). */
-function withSig<T extends object>(dto: T): T & { sig: string } {
-  return { ...dto, sig: createHash("sha1").update(JSON.stringify(dto)).digest("hex").slice(0, 12) };
-}
 
 export async function POST(req: NextRequest) {
   const out = await withAgent(req, "POST /api/agent/chat", "chat", async (ctx) => {

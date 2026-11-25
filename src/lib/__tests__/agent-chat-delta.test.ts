@@ -139,3 +139,17 @@ describe("agentJson の ETag・304", () => {
     expect(agentJson({ status: 404, body: {} }, new Request("http://x/")).headers.get("ETag")).toBeNull();
   });
 });
+
+describe("ストリームの新しいメッセージの sig", async () => {
+  const { liveToStreamEvent, toAgentChatDto, withChatSig } = await import("@/lib/agent-chat");
+  const viewer = { userId: "uid_me", mentionNames: new Set<string>() };
+  const m = { id: 5, authorId: "uid_x", authorName: "x", body: "hi", createdAt: "t", avatar: null, edited: false, editedAt: null };
+  it("create はリアクション空と sig 付き（一覧の sig と同じ）、edit は sig なし", () => {
+    const c = liveToStreamEvent({ type: "chat", action: "create", message: m } as never, viewer)!;
+    const msg = (c.data as { message: { sig?: string; reactions?: unknown[] } }).message;
+    expect(msg.reactions).toEqual([]);
+    expect(msg.sig).toBe(withChatSig(toAgentChatDto(m, viewer, [])).sig);
+    const e = liveToStreamEvent({ type: "chat", action: "edit", message: m } as never, viewer)!;
+    expect((e.data as { message: { sig?: string } }).message.sig).toBeUndefined();
+  });
+});

@@ -9,6 +9,7 @@
  *     ship features first and the app picks them up when it is ready.
  * Compatibility policy: adding fields/capabilities is free; removing or
  * changing the meaning of one requires bumping AGENT_API_VERSION. */
+import { createHash } from "crypto";
 import type { ChatMessage } from "./chat";
 import { CHAT_MAX_BODY, CHAT_MAX_IMAGES, CHAT_TTL } from "./chat";
 import type { LiveEvent } from "./live";
@@ -119,6 +120,12 @@ export function toAgentNotificationDto(n: Notification) {
   };
 }
 
+/** A short hash of a chat message as this viewer sees it (body, names, reactions, …): the
+ *  apps keep it with their cached rows and compare it with GET /api/agent/chat's window. */
+export function withChatSig<T extends object>(dto: T): T & { sig: string } {
+  return { ...dto, sig: createHash("sha1").update(JSON.stringify(dto)).digest("hex").slice(0, 12) };
+}
+
 export type StreamEvent = { event: string; data: Record<string, unknown> };
 
 /** Broadcast bus event → the event this viewer's personal stream sends, or
@@ -129,9 +136,14 @@ export function liveToStreamEvent(ev: LiveEvent, viewer: ChatViewer): StreamEven
     if (ev.action === "delete") {
       return { event: "chat", data: { action: "delete", id: ev.message.id } };
     }
+    // A new message has no reactions yet: send them empty with the sig, so the apps' cache
+    // matches the list's sig and does not re-read it after a reconnect. An edit carries no sig
+    // (its reactions are not here): the apps re-read it once.
+    const fresh = ev.action === "create";
+    const dto = toAgentChatDto(ev.message, viewer, fresh ? [] : undefined);
     return {
       event: "chat",
-      data: { action: ev.action, message: toAgentChatDto(ev.message, viewer) },
+      data: { action: ev.action, message: fresh ? withChatSig(dto) : dto },
     };
   }
   if (ev.type === "presence") {
