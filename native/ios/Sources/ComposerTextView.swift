@@ -155,9 +155,44 @@ final class ComposerUITextView: UITextView {
                                                name: .GCKeyboardDidConnect, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardsChanged),
                                                name: .GCKeyboardDidDisconnect, object: nil)
+        applyHardwareKeyboardMode()
     }
 
-    @objc private func keyboardsChanged() { DispatchQueue.main.async { self.updatePlaceholder() } }
+    @objc private func keyboardsChanged() {
+        DispatchQueue.main.async {
+            self.updatePlaceholder()
+            self.applyHardwareKeyboardMode()
+        }
+    }
+
+    /// iPad with an external keyboard (drikin 2026-11-25「入力位置がちょっとだけ動いたりして見づらい」):
+    /// the bar iPadOS floats at the bottom (undo / redo / paste and the predictive words) came and went
+    /// and changed height while typing, and the composer moved with it. With a keyboard attached there
+    /// is no shortcut group and no autocorrection / predictive words, so the bar is not shown and the
+    /// composer stays put. Japanese conversion is the input method's own and is not affected. Back
+    /// as before when the keyboard is taken away (the on-screen keyboard keeps its shortcuts).
+    private var savedAssistant: (leading: [UIBarButtonItemGroup], trailing: [UIBarButtonItemGroup])?
+
+    private func applyHardwareKeyboardMode() {
+        let hardware = traitCollection.userInterfaceIdiom == .pad && GCKeyboard.coalesced != nil
+        let item = inputAssistantItem
+        if hardware, savedAssistant == nil {
+            savedAssistant = (item.leadingBarButtonGroups, item.trailingBarButtonGroups)
+            item.leadingBarButtonGroups = []
+            item.trailingBarButtonGroups = []
+            autocorrectionType = .no
+            spellCheckingType = .no
+        } else if !hardware, let saved = savedAssistant {
+            savedAssistant = nil
+            item.leadingBarButtonGroups = saved.leading
+            item.trailingBarButtonGroups = saved.trailing
+            autocorrectionType = .default
+            spellCheckingType = .default
+        } else {
+            return
+        }
+        if isFirstResponder { reloadInputViews() }
+    }
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         if let key = presses.first?.key, key.keyCode == .keyboardReturnOrEnter || key.keyCode == .keypadEnter {
