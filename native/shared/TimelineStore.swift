@@ -92,7 +92,18 @@ final class TimelineStore {
     private var readTask: Task<Void, Never>?
     private var pollTask: Task<Void, Never>?
 
-    init(api: APIClient) { self.api = api }
+    init(api: APIClient) {
+        self.api = api
+        // The first page of last time (all clubs), shown at once until the network answers.
+        if let cached = LocalCache.read([Post].self, "timeline", token: api.token), !cached.isEmpty {
+            posts = cached
+            firstPageCount = cached.count
+            savedFirstPage = cached
+        }
+    }
+
+    /// What LocalCache holds of the first page (written only when it changed).
+    @ObservationIgnored private var savedFirstPage: [Post] = []
 
     /// A post's link in the chat opens its thread here, not in the browser. Made once: a new
     /// action on every body run was a new environment value for everything below it.
@@ -188,6 +199,11 @@ final class TimelineStore {
             // Nothing new (most minutes): leave the list alone. Every assignment, even of
             // the same posts, made the whole list (and everything reading it) update.
             if merged != posts { posts = merged }
+            if club == nil, fresh != savedFirstPage {
+                savedFirstPage = fresh
+                let token = api.token
+                Task.detached(priority: .utility) { LocalCache.write(fresh, "timeline", token: token) }
+            }
             if older.isEmpty, nextCursor != r.nextCursor { nextCursor = r.nextCursor }
             if failed { failed = false }
             HangWatch.note("timeline refreshed → \(posts.count) posts")

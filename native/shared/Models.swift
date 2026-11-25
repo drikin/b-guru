@@ -19,7 +19,7 @@ struct ChatReplyRef: Codable, Equatable, Hashable, Sendable {
     }
 }
 
-struct ChatMessage: Codable, Equatable, Sendable {
+struct ChatMessage: Codable, Equatable, Sendable, ChatDeltaItem {
     var id: Int
     var authorId: String?
     var authorName: String?
@@ -42,6 +42,9 @@ struct ChatMessage: Codable, Equatable, Sendable {
     var replyToId: Int? = nil
     /// ↩️ A member's reply: the message it answers (who and its first words). Gone → no name, empty excerpt.
     var replyTo: ChatReplyRef? = nil
+    /// The server's short hash of this message as I see it (ChatDelta). nil once the stream
+    /// changed the row here: the next catch-up reads it again.
+    var sig: String? = nil
 
     var isNotice: Bool { kind == "notice" }
     /// The game card: drawn as a small board when this app has ☗ 将棋 on (else the body as text).
@@ -85,6 +88,10 @@ struct ChatListResponse: Decodable, Sendable {
     /// The member's read cursor (servers before 2026-10-19 omit it).
     var lastReadId: Int?
     var messages: [ChatMessage]
+    /// after=…: more than the limit were newer (read the whole page again).
+    var more: Bool? = nil
+    /// after=…&from=…: [id, sig] of the messages this device has that still exist (ChatDelta).
+    var window: [ChatDelta.WindowEntry]? = nil
 }
 
 struct ChatSendResponse: Decodable, Sendable {

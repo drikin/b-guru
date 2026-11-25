@@ -481,6 +481,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         timeline = nil
         MediaCache.shared.token = nil
         Keychain.delete()
+        LocalCache.clear() // the chat / timeline shown before the network answers
         WebTimeline.shared.tearDown(forgetLogin: true)
         NetaTabWeb.signOutAll() // 📝 ネタ帳・📜 台本のログイン（neta_session）も消す
         Updater.shared.stop()

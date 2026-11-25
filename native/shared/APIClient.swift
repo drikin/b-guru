@@ -50,6 +50,9 @@ final class APIClient: Sendable {
         return "BguruChatMac/\(v)"
     }
 
+    /// Bodies of tagged GETs (send), by URL.
+    private let etags = ETagStore()
+
     func request(_ method: String, _ path: String, json: [String: Any]? = nil) -> URLRequest {
         var req = URLRequest(url: APIClient.baseURL.appendingPathComponent(path))
         req.httpMethod = method
@@ -62,14 +65,25 @@ final class APIClient: Sendable {
     }
 
     func send<T: Decodable>(_ req: URLRequest, as: T.Type = T.self) async throws -> T {
-        let data: Data
+        var req = req
+        // GETs the server tags with an ETag (the timeline every minute, members, …): ask with what
+        // we have, and a 304 (nothing changed) sends no body — use the one kept here.
+        let key = req.httpMethod == "GET" ? req.url?.absoluteString : nil
+        if let key, let kept = etags.get(key) { req.setValue(kept.etag, forHTTPHeaderField: "If-None-Match") }
+        var data: Data
         let resp: URLResponse
         do {
             (data, resp) = try await session.data(for: req)
         } catch {
             throw APIError.transport(error.localizedDescription)
         }
-        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        var status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 304, let key, let kept = etags.get(key) {
+            data = kept.body
+            status = 200
+        } else if let key, status == 200, let tag = (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag") {
+            etags.put(key, .init(etag: tag, body: data))
+        }
         guard (200..<300).contains(status) else {
             let body = try? decoder.decode(APIErrorBody.self, from: data)
             if status == 401 { throw APIError.unauthorized(code: body?.code) }
@@ -238,6 +252,25 @@ final class APIClient: Sendable {
         return try await send(req)
     }
 
+    /// The catch-up (ChatDelta): only messages newer than `after`, and [id, sig] from `from` up.
+    func chatDelta(after: Int, from: Int) async throws -> ChatListResponse {
+        try await chatQuery([.init(name: "after", value: String(after)), .init(name: "from", value: String(from))])
+    }
+
+    /// Only these messages (those whose sig changed).
+    func chat(ids: [Int]) async throws -> [ChatMessage] {
+        guard !ids.isEmpty else { return [] }
+        return try await chatQuery([.init(name: "ids", value: ids.prefix(200).map(String.init).joined(separator: ","))]).messages
+    }
+
+    private func chatQuery(_ items: [URLQueryItem]) async throws -> ChatListResponse {
+        var comps = URLComponents(url: APIClient.baseURL.appendingPathComponent("/api/agent/chat"), resolvingAgainstBaseURL: false)!
+        comps.queryItems = items + [.init(name: "include", value: "reactions")]
+        var req = request("GET", "/api/agent/chat")
+        req.url = comps.url
+        return try await send(req)
+    }
+
     func post(body: String, clientId: String, images: [String] = [], replyTo: Int? = nil) async throws -> ChatMessage {
         var json: [String: Any] = ["body": body, "client_id": clientId]
         if !images.isEmpty { json["images"] = images }
@@ -398,5 +431,23 @@ final class APIClient: Sendable {
 
     func revokeSelf() async {
         _ = try? await session.data(for: request("DELETE", "/api/agent/token/self"))
+    }
+}
+
+/// The last tagged answer per URL (APIClient.send), a few dozen at most, in memory.
+final class ETagStore: @unchecked Sendable {
+    struct Kept { var etag: String; var body: Data }
+    private var items: [String: Kept] = [:]
+    private var order: [String] = []
+    private let lock = NSLock()
+
+    func get(_ key: String) -> Kept? { lock.lock(); defer { lock.unlock() }; return items[key] }
+
+    func put(_ key: String, _ kept: Kept) {
+        guard kept.body.count < 2_000_000 else { return }
+        lock.lock(); defer { lock.unlock() }
+        if items[key] == nil { order.append(key) }
+        items[key] = kept
+        while order.count > 48 { items[order.removeFirst()] = nil }
     }
 }

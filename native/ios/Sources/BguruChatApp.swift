@@ -127,6 +127,7 @@ final class Session {
         self.api = nil
         PushCenter.shared.session = nil
         Keychain.delete()
+        LocalCache.clear() // the chat / timeline shown before the network answers
         if let api {
             Task {
                 await PushCenter.shared.disable(api: api)

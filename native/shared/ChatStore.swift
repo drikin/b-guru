@@ -13,7 +13,7 @@ import SwiftUI
 final class ChatStore {
     enum Connection: Equatable { case connecting, live, offline }
 
-    private(set) var rows: [ChatRow] = []
+    private(set) var rows: [ChatRow] = [] { didSet { scheduleCacheSave() } }
     /// A timeline post to quote, waiting for the chat's composer (「チャットに引用」).
     var pendingQuote: String?
     private(set) var unreadCount = 0
@@ -243,6 +243,7 @@ final class ChatStore {
 
     func start() {
         guard streamTask == nil else { return }
+        loadCache()
         watchNetwork()
         // A return from the background only reconnects: these are loaded once (again only
         // when the first try failed).
@@ -256,6 +257,7 @@ final class ChatStore {
     }
 
     func stop() {
+        cacheSave?.cancel()
         jukebox.shutdown()
         backgroundClose?.cancel()
         streamTask?.cancel()
@@ -400,6 +402,7 @@ final class ChatStore {
                     var updated = m
                     updated.reactions = rows[i].message.reactions
                     updated.clientId = rows[i].message.clientId
+                    updated.sig = nil // its reactions are not in the event: the next catch-up reads it again
                     rows[i].message = updated
                 }
             case "delete":
@@ -408,6 +411,7 @@ final class ChatStore {
                 // Someone (or you, elsewhere) reacted: update the chips at once.
                 if let id = e.id, let i = rows.firstIndex(where: { $0.message.id == id }) {
                     rows[i].message.reactions = e.reactions ?? []
+                    rows[i].message.sig = nil
                 }
             default:
                 break
@@ -497,7 +501,9 @@ final class ChatStore {
 
     func reload() async {
         do {
-            let r = try await api.chat()
+            // A reconnect with rows here: only what changed (ChatDelta). Otherwise the whole page.
+            let r: ChatListResponse
+            if let delta = try await catchUp() { r = delta } else { r = try await api.chat() }
             latestId = max(latestId, r.latestId)
             if let c = r.lastReadId { readCursor = max(readCursor ?? 0, c) }
             unreadCount = isVisible ? 0 : r.unreadCount
@@ -517,6 +523,9 @@ final class ChatStore {
                 }
                 return ChatRow(m)
             }
+            // Messages the stream brought while this was on its way stay too.
+            let newest = r.messages.last?.id ?? 0
+            next.append(contentsOf: rows.filter { $0.message.id > newest })
             next.append(contentsOf: local)
             if next != rows { rows = next } // a resync that changed nothing re-renders nothing
             hasLoaded = true
@@ -533,6 +542,59 @@ final class ChatStore {
         }
     }
 
+    // MARK: - Cache on this device (ChatDelta.swift)
+
+    struct ChatCacheFile: Codable { var latestId: Int; var messages: [ChatMessage] }
+
+    /// The rows of last time, shown at once at launch (before the network answers). Not the
+    /// read cursor: the unread line waits for the server.
+    private func loadCache() {
+        guard rows.isEmpty, !hasLoaded, let c = LocalCache.read(ChatCacheFile.self, "chat", token: api.token) else { return }
+        let kept = ChatDelta.fresh(c.messages)
+        guard !kept.isEmpty else { return }
+        latestId = max(latestId, c.latestId)
+        if let mine = kept.last(where: { $0.isAuthor }) { myUserId = mine.authorId }
+        rows = kept.map { ChatRow($0) }
+    }
+
+    @ObservationIgnored private var cacheSave: Task<Void, Never>?
+
+    private func scheduleCacheSave() {
+        cacheSave?.cancel()
+        cacheSave = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard let self, !Task.isCancelled, !self.signedOut else { return }
+            let messages = self.rows.filter { $0.message.id > 0 && $0.state == .sent }.map(\.message).suffix(ChatDelta.compared)
+            let c = ChatCacheFile(latestId: self.latestId, messages: Array(messages))
+            let token = self.api.token
+            Task.detached(priority: .utility) { LocalCache.write(c, "chat", token: token) }
+        }
+    }
+
+    /// The catch-up after a reconnect: nil when there is nothing to compare with or anything
+    /// is off (more than a page missed, an old server, a failure) — the caller reads it all.
+    private func catchUp() async throws -> ChatListResponse? {
+        let have = Array(rows.map(\.message).filter { $0.id > 0 }.suffix(ChatDelta.compared))
+        guard let from = have.first?.id, let after = have.last?.id else { return nil }
+        do {
+            let d = try await api.chatDelta(after: after, from: from)
+            guard d.more == false, let window = d.window else { return nil }
+            let plan = ChatDelta.plan(local: have, window: window)
+            guard plan.reread.count <= 200 else { return nil }
+            let again = try await api.chat(ids: plan.reread)
+            var r = d
+            r.messages = ChatDelta.merge(local: have, plan: plan, reread: again, new: d.messages)
+            if !plan.reread.isEmpty || !d.messages.isEmpty || !plan.removed.isEmpty {
+                HangWatch.note("chat catch-up: +\(d.messages.count) new, \(plan.reread.count) re-read, \(plan.removed.count) gone")
+            }
+            return r
+        } catch APIError.unauthorized(let code) {
+            throw APIError.unauthorized(code: code)
+        } catch {
+            return nil
+        }
+    }
+
     /// Same rule as reconcileChat in src/lib/chat-optimistic.ts: a pending row
     /// is replaced only by the same author's stored message with its clientId.
     static func reconcile(_ rows: [ChatRow], with m: ChatMessage) -> [ChatRow] {
@@ -545,6 +607,12 @@ final class ChatStore {
                 let reactions = next[j].message.reactions
                 next[j].message = m
                 next[j].message.reactions = m.reactions ?? reactions
+                // The stream's new message comes with no reactions: keep chips already here (and
+                // let the next catch-up check it).
+                if m.reactions?.isEmpty == true, reactions?.isEmpty == false {
+                    next[j].message.reactions = reactions
+                    next[j].message.sig = nil
+                }
                 next[j].state = .sent
             }
             return next
@@ -726,6 +794,7 @@ final class ChatStore {
         let old = rows[i].message
         rows[i].message.body = text // optimistic
         rows[i].message.edited = true
+        rows[i].message.sig = nil
         do {
             let m = try await api.edit(id: id, body: text)
             if let j = rows.firstIndex(where: { $0.message.id == id }) {
@@ -745,6 +814,7 @@ final class ChatStore {
         guard id > 0, let i = rows.firstIndex(where: { $0.message.id == id }) else { return }
         let old = rows[i].message.reactions ?? []
         rows[i].message.reactions = Self.toggled(old, emoji: emoji)
+        rows[i].message.sig = nil
         Task {
             do {
                 let r = try await api.toggleReaction(id: id, emoji: emoji)
