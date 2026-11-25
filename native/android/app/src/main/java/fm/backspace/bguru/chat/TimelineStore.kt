@@ -20,6 +20,8 @@ class TimelineStore(
     /** The operations' calls (tests: a fake that fails). */
     private val ops: PostOpsApi = api,
     dispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Main.immediate,
+    /** The first page (all clubs) on disk, shown at launch before the network answers (AccountCache). null: none. */
+    private val cacheFile: java.io.File? = null,
 ) {
     /** What the server allows (set by the screen): e.g. the idempotent bookmark. */
     var capabilities by mutableStateOf<Capabilities?>(null)
@@ -97,6 +99,34 @@ class TimelineStore(
     private val pendingRead = mutableSetOf<Long>()
     private var readJob: Job? = null
     var demo = false
+    /** What is on disk now (an unchanged first page — a 304 — is not written again). */
+    private var savedFirstPage: List<Post>? = null
+
+    init {
+        cacheFile?.let { f ->
+            scope.launch {
+                val cached = withContext(Dispatchers.IO) {
+                    runCatching { if (f.exists()) ApiJson.decodeFromString<PostListResponse>(f.readText()) else null }.getOrNull()
+                } ?: return@launch
+                savedFirstPage = cached.posts
+                // Only while nothing better is there: no answer yet, all clubs. hasLoaded stays false (the screen
+                // still refreshes at once); nextCursor stays null until that answer (no 「もっと」 from a stale page).
+                if (posts.isEmpty() && !hasLoaded && !demo && clubFilter == null) posts = cached.posts
+            }
+        }
+    }
+
+    /** The first page of all clubs, as the server just gave it. */
+    private fun saveFirstPage(list: List<Post>) {
+        val f = cacheFile ?: return
+        if (demo || list == savedFirstPage) return
+        savedFirstPage = list
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching { AccountCache.write(f, ApiJson.encodeToString(PostListResponse.serializer(), PostListResponse(list))) }
+            }
+        }
+    }
 
     val unreadCount get() = posts.count { it.unread == true }
 
@@ -125,6 +155,7 @@ class TimelineStore(
             }
             nextCursor = r.nextCursor
             failed = false
+            if (clubFilter == null) saveFirstPage(r.posts)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (_: Exception) {

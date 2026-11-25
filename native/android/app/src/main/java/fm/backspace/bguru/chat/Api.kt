@@ -150,9 +150,36 @@ class ApiClient(val token: String) : PostOpsApi {
         }
     }
 
+    /** The last answer of each GET that came with an ETag (by full URL, this token only — one client per
+     *  sign-in): sent back as If-None-Match, and a 304 (no body) gives that answer again. Memory only, small. */
+    private class Tagged(val etag: String, val body: String)
+    private val tagged = object : LinkedHashMap<String, Tagged>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Tagged>?) = size > ETAG_ENTRIES
+    }
+
+    /** [send] for a GET, with the ETag cache: the timeline's minute poll, members, club unread… cost a 304
+     *  when nothing changed (server 2026-11-25). Servers without ETags: exactly [send]. */
+    private suspend fun sendGet(req: Request): String = withContext(Dispatchers.IO) {
+        val key = req.url.toString()
+        val known = synchronized(tagged) { tagged[key] }
+        val r = if (known != null) req.newBuilder().header("If-None-Match", known.etag).build() else req
+        Net.http.newCall(r).await().use { resp ->
+            if (resp.code == 304 && known != null) return@withContext known.body
+            val text = try { resp.body.string() } catch (e: IOException) { throw ApiError.Transport(e.message ?: "network") }
+            if (!resp.isSuccessful) {
+                val err = runCatching { ApiJson.decodeFromString<ApiErrorBody>(text) }.getOrNull()
+                if (resp.code == 401) throw ApiError.Unauthorized(err?.code)
+                throw ApiError.Http(resp.code, err?.code, err?.error)
+            }
+            val etag = resp.header("ETag")
+            synchronized(tagged) { if (etag != null && text.length <= ETAG_MAX_BODY) tagged[key] = Tagged(etag, text) else tagged.remove(key) }
+            text
+        }
+    }
+
     /** The lists (chat 100 件, posts, DM threads, members) come through here: parsed off the main thread too. */
     private suspend inline fun <reified T> get(path: String, query: Map<String, String> = emptyMap()): T {
-        val text = send(request("GET", path, query = query))
+        val text = sendGet(request("GET", path, query = query))
         return withContext(Dispatchers.Default) { decode(text) }
     }
 
@@ -161,6 +188,14 @@ class ApiClient(val token: String) : PostOpsApi {
 
     suspend fun capabilities(): Capabilities = get("/api/agent/capabilities")
     suspend fun chat(limit: Int = 100): ChatListResponse = get("/api/agent/chat", mapOf("limit" to "$limit", "include" to "reactions"))
+    /** The delta resync: messages after [after], and the [id, sig] of those from [from] to [after] still there. */
+    suspend fun chatDelta(after: Long, from: Long): ChatDeltaResponse =
+        get("/api/agent/chat", mapOf("include" to "reactions", "after" to "$after", "from" to "$from"))
+    /** Only these messages (at most 200 per call; the server ignores the rest). Gone ones are simply not returned. */
+    suspend fun chatByIds(ids: List<Long>): List<ChatMessage> =
+        ids.chunked(200).flatMap { part ->
+            get<ChatListResponse>("/api/agent/chat", mapOf("include" to "reactions", "ids" to part.joinToString(","))).messages
+        }
     suspend fun summary(): SummaryResponse = get("/api/agent/summary")
     suspend fun members(): List<MentionMember> = get<MembersResponse>("/api/agent/members").members
     suspend fun chatMessage(id: Long): ChatMessage = get<ChatSendResponse>("/api/agent/chat/$id").message
@@ -606,6 +641,9 @@ class ApiClient(val token: String) : PostOpsApi {
     }
 
     companion object {
+        /** The ETag cache keeps this many URLs, and no answer bigger than this (characters). */
+        private const val ETAG_ENTRIES = 48
+        private const val ETAG_MAX_BODY = 2_000_000
         /** 既読にする: `{ club }` for one club, `{}` for all. */
         fun clubReadBody(club: String?): JsonObject = buildJsonObject { if (club != null) put("club", club) }
         /** GET /api/agent/posts' query: the first page or the next (cursor), all or one club. Pure, for the tests. */

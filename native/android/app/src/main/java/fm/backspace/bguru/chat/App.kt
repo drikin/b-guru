@@ -101,12 +101,15 @@ class Session(private val app: Context) {
         ImageCache.token = null
         tokenTask = null
         TokenStore.delete(app)
+        AccountCache.clear(app) // the chat's rows and the timeline's first page of this account
         // 📝 ネタ帳タブ's and 📜 台本タブ's login (the httpOnly neta_session cookie, one cookie jar for both
         // WebViews) goes with the app's; both WebViews were dropped in s.stop().
         NetaTabStore.clearCookies()
         scope.launch {
             Push.unregister(app, s.api)
             s.api.revokeSelf()
+            // A save that was already writing when the store stopped (only this token's files: a new sign-in may have begun).
+            kotlinx.coroutines.withContext(Dispatchers.IO) { AccountCache.clearToken(app, s.api.token) }
         }
     }
 
@@ -120,7 +123,7 @@ class Session(private val app: Context) {
     private fun start(token: String) {
         val api = ApiClient(token)
         val s = ChatStore(api, app)
-        val t = TimelineStore(api)
+        val t = TimelineStore(api, cacheFile = AccountCache.file(app, token, "timeline"))
         keepClubSort(t, "club_list")
         timeline = t
         s.onPostCreated = { t.postCreated() }

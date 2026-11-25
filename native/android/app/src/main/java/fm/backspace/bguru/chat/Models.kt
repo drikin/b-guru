@@ -56,6 +56,9 @@ data class ChatMessage(
     val replyToId: Long? = null,
     /** ↩️ A member's reply: the message it answers (who and its first words). */
     val replyTo: ChatReplyRef? = null,
+    /** A short hash of what I see of it (server 2026-11-25): the delta resync re-reads it when the server's differs.
+     *  null = changed here (a stream edit / reaction) or from an older server → always re-read. */
+    val sig: String? = null,
 ) {
     val isNotice: Boolean get() = kind == "notice"
     /** The ☗ 将棋 game card (drawn as a small board when the server turns shogi on for me). */
@@ -90,6 +93,13 @@ data class ChatRow(
 
 /** `lastReadId`: the member's read cursor (servers before 2026-10-19 omit it). */
 @Serializable data class ChatListResponse(val unreadCount: Int = 0, val latestId: Long = 0, val lastReadId: Long? = null, val messages: List<ChatMessage> = emptyList())
+/** GET /api/agent/chat?after=&from=: the newer messages, `more` = there were more than the limit (read the whole
+ *  page instead), `window` = [[id, sig], …] of the messages from ≤ id ≤ after that still exist. */
+@Serializable data class ChatDeltaResponse(
+    val unreadCount: Int = 0, val latestId: Long = 0, val lastReadId: Long? = null,
+    val messages: List<ChatMessage> = emptyList(), val more: Boolean = false,
+    val window: List<kotlinx.serialization.json.JsonArray>? = null,
+)
 @Serializable data class ChatSendResponse(val message: ChatMessage)
 @Serializable data class ReactionToggleResponse(val added: Boolean = false, val reactions: List<Reaction> = emptyList())
 @Serializable data class SummaryResponse(val onlineCount: Int = 0)

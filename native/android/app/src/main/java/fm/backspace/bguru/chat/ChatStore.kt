@@ -10,6 +10,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -154,6 +155,45 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
     private var latestId = 0L
     private var myUserId: String? = null
 
+    /** The chat's last rows on disk (this sign-in): shown at launch before the network answers, and the base of
+     *  the delta resync. Not in the demo. */
+    private val cacheFile: java.io.File? =
+        if (api.token == "demo") null else AccountCache.file(app.applicationContext, api.token, "chat")
+    /** Reading the cache at launch; the first resync waits for it. */
+    private val cacheLoad: Job? = cacheFile?.let { f ->
+        scope.launch {
+            val ctx = app.applicationContext
+            val cached = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                runCatching { AccountCache.keepOnly(ctx, api.token) }
+                runCatching { if (f.exists()) ApiJson.decodeFromString<ChatCacheFile>(f.readText()) else null }.getOrNull()
+            } ?: return@launch
+            val msgs = ChatDelta.fresh(cached.messages, System.currentTimeMillis())
+            // Only into an empty list (a reload or the demo got there first: theirs is newer).
+            if (rows.isEmpty() && !hasLoaded && !demo && msgs.isNotEmpty()) {
+                rows = msgs.map { ChatRow(it, key = it.clientId ?: "id-${it.id}") }
+                latestId = maxOf(latestId, cached.latestId, msgs.last().id)
+                msgs.lastOrNull { it.isAuthor }?.let { myUserId = it.authorId }
+            }
+        }
+    }
+    private var cacheSave: Job? = null
+
+    /** Saves the stored rows a moment after the list last changed (a burst of stream events is one write). */
+    private fun watchCache() {
+        val f = cacheFile ?: return
+        cacheSave = scope.launch {
+            cacheLoad?.join()
+            androidx.compose.runtime.snapshotFlow { rows }.collectLatest { list ->
+                if (demo) return@collectLatest
+                delay(1_500)
+                val keep = ChatDelta.forCache(list.filter { it.state == SendState.SENT }.map { it.message })
+                if (keep.isEmpty() && !hasLoaded) return@collectLatest // nothing read yet: keep what is on disk
+                val text = ApiJson.encodeToString(ChatCacheFile.serializer(), ChatCacheFile(latestId = latestId, messages = keep))
+                kotlinx.coroutines.withContext(Dispatchers.IO) { runCatching { AccountCache.write(f, text) } }
+            }
+        }
+    }
+
     /** What a pending message still has to send, by clientId. Memory only: the JPEGs
      *  stay until the post lands (or is discarded), so 再送 can re-upload them; `urls`
      *  is set once the upload succeeded, so a retry after that only re-posts. */
@@ -173,6 +213,8 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
 
     /** Debug only: sample chat, sends "succeed" locally (no network). */
     var demo = false
+
+    init { watchCache() } // after every property it reads
 
     fun loadDemo(scale: Boolean = false, images: String? = null, withRoom: Boolean = true, withShogi: Boolean = true, shogiScenario: String = "play", withMinigame: Boolean = true) {
         demo = true
@@ -398,13 +440,14 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
                     "create" -> e.message?.let(::received)
                     "edit" -> e.message?.let { m ->
                         rows = rows.map { r ->
-                            if (r.message.id == m.id) r.copy(message = m.copy(reactions = r.message.reactions, clientId = r.message.clientId)) else r
+                            // sig null: the stream's edit has none (it is per viewer) → the next resync re-reads it.
+                            if (r.message.id == m.id) r.copy(message = m.copy(reactions = r.message.reactions, clientId = r.message.clientId, sig = null)) else r
                         }
                     }
                     "delete" -> e.id?.let { id -> rows = rows.filterNot { it.message.id == id } }
                     // Someone (or you, elsewhere) reacted: update the chips at once.
                     "reactions" -> e.id?.let { id ->
-                        rows = rows.map { if (it.message.id == id) it.copy(message = it.message.copy(reactions = e.reactions ?: emptyList())) else it }
+                        rows = rows.map { if (it.message.id == id) it.copy(message = it.message.copy(reactions = e.reactions ?: emptyList(), sig = null)) else it }
                     }
                 }
             }
@@ -446,21 +489,16 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         if (isVisible) markReadSoon() else unreadCount += 1
     }
 
+    /** Every (re)connect: the delta when there are rows to compare (the cache, or the list before the drop),
+     *  else — or when the server says there were too many, or anything fails — the whole page as before. */
     suspend fun reload() {
         try {
-            val r = api.chat()
-            latestId = maxOf(latestId, r.latestId)
-            r.lastReadId?.let { c -> readCursor = maxOf(readCursor ?: 0L, c) }
-            unreadCount = if (isVisible) 0 else r.unreadCount
-            r.messages.firstOrNull { it.isAuthor }?.let { myUserId = it.authorId }
-            // Keep rows still sending / failed; keep the stable key of rows we sent.
-            val local = rows.filter { it.message.id < 0 }
-            val keys = rows.associate { it.message.id to it.key }
-            val previews = rows.filter { it.localImages.isNotEmpty() }.associate { it.message.id to it.localImages }
-            rows = r.messages.map { m ->
-                ChatRow(m, key = keys[m.id] ?: (m.clientId ?: "id-${m.id}"), localImages = previews[m.id] ?: emptyList())
-            } + local
-            hasLoaded = true
+            cacheLoad?.join()
+            val before = rows.maxOfOrNull { it.message.id } ?: 0L
+            if (!resyncDelta(before)) {
+                val r = api.chat()
+                apply(r.messages, r.latestId, r.lastReadId, r.unreadCount, before)
+            }
             if (isVisible) {
                 findUnreadMarker()
                 openPendingSince = null
@@ -478,6 +516,43 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
 
     fun refresh() {
         scope.launch { reload() }
+    }
+
+    /** The delta resync (server 2026-11-25): only the messages after the newest we have, the [id, sig] of the
+     *  ones we have, and a re-read of those whose sig changed. False: do the full reload instead. */
+    private suspend fun resyncDelta(before: Long): Boolean {
+        val stored = ChatDelta.forCache(rows.filter { it.state == SendState.SENT }.map { it.message })
+        if (stored.isEmpty()) return false
+        val after = stored.last().id
+        val from = stored.first().id
+        val d = try { api.chatDelta(after, from) } catch (e: ApiError.Unauthorized) { throw e } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { return false }
+        // An older server ignores after/from (no window): its answer is the plain page — fine for the full reload.
+        if (d.more || d.window == null) return false
+        val plan = ChatDelta.plan(stored, ChatDelta.parseWindow(d.window), d.messages, after)
+        val reread = if (plan.reread.isEmpty()) emptyList() else
+            try { api.chatByIds(plan.reread) } catch (e: ApiError.Unauthorized) { throw e } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (_: Exception) { return false }
+        apply(ChatDelta.merge(plan, reread), d.latestId, d.lastReadId, d.unreadCount, before)
+        return true
+    }
+
+    /** The server's rows for the list (full page or the delta's result), with what the reload always did. */
+    private fun apply(messages: List<ChatMessage>, serverLatest: Long, lastRead: Long?, unread: Int, before: Long) {
+        latestId = maxOf(latestId, serverLatest)
+        lastRead?.let { c -> readCursor = maxOf(readCursor ?: 0L, c) }
+        unreadCount = if (isVisible) 0 else unread
+        messages.firstOrNull { it.isAuthor }?.let { myUserId = it.authorId }
+        // Keep rows still sending / failed; keep the stable key of rows we sent.
+        val local = rows.filter { it.message.id < 0 }
+        val keys = rows.associate { it.message.id to it.key }
+        val previews = rows.filter { it.localImages.isNotEmpty() }.associate { it.message.id to it.localImages }
+        // Stream messages that landed while the request was out (newer than anything in the answer and than
+        // what the list had when it left) stay.
+        val top = maxOf(messages.maxOfOrNull { it.id } ?: 0L, before)
+        val arrived = rows.filter { it.message.id > top && it.state == SendState.SENT }
+        rows = messages.map { m ->
+            ChatRow(m, key = keys[m.id] ?: (m.clientId ?: "id-${m.id}"), localImages = previews[m.id] ?: emptyList())
+        } + arrived + local
+        hasLoaded = true
     }
 
     // MARK: actions
@@ -562,7 +637,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         scope.launch {
             try {
                 val m = api.edit(id, text)
-                rows = rows.map { if (it.message.id == id) it.copy(message = it.message.copy(body = m.body, edited = m.edited)) else it }
+                rows = rows.map { if (it.message.id == id) it.copy(message = it.message.copy(body = m.body, edited = m.edited, sig = null)) else it }
             } catch (_: ApiError) {
                 rows = rows.map { if (it.message.id == id) it.copy(message = old) else it }
             }
@@ -576,7 +651,7 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
         scope.launch {
             try {
                 val r = api.toggleReaction(id, emoji)
-                rows = rows.map { if (it.message.id == id) it.copy(message = it.message.copy(reactions = r.reactions)) else it }
+                rows = rows.map { if (it.message.id == id) it.copy(message = it.message.copy(reactions = r.reactions, sig = null)) else it }
             } catch (_: ApiError) {
                 rows = rows.map { if (it.message.id == id) it.copy(message = it.message.copy(reactions = old)) else it }
             }
@@ -744,7 +819,11 @@ class ChatStore(val api: ApiClient, app: android.content.Context) {
             fun isTwin(r: ChatRow) = r.message.id < 0 && m.clientId != null && r.message.clientId == m.clientId && m.isAuthor
             if (rows.any { it.message.id == m.id }) {
                 return rows.filterNot(::isTwin).map {
-                    if (it.message.id == m.id) it.copy(message = m.copy(reactions = m.reactions ?: it.message.reactions), state = SendState.SENT) else it
+                    if (it.message.id == m.id) {
+                        // The stream's new message comes with no reactions: keep chips already here (the next resync checks it).
+                        val keepOld = m.reactions.isNullOrEmpty() && !it.message.reactions.isNullOrEmpty()
+                        it.copy(message = if (keepOld) m.copy(reactions = it.message.reactions, sig = null) else m.copy(reactions = m.reactions ?: it.message.reactions), state = SendState.SENT)
+                    } else it
                 }
             }
             val i = rows.indexOfFirst(::isTwin)
