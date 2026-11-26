@@ -264,6 +264,13 @@ extension APIClient {
         try await perform(request("GET", path), as: MutedWordsInfo.self)
     }
 
+    /// 人のミュート（capabilities `muted_users`、2026-11-25）: ミュートする・外す。
+    func setUserMuted(userId: String, muted: Bool) async throws {
+        struct R: Decodable { var muted: Bool }
+        let enc = userId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))) ?? userId
+        _ = try await perform(request(muted ? "POST" : "DELETE", "/api/agent/users/\(enc)/mute"), as: R.self)
+    }
+
     /// 一覧ごと置き換える。サーバがそろえた形（NFKC・小文字・重複なし）が返る。
     func setMutedWords(path: String, words: [String]) async throws -> [String] {
         struct R: Decodable { var words: [String] }

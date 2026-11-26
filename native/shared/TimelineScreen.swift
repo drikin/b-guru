@@ -117,7 +117,7 @@ struct TimelineScreen: View {
                     Button("部活の表示…", systemImage: "eye") { actions.clubVisibility = ClubVisibilityRequest() }
                 }
                 if actions.mutedWordsPath != nil {
-                    Button("NG ワード…", systemImage: "nosign") { actions.mutedWords = MutedWordsRequest() }
+                    Button("NG ワード・ミュート…", systemImage: "nosign") { actions.mutedWords = MutedWordsRequest() }
                 }
             } label: {
                 Image(systemName: "list.bullet")

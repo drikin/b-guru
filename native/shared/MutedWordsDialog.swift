@@ -7,9 +7,17 @@ struct MutedWordsRequest: Identifiable, Equatable {
 
 /// GET /api/agent/muted-words.
 struct MutedWordsInfo: Decodable, Sendable {
+    /// 人のミュート（2026-11-25）: ミュートした人。無ければ古いサーバ。
+    struct User: Decodable, Sendable, Identifiable, Equatable {
+        var userId: String
+        var name: String
+        var avatar: String?
+        var id: String { userId }
+    }
     var words: [String]
     var max: Int?
     var maxLength: Int?
+    var users: [User]?
 }
 
 /// NG ワード（Web と同じ設定。サーバに保存されて端末をまたぐ）。言葉を含むほかの人の投稿・返信は
@@ -26,12 +34,13 @@ struct MutedWordsDialog: View {
     @State private var busy = false
     @State private var error: String?
     @State private var changed = false
+    @State private var users: [MutedWordsInfo.User]?
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Label("NG ワード", systemImage: "nosign").font(.app(.headline))
+                Label("NG ワード・ミュート", systemImage: "nosign").font(.app(.headline))
                 Spacer()
                 Button { timeline.actions.mutedWords = nil } label: { Image(systemName: "xmark").font(.app(.callout)) }
                     .buttonStyle(.borderless)
@@ -98,6 +107,7 @@ struct MutedWordsDialog: View {
                             .font(.app(.caption)).foregroundStyle(.secondary)
                             .padding(16)
                     }
+                    if loaded && !failed, let users { mutedUsers(users) }
                 }
             }
         }
@@ -107,10 +117,56 @@ struct MutedWordsDialog: View {
         }
     }
 
+    /// 人のミュート（2026-11-25）: ミュートした人と「外す」。ミュートはプロフィールから。
+    @ViewBuilder private func mutedUsers(_ users: [MutedWordsInfo.User]) -> some View {
+        Divider()
+        VStack(alignment: .leading, spacing: 4) {
+            Text("ミュートした人").font(.app(.subheadline, weight: .semibold))
+            Text("ミュートした人の投稿・返信はタイムラインに出ず、知らせも来ません（その人のプロフィールでは見られます。相手には伝わりません）。ミュートはプロフィールからできます。")
+                .font(.app(.footnote)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 6)
+        if users.isEmpty {
+            Text("まだいません")
+                .font(.app(.callout)).foregroundStyle(.secondary)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+        }
+        ForEach(users) { u in
+            HStack(spacing: 10) {
+                AvatarView(url: u.avatar, name: u.name, size: 28)
+                Text(u.name).font(.app(.body)).lineLimit(1)
+                Spacer()
+                Button("外す") { unmute(u) }
+                    .buttonStyle(.borderless)
+                    .disabled(busy)
+                    .accessibilityLabel("\(u.name)さんのミュートを外す")
+            }
+            .padding(.horizontal, 16).padding(.vertical, 8)
+            Divider().padding(.leading, 16)
+        }
+    }
+
+    private func unmute(_ u: MutedWordsInfo.User) {
+        busy = true
+        error = nil
+        Task {
+            defer { busy = false }
+            do {
+                try await timeline.api.setUserMuted(userId: u.userId, muted: false)
+                users?.removeAll { $0.userId == u.userId }
+                changed = true
+            } catch {
+                self.error = PostActionsModel.message(error, fallback: "保存できませんでした")
+            }
+        }
+    }
+
     private func load() async {
         do {
             let info = try await timeline.api.mutedWords(path: path)
             words = info.words
+            users = info.users
             if let m = info.max { max = m }
             if let m = info.maxLength { maxLength = m }
             loaded = true

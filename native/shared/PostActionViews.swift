@@ -886,6 +886,8 @@ struct ProfileDialog: View {
     @State private var viewing: ImageViewerItem?
     @State private var avatarBusy = false
     @State private var avatarError: String?
+    @State private var muteBusy = false
+    @State private var muteError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -947,6 +949,7 @@ struct ProfileDialog: View {
                 }
             }
             if profile?.isSelf == true, let custom = profile?.avatarCustom { avatarControls(custom: custom) }
+            if profile?.isSelf != true, let muted = profile?.muted { muteControls(muted: muted) }
             if let bio = profile?.bio, !bio.isEmpty {
                 Text(bio).font(.app(.callout)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
@@ -988,6 +991,42 @@ struct ProfileDialog: View {
             Text(avatarError ?? (custom ? "アップロードした画像を使っています。" : "今は Gravatar の画像です。写真の真ん中を丸く切り抜いて使います。"))
                 .font(.app(.caption))
                 .foregroundStyle(avatarError == nil ? Color.secondary : Color.red)
+        }
+    }
+
+    /// ほかの人のプロフィールだけ: 「🔇 ミュート」（2026-11-25）。投稿・返信がタイムラインに出なくなり、知らせも止まる。
+    @ViewBuilder private func muteControls(muted: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Button { Task { await setMuted(!muted) } } label: {
+                    Label(muted ? "ミュート中（外す）" : "ミュート", systemImage: muted ? "speaker.slash.fill" : "speaker.slash")
+                        .font(.app(.callout))
+                }
+                .buttonStyle(.bordered)
+                .disabled(muteBusy)
+                .accessibilityIdentifier("profile-mute")
+                if muteBusy { ProgressView().controlSize(.small) }
+            }
+            Text(muteError ?? (muted
+                ? "この人の投稿・返信はタイムラインに出ず、知らせも来ません。ここでは見られます。"
+                : "ミュートすると、この人の投稿・返信がタイムラインに出なくなり、知らせも止まります（相手には伝わりません）。"))
+                .font(.app(.caption))
+                .foregroundStyle(muteError == nil ? Color.secondary : Color.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func setMuted(_ next: Bool) async {
+        guard !muteBusy, let id = profile?.userId else { return }
+        muteBusy = true
+        muteError = nil
+        defer { muteBusy = false }
+        do {
+            try await timeline.api.setUserMuted(userId: id, muted: next)
+            profile?.muted = next
+            await timeline.refresh(full: true)
+        } catch {
+            muteError = PostActionsModel.message(error, fallback: "保存できませんでした")
         }
     }
 

@@ -20,10 +20,10 @@ final class MutedWordsUITests: XCTestCase {
         let menu = app.buttons["一覧（ピン留め・ブックマーク・お気に入りの人）と表示の設定"]
         XCTAssertTrue(menu.waitForExistence(timeout: 8), "no lists menu on the timeline")
         menu.tap()
-        let item = app.buttons["NG ワード…"]
+        let item = app.buttons["NG ワード・ミュート…"]
         XCTAssertTrue(item.waitForExistence(timeout: 4), "no 「NG ワード…」 in the menu")
         item.tap()
-        XCTAssertTrue(app.staticTexts["NG ワード"].waitForExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["NG ワード・ミュート"].waitForExistence(timeout: 4))
     }
 
     func testAddAndRemoveAWord() {
@@ -31,8 +31,8 @@ final class MutedWordsUITests: XCTestCase {
         let menu = app.buttons["一覧（ピン留め・ブックマーク・お気に入りの人）と表示の設定"]
         XCTAssertTrue(menu.waitForExistence(timeout: 8))
         menu.tap()
-        app.buttons["NG ワード…"].tap()
-        XCTAssertTrue(app.staticTexts["NG ワード"].waitForExistence(timeout: 4))
+        app.buttons["NG ワード・ミュート…"].tap()
+        XCTAssertTrue(app.staticTexts["NG ワード・ミュート"].waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["ネタバレ"].waitForExistence(timeout: 4), "the saved word did not load")
 
         let field = app.textFields["muted-field"]
@@ -48,11 +48,11 @@ final class MutedWordsUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["ネタバレ"].waitForNonExistence(timeout: 4), "the word was not removed")
 
         app.buttons["閉じる"].tap()
-        XCTAssertTrue(app.staticTexts["NG ワード"].waitForNonExistence(timeout: 4))
+        XCTAssertTrue(app.staticTexts["NG ワード・ミュート"].waitForNonExistence(timeout: 4))
 
         // Opened again: the saved list (from the demo server).
         app.buttons["一覧（ピン留め・ブックマーク・お気に入りの人）と表示の設定"].tap()
-        app.buttons["NG ワード…"].tap()
+        app.buttons["NG ワード・ミュート…"].tap()
         XCTAssertTrue(app.staticTexts["abc"].waitForExistence(timeout: 4))
         XCTAssertFalse(app.staticTexts["ネタバレ"].exists)
     }

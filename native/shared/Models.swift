@@ -453,6 +453,8 @@ struct MemberProfile: Decodable, Equatable, Sendable {
     var links: [Link]?
     var postCount: Int?
     var firstPostAt: String?
+    /// Only on other members' profiles: whether I muted them (nil = an older server without 人のミュート).
+    var muted: Bool?
 }
 
 /// Mirrors `agentPostDto` in src/app/api/agent/posts/route.ts (+ include=reactions,read).
