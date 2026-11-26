@@ -113,6 +113,8 @@ interface PostOpsApi {
     /** NG ワード（capabilities `muted_words`）。置き換えるとサーバがそろえた形が返る。 */
     suspend fun mutedWords(path: String): MutedWordsResponse
     suspend fun setMutedWords(path: String, words: List<String>): List<String>
+    /** 人のミュート（capabilities `muted_users`、`:id` 入りのパス）。返るのは今ミュートしているか。 */
+    suspend fun setUserMuted(path: String, userId: String, muted: Boolean): Boolean = muted
     /** 部活一覧の自分の順番（capabilities `club_order`）。[] = まだ並べていない。置き換えるとサーバの順番が返る。 */
     suspend fun clubOrder(path: String): List<String> = emptyList()
     suspend fun setClubOrder(path: String, order: List<String>): List<String> = order
@@ -561,6 +563,9 @@ class ApiClient(val token: String) : PostOpsApi {
     override suspend fun setMutedWords(path: String, words: List<String>): List<String> =
         decode<MutedWordsResponse>(send(request("PUT", path, buildJsonObject { put("words", JsonArray(words.map { JsonPrimitive(it) })) }))).words
 
+    override suspend fun setUserMuted(path: String, userId: String, muted: Boolean): Boolean =
+        decode<MutedUserResponse>(send(request(if (muted) "POST" else "DELETE", mutedUserPath(path, userId), if (muted) buildJsonObject {} else null))).muted
+
     override suspend fun clubOrder(path: String): List<String> = get<ClubOrderResponse>(path).order
 
     override suspend fun setClubOrder(path: String, order: List<String>): List<String> =
@@ -644,6 +649,9 @@ class ApiClient(val token: String) : PostOpsApi {
         /** The ETag cache keeps this many URLs, and no answer bigger than this (characters). */
         private const val ETAG_ENTRIES = 48
         private const val ETAG_MAX_BODY = 2_000_000
+        /** 人のミュートの窓口: capabilities の `/api/agent/users/:id/mute` の `:id` をその人に（エンコードして）。Pure, for the tests. */
+        fun mutedUserPath(template: String, userId: String): String =
+            template.replace(":id", java.net.URLEncoder.encode(userId, "UTF-8").replace("+", "%20"))
         /** 既読にする: `{ club }` for one club, `{}` for all. */
         fun clubReadBody(club: String?): JsonObject = buildJsonObject { if (club != null) put("club", club) }
         /** GET /api/agent/posts' query: the first page or the next (cursor), all or one club. Pure, for the tests. */

@@ -22,7 +22,8 @@ class PostOpsTest {
         override suspend fun setClubHidden(path: String, club: String, hidden: Boolean) = answer("setClubHidden:$club:$hidden", hidden)
         override suspend fun setAllClubsHidden(path: String, hidden: Boolean) =
             answer("setAllClubsHidden:$hidden", if (hidden) setOf("apple", "car", "__unset__") else emptySet())
-        override suspend fun mutedWords(path: String) = answer("mutedWords", MutedWordsResponse(listOf("ネタバレ"), 50, 40))
+        override suspend fun mutedWords(path: String) = answer("mutedWords", MutedWordsResponse(listOf("ネタバレ"), 50, 40, listOf(MutedUser("u9", "うるさい人", "/api/avatar/x"))))
+        override suspend fun setUserMuted(path: String, userId: String, muted: Boolean) = answer("setUserMuted:${ApiClient.mutedUserPath(path, userId)}:$muted", muted)
         override suspend fun setMutedWords(path: String, words: List<String>) = answer("setMutedWords:${words.joinToString(",")}", words.map { it.lowercase() })
         override suspend fun vote(id: Long, optionId: Long): PostPoll? = answer("vote", null)
         override suspend fun togglePostReaction(id: Long, emoji: String) = answer("react", PostReactionToggle(true, listOf(PostReactionToggle.Count(emoji, 1))))
@@ -132,6 +133,64 @@ class PostOpsTest {
         val s = store(fake) // an older server: no muted_words
         s.loadMutedWords()
         assertNull(s.mutedWords)
+        assertEquals(emptyList<String>(), fake.calls)
+    }
+
+    // 人のミュート（2026-11-25）
+    private fun muteStore(fake: PostOpsApi): TimelineStore {
+        val s = store(fake)
+        s.capabilities = ApiJson.decodeFromString("""{"features":{"posts":{"muted_words":"/api/agent/muted-words","muted_users":"/api/agent/users/:id/mute"}}}""")
+        return s
+    }
+
+    @Test fun mutedUsersDecode() {
+        val r = ApiJson.decodeFromString<MutedWordsResponse>("""{"apiVersion":1,"words":["a"],"max":50,"maxLength":40,"users":[{"user_id":"u9","name":"うるさい人","avatar":null}]}""")
+        assertEquals(listOf(MutedUser("u9", "うるさい人", null)), r.users)
+        // an older server: no users
+        assertEquals(emptyList<MutedUser>(), ApiJson.decodeFromString<MutedWordsResponse>("""{"words":[]}""").users)
+        val other = ApiJson.decodeFromString<MemberProfileResponse>("""{"profile":{"user_id":"u9","is_self":false,"muted":true,"name":"x"}}""").profile
+        assertEquals(true, other.muted)
+        val old = ApiJson.decodeFromString<MemberProfileResponse>("""{"profile":{"user_id":"u9","is_self":false,"name":"x"}}""").profile
+        assertNull(old.muted) // no button
+        val caps = ApiJson.decodeFromString<Capabilities>("""{"features":{"posts":{"muted_users":"/api/agent/users/:id/mute"}}}""")
+        assertEquals("/api/agent/users/:id/mute", caps.mutedUsersPath)
+        assertNull(ApiJson.decodeFromString<Capabilities>("""{"features":{"posts":{"muted_users":null}}}""").mutedUsersPath)
+        assertNull(ApiJson.decodeFromString<Capabilities>("""{"features":{"posts":{"muted_users":"https://evil.example/:id"}}}""").mutedUsersPath)
+        assertEquals("/api/agent/users/a%20b%2Fc/mute", ApiClient.mutedUserPath("/api/agent/users/:id/mute", "a b/c"))
+    }
+
+    @Test fun mutedUsersLoadMuteAndUnmute() {
+        val fake = FakeOps(error = null)
+        val s = muteStore(fake)
+        assertTrue(s.canMuteUsers)
+        s.loadMutedWords()
+        assertEquals(listOf("u9"), s.mutedUsers.map { it.userId })
+        assertEquals(true, kotlinx.coroutines.runBlocking { s.setUserMuted("u1", true, "mazzo") })
+        s.unmuteUser(s.mutedUsers.first())
+        assertEquals(emptyList<MutedUser>(), s.mutedUsers)
+        assertEquals(listOf("mutedWords", "setUserMuted:/api/agent/users/u1/mute:true", "setUserMuted:/api/agent/users/u9/mute:false"), fake.calls)
+        assertNull(s.mutedWordsError)
+        assertEquals(false, s.mutedWordsBusy)
+    }
+
+    @Test fun mutedUsersKeepTheListOnFailure() {
+        val ok = FakeOps(error = null)
+        val s = muteStore(ok)
+        s.loadMutedWords()
+        val bad = FakeOps(error = ApiError.Http(400, null, "自分はミュートできません"))
+        val s2 = muteStore(bad)
+        assertNull(kotlinx.coroutines.runBlocking { s2.setUserMuted("me", true) })
+        assertEquals("自分はミュートできません", s2.mutedWordsError) // the server's words
+        assertEquals(false, s2.mutedWordsBusy)
+        assertEquals(listOf("u9"), s.mutedUsers.map { it.userId })
+    }
+
+    @Test fun mutedUsersNeedTheServer() {
+        val fake = FakeOps(error = null)
+        val s = mutedStore(fake) // NG ワードだけのサーバ: no muted_users
+        assertTrue(!s.canMuteUsers)
+        assertNull(kotlinx.coroutines.runBlocking { s.setUserMuted("u1", true) })
+        s.unmuteUser(MutedUser("u9"))
         assertEquals(emptyList<String>(), fake.calls)
     }
 

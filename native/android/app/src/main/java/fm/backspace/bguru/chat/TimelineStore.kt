@@ -679,14 +679,15 @@ class TimelineStore(
 
     fun loadMutedWords() {
         mutedWords = null
+        mutedUsers = emptyList()
         mutedWordsError = null
         mutedWordsChanged = false
-        if (demo) { mutedWords = demoMuted; return }
+        if (demo) { mutedWords = demoMuted; mutedUsers = demoMutedUsers; return }
         val path = capabilities?.mutedWordsPath ?: return
         scope.launch {
             try {
                 val r = ops.mutedWords(path)
-                mutedWordsMax = r.max; mutedWordsMaxLength = r.maxLength; mutedWords = r.words
+                mutedWordsMax = r.max; mutedWordsMaxLength = r.maxLength; mutedWords = r.words; mutedUsers = r.users
             } catch (e: Exception) { mutedWordsError = PostActions.errorText(e, "読み込めませんでした") }
         }
     }
@@ -722,6 +723,56 @@ class TimelineStore(
             false
         } finally {
             mutedWordsBusy = false
+        }
+    }
+
+    /** 人のミュート（2026-11-25）: ミュートした人（muted-words の GET の users。古いサーバは空）。 */
+    var mutedUsers by mutableStateOf<kotlin.collections.List<MutedUser>>(emptyList()); private set
+    private var demoMutedUsers = emptyList<MutedUser>()
+    /** ボタンを出せるか: サーバが `muted_users` を言うときだけ（アプリの鍵）。 */
+    val canMuteUsers get() = demo || capabilities?.mutedUsersPath != null
+
+    /** プロフィールの 🔇: ミュートする・外す。返るのは今の状態（null = できなかった、[mutedWordsError] に理由）。
+     *  変わったらタイムラインを読み直す（サーバがその人の投稿・返信を外して返す）。 */
+    suspend fun setUserMuted(userId: String, muted: Boolean, name: String = "", avatar: String? = null): Boolean? {
+        mutedWordsError = null
+        if (demo) {
+            demoMutedUsers = if (muted) (demoMutedUsers.filter { it.userId != userId } + MutedUser(userId, name, avatar)) else demoMutedUsers.filter { it.userId != userId }
+            mutedUsers = demoMutedUsers
+            return muted
+        }
+        val path = capabilities?.mutedUsersPath ?: return null
+        mutedWordsBusy = true
+        return try {
+            val now = ops.setUserMuted(path, userId, muted)
+            mutedUsers = if (now) mutedUsers else mutedUsers.filter { it.userId != userId }
+            refreshAsync()
+            now
+        } catch (e: Exception) {
+            mutedWordsError = PostActions.errorText(e, "保存できませんでした")
+            null
+        } finally {
+            mutedWordsBusy = false
+        }
+    }
+
+    /** 「NG ワード・ミュート」の一覧の「外す」: タイムラインは閉じたときに読み直す。 */
+    fun unmuteUser(u: MutedUser) {
+        scope.launch {
+            mutedWordsError = null
+            if (demo) { demoMutedUsers = demoMutedUsers.filter { it.userId != u.userId }; mutedUsers = demoMutedUsers; return@launch }
+            val path = capabilities?.mutedUsersPath ?: return@launch
+            mutedWordsBusy = true
+            try {
+                if (!ops.setUserMuted(path, u.userId, false)) {
+                    mutedUsers = mutedUsers.filter { it.userId != u.userId }
+                    mutedWordsChanged = true
+                }
+            } catch (e: Exception) {
+                mutedWordsError = PostActions.errorText(e, "外せませんでした")
+            } finally {
+                mutedWordsBusy = false
+            }
         }
     }
 

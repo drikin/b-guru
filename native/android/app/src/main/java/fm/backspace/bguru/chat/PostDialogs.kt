@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -615,6 +616,35 @@ private fun ProfileSheet(timeline: TimelineStore, req: PostDialog.Profile, onOpe
                             style = MaterialTheme.typography.bodySmall,
                             color = if (avatarError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    // 🔇 人のミュート（2026-11-25）: 本人以外で、サーバが muted を返したときだけ。
+                    val muted = profile?.muted
+                    if (profile?.isSelf == false && muted != null && timeline.canMuteUsers) {
+                        var muteBusy by remember(req.userId) { mutableStateOf(false) }
+                        var muteError by remember(req.userId) { mutableStateOf<String?>(null) }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = {
+                                muteBusy = true
+                                muteError = null
+                                scope.launch {
+                                    try {
+                                        val now = timeline.setUserMuted(req.userId, !muted, name, profile?.avatar ?: req.avatar)
+                                        if (now != null) profile = profile?.copy(muted = now)
+                                        else muteError = timeline.mutedWordsError ?: "保存できませんでした"
+                                    } finally {
+                                        muteBusy = false
+                                    }
+                                }
+                            }, enabled = !muteBusy) {
+                                Text(if (muted) "🔇 ミュート中（外す）" else "🔇 ミュート")
+                            }
+                            if (muteBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        }
+                        val note = muteError ?: if (muted) "この人の投稿・返信はタイムラインと検索に出ず、知らせも来ません。ここでは見られます。" else null
+                        note?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall,
+                                color = if (muteError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
                     profile?.bio?.takeIf { it.isNotEmpty() }?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                     profile?.links?.filter { it.href.startsWith("https://") || it.href.startsWith("http://") }?.forEach { l ->
                         Text("🔗 " + l.label.ifEmpty { l.href }, color = AccentGreen, style = MaterialTheme.typography.bodyMedium,
@@ -716,7 +746,7 @@ private fun MutedWordsSheet(timeline: TimelineStore) {
     var draft by remember { mutableStateOf("") }
     ModalBottomSheet(onDismissRequest = { timeline.closeMutedWords() }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding()) {
-            Text("NG ワード", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            Text("NG ワード・ミュート", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
             Text("ここに入れた言葉を含む投稿・返信はタイムラインに出ず、知らせも来ません（自分の投稿は出ます）。大文字小文字・全角半角は区別しません。Web と同じ設定です。",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
@@ -744,21 +774,45 @@ private fun MutedWordsSheet(timeline: TimelineStore) {
             }
             if (words == null) {
                 if (timeline.mutedWordsError == null) CircularProgressIndicator(Modifier.align(Alignment.CenterHorizontally).padding(24.dp))
-            } else if (words.isEmpty()) {
-                Text("まだありません", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.CenterHorizontally).padding(24.dp))
             } else LazyColumn(Modifier.fillMaxWidth()) {
-                items(words, key = { it }) { w ->
-                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(w, Modifier.weight(1f))
-                        IconButton(onClick = { timeline.removeMutedWord(w) }, enabled = !timeline.mutedWordsBusy) {
-                            Icon(Icons.Default.Close, "「$w」を消す")
+                if (words.isEmpty()) item {
+                    Text("まだありません", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth().padding(24.dp), textAlign = TextAlign.Center)
+                } else {
+                    items(words, key = { "w:$it" }) { w ->
+                        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(w, Modifier.weight(1f))
+                            IconButton(onClick = { timeline.removeMutedWord(w) }, enabled = !timeline.mutedWordsBusy) {
+                                Icon(Icons.Default.Close, "「$w」を消す")
+                            }
                         }
+                        HorizontalDivider()
                     }
-                    HorizontalDivider()
+                    item {
+                        Text("${words.size} / ${timeline.mutedWordsMax} 個", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
+                    }
                 }
-                item {
-                    Text("${words.size} / ${timeline.mutedWordsMax} 個", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp))
+                // 🔇 ミュートした人（2026-11-25）: プロフィールの 🔇 で入れた人。ここでは外すだけ。
+                if (timeline.canMuteUsers) {
+                    item {
+                        Text("ミュートした人", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp))
+                        Text("この人たちの投稿・返信はタイムラインと検索に出ず、知らせも来ません。ミュートはプロフィールの 🔇 から。",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp))
+                    }
+                    val people = timeline.mutedUsers
+                    if (people.isEmpty()) item {
+                        Text("まだいません", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth().padding(24.dp), textAlign = TextAlign.Center)
+                    } else items(people, key = { "u:" + it.userId }) { u ->
+                        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Avatar(u.avatar?.let { ApiClient.absolute(it) ?: it }, u.name, 32.dp)
+                            Text(u.name, Modifier.weight(1f))
+                            TextButton(onClick = { timeline.unmuteUser(u) }, enabled = !timeline.mutedWordsBusy,
+                                modifier = Modifier.semantics { contentDescription = "${u.name} のミュートを外す" }) { Text("外す") }
+                        }
+                        HorizontalDivider()
+                    }
                 }
             }
             Spacer(Modifier.height(12.dp))

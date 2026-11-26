@@ -200,7 +200,7 @@ fun TimelineScreen(
                                     DropdownMenuItem(text = { Text("👁 部活の表示…") }, onClick = { listsMenu = false; timeline.dialog = PostDialog.ClubVisibility })
                                 }
                                 if (canMuted) {
-                                    DropdownMenuItem(text = { Text("🚫 NG ワード…") }, onClick = { listsMenu = false; timeline.dialog = PostDialog.MutedWords })
+                                    DropdownMenuItem(text = { Text("🚫 NG ワード・ミュート…") }, onClick = { listsMenu = false; timeline.dialog = PostDialog.MutedWords })
                                 }
                             }
                         }

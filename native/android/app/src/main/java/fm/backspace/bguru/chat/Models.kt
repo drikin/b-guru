@@ -261,6 +261,8 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
         val clubVisibility: String? = null,
         /** NG ワード（GET で一覧、PUT { words } で置き換え）。無い（古いサーバ）なら出さない。 */
         val mutedWords: String? = null,
+        /** 人のミュート（POST で入れる・DELETE で外す。`:id` を置き換える。一覧は muted-words の GET の users）。無い（古いサーバ・アプリの鍵でない）ならボタンを出さない（2026-11-25）。 */
+        val mutedUsers: String? = null,
         val mentions: String? = null,
         /** 部活一覧の自分の順番（GET で順番、PUT { order } で置き換え。サーバに保存して全端末で同じ）。無い（古いサーバ）なら並べ替えを出さない（2026-11-09）。 */
         val clubOrder: String? = null,
@@ -331,6 +333,8 @@ data class Capabilities(val scopes: List<String> = emptyList(), val features: Fe
     val canChangeClub get() = p?.clubChange ?: false
     val clubVisibilityPath get() = p?.clubVisibility?.takeIf { it.startsWith("/api/") }
     val mutedWordsPath get() = p?.mutedWords?.takeIf { it.startsWith("/api/") }
+    /** 人のミュートの窓口（`:id` 入り、自分のサーバのパスだけ）。 */
+    val mutedUsersPath get() = p?.mutedUsers?.takeIf { it.startsWith("/api/") && it.contains(":id") }
     val clubOrderPath get() = p?.clubOrder?.takeIf { it.startsWith("/api/") }
     val clubUnreadPath get() = p?.clubUnread?.takeIf { it.startsWith("/api/") }
     val clubReadPath get() = p?.clubRead?.takeIf { it.startsWith("/api/") }
@@ -642,6 +646,8 @@ data class PostPoll(
     val links: List<ProfileLink> = emptyList(),
     val postCount: Int? = null,
     val firstPostAt: String? = null,
+    /** Only on someone else's profile: I have muted them (null = an older server without 人のミュート). */
+    val muted: Boolean? = null,
 )
 @Serializable data class ProfileLink(val label: String = "", val href: String = "")
 @Serializable data class MemberProfileResponse(val profile: MemberProfile)
@@ -655,7 +661,14 @@ data class PostPoll(
 @Serializable data class ClubHiddenResponse(val club: String = "", val hidden: Boolean = false)
 @Serializable data class ClubOrderResponse(val order: List<String> = emptyList())
 @Serializable data class ClubUnreadResponse(val unread: Map<String, Int> = emptyMap())
-@Serializable data class MutedWordsResponse(val words: List<String> = emptyList(), val max: Int = 50, val maxLength: Int = 40)
+@Serializable data class MutedWordsResponse(
+    val words: List<String> = emptyList(), val max: Int = 50, val maxLength: Int = 40,
+    /** ミュートした人（2026-11-25。古いサーバは無い → 空）。 */
+    val users: List<MutedUser> = emptyList(),
+)
+/** 「NG ワード・ミュート」の一覧の 1 人（メールは来ない）。 */
+@Serializable data class MutedUser(val userId: String, val name: String = "", val avatar: String? = null)
+@Serializable data class MutedUserResponse(val muted: Boolean = false)
 @Serializable data class ClubsResponse(val clubs: List<ClubInfo> = emptyList())
 /** POST /api/agent/reactions answers without `mine`; the app fills it in. */
 @Serializable data class PostReactionToggle(val added: Boolean = false, val reactions: List<Count> = emptyList()) {
