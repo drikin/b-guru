@@ -2,7 +2,7 @@
 import crypto from "crypto";
 import { avatarPathForMd5 } from "./custom-avatar";
 import { pool } from "./db";
-import { noMutedWordSql } from "./muted-words";
+import { mutedUserToken, noMutedWordSql } from "./muted-words";
 import { fetchUrlPreview, UrlPreview } from "./urlpreview";
 import { emitLive } from "./live";
 import { invalidateOnPostChange, sharedCache } from "./shared-cache";
@@ -481,7 +481,9 @@ export async function listPosts(options?: {
   }
   // NG ワード (drikin 2026-10-29): applies everywhere (club taps, profiles, search, bookmarks too);
   // the viewer's own posts always show.
-  const muted = options?.mutedWords ?? [];
+  // 人のミュート (2026-11-25): that member's own profile still shows their posts.
+  const authorToken = author ? mutedUserToken(author) : "";
+  const muted = (options?.mutedWords ?? []).filter((w) => w !== authorToken);
   let mutedParam = "";
   if (muted.length > 0) {
     searchParams.push(muted);

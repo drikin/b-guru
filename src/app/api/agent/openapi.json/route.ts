@@ -421,12 +421,22 @@ const spec = {
     "/api/agent/muted-words": {
       get: {
         summary: "自分の NG ワード（NFKC・小文字にそろえた形）。含むほかの人の投稿・返信はタイムラインに出ず、知らせも来ない（自分の投稿は出る）",
-        responses: { "200": { description: "{apiVersion, words: string[], max, maxLength}" } },
+        responses: { "200": { description: "{apiVersion, words: string[], max, maxLength, users: [{user_id, name, avatar}]（ミュートした人）}" } },
       },
       put: {
         summary: "NG ワードを一覧ごと置き換える（アプリの鍵だけ）",
         requestBody: { content: { "application/json": { schema: { type: "object", properties: { words: { type: "array", items: { type: "string" } } }, required: ["words"] } } } },
         responses: { "200": { description: "{apiVersion, words}" }, "400": { description: "多すぎる・長すぎる" } },
+      },
+    },
+    "/api/agent/users/{user_id}/mute": {
+      post: {
+        summary: "この人をタイムラインでミュートする（アプリの鍵だけ）。投稿・返信がタイムライン・検索・スレッドに出ず、知らせも来ない。プロフィールでは出る。相手には知らせない",
+        responses: { "200": { description: "{apiVersion, muted: true}" }, "400": { description: "自分・上限" }, "404": { description: "いない人" } },
+      },
+      delete: {
+        summary: "ミュートを外す（アプリの鍵だけ）",
+        responses: { "200": { description: "{apiVersion, muted: false}" } },
       },
     },
     "/api/agent/notifications": {

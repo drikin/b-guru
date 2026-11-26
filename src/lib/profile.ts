@@ -37,6 +37,8 @@ export interface Profile {
   links: ProfileLink[];
   postCount: number;
   firstPostAt: string | null;
+  /** Other viewers only: the viewer has muted this member (人のミュート, 2026-11-25). */
+  muted?: boolean;
 }
 
 export const MAX_BIO = 2000;

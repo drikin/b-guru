@@ -2,7 +2,9 @@
 /* NG ワード（本人の設定。サーバに保存してアプリと共通。drikin 2026-10-29）。
  * 言葉を含むほかの人の投稿・返信はタイムラインに出ず、その知らせも来ない（自分の投稿は出る）。 */
 import { useEffect, useState } from "react";
-import { ActionIcon, Badge, Button, Group, Modal, Stack, Text, TextInput } from "@mantine/core";
+import { ActionIcon, Avatar, Badge, Button, Divider, Group, Modal, Stack, Text, TextInput } from "@mantine/core";
+
+type MutedUser = { user_id: string; name: string; avatar: string | null };
 
 export default function MutedWordsModal({
   opened,
@@ -21,6 +23,7 @@ export default function MutedWordsModal({
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [users, setUsers] = useState<MutedUser[]>([]);
 
   useEffect(() => {
     if (!opened) return;
@@ -32,6 +35,7 @@ export default function MutedWordsModal({
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d?.error || "読み込めませんでした");
         setWords(d.words ?? []);
+        setUsers(Array.isArray(d.users) ? d.users : []);
         if (d.max) setMax(d.max);
         if (d.maxLength) setMaxLength(d.maxLength);
         setLoaded(true);
@@ -61,6 +65,23 @@ export default function MutedWordsModal({
     }
   };
 
+  // 人のミュートを外す（ミュートはプロフィールの 🔇 から、2026-11-25）。
+  const unmute = async (u: MutedUser) => {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await fetch(`/api/user/${encodeURIComponent(u.user_id)}/mute`, { method: "DELETE" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.error || "保存できませんでした");
+      setUsers((cur) => cur.filter((x) => x.user_id !== u.user_id));
+      onChanged();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const add = async () => {
     const w = draft.trim();
     if (!w) return;
@@ -68,7 +89,7 @@ export default function MutedWordsModal({
   };
 
   return (
-    <Modal opened={opened} onClose={onClose} title="NG ワード" centered>
+    <Modal opened={opened} onClose={onClose} title="NG ワード・ミュート" centered>
       <Stack gap="sm">
         <Text size="sm" c="dimmed">
           ここに入れた言葉を含む投稿・返信はタイムラインと検索に出ず、知らせも来ません（自分の投稿は出ます）。大文字小文字・全角半角は区別しません。アプリと同じ設定です。
@@ -133,6 +154,32 @@ export default function MutedWordsModal({
             {words.length} / {max} 個
           </Text>
         )}
+        <Divider label="ミュートした人" labelPosition="left" mt="xs" />
+        <Text size="sm" c="dimmed">
+          ミュートした人の投稿・返信はタイムラインと検索に出ず、知らせも来ません（その人のプロフィールでは見られます。相手には伝わりません）。ミュートはプロフィールの 🔇 からできます。
+        </Text>
+        {loaded && users.length === 0 && (
+          <Text size="sm" c="dimmed">
+            まだいません
+          </Text>
+        )}
+        <Stack gap={6}>
+          {users.map((u) => (
+            <Group key={u.user_id} gap="sm" wrap="nowrap" justify="space-between">
+              <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+                <Avatar src={u.avatar || undefined} size="sm" radius="xl">
+                  {u.name.slice(0, 1)}
+                </Avatar>
+                <Text size="sm" truncate>
+                  {u.name}
+                </Text>
+              </Group>
+              <Button size="xs" variant="light" color="gray" disabled={busy} onClick={() => void unmute(u)}>
+                外す
+              </Button>
+            </Group>
+          ))}
+        </Stack>
       </Stack>
     </Modal>
   );

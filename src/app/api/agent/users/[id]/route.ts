@@ -6,6 +6,7 @@ import { withAgent } from "@/lib/agent-auth";
 import { getProfile } from "@/lib/profile";
 import { userIdToEmail } from "@/lib/user";
 import { emailMd5, hasCustomAvatar } from "@/lib/custom-avatar";
+import { isUserMuted } from "@/lib/muted-words";
 import { NO_CACHE } from "../../_lib";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +30,8 @@ export async function GET(req: NextRequest, { params }: Ctx) {
           is_self: isSelf,
           // 本人にだけ: アイコンが自分で上げたものか（POST/DELETE /api/agent/profile/avatar）。無ければ古いサーバ。
           ...(isSelf ? { avatar_custom: hasCustomAvatar(emailMd5(email)) } : {}),
+          // ほかの人にだけ: 自分がこの人をミュートしているか（POST/DELETE …/mute）。無ければ古いサーバ。
+          ...(isSelf ? {} : { muted: await isUserMuted(ctx.email, email) }),
           name: p.name,
           avatar: p.avatar,
           bio: p.bio,

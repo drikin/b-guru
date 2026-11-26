@@ -447,6 +447,17 @@ export async function initSchema() {
       PRIMARY KEY (email, word)
     );
 
+    -- 人のミュート (drikin 2026-11-25): the viewer never sees muted_email's posts and replies on
+    -- the timeline (their profile still shows them), and gets no notification for them.
+    -- Both emails lowercase. Not told to the muted member. lib/muted-words.ts.
+    CREATE TABLE IF NOT EXISTS muted_users (
+      email TEXT NOT NULL,
+      muted_email TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (email, muted_email)
+    );
+    CREATE INDEX IF NOT EXISTS idx_muted_users_muted ON muted_users(muted_email);
+
     -- Per-user club pins (snize 2026-10-17): pinned clubs stay at the top of
     -- the sidebar in pin order (pinned_at) instead of moving with activity.
     -- One row per (email, club) only when pinned. Independent of club_visibility.

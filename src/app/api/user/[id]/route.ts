@@ -3,6 +3,7 @@ import { getProfile, updateProfile, MAX_BIO } from "@/lib/profile";
 import { getSessionEmail } from "@/lib/session";
 import { isAdmin } from "@/lib/admin";
 import { resolveEmailSegment } from "@/lib/user";
+import { isUserMuted } from "@/lib/muted-words";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -19,7 +20,8 @@ async function popProfile(email: string, me: string) {
   // the leak the user_id switch fixes. The owner still gets their own email
   // (useful for the editor / gravatar rebuild).
   if (!profile.isSelf) delete profile.email;
-  return profile;
+  // 人のミュート (2026-11-25): whether the viewer has muted this member.
+  return profile.isSelf ? profile : { ...profile, muted: await isUserMuted(me.toLowerCase(), email) };
 }
 
 // GET /api/user/[id] — profile header info + summary (own view, no-store).

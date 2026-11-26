@@ -316,6 +316,8 @@ export function agentCapabilities(
         club_read: app && can("read_state") ? "/api/agent/clubs/read" : null,
         // NG ワード（GET は読むだけ、PUT { words } はアプリの鍵だけ）。2026-10-29
         muted_words: app ? "/api/agent/muted-words" : null,
+        // 人のミュート (2026-11-25): POST/DELETE /api/agent/users/:id/mute、一覧は muted-words の users。
+        muted_users: app ? "/api/agent/users/:id/mute" : null,
         mentions: can("read") ? "/api/agent/members" : null,
       },
       stream: {

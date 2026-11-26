@@ -61,6 +61,7 @@ d("NG ワード（DB）", () => {
     await sql(`DELETE FROM notifications WHERE user_email LIKE 'mw-%'`);
     await sql(`DELETE FROM posts WHERE author_email LIKE 'mw-%'`);
     await sql(`DELETE FROM muted_words WHERE email LIKE 'mw-%'`);
+    await sql(`DELETE FROM muted_users WHERE email LIKE 'mw-%'`);
     anchor = await post(OTHER, "anchor");
     await sql(`UPDATE posts SET created_at = now() - interval '1 hour' WHERE id = $1`, [anchor]);
   });
@@ -70,6 +71,7 @@ d("NG ワード（DB）", () => {
     await sql(`DELETE FROM notifications WHERE user_email LIKE 'mw-%'`);
     await sql(`DELETE FROM posts WHERE author_email LIKE 'mw-%'`);
     await sql(`DELETE FROM muted_words WHERE email LIKE 'mw-%'`);
+    await sql(`DELETE FROM muted_users WHERE email LIKE 'mw-%'`);
     await m.db.pool.end();
   });
 
@@ -196,5 +198,59 @@ d("NG ワード（DB）", () => {
     expect([...muted]).toEqual([ME]);
     const mineBad = await post(ME, "ネタバレ（自分）");
     expect([...(await m.mw.mutedRecipients(mineBad, [ME]))]).toEqual([]);
+  });
+
+  it("人のミュート: その人の投稿・返信はタイムライン・アプリ・スレッド・検索に出ない、プロフィールでは出る", async () => {
+    const THIRD = `mw-third-${stamp}@test.local`;
+    expect(await m.mw.setUserMuted(ME, OTHER.toUpperCase(), true)).toEqual({ ok: true });
+    expect(await m.mw.isUserMuted(ME, OTHER)).toBe(true);
+    const theirs = await post(OTHER, "雑談");
+    const root = await post(THIRD, "映画の話");
+    const theirReply = await post(OTHER, "見た", root);
+    const okReply = await post(THIRD, "よかった", root);
+    const mine = await post(ME, "自分");
+    const { web, app, words } = await views();
+    const webIds = web.map((p) => p.id);
+    for (const ids of [webIds, app]) {
+      expect(ids).not.toContain(theirs);
+      expect(ids).toContain(root);
+      expect(ids).toContain(mine);
+    }
+    expect(app).not.toContain(theirReply);
+    expect(web.find((p) => p.id === root)?.replies?.map((x) => x.id)).toEqual([okReply]);
+    expect((await m.posts.getPostThread(root, ME, words)).replies.map((x) => x.id)).toEqual([okReply]);
+    const found = await m.posts.listPosts({ viewerEmail: ME, search: "雑談", mutedWords: words, limit: 50 });
+    expect(found.map((p) => p.id)).not.toContain(theirs);
+    // その人のプロフィールでは出る
+    const prof = await m.posts.listPosts({ viewerEmail: ME, author: OTHER, mutedWords: words, limit: 50 });
+    expect(prof.map((p) => p.id)).toContain(theirs);
+    // ほかの人には今までどおり
+    const otherView = await m.posts.listPosts({ viewerEmail: THIRD, mutedWords: await m.mw.getMutedWords(THIRD), limit: 200 });
+    expect(otherView.map((p) => p.id)).toContain(theirs);
+    // 外すと戻る
+    await m.mw.setUserMuted(ME, OTHER, false);
+    expect((await views()).web.map((p) => p.id)).toContain(theirs);
+    await sql(`DELETE FROM posts WHERE author_email = $1`, [THIRD]);
+  });
+
+  it("人のミュート: 知らせ・新着 push・未読の返信の数にも効く。NG ワードと一緒でも、言葉の一覧には出ない", async () => {
+    await m.mw.setMutedWords(ME, ["ネタバレ"]);
+    await m.mw.setUserMuted(ME, OTHER, true);
+    const myPost = await post(ME, "映画みた");
+    const reply = await post(OTHER, "いいね", myPost);
+    expect(await m.notif.createNotification({ userEmail: ME, type: "reply", actorEmail: OTHER, postId: myPost, replyId: reply, text: "x" })).toBeNull();
+    expect((await m.rs.getUnreadReplyCounts(ME, [myPost])).get(myPost) ?? 0).toBe(0);
+    const theirs = await post(OTHER, "雑談");
+    expect([...(await m.mw.mutedRecipients(theirs, [ME]))]).toEqual([ME]);
+    expect((await m.mw.getMutedWordsApi(ME)).body.words).toEqual(["ネタバレ"]);
+    const words = await m.mw.getMutedWords(ME);
+    expect(words).toHaveLength(2);
+    expect(m.mw.containsMutedWord("雑談", words)).toBe(false);
+  });
+
+  it("人のミュート: 自分はできない・言葉に制御文字は入らない", async () => {
+    expect(await m.mw.setUserMuted(ME, ME, true)).toHaveProperty("error");
+    expect(m.mw.cleanMutedWords(["\u0001" + OTHER])).toEqual([OTHER]);
+    expect((await m.mw.setUserMutedApi(ME, "nope!", true)).status).toBe(404);
   });
 });

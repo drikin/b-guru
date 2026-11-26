@@ -3188,12 +3188,15 @@ function ProfileView({
   onToggleBookmark,
   onQuoteToChat,
   onSendToNeta,
+  onToggleMute,
 }: {
   profile: ProfileData | null;
   posts: FeedPost[];
   loading: boolean;
   hasMore: boolean;
   isOwn: boolean;
+  /** 人のミュート (2026-11-25): ほかの人のプロフィールだけ。 */
+  onToggleMute?: () => void;
   auth: { email: string; isAdmin?: boolean };
   avatarSrc?: string | null;
   mentionMembers?: MentionMember[];
@@ -3261,7 +3264,24 @@ function ProfileView({
               プロフィールを編集
             </Button>
           )}
+          {!isOwn && onToggleMute && typeof profile?.muted === "boolean" && (
+            <Button
+              size="xs"
+              variant={profile.muted ? "filled" : "light"}
+              color="gray"
+              style={{ position: "absolute", right: 12, top: 6 }}
+              onClick={onToggleMute}
+              title={profile.muted ? "タイムラインに戻す" : "この人の投稿・返信をタイムラインに出さず、知らせも止めます（相手には伝わりません）"}
+            >
+              {profile.muted ? "🔇 ミュート中（外す）" : "🔇 ミュート"}
+            </Button>
+          )}
         </Box>
+        {!isOwn && profile?.muted ? (
+          <Text size="xs" c="dimmed" px="md" mt={6}>
+            ミュート中: この人の投稿・返信はタイムラインと検索に出ず、知らせも来ません。ここでは見られます。
+          </Text>
+        ) : null}
         <Box px="md" pb="md" style={{ marginTop: 8 }}>
           <Text fw={700} size="lg">
             {profile?.name || "?"}
@@ -8684,6 +8704,24 @@ export default function Home() {
   );
   openProfileRef.current = openProfile;
 
+  // 人のミュート (2026-11-25): プロフィールのボタンから。タイムラインと注目を読み直す。
+  const toggleProfileMute = useCallback(async () => {
+    const p = profileData;
+    if (!p || p.isSelf || !profileUserId || typeof p.muted !== "boolean") return;
+    const next = !p.muted;
+    try {
+      const r = await fetch(`/api/user/${encodeURIComponent(profileUserId)}/mute`, { method: next ? "POST" : "DELETE" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.error || "保存できませんでした");
+      setProfileData((cur) => (cur ? { ...cur, muted: next } : cur));
+      loadFeed(undefined, searchQueryRef.current.trim() || undefined);
+      loadersRef.current?.loadHot();
+      mantineNotifications.show({ message: next ? `${p.name || "この人"}さんをミュートしました` : "ミュートを外しました", color: "gray" });
+    } catch (e) {
+      mantineNotifications.show({ message: (e as Error).message, color: "red" });
+    }
+  }, [profileData, profileUserId, loadFeed]);
+
   const closeProfile = useCallback(() => {
     setProfileUserId(null);
     setProfileData(null);
@@ -11458,7 +11496,7 @@ export default function Home() {
           >
             <Group gap="sm" wrap="nowrap" align="center">
               <span style={{ lineHeight: 1 }}>🚫</span>
-              <span>NG ワード…</span>
+              <span>NG ワード・ミュート…</span>
             </Group>
             <span style={{ color: "var(--text-muted)" }}>›</span>
           </UnstyledButton>
@@ -12468,7 +12506,7 @@ export default function Home() {
                     />
                   ))}
                   <ClubChip label="未設定" active={clubFilter === CLUB_UNSET} onClick={() => selectClub(CLUB_UNSET)} />
-                  <ClubChip label="NG ワード…" active={false} onClick={() => setMutedWordsOpen(true)} />
+                  <ClubChip label="NG ワード・ミュート…" active={false} onClick={() => setMutedWordsOpen(true)} />
                 </Box>
               )}
 
@@ -13118,6 +13156,7 @@ export default function Home() {
                   mentionMembers={mentionMembers}
                   searchQuery={searchActive ? searchQuery : undefined}
                   onClose={closeProfile}
+                  onToggleMute={toggleProfileMute}
                   onLoadMore={loadMoreProfile}
                   onEdit={openEditProfile}
                   onOpenThread={openThread}
