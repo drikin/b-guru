@@ -166,31 +166,21 @@ final class ComposerUITextView: UITextView {
     }
 
     /// iPad with an external keyboard (drikin 2026-11-25「入力位置がちょっとだけ動いたりして見づらい」):
-    /// the bar iPadOS floats at the bottom (undo / redo / paste and the predictive words) came and went
-    /// and changed height while typing, and the composer moved with it. With a keyboard attached there
-    /// is no shortcut group and no autocorrection / predictive words, so the bar is not shown and the
-    /// composer stays put. Japanese conversion is the input method's own and is not affected. Back
-    /// as before when the keyboard is taken away (the on-screen keyboard keeps its shortcuts).
-    private var savedAssistant: (leading: [UIBarButtonItemGroup], trailing: [UIBarButtonItemGroup])?
+    /// the predictive words in the bar iPadOS floats at the bottom came and went and changed its height
+    /// while typing, so with a keyboard attached there is no autocorrection / predictive words.
+    /// The shortcut group (undo / redo / paste) stays (drikin 2026-11-27「外付けキーボード接続時に
+    /// 折りたたんだキーボードコントロールが出るように」): without it iPadOS shows no bar at all, not even
+    /// the collapsed control. The bar does not lift the composer (MainView's KeyboardOverlapReader only
+    /// counts a keyboard across the whole bottom edge). Japanese conversion is the input method's own
+    /// and is not affected. Back as before when the keyboard is taken away.
+    private var hardwareMode = false
 
     private func applyHardwareKeyboardMode() {
         let hardware = traitCollection.userInterfaceIdiom == .pad && GCKeyboard.coalesced != nil
-        let item = inputAssistantItem
-        if hardware, savedAssistant == nil {
-            savedAssistant = (item.leadingBarButtonGroups, item.trailingBarButtonGroups)
-            item.leadingBarButtonGroups = []
-            item.trailingBarButtonGroups = []
-            autocorrectionType = .no
-            spellCheckingType = .no
-        } else if !hardware, let saved = savedAssistant {
-            savedAssistant = nil
-            item.leadingBarButtonGroups = saved.leading
-            item.trailingBarButtonGroups = saved.trailing
-            autocorrectionType = .default
-            spellCheckingType = .default
-        } else {
-            return
-        }
+        guard hardware != hardwareMode else { return }
+        hardwareMode = hardware
+        autocorrectionType = hardware ? .no : .default
+        spellCheckingType = hardware ? .no : .default
         if isFirstResponder { reloadInputViews() }
     }
 
