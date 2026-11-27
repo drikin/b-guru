@@ -173,7 +173,9 @@ struct TimelineScreen: View {
                 }
                 .navigationDestination(for: Int.self) { id in
                     ThreadScreen(id: id, timeline: timeline, capabilities: capabilities, onReconnect: onReconnect)
+                        .pageKeyboardAvoidanceOff()
                 }
+                .pageKeyboardAvoidanceOff()
         }
         #else
         // The panel's own header row: [‹ back] switch … [reload] [✎].

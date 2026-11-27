@@ -22,6 +22,7 @@ struct JukeboxScreen: View {
                 .navigationTitle("ジュークボックス")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { if let tabPicker { ToolbarItem(placement: .principal) { tabPicker } } }
+                .pageKeyboardAvoidanceOff()
         }
         #else
         VStack(spacing: 0) {

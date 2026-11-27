@@ -143,6 +143,7 @@ struct ChatScreen: View {
                     menu
                 }
             }
+            .pageKeyboardAvoidanceOff()
         }
     }
 

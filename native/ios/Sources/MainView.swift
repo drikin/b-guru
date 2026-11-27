@@ -29,7 +29,7 @@ struct MainView: View {
     /// What can be seen (the settled page, the app active), for the views inside.
     @State private var visibility = ScreenVisibility()
     /// How much of the screen a docked software keyboard covers (iPhone pager, iPad columns).
-    @State private var keyboard = KeyboardOverlap()
+    @State private var keyboard = KeyboardLift()
     /// iPad: the timeline column's width (dragged at the line; kept between launches).
     @AppStorage("ipadTimelineWidth") private var leftWidth: Double = ColumnSplit.defaultWidth
 
@@ -109,9 +109,9 @@ struct MainView: View {
                 }
             }
             // Our own keyboard avoidance, as on iPhone: only a keyboard docked at the bottom lifts the
-            // reply box and the composer. SwiftUI's own kept a docked keyboard's height free under the
-            // floating keyboard (リュー 2026-11-27: タイムラインの返信欄で固定キーボードの幅の余白).
-            .modifier(AvoidsKeyboard(keyboard: keyboard))
+            // reply box and the composer (each screen, pageKeyboardAvoidanceOff). SwiftUI's own kept a docked
+            // keyboard's height free under the floating keyboard (リュー 2026-11-27: 固定キーボードの幅の余白).
+            .environment(keyboard)
             .ignoresSafeArea(.keyboard)
             .background(KeyboardOverlapReader(keyboard: keyboard).ignoresSafeArea(.keyboard))
         } else {
@@ -133,19 +133,16 @@ struct MainView: View {
                                 .frame(width: g.size.width, height: g.size.height)
                                 .id(MainTab.clubs)
                             TimelineScreen(timeline: timeline, capabilities: store.capabilities, tabPicker: picker, onReconnect: onSignOut)
-                                .modifier(AvoidsKeyboard(keyboard: keyboard))
                                 .frame(width: g.size.width, height: g.size.height)
                                 .id(MainTab.timeline)
                             ChatScreen(store: store, onSignOut: onSignOut, tabPicker: picker)
-                                .modifier(AvoidsKeyboard(keyboard: keyboard))
                                 .frame(width: g.size.width, height: g.size.height)
                                 .id(MainTab.chat)
                             // ✉️ DM: a page of its own right after 💬 (the list, a conversation pushed over it).
                             // オーナー 2026-11-08「アプリ版のDMを素直にチャットの右のタブに移動」
                             if store.dm.enabled {
                                 DMTabScreen(dm: store.dm, tabPicker: AnyView(picker))
-                                    .modifier(AvoidsKeyboard(keyboard: keyboard))
-                                    .frame(width: g.size.width, height: g.size.height)
+                                        .frame(width: g.size.width, height: g.size.height)
                                     .id(MainTab.dm)
                             }
                             // 📝 ネタ帳: ✉️ と 📻 の間（オーナー 2026-11-14「DM とプレイヤーの間のタブにネタ帳」）。
@@ -156,8 +153,7 @@ struct MainView: View {
                             }
                             if jukeboxOn {
                                 JukeboxScreen(jukebox: store.jukebox, path: jukeboxPath, tabPicker: picker)
-                                    .modifier(AvoidsKeyboard(keyboard: keyboard))
-                                    .frame(width: g.size.width, height: g.size.height)
+                                        .frame(width: g.size.width, height: g.size.height)
                                     .id(MainTab.jukebox)
                             }
                             // 📜 台本: いちばん右（オーナー 2026-11-14「アプリは 1 番右のタブに追加」）。
@@ -180,8 +176,9 @@ struct MainView: View {
             }
             .ignoresSafeArea(.container, edges: .bottom)
             // A ScrollView does not move its content out of the keyboard's way: the pages stay
-            // full height and each lifts its own content (AvoidsKeyboard), so the chat
+            // full height and each screen lifts its own content (pageKeyboardAvoidanceOff), so the chat
             // composer, a thread's reply box and the record shelf's search stay above it.
+            .environment(keyboard)
             .ignoresSafeArea(.keyboard)
             .background(KeyboardOverlapReader(keyboard: keyboard).ignoresSafeArea(.keyboard))
         }
@@ -432,27 +429,10 @@ private struct DMCountBadge: View {
     }
 }
 
-/// How far the software keyboard covers the pager from its bottom edge (0 when hidden).
-@MainActor
-@Observable
-final class KeyboardOverlap {
-    var height: CGFloat = 0
-}
-
-/// A page's own keyboard avoidance (the pager ignores the keyboard): the page's content
-/// ends at the keyboard's top, so the chat composer, a thread's reply box and the record
-/// shelf's search field stay above it. Reads the height itself, so only this redraws.
-private struct AvoidsKeyboard: ViewModifier {
-    let keyboard: KeyboardOverlap
-    func body(content: Content) -> some View {
-        content.padding(.bottom, keyboard.height)
-    }
-}
-
 /// Follows the software keyboard's frame (UIKit's keyboard notifications) and turns it into
 /// how much of the pager it covers. Moves with the keyboard's own animation.
 private struct KeyboardOverlapReader: UIViewRepresentable {
-    let keyboard: KeyboardOverlap
+    let keyboard: KeyboardLift
 
     func makeUIView(context: Context) -> ReaderView {
         let view = ReaderView()

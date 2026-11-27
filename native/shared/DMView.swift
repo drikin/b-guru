@@ -104,7 +104,9 @@ struct DMTabScreen: View {
                 .navigationDestination(for: DMRoute.self) { r in
                     DMRouteView(dm: dm, route: r)
                         .environment(\.dmPresentation, .navigation)
+                        .pageKeyboardAvoidanceOff()
                 }
+                .pageKeyboardAvoidanceOff()
         }
     }
 }

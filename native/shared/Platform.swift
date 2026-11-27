@@ -139,6 +139,34 @@ extension UIResponder {
 }
 #endif
 
+/// How much of the screen a keyboard docked at the bottom covers (iOS: MainView's KeyboardOverlapReader
+/// sets it; 0 for the iPad's floating keyboard and on macOS).
+@MainActor
+@Observable
+final class KeyboardLift {
+    var height: CGFloat = 0
+}
+
+extension View {
+    /// iOS, on each screen of a page's NavigationStack (the stack's root and what it pushes): SwiftUI's own
+    /// keyboard avoidance off, and the screen's content ends at the top of a keyboard docked at the bottom
+    /// (KeyboardLift from MainView). SwiftUI's own kept a docked keyboard's height free under the iPad's
+    /// floating keyboard (リュー 2026-11-27). The lift has to be inside each screen: a padding outside the
+    /// stack was overridden by the screens ignoring the keyboard. macOS: unchanged.
+    func pageKeyboardAvoidanceOff() -> some View { modifier(PageKeyboardLift()) }
+}
+
+private struct PageKeyboardLift: ViewModifier {
+    @Environment(KeyboardLift.self) private var lift: KeyboardLift?
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content.padding(.bottom, lift?.height ?? 0).ignoresSafeArea(.keyboard)
+        #else
+        content
+        #endif
+    }
+}
+
 /// Hide the software keyboard wherever it is (tap outside the composer, page switch).
 /// macOS has no software keyboard: no-ops there.
 @MainActor
