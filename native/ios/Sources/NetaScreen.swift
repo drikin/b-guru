@@ -13,7 +13,11 @@ struct NetaScreen: View {
             NetaTabView(path: path, web: web)
                 .ignoresSafeArea(.container, edges: .bottom)
                 // 元記事（2026-11-27）: ネタ帳の上に重ねる。✕ でネタ帳に戻る。
-                .overlay { NetaReaderOverlay(reader: web.reader) }
+                .overlay { NetaReaderOverlay(reader: web.reader).ignoresSafeArea(.keyboard) }
+                // キーボードは WebView が自分で避ける（入力欄が見えるようにページの中をずらす）。SwiftUI にも避けさせると
+                // ネタ帳の画面ごとキーボードの高さに合わせて縮み、iPad のフローティングキーボードでも上がっていた
+                // （オーナー 2026-11-27「ネタ帳の表示ビューがソフトウェアキーボードの表示領域に引っ張られて可変に上がっちゃう」）。
+                .ignoresSafeArea(.keyboard)
                 .navigationTitle(title)
                 .inlineNavigationTitle()
                 .toolbar {

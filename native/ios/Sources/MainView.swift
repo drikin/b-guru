@@ -46,8 +46,9 @@ struct MainView: View {
             .environment(\.quoteToChat, store.quoteToChat)
             .environment(\.watch, store.watch.enabled ? store.watch : nil)
             #if DEBUG
-            // Dev only: BGURU_DEMO_NETA_READER=<url> → the 📝 article browser over everything (the demo has no 📝 tab).
-            .overlay { if ProcessInfo.processInfo.environment["BGURU_DEMO_NETA_READER"] != nil { NetaReaderOverlay(reader: NetaTabWeb.shared.reader) } }
+            // Dev only: BGURU_DEMO_NETA_READER=<url> → the 📝 page with the article browser open, over everything
+            // (the demo has no 📝 tab; the page itself stays empty without a token).
+            .overlay { if ProcessInfo.processInfo.environment["BGURU_DEMO_NETA_READER"] != nil { NetaScreen(path: "/neta/app/enter") } }
             .task {
                 if let s = ProcessInfo.processInfo.environment["BGURU_DEMO_NETA_READER"], let u = URL(string: s) {
                     NetaTabWeb.shared.reader.open(u)

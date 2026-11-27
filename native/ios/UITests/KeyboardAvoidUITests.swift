@@ -79,4 +79,30 @@ final class KeyboardAvoidUITests: XCTestCase {
         }
         keyboard.pinch(withScale: 3, velocity: 1) // dock it again for the next run
     }
+
+    /// 📝 ネタ帳（オーナー 2026-11-27「ネタ帳の表示ビューがソフトウェアキーボードの表示領域に引っ張られて可変に上がっちゃう」）:
+    /// ページの入力欄でキーボードを出しても、ネタ帳の画面（記事のブラウザ）は縮まない・上がらない。WebView が自分で避ける。
+    /// 記事は google.com の検索欄（ネットが要る。読めなければスキップ）。
+    func testNetaPageDoesNotFollowKeyboard() throws {
+        let app = XCUIApplication()
+        app.launchEnvironment["BGURU_DEMO"] = "1"
+        app.launchEnvironment["BGURU_DEMO_NETA_READER"] = "https://www.google.com/"
+        app.launch()
+        let close = app.buttons["neta-reader-close"]
+        guard close.waitForExistence(timeout: 10) else { return XCTFail("the article browser did not show") }
+        // The article browser's page (the 📝 page under it is empty in the demo: no token).
+        let page = app.webViews.allElementsBoundByIndex.last ?? app.webViews.firstMatch
+        let field = app.webViews.descendants(matching: .any).matching(NSPredicate(format: "elementType IN %@",
+            [XCUIElement.ElementType.textField, .searchField, .textView, .comboBox].map(\.rawValue))).firstMatch
+        guard field.waitForExistence(timeout: 15) else { throw XCTSkip("the page's field did not load (network)") }
+        let before = page.frame
+        let barBefore = close.frame
+        field.tap()
+        let keyboard = app.keyboards.firstMatch
+        guard keyboard.waitForExistence(timeout: 4) else { throw XCTSkip("no software keyboard") }
+        sleep(2)
+        print("[neta-kb] before=\(before) after=\(page.frame) keyboard=\(keyboard.frame)")
+        XCTAssertEqual(close.frame.minY, barBefore.minY, accuracy: 1, "the bar moved with the keyboard")
+        XCTAssertEqual(page.frame.height, before.height, accuracy: 1, "the page shrank with the keyboard")
+    }
 }
