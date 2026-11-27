@@ -28,7 +28,7 @@ struct MainView: View {
     @State private var pager = PagerState()
     /// What can be seen (the settled page, the app active), for the views inside.
     @State private var visibility = ScreenVisibility()
-    /// iPhone: how much of the pager the software keyboard covers.
+    /// How much of the screen a docked software keyboard covers (iPhone pager, iPad columns).
     @State private var keyboard = KeyboardOverlap()
     /// iPad: the timeline column's width (dragged at the line; kept between launches).
     @AppStorage("ipadTimelineWidth") private var leftWidth: Double = ColumnSplit.defaultWidth
@@ -108,6 +108,12 @@ struct MainView: View {
                     ChatScreen(store: store, onSignOut: onSignOut)
                 }
             }
+            // Our own keyboard avoidance, as on iPhone: only a keyboard docked at the bottom lifts the
+            // reply box and the composer. SwiftUI's own kept a docked keyboard's height free under the
+            // floating keyboard (リュー 2026-11-27: タイムラインの返信欄で固定キーボードの幅の余白).
+            .modifier(AvoidsKeyboard(keyboard: keyboard))
+            .ignoresSafeArea(.keyboard)
+            .background(KeyboardOverlapReader(keyboard: keyboard).ignoresSafeArea(.keyboard))
         } else {
             let picker = PagePicker(store: store, pager: pager, jukeboxOn: jukeboxOn)
             // A paging ScrollView, not TabView(.page): the paged TabView is a UICollectionView
@@ -501,8 +507,9 @@ private struct KeyboardOverlapReader: UIViewRepresentable {
             if let frame = keyboardFrame, !frame.isEmpty {
                 let inWindow = window.convert(frame, from: window.screen.coordinateSpace)
                 let mine = convert(inWindow, from: window)
-                // Only a keyboard docked at the bottom (one that reaches our bottom edge) moves the page.
-                if mine.maxY >= bounds.maxY - 1 { height = max(0, bounds.maxY - mine.minY) }
+                // Only a keyboard docked at the bottom (one that reaches our bottom edge and spans our
+                // width) moves the page; the iPad's floating keyboard is a small box over it.
+                if mine.maxY >= bounds.maxY - 1, mine.width >= bounds.width - 1 { height = max(0, bounds.maxY - mine.minY) }
             }
             onChange?(height.rounded(), animated)
         }
