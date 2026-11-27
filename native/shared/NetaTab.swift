@@ -10,7 +10,8 @@ import WebKit
 ///    アプリからログアウトしたら WebView ごと捨てる（signOut）。
 ///  - ページが bguru-neta://reenter に移ろうとしたら（ログインが切れた）入り直す。このスキームは OS には登録しない
 ///    （ここで横取りするだけ）。
-///  - 自分のサイトの中だけ WebView で動く。ほかのサイト・新しいタブで開くリンクは普段のブラウザで開く。
+///  - 自分のサイトの中だけ WebView で動く。ほかのサイト・新しいタブで開くリンクは、既定ではネタ帳の上に重ねる
+///    記事のブラウザ（NetaReader、2026-11-27）で、設定を切ると普段のブラウザで開く。
 ///  - 📜 台本のタブ（いちばん右、2026-11-14）も同じ作り: NetaTabWeb.script（入口は features.neta.scriptTab、
 ///    "/neta/app/enter?to=script" で /neta/app/script へ）。WebView と保存場所はタブごとに別。
 @MainActor
@@ -30,6 +31,8 @@ final class NetaTabWeb: NSObject {
     nonisolated private static let base = APIClient.baseURL
 
     private var web: WKWebView?
+    /// 元記事を読むブラウザ（ネタ帳の上に重ねる）。
+    let reader = NetaReader()
     private var path = "/neta/app/enter"
     private var enteredAt: Date?
     #if os(iOS)
@@ -100,6 +103,7 @@ final class NetaTabWeb: NSObject {
         web?.removeFromSuperview()
         web = nil
         enteredAt = nil
+        reader.close()
         #if os(iOS)
         refresh = nil
         #endif
@@ -128,14 +132,14 @@ extension NetaTabWeb: WKNavigationDelegate, WKUIDelegate {
         if Self.isOurs(url) || url.scheme == "about" || url.scheme == "blob" { return .allow }
         // 埋め込み（iframe）はそのまま。ページそのものがほかのサイトへ行くときは普段のブラウザで。
         if action.targetFrame?.isMainFrame == false { return .allow }
-        if url.scheme == "http" || url.scheme == "https" { Platform.open(url) }
+        if url.scheme == "http" || url.scheme == "https" { reader.open(url) }
         return .cancel
     }
 
-    /// target=_blank: 自分のサイトならこの中で、ほかは普段のブラウザで（新しい WebView は作らない）。
+    /// target=_blank: 記事のブラウザ（設定を切ると普段のブラウザ）で開く（新しい WebView は作らない）。
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = action.request.url, url.scheme == "http" || url.scheme == "https" { Platform.open(url) }
+        if let url = action.request.url, url.scheme == "http" || url.scheme == "https" { reader.open(url) }
         return nil
     }
 

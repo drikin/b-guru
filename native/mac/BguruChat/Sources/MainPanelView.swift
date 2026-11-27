@@ -426,6 +426,12 @@ private struct NetaTab: View, @MainActor Equatable {
             HStack(spacing: 8) {
                 PanelTabSwitch(store: store, pin: pin, pane: pane)
                 Spacer()
+                // 元記事をどこで開くか（2026-11-27、既定はこの中）。
+                Menu { NetaLinksToggle() } label: { Image(systemName: "gearshape") }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("ネタ帳の設定")
                 // No ⌘R here: the hidden tabs stay built and the web timeline's ↻ already has it.
                 Button { web.reload() } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(.borderless)
@@ -436,6 +442,7 @@ private struct NetaTab: View, @MainActor Equatable {
             .padding(.bottom, 8)
             Divider()
             NetaTabView(path: path, web: web)
+                .overlay { NetaReaderOverlay(reader: web.reader) }
         }
         .background(.regularMaterial)
         // The page follows the app's text size (⌘+ / ⌘− / ⌘0), like the web timeline.

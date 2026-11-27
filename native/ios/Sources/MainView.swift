@@ -45,6 +45,15 @@ struct MainView: View {
             // once (store.showChat, set on appear, shows the chat page).
             .environment(\.quoteToChat, store.quoteToChat)
             .environment(\.watch, store.watch.enabled ? store.watch : nil)
+            #if DEBUG
+            // Dev only: BGURU_DEMO_NETA_READER=<url> → the 📝 article browser over everything (the demo has no 📝 tab).
+            .overlay { if ProcessInfo.processInfo.environment["BGURU_DEMO_NETA_READER"] != nil { NetaReaderOverlay(reader: NetaTabWeb.shared.reader) } }
+            .task {
+                if let s = ProcessInfo.processInfo.environment["BGURU_DEMO_NETA_READER"], let u = URL(string: s) {
+                    NetaTabWeb.shared.reader.open(u)
+                }
+            }
+            #endif
             // 📺 floating over every page (a 「みんなで見る」 on the timeline opens it here).
             .overlay {
                 if store.watch.open && store.watch.mode == .floating {

@@ -23,6 +23,9 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -36,6 +39,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -90,6 +94,8 @@ class NetaTabStore(private val token: String) {
     var loading by mutableStateOf(false); private set
     var failed by mutableStateOf(false); private set
     var canGoBack by mutableStateOf(false); private set
+    /** 元記事を読むブラウザ（ネタ帳の上に重ねる、2026-11-27）。 */
+    val reader = NetaReader()
     private var enterPath: String? = null
     private var entered = false
     private var clearHistoryWhenLoaded = false
@@ -141,6 +147,7 @@ class NetaTabStore(private val token: String) {
     fun goBack() { web?.takeIf { it.canGoBack() }?.goBack() }
 
     fun destroy() {
+        reader.close()
         val w = web ?: return
         web = null
         Handler(Looper.getMainLooper()).post {
@@ -150,15 +157,16 @@ class NetaTabStore(private val token: String) {
         }
     }
 
-    private fun openOutside(ctx: Context, url: Uri) {
-        runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, url).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-    }
+    private fun openOutside(ctx: Context, url: Uri) = NetaReader.openOutside(ctx, url)
+
+    /** ほかのサイトへ: 既定は記事のブラウザ（設定を切ると普段のブラウザ）。 */
+    private fun openLink(ctx: Context, url: Uri) = reader.open(ctx, url)
 
     /** true: handled here (not loaded in the WebView). */
     private fun handle(view: WebView, url: Uri): Boolean = when (NetaTabLogic.route(url.toString(), base.host)) {
         NetaTabLogic.Route.REENTER -> { view.post { enter() }; true }
         NetaTabLogic.Route.INSIDE -> false
-        NetaTabLogic.Route.EXTERNAL -> { openOutside(view.context, url); true }
+        NetaTabLogic.Route.EXTERNAL -> { openLink(view.context, url); true }
         NetaTabLogic.Route.BLOCK -> true
     }
 
@@ -212,7 +220,8 @@ class NetaTabStore(private val token: String) {
                         if (!done && u != null) {
                             done = true
                             val s = u.scheme?.lowercase()
-                            if (s == "https" || s == "http" || s == "mailto") openOutside(view.context, u)
+                            if (s == "https" || s == "http") openLink(view.context, u)
+                            else if (s == "mailto") openOutside(view.context, u)
                         }
                         w.post { w.stopLoading(); w.destroy() }
                         return true
@@ -261,12 +270,30 @@ fun NetaTabScreen(store: NetaTabStore, enterPath: String, tabSwitch: (@Composabl
     }
     // Back inside the page (its own history) before leaving the app.
     BackHandler(enabled = visible && store.canGoBack) { store.goBack() }
+    // The article browser on top: back in it, then back to ネタ帳.
+    BackHandler(enabled = visible && store.reader.url != null) {
+        if (store.reader.canGoBack) store.reader.back() else store.reader.close()
+    }
+    var menu by remember { mutableStateOf(false) }
+    var inApp by remember { mutableStateOf(NetaReader.inApp(ctx)) }
     val bg = MaterialTheme.colorScheme.background
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { if (tabSwitch != null) tabSwitch() else Text(title, maxLines = 1) },
-                actions = { TextButton(onClick = { store.reload() }) { Text("↻") } },
+                actions = {
+                    TextButton(onClick = { store.reload() }) { Text("↻") }
+                    Box {
+                        TextButton(onClick = { menu = true }) { Text("⋯") }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text("記事をアプリの中で開く") },
+                                trailingIcon = { Checkbox(checked = inApp, onCheckedChange = null) },
+                                onClick = { inApp = !inApp; NetaReader.setInApp(ctx, inApp) },
+                            )
+                        }
+                    }
+                },
             )
         },
         contentWindowInsets = WindowInsets(0),
@@ -293,6 +320,7 @@ fun NetaTabScreen(store: NetaTabStore, enterPath: String, tabSwitch: (@Composabl
                     OutlinedButton(onClick = { store.reload() }, modifier = Modifier.padding(top = 12.dp)) { Text("もう一度") }
                 }
             }
+            NetaReaderOverlay(store.reader, ctx)
         }
     }
 }

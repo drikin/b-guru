@@ -12,9 +12,17 @@ struct NetaScreen: View {
         NavigationStack {
             NetaTabView(path: path, web: web)
                 .ignoresSafeArea(.container, edges: .bottom)
+                // 元記事（2026-11-27）: ネタ帳の上に重ねる。✕ でネタ帳に戻る。
+                .overlay { NetaReaderOverlay(reader: web.reader) }
                 .navigationTitle(title)
                 .inlineNavigationTitle()
-                .toolbar { if let tabPicker { ToolbarItem(placement: .principal) { tabPicker } } }
+                .toolbar {
+                    if let tabPicker { ToolbarItem(placement: .principal) { tabPicker } }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu { NetaLinksToggle() } label: { Image(systemName: "ellipsis.circle") }
+                            .accessibilityLabel("ネタ帳の設定")
+                    }
+                }
                 .onAppear { web.shown() }
         }
     }
