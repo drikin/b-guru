@@ -96,6 +96,21 @@ d("📝 ネタ帳の読み出し（DB）", () => {
     expect((await m.listTopics(base + 1, "new")).map((t) => t.id)).toEqual([base + 2, base + 1, base]);
   });
 
+  it("不採用は一覧と件数から外れ、rejected: true で不採用だけ。1 つのページでは読める", async () => {
+    expect(await m.countTopics(base + 1)).toBe(3);
+    await db.pool.query(`UPDATE neta_topics SET status = 'rejected' WHERE id = $1`, [base + 2]);
+    try {
+      expect((await m.listTopics(base + 1, "stars")).map((t) => t.id)).toEqual([base + 1, base]);
+      expect((await m.listTopics(base + 1, "new")).map((t) => t.id)).toEqual([base + 1, base]);
+      expect(await m.countTopics(base + 1)).toBe(2);
+      const rej = await m.listTopics(base + 1, "new", { rejected: true });
+      expect(rej.map((t) => [t.id, t.rejected, t.featured])).toEqual([[base + 2, true, false]]);
+      expect((await m.getTopic(base + 2))?.topic.rejected).toBe(true);
+    } finally {
+      await db.pool.query(`UPDATE neta_topics SET status = 'pending' WHERE id = $1`, [base + 2]);
+    }
+  });
+
   it("1 つのネタはコメントと週つき、ない id は null", async () => {
     const got = await m.getTopic(base);
     expect(got?.week?.title).toBe("ep2");

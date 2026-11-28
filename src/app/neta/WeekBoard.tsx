@@ -5,7 +5,7 @@ import {
   countTopics, getCurrentWeek, getWeek, listTopics, listWeeks, netaDate, netaHost, netaLiveDate, netaPreview, type NetaSort, type NetaWeek,
 } from "@/lib/neta-board";
 import { votedTopicIds } from "@/lib/neta-write";
-import { NetaProvider, NetaSubmit, NetaTopicAdmin, NetaVote } from "./NetaClient";
+import { NetaProvider, NetaRejectedList, NetaSubmit, NetaTopicAdmin, NetaVote } from "./NetaClient";
 import { loadNetaViewer, NetaFooter, NetaHeader } from "./parts";
 import s from "./neta.module.css";
 
@@ -36,7 +36,12 @@ export default async function WeekBoard({ weekId, sort }: { weekId: number | nul
     );
   }
   const { week, current } = loaded;
-  const [topics, total, weeks] = await Promise.all([listTopics(week.id, sort), countTopics(week.id), listWeeks()]);
+  const [topics, total, weeks, rejected] = await Promise.all([
+    listTopics(week.id, sort),
+    countTopics(week.id),
+    listWeeks(),
+    admin ? listTopics(week.id, "new", { rejected: true }) : Promise.resolve([]),
+  ]);
   const voted = await votedTopicIds(memberId, topics.map((t) => t.id));
   const isCurrent = current?.id === week.id;
   return (
@@ -117,6 +122,7 @@ export default async function WeekBoard({ weekId, sort }: { weekId: number | nul
           })}
         </ol>
       )}
+      <NetaRejectedList topics={rejected.map((t) => ({ id: t.id, title: t.title, submitter: t.submitter, url: t.url }))} />
       <NetaFooter />
     </main>
     </NetaProvider>

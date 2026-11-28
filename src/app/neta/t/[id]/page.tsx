@@ -42,10 +42,11 @@ export default async function NetaTopicPage({ params }: { params: Promise<{ id: 
           <h1 className={s.topicTitle}>{topic.title}</h1>
           <div className={s.sub}>
             {topic.featured && <span className={s.featured}>🎙 番組で話した</span>}
+            {topic.rejected && <span className={s.rejectedTag}>不採用</span>}
             <span>{topic.submitter}</span>
             <span>{netaDate(topic.createdAt)}</span>
           </div>
-          <NetaTopicAdmin topicId={topic.id} featured={topic.featured} afterDelete={week && !week.isActive ? `/neta/w/${week.id}` : "/neta"} />
+          <NetaTopicAdmin topicId={topic.id} featured={topic.featured} rejected={topic.rejected} afterDelete={week && !week.isActive ? `/neta/w/${week.id}` : "/neta"} />
         </div>
         <NetaVote topicId={topic.id} stars={topic.stars} voted={voted} />
       </div>

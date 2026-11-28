@@ -8,6 +8,7 @@ import {
   NetaCommentDelete,
   NetaCommentForm,
   NetaProvider,
+  NetaRejectedList,
   NetaSubmit,
   NetaTopicAdmin,
   NetaVote,
@@ -17,7 +18,7 @@ import {
 import s from "./neta.module.css";
 
 type Me = { viewer: ClientViewer; writable: boolean; admin: boolean; live: boolean };
-type BoardData = Me & { week: NetaWeek | null; current: NetaWeek | null; weeks: NetaWeek[]; total: number; topics: (NetaTopic & { voted: boolean })[] };
+type BoardData = Me & { week: NetaWeek | null; current: NetaWeek | null; weeks: NetaWeek[]; total: number; topics: (NetaTopic & { voted: boolean })[]; rejected?: NetaTopic[] };
 type TopicData = Me & { topic: NetaTopic; week: NetaWeek | null; comments: NetaComment[]; voted: boolean };
 
 type View = { kind: "week"; weekId: number | null; sort: NetaSort } | { kind: "topic"; id: number };
@@ -130,7 +131,7 @@ export default function NetaBoard({ app = false }: { app?: boolean }) {
 }
 
 function WeekView({ data, sort, go }: { data: BoardData; sort: NetaSort; go: (h: string) => void }) {
-  const { week, current, weeks, topics, total } = data;
+  const { week, current, weeks, topics, total, rejected = [] } = data;
   if (!week) return <p className={s.empty}>まだ週がありません</p>;
   const isCurrent = current?.id === week.id;
   const wh = (w: NetaWeek, so: NetaSort) => hrefOf({ kind: "week", weekId: current && w.id === current.id ? null : w.id, sort: so });
@@ -206,6 +207,7 @@ function WeekView({ data, sort, go }: { data: BoardData; sort: NetaSort; go: (h:
           })}
         </ol>
       )}
+      <NetaRejectedList topics={rejected} />
     </>
   );
 }
@@ -227,13 +229,14 @@ function TopicView({ data, go }: { data: TopicData; go: (h: string) => void }) {
           <h1 className={s.topicTitle}>{topic.title}</h1>
           <div className={s.sub}>
             {topic.featured && <span className={s.featured}>🎙 番組で話した</span>}
+            {topic.rejected && <span className={s.rejectedTag}>不採用</span>}
             <span>{topic.submitter}</span>
             <span>{netaDate(topic.createdAt)}</span>
             <a href={`/neta/t/${topic.id}`} target="_blank" rel="noopener noreferrer">
               共有用のページ
             </a>
           </div>
-          <NetaTopicAdmin topicId={topic.id} featured={topic.featured} afterDelete={back} />
+          <NetaTopicAdmin topicId={topic.id} featured={topic.featured} rejected={topic.rejected} afterDelete={back} />
         </div>
         <NetaVote topicId={topic.id} stars={topic.stars} voted={voted} />
       </div>

@@ -38,6 +38,7 @@ function toTopic(r: Record<string, unknown>): NetaTopic {
     description: (r.description as string | null) || null,
     submitter: String(r.submitter ?? ""),
     featured: r.status === "featured",
+    rejected: r.status === "rejected",
     stars: Number(r.stars ?? 0),
     comments: Number(r.comments ?? 0),
     createdAt: new Date(r.created_at as string).toISOString(),
@@ -62,15 +63,18 @@ export async function listWeeks(limit = 30): Promise<NetaWeek[]> {
   return r.rows.map(toWeek);
 }
 
-/** その週の話題。聞きたい順は同数なら新しい順（ネタ帳と同じ）。 */
-export async function listTopics(weekId: number, sort: NetaSort = "stars"): Promise<NetaTopic[]> {
+/** その週の話題。聞きたい順は同数なら新しい順（ネタ帳と同じ）。
+ * 不採用（2026-11-27 オーナー「使わないネタをネタ帳から外せるようにしてみやすく」）は一覧から外す。rejected: true でその逆（不採用だけ）。 */
+export async function listTopics(weekId: number, sort: NetaSort = "stars", opts: { rejected?: boolean } = {}): Promise<NetaTopic[]> {
   const order = sort === "new" ? "t.created_at DESC, t.id DESC" : "stars DESC, t.created_at DESC, t.id DESC";
-  const r = await pool.query(`${TOPIC_SELECT} WHERE t.week_id = $1 ORDER BY ${order} LIMIT ${NETA_LIST_LIMIT}`, [weekId]);
+  const which = opts.rejected ? "t.status = 'rejected'" : "t.status <> 'rejected'";
+  const r = await pool.query(`${TOPIC_SELECT} WHERE t.week_id = $1 AND ${which} ORDER BY ${order} LIMIT ${NETA_LIST_LIMIT}`, [weekId]);
   return r.rows.map(toTopic);
 }
 
+/** 一覧に出るネタの数（不採用は数えない）。 */
 export async function countTopics(weekId: number): Promise<number> {
-  const r = await pool.query(`SELECT count(*)::int AS n FROM neta_topics WHERE week_id = $1`, [weekId]);
+  const r = await pool.query(`SELECT count(*)::int AS n FROM neta_topics WHERE week_id = $1 AND status <> 'rejected'`, [weekId]);
   return r.rows[0]?.n ?? 0;
 }
 

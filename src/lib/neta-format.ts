@@ -18,6 +18,8 @@ export type NetaTopic = {
   description: string | null;
   submitter: string;
   featured: boolean;
+  /** 不採用（使わないネタ）。一覧からは外れ、管理者だけが下の「不採用」で見られる。 */
+  rejected: boolean;
   /** 聞きたい = 移行前の票 + 新しい票。 */
   stars: number;
   comments: number;

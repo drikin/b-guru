@@ -15,10 +15,16 @@ export async function GET(req: NextRequest) {
   const [current, me] = await Promise.all([getCurrentWeek(), viewerForClient()]);
   const week = weekId == null ? current : await getWeek(weekId);
   if (!week) return NextResponse.json({ week: null, current, weeks: [], topics: [], total: 0, ...me.client }, { status: weekId == null ? 200 : 404 });
-  const [topics, total, weeks] = await Promise.all([listTopics(week.id, sort), countTopics(week.id), listWeeks()]);
+  const [topics, total, weeks, rejected] = await Promise.all([
+    listTopics(week.id, sort),
+    countTopics(week.id),
+    listWeeks(),
+    // 不採用は管理者にだけ（一覧の下にたたんで出す）。
+    me.client.admin ? listTopics(week.id, "new", { rejected: true }) : Promise.resolve([]),
+  ]);
   const voted = await votedTopicIds(me.memberId, topics.map((t) => t.id));
   return NextResponse.json(
-    { week, current, weeks, total, sort, topics: topics.map((t) => ({ ...t, voted: voted.has(t.id) })), ...me.client },
+    { week, current, weeks, total, sort, topics: topics.map((t) => ({ ...t, voted: voted.has(t.id) })), rejected, ...me.client },
     { headers: { "Cache-Control": "no-store" } }
   );
 }

@@ -148,6 +148,17 @@ d("📝 ネタ帳の管理（DB）", () => {
     await expect(a.setTopicFeatured(2_000_000_000, true)).rejects.toMatchObject({ status: 404 });
   });
 
+  it("不採用にする・戻す（採用から不採用にすると featured_at は消える）。知らない状態は断る", async () => {
+    await a.setTopicStatus(base, "featured");
+    await a.setTopicStatus(base, "rejected");
+    let row = (await db.pool.query(`SELECT status, featured_at FROM neta_topics WHERE id = $1`, [base])).rows[0];
+    expect(row).toMatchObject({ status: "rejected", featured_at: null });
+    await a.setTopicStatus(base, "pending");
+    row = (await db.pool.query(`SELECT status FROM neta_topics WHERE id = $1`, [base])).rows[0];
+    expect(row.status).toBe("pending");
+    await expect(a.setTopicStatus(base, "deleted" as "pending")).rejects.toMatchObject({ status: 400 });
+  });
+
   it("新しい週は前の台本から台本ができ、今週の切り替えは 1 つだけ、ネタのある週と今週は消せない", async () => {
     // 使い捨ての DB に前の回の台本が残っていると「いちばん新しい台本」がそれになるので、この週のもの以外は片付ける。
     await db.pool.query(`DELETE FROM neta_scripts WHERE week_id <> $1`, [base]);

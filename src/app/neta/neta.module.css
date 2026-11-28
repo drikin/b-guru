@@ -361,3 +361,19 @@ a.adminBtn { text-decoration: none; display: inline-block; }
 .talkCard a { color: var(--text-link); white-space: nowrap; }
 /* B-guru の中（メインの列）に出すとき: 外側の余白はアプリ側が持つ */
 .inApp { width: 100%; color: var(--text-body); }
+
+/* 不採用（管理者だけ）: 一覧の下にたたむ。 */
+.rejected { margin-top: 18px; color: var(--text-secondary); }
+.rejected summary { cursor: pointer; color: var(--text-link); }
+.rejectedList { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.rejectedList li { padding: 8px 0; border-top: 1px solid var(--border-light); }
+.rejectedTitle { color: var(--text-secondary); text-decoration: none; overflow-wrap: anywhere; }
+.rejectedTitle:hover { text-decoration: underline; }
+.rejectedTag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}

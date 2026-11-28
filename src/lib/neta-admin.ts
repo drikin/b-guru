@@ -187,18 +187,27 @@ export async function deleteWeek(id: number): Promise<void> {
   await pool.query(`DELETE FROM neta_weeks WHERE id = $1`, [id]);
 }
 
+export type NetaTopicStatus = "pending" | "featured" | "rejected";
+
 /** 採用（番組で話した）にする・戻す。初めて採用したとき、投稿した人（ネタ帳にログインして投稿した人）にメールで知らせる。 */
 export async function setTopicFeatured(id: number, featured: boolean): Promise<{ notified: boolean }> {
+  return setTopicStatus(id, featured ? "featured" : "pending");
+}
+
+/** ネタの状態: ふつう・採用・不採用（使わないネタ。一覧から外れる）。採用から外すと featured_at は消える。
+ * 初めて採用したとき、投稿した人（ネタ帳にログインして投稿した人）にメールで知らせる。 */
+export async function setTopicStatus(id: number, status: NetaTopicStatus): Promise<{ notified: boolean }> {
+  if (status !== "pending" && status !== "featured" && status !== "rejected") throw new NetaError(400, "ネタの状態が分かりません");
   const r = await pool.query(
     `WITH old AS (SELECT id, status FROM neta_topics WHERE id = $1 FOR UPDATE)
      UPDATE neta_topics t SET status = $2, featured_at = CASE WHEN $2 = 'featured' THEN COALESCE(t.featured_at, now()) ELSE NULL END
        FROM old WHERE t.id = old.id
      RETURNING t.id, t.title, t.week_id, t.member_id, old.status AS old_status`,
-    [id, featured ? "featured" : "pending"]
+    [id, status]
   );
   const row = r.rows[0];
   if (!row) throw new NetaError(404, "ネタが見つかりません");
-  if (!featured || row.old_status === "featured" || !row.member_id) return { notified: false };
+  if (status !== "featured" || row.old_status === "featured" || !row.member_id) return { notified: false };
   return { notified: await notifyFeatured(Number(row.id), String(row.title), Number(row.week_id), Number(row.member_id)) };
 }
 
@@ -290,7 +299,7 @@ export async function suggestTitles(weekId: number): Promise<TitleSuggestion[]> 
   if (!w.rows[0]) throw new NetaError(404, "週が見つかりません");
   const r = await pool.query(
     `SELECT t.title, t.status, t.legacy_stars + (SELECT count(*) FROM neta_votes v WHERE v.topic_id = t.id)::int AS stars
-       FROM neta_topics t WHERE t.week_id = $1
+       FROM neta_topics t WHERE t.week_id = $1 AND t.status <> 'rejected'
       ORDER BY (t.status = 'featured') DESC, stars DESC, t.id LIMIT 20`,
     [weekId]
   );

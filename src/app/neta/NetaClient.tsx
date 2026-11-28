@@ -515,8 +515,19 @@ export function NetaCommentForm({ topicId }: { topicId: number }) {
   );
 }
 
-/** 管理者だけ: 採用（番組で話した）の切り替えと削除。確かめるのはページの中（アプリの WebView は confirm・alert を出さない）。 */
-export function NetaTopicAdmin({ topicId, featured, afterDelete }: { topicId: number; featured: boolean; afterDelete?: string }) {
+/** 管理者だけ: 採用（番組で話した）・不採用（使わないネタを一覧から外す）の切り替えと削除。
+ * 確かめるのはページの中（アプリの WebView は confirm・alert を出さない）。不採用は戻せるので確かめない。 */
+export function NetaTopicAdmin({
+  topicId,
+  featured,
+  rejected = false,
+  afterDelete,
+}: {
+  topicId: number;
+  featured: boolean;
+  rejected?: boolean;
+  afterDelete?: string;
+}) {
   const { admin, nav } = useNeta();
   const [busy, setBusy] = useState(false);
   const [asking, setAsking] = useState(false);
@@ -529,6 +540,9 @@ export function NetaTopicAdmin({ topicId, featured, afterDelete }: { topicId: nu
     setBusy(false);
     if (!r.ok) setErr(errText(r.data));
     return r.ok;
+  };
+  const setStatus = async (status: "pending" | "featured" | "rejected") => {
+    if (await call("PATCH", { status })) nav.refresh();
   };
   return (
     <div className={s.adminRow}>
@@ -552,17 +566,22 @@ export function NetaTopicAdmin({ topicId, featured, afterDelete }: { topicId: nu
             やめる
           </button>
         </>
+      ) : rejected ? (
+        <>
+          <button type="button" className={s.adminBtn} disabled={busy} onClick={() => setStatus("pending")}>
+            不採用をやめる
+          </button>
+          <button type="button" className={`${s.adminBtn} ${s.danger}`} disabled={busy} onClick={() => setAsking(true)}>
+            削除
+          </button>
+        </>
       ) : (
         <>
-          <button
-            type="button"
-            className={s.adminBtn}
-            disabled={busy}
-            onClick={async () => {
-              if (await call("PATCH", { featured: !featured })) nav.refresh();
-            }}
-          >
+          <button type="button" className={s.adminBtn} disabled={busy} onClick={() => setStatus(featured ? "pending" : "featured")}>
             {featured ? "採用をやめる" : "🎙 採用"}
+          </button>
+          <button type="button" className={s.adminBtn} disabled={busy} onClick={() => setStatus("rejected")}>
+            不採用
           </button>
           <button type="button" className={`${s.adminBtn} ${s.danger}`} disabled={busy} onClick={() => setAsking(true)}>
             削除
@@ -571,6 +590,36 @@ export function NetaTopicAdmin({ topicId, featured, afterDelete }: { topicId: nu
       )}
       {err && <span className={s.err}>{err}</span>}
     </div>
+  );
+}
+
+/** 管理者だけ: 一覧の下にたたんだ不採用のネタ（戻すとき用）。 */
+export function NetaRejectedList({ topics }: { topics: { id: number; title: string; submitter: string; url: string }[] }) {
+  const { admin, nav } = useNeta();
+  if (!admin || topics.length === 0) return null;
+  return (
+    <details className={s.rejected}>
+      <summary>不採用 {topics.length} 件（管理者にだけ見えます）</summary>
+      <ul className={s.rejectedList}>
+        {topics.map((t) => (
+          <li key={t.id}>
+            <a
+              href={`/neta/t/${t.id}`}
+              className={s.rejectedTitle}
+              onClick={(e) => {
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                e.preventDefault();
+                nav.go(`/neta/t/${t.id}`);
+              }}
+            >
+              {t.title}
+            </a>
+            <span className={s.count}> {t.submitter}</span>
+            <NetaTopicAdmin topicId={t.id} featured={false} rejected />
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
